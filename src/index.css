@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --color-v4-red: #e63946;
+  --color-v4-red-hover: #ff4d5a;
+  --color-v4-red-muted: #e6394620;
+  
+  --color-v4-bg: #121212;
+  --color-v4-card: #1e1e1e;
+  --color-v4-surface: #252525;
+  --color-v4-card-hover: #2a2a2a;
+  
+  --color-v4-text: #f5f5f5;
+  --color-v4-text-muted: #a0a0a0;
+  --color-v4-text-disabled: #666666;
+  
+  --color-v4-border: #2e2e2e;
+  --color-v4-border-strong: #383838;
+
+  --color-v4-success: #22c55e;
+  --color-v4-warning: #facc15;
+  --color-v4-error: #ef4444;
+
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  @apply bg-[var(--color-v4-bg)] text-[var(--color-v4-text)] font-sans antialiased;
+}
+
+/* Custom scrollbar for dark mode */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-[var(--color-v4-bg)];
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-[var(--color-v4-border-strong)] rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-[var(--color-v4-text-disabled)];
+}
