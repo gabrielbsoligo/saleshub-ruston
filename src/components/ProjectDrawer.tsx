@@ -267,7 +267,7 @@ export const ProjectDrawer: React.FC<{
         const teamEmails = team?.map(t => (t.member as any)?.email).filter(Boolean) || [];
         const teamPhones = team?.map(t => (t.member as any)?.phone).filter(Boolean) || [];
 
-        const fixedEmails = ['ruston@v4company.com', 'tiago.bardini@v4company.com', 'patrick.rosavianna@v4company.com'];
+        const fixedEmails = ['tiago.bardini@v4company.com', 'patrick.rosavianna@v4company.com', 'gabriel.sartori@v4company.com'];
         
         // Fetch correct phones for fixed members
         const { data: fixedMembersData } = await supabase
@@ -277,8 +277,9 @@ export const ProjectDrawer: React.FC<{
         
         const fetchedFixedPhones = fixedMembersData?.map(m => m.phone).filter(Boolean) || [];
 
-        const fixedPhones = fetchedFixedPhones;
-        const fixedAdminPhones = fetchedFixedPhones;
+        // Apenas Tiago como fixo
+        const fixedPhones = ['554796769946'];
+        const fixedAdminPhones = ['554796769946'];
         
         // Buscar Coordenador para fone e email extra, se necessário
         let coordEmail = '';
@@ -313,14 +314,11 @@ export const ProjectDrawer: React.FC<{
         ])].filter(Boolean);
 
         // Regra para Admins: 
-        // Telefones fixos (Patrick, Nicolas, Tiago)
+        // Telefones fixos (Tiago)
         // Coordenador (coordPhone)
-        // Stakeholder principal (primeiro cadastrado ou clientPhone)
-        const mainStakeholderPhone = (stakeholders && stakeholders.length > 0 && stakeholders[0].phone) ? stakeholders[0].phone : clientPhone;
         const adminPhones = [...new Set([
           ...fixedAdminPhones,
-          coordPhone,
-          mainStakeholderPhone
+          coordPhone
         ])].filter(Boolean);
 
         createGChatSpace(project.id, project.clientName, allEmails).catch(err => {
