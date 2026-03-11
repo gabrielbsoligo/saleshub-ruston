@@ -71,6 +71,14 @@ const ProjectCard: React.FC<{
         />
       </div>
 
+      <div className="flex flex-wrap gap-1 mb-2">
+        {project.product?.map(p => (
+          <span key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[9px] font-semibold tracking-wider text-[var(--color-v4-text-muted)]">
+            {p === 'ee' ? 'EE' : 'Byline'}
+          </span>
+        ))}
+      </div>
+
       <div className="text-xs text-[var(--color-v4-text-muted)] mb-3 space-y-1">
         <p className="truncate">{project.clientName}</p>
         <p className="font-mono text-[10px] bg-[var(--color-v4-surface)] px-1.5 py-0.5 rounded inline-block">
@@ -116,10 +124,14 @@ export const KanbanBoard: React.FC<{
 
   const filteredProjects = useMemo(() => {
     if (!currentUser) return [];
-    if (currentUser.role === "owner" || currentUser.role === "coord_geral")
+    if (currentUser.role === "owner" || currentUser.role === "admin" || currentUser.role === "coord_geral")
       return projects;
     if (currentUser.role === "comercial")
-      return projects.filter((p) => p.stage === "aguardando_comercial");
+      return projects.filter(
+        (p) =>
+          p.stage === "aguardando_comercial" &&
+          p.soldById === currentUser.id,
+      );
     if (currentUser.role === "coord_equipe")
       return projects.filter(
         (p) =>

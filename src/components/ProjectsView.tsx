@@ -14,7 +14,8 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
   const filteredProjects = projects.filter(
     (p) =>
       p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.clientName.toLowerCase().includes(searchTerm.toLowerCase()),
+      p.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (p.soldBy?.name || "").toLowerCase().includes(searchTerm.toLowerCase()),
   );
 
   return (
@@ -60,6 +61,7 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
                   <th className="px-6 py-4 font-semibold">Cliente</th>
                   <th className="px-6 py-4 font-semibold">Produto</th>
                   <th className="px-6 py-4 font-semibold">Valor</th>
+                  <th className="px-6 py-4 font-semibold">Vendedor</th>
                   <th className="px-6 py-4 font-semibold">Estágio</th>
                   <th className="px-6 py-4 font-semibold">Coordenador</th>
                   <th className="px-6 py-4 font-semibold">Início</th>
@@ -80,12 +82,34 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
                         {project.name}
                       </td>
                       <td className="px-6 py-4">{project.clientName}</td>
-                      <td className="px-6 py-4">{project.product || "—"}</td>
+                      <td className="px-6 py-4">
+                        {project.product && project.product.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {project.product.map(p => (
+                              <span key={p} className="px-2 py-0.5 rounded bg-slate-800 border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                                {p === 'ee' ? 'EE' : 'Byline'}
+                              </span>
+                            ))}
+                          </div>
+                        ) : "—"}
+                      </td>
                       <td className="px-6 py-4 font-mono text-xs">
                         R${" "}
                         {project.contractValue?.toLocaleString("pt-BR", {
                           minimumFractionDigits: 2,
                         }) || "0,00"}
+                      </td>
+                      <td className="px-6 py-4">
+                        {project.soldBy ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-full bg-[var(--color-v4-red)]/20 border border-[var(--color-v4-red)]/30 flex items-center justify-center text-[10px] font-bold text-[var(--color-v4-red)] uppercase">
+                              {project.soldBy.name?.charAt(0) || "U"}
+                            </div>
+                            <span className="text-xs font-medium text-slate-300">{project.soldBy.name}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-500">—</span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-[var(--color-v4-border)] text-[10px] font-semibold uppercase tracking-wider text-slate-300">

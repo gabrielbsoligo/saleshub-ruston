@@ -1,9 +1,9 @@
 export type Role =
   | "owner"
+  | "admin"
   | "coord_geral"
   | "coord_equipe"
   | "comercial"
-  | "account"
   | "copywriter"
   | "designer"
   | "gestor_trafego"
@@ -40,9 +40,7 @@ export interface Project {
   clientEmail?: string;
   kommoLeadId?: string;
   kommoLink?: string;
-  ekyteId?: string;
-
-  product?: string;
+  product?: string[];
   contractValue?: number;
   firstPaymentDate?: string;
   projectStartDate?: string;
@@ -52,11 +50,24 @@ export interface Project {
   assignedById?: string;
 
   gchatSpaceId?: string;
+  gchatLink?: string;
   wppGroupId?: string;
+  wppGroupLink?: string;
   gdriveFolderId?: string;
   gdriveFolderLink?: string;
+  gdriveSharedFolderId?: string;
+  gdriveSharedFolderLink?: string;
   metaAdsAccountId?: string;
   googleAdsAccountId?: string;
+  ekyteId?: string;
+  ekyteLink?: string;
+
+  workspaceStatus?: {
+    gchat: 'pending' | 'creating' | 'created' | 'error';
+    whatsapp: 'pending' | 'creating' | 'created' | 'error';
+    gdrive: 'pending' | 'creating' | 'created' | 'error';
+    ekyte: 'pending' | 'creating' | 'created' | 'error';
+  };
 
   stage: Stage;
   welcomeSent: boolean;
@@ -71,7 +82,6 @@ export interface ProjectMember {
   memberId: string;
   roleInProject:
     | "coord_equipe"
-    | "account"
     | "copywriter"
     | "designer"
     | "gestor_trafego"

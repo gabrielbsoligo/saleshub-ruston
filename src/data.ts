@@ -66,26 +66,7 @@ export const mockMembers: Member[] = [
     isActive: true,
     avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Bia",
   },
-  {
-    id: "m6",
-    name: "João Mendes",
-    nickname: "João",
-    email: "joao@v4company.com",
-    phone: "5511966666666",
-    role: "account",
-    isActive: true,
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Joao",
-  },
-  {
-    id: "m6b",
-    name: "Fernanda Lima",
-    nickname: "Nanda",
-    email: "fernanda@v4company.com",
-    phone: "5511966666667",
-    role: "account",
-    isActive: true,
-    avatarUrl: "https://api.dicebear.com/7.x/avataaars/svg?seed=Nanda",
-  },
+
   {
     id: "m10",
     name: "Roberto Carlos",
@@ -175,12 +156,12 @@ const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 export const mockProjects: Project[] = [
   {
     id: "p1",
-    name: "Power Bikes - Byline + EE",
+    name: "Power Bikes — Byline + EE",
     clientName: "Power Bikes",
     clientPhone: "5511900000001",
     kommoLeadId: "1001",
     kommoLink: "https://v4.kommo.com/leads/1001",
-    product: "Byline + EE",
+    product: ["byline", "ee"],
     contractValue: 5000,
     projectStartDate: new Date().toISOString().split("T")[0],
     stage: "aguardando_comercial",
@@ -190,12 +171,12 @@ export const mockProjects: Project[] = [
   },
   {
     id: "p2",
-    name: "Tech Solutions - Growth",
+    name: "Tech Solutions",
     clientName: "Tech Solutions",
     clientPhone: "5511900000002",
     kommoLeadId: "1002",
     kommoLink: "https://v4.kommo.com/leads/1002",
-    product: "Growth",
+    product: [],
     contractValue: 8000,
     projectStartDate: new Date().toISOString().split("T")[0],
     stage: "atribuir_coordenador",
@@ -205,12 +186,12 @@ export const mockProjects: Project[] = [
   },
   {
     id: "p3",
-    name: "Padaria Doce Pão - Local",
+    name: "Padaria Doce Pão",
     clientName: "Padaria Doce Pão",
     clientPhone: "5511900000003",
     kommoLeadId: "1003",
     kommoLink: "https://v4.kommo.com/leads/1003",
-    product: "Local",
+    product: [],
     contractValue: 3000,
     projectStartDate: new Date().toISOString().split("T")[0],
     assignedCoordinatorId: "m3", // Ana
@@ -222,12 +203,12 @@ export const mockProjects: Project[] = [
   },
   {
     id: "p4",
-    name: "Clinica Sorriso - Byline",
+    name: "Clinica Sorriso — Byline",
     clientName: "Clinica Sorriso",
     clientPhone: "5511900000004",
     kommoLeadId: "1004",
     kommoLink: "https://v4.kommo.com/leads/1004",
-    product: "Byline",
+    product: ["byline"],
     contractValue: 4500,
     projectStartDate: new Date().toISOString().split("T")[0],
     assignedCoordinatorId: "m4", // Carlos
@@ -239,12 +220,12 @@ export const mockProjects: Project[] = [
   },
   {
     id: "p5",
-    name: "Imobiliária Casa Nova - EE",
+    name: "Imobiliária Casa Nova — EE",
     clientName: "Imobiliária Casa Nova",
     clientPhone: "5511900000005",
     kommoLeadId: "1005",
     kommoLink: "https://v4.kommo.com/leads/1005",
-    product: "EE",
+    product: ["ee"],
     contractValue: 6000,
     projectStartDate: new Date().toISOString().split("T")[0],
     assignedCoordinatorId: "m3", // Ana
@@ -254,6 +235,12 @@ export const mockProjects: Project[] = [
     gdriveFolderId: "folder123",
     gdriveFolderLink: "https://drive.google.com/drive/folders/folder123",
     ekyteId: "ekyte123",
+    workspaceStatus: {
+      gchat: "created",
+      whatsapp: "created",
+      gdrive: "created",
+      ekyte: "created",
+    },
     stage: "boas_vindas",
     welcomeSent: false,
     createdAt: threeDaysAgo.toISOString(),
@@ -263,7 +250,6 @@ export const mockProjects: Project[] = [
 
 export const mockProjectMembers: ProjectMember[] = [
   { id: "pm1", projectId: "p4", memberId: "m4", roleInProject: "coord_equipe" },
-  { id: "pm2", projectId: "p4", memberId: "m6", roleInProject: "account" },
   { id: "pm3", projectId: "p4", memberId: "m7", roleInProject: "designer" },
   {
     id: "pm4",

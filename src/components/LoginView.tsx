@@ -1,22 +1,29 @@
 import React, { useState } from "react";
 import { useAppStore } from "../store";
 import { LogIn } from "lucide-react";
+import toast from "react-hot-toast";
 
 export const LoginView: React.FC = () => {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const { login } = useAppStore();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setIsLoading(true);
     try {
       if (!email.endsWith("@v4company.com")) {
         throw new Error("Acesso restrito a emails @v4company.com");
       }
-      login(email);
+      await login(email);
+      toast.success("Link enviado! Verifique seu email para acessar o sistema.");
+      setEmail("");
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Erro ao tentar fazer login.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -59,10 +66,11 @@ export const LoginView: React.FC = () => {
 
           <button
             type="submit"
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium transition-colors shadow-lg shadow-[var(--color-v4-red-muted)]"
+            disabled={isLoading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors shadow-lg shadow-[var(--color-v4-red-muted)]"
           >
             <LogIn size={18} />
-            Entrar
+            {isLoading ? "Enviando..." : "Enviar Login"}
           </button>
         </form>
 

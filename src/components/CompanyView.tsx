@@ -12,7 +12,7 @@ export const CompanyView: React.FC = () => {
     setIsEditing(false);
   };
 
-  const isOwner = currentUser?.role === "owner";
+  const isOwner = currentUser?.role === "owner" || currentUser?.role === "admin";
 
   return (
     <div className="flex-1 h-full overflow-y-auto bg-[var(--color-v4-bg)] p-6">

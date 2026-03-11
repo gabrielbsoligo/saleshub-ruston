@@ -9,13 +9,25 @@ import { StakeholdersView } from "./components/StakeholdersView";
 import { CompanyView } from "./components/CompanyView";
 import { ProjectDrawer } from "./components/ProjectDrawer";
 import { Project } from "./types";
+import { Toaster } from "react-hot-toast";
 
 type View = "dashboard" | "projects" | "members" | "stakeholders" | "company";
 
 const MainApp: React.FC = () => {
-  const { currentUser } = useAppStore();
+  const { currentUser, isLoadingAuth } = useAppStore();
   const [currentView, setCurrentView] = useState<View>("dashboard");
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+
+  if (isLoadingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[var(--color-v4-bg)]">
+         <div className="flex flex-col items-center gap-4">
+           <div className="w-12 h-12 border-4 border-slate-700 border-t-[var(--color-v4-red)] rounded-full animate-spin"></div>
+           <p className="text-slate-400 font-medium">Validando sessão...</p>
+         </div>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     return <LoginView />;
@@ -54,6 +66,7 @@ const MainApp: React.FC = () => {
 export default function App() {
   return (
     <AppProvider>
+      <Toaster position="top-right" />
       <MainApp />
     </AppProvider>
   );
