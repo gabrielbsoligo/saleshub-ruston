@@ -156,15 +156,21 @@ export const ProjectDrawer: React.FC<{
     const toastId = toast.loading("Fazendo upload do contrato...");
 
     try {
+      const sanitizedName = file.name
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[\[\]\(\)\{\}]/g, '')
+        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9_\-\.]/g, '');
+
       const { data, error } = await supabase.storage
         .from('contracts')
-        .upload(`${project.id}/${file.name}`, file, { upsert: true });
+        .upload(`${project.id}/${sanitizedName}`, file, { upsert: true });
 
       if (error) throw error;
 
       const { data: { publicUrl } } = supabase.storage
         .from('contracts')
-        .getPublicUrl(`${project.id}/${file.name}`);
+        .getPublicUrl(`${project.id}/${sanitizedName}`);
 
       await supabase.from('project').update({
         contract_url: publicUrl,
@@ -196,9 +202,15 @@ export const ProjectDrawer: React.FC<{
     const toastId = toast.loading("Removendo contrato...");
 
     try {
+      const sanitizedName = project.contractFilename
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[\[\]\(\)\{\}]/g, '')
+        .replace(/\s+/g, '_')
+        .replace(/[^a-zA-Z0-9_\-\.]/g, '');
+
       const { error } = await supabase.storage
         .from('contracts')
-        .remove([`${project.id}/${project.contractFilename}`]);
+        .remove([`${project.id}/${sanitizedName}`]);
 
       if (error) throw error;
 
