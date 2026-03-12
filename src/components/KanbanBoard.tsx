@@ -72,9 +72,9 @@ const ProjectCard: React.FC<{
       </div>
 
       <div className="flex flex-wrap gap-1 mb-2">
-        {project.product?.map(p => (
-          <span key={p} className="px-1.5 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[9px] font-semibold tracking-wider text-[var(--color-v4-text-muted)]">
-            {p === 'ee' ? 'EE' : 'Byline'}
+        {[...(project.produtosEscopo || []), ...(project.produtosRecorrente || [])].map((p, i) => (
+          <span key={i} className="px-1.5 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[9px] font-semibold tracking-wider text-[var(--color-v4-text-muted)]">
+            {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
           </span>
         ))}
       </div>
@@ -83,7 +83,7 @@ const ProjectCard: React.FC<{
         <p className="truncate">{project.clientName}</p>
         <p className="font-mono text-[10px] bg-[var(--color-v4-surface)] px-1.5 py-0.5 rounded inline-block">
           R${" "}
-          {project.contractValue?.toLocaleString("pt-BR", {
+          {((project.valorEscopo || 0) + (project.valorRecorrente || 0)).toLocaleString("pt-BR", {
             minimumFractionDigits: 2,
           })}
         </p>

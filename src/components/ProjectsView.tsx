@@ -83,11 +83,11 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
                       </td>
                       <td className="px-6 py-4">{project.clientName}</td>
                       <td className="px-6 py-4">
-                        {project.product && project.product.length > 0 ? (
+                        {([...(project.produtosEscopo || []), ...(project.produtosRecorrente || [])]).length > 0 ? (
                           <div className="flex flex-wrap gap-1">
-                            {project.product.map(p => (
-                              <span key={p} className="px-2 py-0.5 rounded bg-slate-800 border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
-                                {p === 'ee' ? 'EE' : 'Byline'}
+                            {[...(project.produtosEscopo || []), ...(project.produtosRecorrente || [])].map((p, i) => (
+                              <span key={i} className="px-2 py-0.5 rounded bg-slate-800 border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                                {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
                               </span>
                             ))}
                           </div>
@@ -95,9 +95,9 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
                       </td>
                       <td className="px-6 py-4 font-mono text-xs">
                         R${" "}
-                        {project.contractValue?.toLocaleString("pt-BR", {
+                        {((project.valorEscopo || 0) + (project.valorRecorrente || 0)).toLocaleString("pt-BR", {
                           minimumFractionDigits: 2,
-                        }) || "0,00"}
+                        })}
                       </td>
                       <td className="px-6 py-4">
                         {project.soldBy ? (

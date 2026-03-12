@@ -99,21 +99,22 @@ export const ProjectDrawer: React.FC<{
     updateProject(project.id, {
       clientName: editedProject.clientName,
       clientPhone: editedProject.clientPhone,
-      product: editedProject.product,
-      contractValue: editedProject.contractValue,
       meetingLinks: editedProject.meetingLinks,
+      produtosEscopo: editedProject.produtosEscopo,
+      valorEscopo: editedProject.valorEscopo,
+      dataInicioEscopo: editedProject.dataInicioEscopo,
+      dataPgtoEscopo: editedProject.dataPgtoEscopo,
+      produtosRecorrente: editedProject.produtosRecorrente,
+      valorRecorrente: editedProject.valorRecorrente,
+      dataInicioRecorrente: editedProject.dataInicioRecorrente,
+      dataPgtoRecorrente: editedProject.dataPgtoRecorrente,
+      linkCallVendas: editedProject.linkCallVendas,
+      linkTranscricao: editedProject.linkTranscricao,
+      observacoes: editedProject.observacoes,
+      contractUrl: editedProject.contractUrl,
     });
     setIsEditingClient(false);
     toast.success("Informações do projeto atualizadas!");
-  };
-
-  const toggleProduct = (prodId: string) => {
-    const current = editedProject.product || [];
-    if (current.includes(prodId)) {
-      setEditedProject({ ...editedProject, product: current.filter(p => p !== prodId) });
-    } else {
-      setEditedProject({ ...editedProject, product: [...current, prodId] });
-    }
   };
 
   const handleAddLink = () => {
@@ -625,7 +626,7 @@ export const ProjectDrawer: React.FC<{
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
           
-          {/* Client Info */}
+          {/* Seção 1: Dados do Cliente */}
           <section>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
@@ -636,7 +637,7 @@ export const ProjectDrawer: React.FC<{
                   onClick={() => setIsEditingClient(!isEditingClient)}
                   className="text-xs text-[var(--color-v4-red)] hover:underline flex items-center gap-1"
                 >
-                  {isEditingClient ? "Cancelar Edição" : <><Edit2 size={12} /> Editar</>}
+                  {isEditingClient ? "Cancelar Edição" : <><Edit2 size={12} /> Editar Todos</>}
                 </button>
               )}
             </div>
@@ -645,56 +646,13 @@ export const ProjectDrawer: React.FC<{
               {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs text-slate-400 mb-1">Nome do Cliente</label>
+                    <label className="block text-xs text-slate-400 mb-1">Empresa</label>
                     <input type="text" value={editedProject.clientName} onChange={(e) => setEditedProject({ ...editedProject, clientName: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
                   </div>
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">Telefone / WhatsApp</label>
                     <input type="text" value={editedProject.clientPhone || ""} onChange={(e) => setEditedProject({ ...editedProject, clientPhone: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Produto(s) Contratado(s)</label>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                       {(editedProject.product || []).map(pId => {
-                         const lbl = pId === 'ee' ? 'EE' : 'Byline';
-                         return (
-                           <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
-                             {lbl}
-                             <button type="button" onClick={() => toggleProduct(pId)} className="hover:text-white"><X size={12} /></button>
-                           </span>
-                         )
-                       })}
-                    </div>
-                    <select
-                      value=""
-                      onChange={(e) => { if(e.target.value) toggleProduct(e.target.value) }}
-                      className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
-                    >
-                      <option value="">+ Adicionar produto</option>
-                      {PRODUCT_OPTIONS.filter(o => !(editedProject.product || []).includes(o.id)).map(opt => (
-                        <option key={opt.id} value={opt.id}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Valor Contratado (R$)</label>
-                    <input type="number" value={editedProject.contractValue || 0} onChange={(e) => setEditedProject({ ...editedProject, contractValue: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                  </div>
-                  <hr className="border-[var(--color-v4-border)]" />
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-2">Links Relacionados (Meetings, docs etc)</label>
-                    <div className="flex gap-2 mb-2">
-                      <input type="text" placeholder="https://..." value={newLink} onChange={(e) => setNewLink(e.target.value)} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                      <button type="button" onClick={handleAddLink} className="p-2 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white rounded-md"><Plus size={16} /></button>
-                    </div>
-                    {editedProject.meetingLinks?.map((link, idx) => (
-                      <div key={idx} className="flex justify-between items-center text-xs text-blue-400 bg-slate-900/50 p-2 rounded mb-1">
-                        <span className="truncate flex-1 pr-2">{link}</span>
-                        <button type="button" onClick={() => handleRemoveLink(idx)} className="text-red-400 hover:text-red-300"><Trash2 size={14} /></button>
-                      </div>
-                    ))}
-                  </div>
-                  <button onClick={handleSaveProjectInfo} className="w-full py-2 bg-[var(--color-v4-red)] text-white rounded text-sm font-medium mt-2">Salvar Alterações do Cliente</button>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -706,24 +664,6 @@ export const ProjectDrawer: React.FC<{
                     <div>
                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Telefone</p>
                       <p className="text-sm font-medium text-white">{project.clientPhone || "—"}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Produto(s)</p>
-                      {project.product && project.product.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {project.product.map(p => (
-                             <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
-                               {p === 'ee' ? 'EE' : 'Byline'}
-                             </span>
-                          ))}
-                        </div>
-                      ) : <p className="text-sm font-medium text-slate-500">—</p>}
-                    </div>
-                    <div>
-                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Valor</p>
-                      <p className="text-sm font-medium text-white font-mono">
-                        R$ {project.contractValue?.toLocaleString("pt-BR", { minimumFractionDigits: 2, }) || "0,00"}
-                      </p>
                     </div>
                     {project.soldBy && (
                       <div className="col-span-2 pt-2">
@@ -737,16 +677,6 @@ export const ProjectDrawer: React.FC<{
                       </div>
                     )}
                   </div>
-                  {(project.meetingLinks && project.meetingLinks.length > 0) && (
-                    <div className="pt-3 border-t border-[var(--color-v4-border-strong)]">
-                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-2">Links</p>
-                      <ul className="space-y-1">
-                        {project.meetingLinks.map((link, idx) => (
-                          <li key={idx}><a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-1 truncate"><LinkIcon size={12} className="shrink-0" /> {link}</a></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                   {project.kommoLink && (
                     <div className="pt-3 border-t border-[var(--color-v4-border-strong)]">
                       <a href={project.kommoLink} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-1"><LinkIcon size={12} /> Ver no Kommo</a>
@@ -756,6 +686,277 @@ export const ProjectDrawer: React.FC<{
               )}
             </div>
           </section>
+
+          {/* Seção 2: Escopo Fechado */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
+                <Building2 size={16} /> Escopo Fechado
+              </h3>
+            </div>
+            
+            <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
+              {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Produtos (Escopo)</label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                       {(editedProject.produtosEscopo || []).map(pId => {
+                         const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
+                         return (
+                           <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
+                             {lbl}
+                             <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosEscopo: (editedProject.produtosEscopo || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
+                           </span>
+                         )
+                       })}
+                    </div>
+                    <select
+                      value=""
+                      onChange={(e) => { 
+                        if(e.target.value) {
+                           const opts = editedProject.produtosEscopo || [];
+                           if(!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosEscopo: [...opts, e.target.value] });
+                        }
+                      }}
+                      className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
+                    >
+                      <option value="">+ Adicionar produto</option>
+                      {PRODUCT_OPTIONS.filter(o => !(editedProject.produtosEscopo || []).includes(o.id)).map(opt => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Valor do Escopo (R$)</label>
+                    <input type="number" value={editedProject.valorEscopo || ""} onChange={(e) => setEditedProject({ ...editedProject, valorEscopo: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="block text-xs text-slate-400 mb-1">Data Início</label>
+                        <input type="date" value={editedProject.dataInicioEscopo ? editedProject.dataInicioEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataInicioEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                     </div>
+                     <div>
+                        <label className="block text-xs text-slate-400 mb-1">Data 1º Pgto</label>
+                        <input type="date" value={editedProject.dataPgtoEscopo ? editedProject.dataPgtoEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataPgtoEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                     </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Produto(s)</p>
+                      {project.produtosEscopo && project.produtosEscopo.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {project.produtosEscopo.map(p => (
+                             <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                               {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
+                             </span>
+                          ))}
+                        </div>
+                      ) : <p className="text-sm font-medium text-slate-500">—</p>}
+                    </div>
+                    <div>
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Valor</p>
+                      <p className="text-sm font-medium text-white font-mono">
+                        R$ {project.valorEscopo?.toLocaleString("pt-BR", { minimumFractionDigits: 2, }) || "0,00"}
+                      </p>
+                    </div>
+                    <div>
+                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início / Pgto</p>
+                       <p className="text-sm font-medium text-white">
+                         {project.dataInicioEscopo ? new Date(project.dataInicioEscopo).toLocaleDateString('pt-BR') : '—'} / {project.dataPgtoEscopo ? new Date(project.dataPgtoEscopo).toLocaleDateString('pt-BR') : '—'}
+                       </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Seção 3: Recorrente */}
+          {((isEditingClient && (!isPastAguardandoComercial || canEditAnyStage)) || (project.produtosRecorrente?.length || project.valorRecorrente || project.dataInicioRecorrente || project.dataPgtoRecorrente)) ? (
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
+                <Building2 size={16} /> Recorrente
+              </h3>
+            </div>
+            
+            <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
+              {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Produtos (Recorrente)</label>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                       {(editedProject.produtosRecorrente || []).map(pId => {
+                         const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
+                         return (
+                           <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
+                             {lbl}
+                             <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosRecorrente: (editedProject.produtosRecorrente || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
+                           </span>
+                         )
+                       })}
+                    </div>
+                    <select
+                      value=""
+                      onChange={(e) => { 
+                        if(e.target.value) {
+                           const opts = editedProject.produtosRecorrente || [];
+                           if(!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosRecorrente: [...opts, e.target.value] });
+                        }
+                      }}
+                      className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
+                    >
+                      <option value="">+ Adicionar produto</option>
+                      {PRODUCT_OPTIONS.filter(o => !(editedProject.produtosRecorrente || []).includes(o.id)).map(opt => (
+                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Valor Recorrente (R$)</label>
+                    <input type="number" value={editedProject.valorRecorrente || ""} onChange={(e) => setEditedProject({ ...editedProject, valorRecorrente: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="block text-xs text-slate-400 mb-1">Data Início</label>
+                        <input type="date" value={editedProject.dataInicioRecorrente ? editedProject.dataInicioRecorrente.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataInicioRecorrente: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                     </div>
+                     <div>
+                        <label className="block text-xs text-slate-400 mb-1">Data 1º Pgto</label>
+                        <input type="date" value={editedProject.dataPgtoRecorrente ? editedProject.dataPgtoRecorrente.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataPgtoRecorrente: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                     </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2">
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Produto(s)</p>
+                      {project.produtosRecorrente && project.produtosRecorrente.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {project.produtosRecorrente.map(p => (
+                             <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                               {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
+                             </span>
+                          ))}
+                        </div>
+                      ) : <p className="text-sm font-medium text-slate-500">—</p>}
+                    </div>
+                    <div>
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Valor</p>
+                      <p className="text-sm font-medium text-white font-mono">
+                        R$ {project.valorRecorrente?.toLocaleString("pt-BR", { minimumFractionDigits: 2, }) || "0,00"}
+                      </p>
+                    </div>
+                    <div>
+                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início / Pgto</p>
+                       <p className="text-sm font-medium text-white">
+                         {project.dataInicioRecorrente ? new Date(project.dataInicioRecorrente).toLocaleDateString('pt-BR') : '—'} / {project.dataPgtoRecorrente ? new Date(project.dataPgtoRecorrente).toLocaleDateString('pt-BR') : '—'}
+                       </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+          ) : null}
+
+          {/* Seção 4: Informações */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
+                <Building2 size={16} /> Informações
+              </h3>
+            </div>
+            
+            <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
+              {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Link Call de Vendas</label>
+                    <input type="text" value={editedProject.linkCallVendas || ""} onChange={(e) => setEditedProject({ ...editedProject, linkCallVendas: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Link Transcrição</label>
+                    <input type="text" value={editedProject.linkTranscricao || ""} onChange={(e) => setEditedProject({ ...editedProject, linkTranscricao: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">Observações</label>
+                    <textarea rows={3} value={editedProject.observacoes || ""} onChange={(e) => setEditedProject({ ...editedProject, observacoes: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)] resize-none" />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-2">
+                    {project.linkCallVendas ? (
+                       <a href={project.linkCallVendas} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Call</a>
+                    ) : <p className="text-sm font-medium text-slate-500">Call não informada</p>}
+                    
+                    {project.linkTranscricao ? (
+                       <a href={project.linkTranscricao} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Transcrição</a>
+                    ) : <p className="text-sm font-medium text-slate-500">Transcrição não informada</p>}
+                  </div>
+                  {project.observacoes && (
+                    <div className="pt-3 border-t border-[var(--color-v4-border-strong)]">
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Observações</p>
+                      <p className="text-sm text-white items-center whitespace-pre-wrap">{project.observacoes}</p>
+                    </div>
+                  )}
+                  {(project.meetingLinks && project.meetingLinks.length > 0) && (
+                    <div className="pt-3 border-t border-[var(--color-v4-border-strong)]">
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-2">Links Antigos/Legacy</p>
+                      <ul className="space-y-1">
+                        {project.meetingLinks.map((link, idx) => (
+                          <li key={idx}><a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline flex items-center gap-1 truncate"><LinkIcon size={12} className="shrink-0" /> {link}</a></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Seção 5: Contrato */}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
+                <Building2 size={16} /> Contrato
+              </h3>
+            </div>
+            
+            <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
+              {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs text-slate-400 mb-1">URL do Contrato PDF</label>
+                    <input type="text" placeholder="https://..." value={editedProject.contractUrl || ""} onChange={(e) => setEditedProject({ ...editedProject, contractUrl: e.target.value })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-col gap-2">
+                    {project.contractUrl ? (
+                       <a href={project.contractUrl} target="_blank" rel="noreferrer" className="text-sm bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white py-1.5 px-3 rounded flex items-center justify-center gap-1 w-fit"><LinkIcon size={14} /> Visualizar PDF do Contrato</a>
+                    ) : <p className="text-sm font-medium text-slate-500">Nenhum contrato anexado</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+          
+          {/* Botão Global de Salvar, exibido se estiver em modo edição */}
+          {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) && (
+             <div className="sticky bottom-4 z-10 flex flex-col items-center">
+                 <button onClick={handleSaveProjectInfo} className="w-full py-3 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] transition-colors text-white rounded shadow-lg text-sm font-bold mt-2 flex justify-center items-center gap-2">
+                    <CheckCircle2 size={18} /> Salvar Todas as Alterações
+                 </button>
+             </div>
+          )}
 
           {/* Coordenador Designado */}
           {isPastCoordenador && (

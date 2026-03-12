@@ -46,6 +46,24 @@ export interface Project {
   projectStartDate?: string;
   meetingLinks?: string[];
 
+  // Novos campos: Escopo Fechado
+  produtosEscopo?: string[];
+  valorEscopo?: number | null;
+  dataInicioEscopo?: string | null;
+  dataPgtoEscopo?: string | null;
+
+  // Novos campos: Recorrente
+  produtosRecorrente?: string[];
+  valorRecorrente?: number | null;
+  dataInicioRecorrente?: string | null;
+  dataPgtoRecorrente?: string | null;
+
+  // Novos campos: Informações e Contrato
+  linkCallVendas?: string | null;
+  linkTranscricao?: string | null;
+  observacoes?: string | null;
+  contractUrl?: string | null;
+
   assignedCoordinatorId?: string;
   assignedById?: string;
 

@@ -143,6 +143,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
           clientCnpj: p.client_cnpj, clientEmail: p.client_email,
           kommoLeadId: p.kommo_lead_id, kommoLink: p.kommo_link, ekyteId: p.ekyte_id,
           product: p.products, contractValue: p.contract_value, meetingLinks: p.meeting_links,
+          produtosEscopo: p.produtos_escopo, valorEscopo: p.valor_escopo,
+          dataInicioEscopo: p.data_inicio_escopo, dataPgtoEscopo: p.data_pgto_escopo,
+          produtosRecorrente: p.produtos_recorrente, valorRecorrente: p.valor_recorrente,
+          dataInicioRecorrente: p.data_inicio_recorrente, dataPgtoRecorrente: p.data_pgto_recorrente,
+          linkCallVendas: p.link_call_vendas, linkTranscricao: p.link_transcricao,
+          observacoes: p.observacoes, contractUrl: p.contract_url,
           firstPaymentDate: p.first_payment_date, projectStartDate: p.project_start_date,
           assignedCoordinatorId: p.assigned_coordinator_id, assignedById: p.assigned_by_id,
           soldById: p.sold_by_id, soldBy: p.sold_by,
@@ -242,9 +248,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
     setCurrentUser(null);
   };
 
-  const getProjectName = (clientName: string, product?: string[]) => {
-    if (!product || product.length === 0) return clientName;
-    const productsStr = product.map(p => p === 'ee' ? 'EE' : 'Byline').join(" + ");
+  const getProjectName = (clientName: string, produtosEscopo?: string[], produtosRecorrente?: string[]) => {
+    const allProducts = [...(produtosEscopo || []), ...(produtosRecorrente || [])];
+    if (allProducts.length === 0) return clientName;
+    const productsStr = allProducts.map(p => p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p).join(" + ");
     return `${clientName} — ${productsStr}`;
   };
 
@@ -260,8 +267,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
             workspaceStatus: updates.workspaceStatus ? { ...p.workspaceStatus, ...updates.workspaceStatus } : p.workspaceStatus,
             updatedAt: new Date().toISOString() 
           };
-          if (updates.clientName !== undefined || updates.product !== undefined) {
-            updated.name = getProjectName(updated.clientName, updated.product);
+          if (updates.clientName !== undefined || updates.produtosEscopo !== undefined || updates.produtosRecorrente !== undefined) {
+            updated.name = getProjectName(updated.clientName || p.clientName, updated.produtosEscopo || p.produtosEscopo, updated.produtosRecorrente || p.produtosRecorrente);
           }
           return updated;
         }
@@ -277,6 +284,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
       if (updates.clientEmail !== undefined) payload.client_email = updates.clientEmail;
       if (updates.product !== undefined) payload.products = updates.product;
       if (updates.contractValue !== undefined) payload.contract_value = updates.contractValue;
+      
+      if (updates.produtosEscopo !== undefined) payload.produtos_escopo = updates.produtosEscopo;
+      if (updates.valorEscopo !== undefined) payload.valor_escopo = updates.valorEscopo;
+      if (updates.dataInicioEscopo !== undefined) payload.data_inicio_escopo = updates.dataInicioEscopo;
+      if (updates.dataPgtoEscopo !== undefined) payload.data_pgto_escopo = updates.dataPgtoEscopo;
+      
+      if (updates.produtosRecorrente !== undefined) payload.produtos_recorrente = updates.produtosRecorrente;
+      if (updates.valorRecorrente !== undefined) payload.valor_recorrente = updates.valorRecorrente;
+      if (updates.dataInicioRecorrente !== undefined) payload.data_inicio_recorrente = updates.dataInicioRecorrente;
+      if (updates.dataPgtoRecorrente !== undefined) payload.data_pgto_recorrente = updates.dataPgtoRecorrente;
+      
+      if (updates.linkCallVendas !== undefined) payload.link_call_vendas = updates.linkCallVendas;
+      if (updates.linkTranscricao !== undefined) payload.link_transcricao = updates.linkTranscricao;
+      if (updates.observacoes !== undefined) payload.observacoes = updates.observacoes;
+      if (updates.contractUrl !== undefined) payload.contract_url = updates.contractUrl;
+
       if (updates.meetingLinks !== undefined) payload.meeting_links = updates.meetingLinks;
       if (updates.workspaceStatus !== undefined) payload.workspace_status = updates.workspaceStatus; // this will overwrite instead of patch, you might need to fetch first or let optimistic handle it UI side for now, wait we can just send the patched object
       
