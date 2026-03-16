@@ -24,13 +24,13 @@ import {
 import { cn } from "./Layout";
 import toast from "react-hot-toast";
 import { supabase } from "../lib/supabase";
-import { 
-  notifyWhatsApp, 
-  createGChatSpace, 
-  createWppGroup, 
-  createDriveFolders, 
-  createEkyteWorkspace, 
-  sendWelcomeSequence 
+import {
+  notifyWhatsApp,
+  createGChatSpace,
+  createWppGroup,
+  createDriveFolders,
+  createEkyteWorkspace,
+  sendWelcomeSequence
 } from "../lib/webhooks";
 
 const PRODUCT_OPTIONS = [
@@ -62,7 +62,7 @@ export const ProjectDrawer: React.FC<{
   const [editedProject, setEditedProject] = useState<Project | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [nextStage, setNextStage] = useState<Stage | null>(null);
-  
+
   // Link states
   const [newLink, setNewLink] = useState("");
   const [isUploadingContract, setIsUploadingContract] = useState(false);
@@ -81,7 +81,7 @@ export const ProjectDrawer: React.FC<{
   useEffect(() => {
     if (project) {
       setEditedProject(project);
-      
+
       const currentTeam = projectMembers.filter((pm) => pm.projectId === project.id);
       setTeamSelection({
         gestor_projetos: currentTeam.find((pm) => pm.roleInProject === "gestor_projetos")?.memberId || "",
@@ -181,7 +181,7 @@ export const ProjectDrawer: React.FC<{
         contractUrl: publicUrl,
         contractFilename: file.name
       });
-      
+
       setEditedProject(prev => ({ ...prev, contractUrl: publicUrl, contractFilename: file.name }));
 
       toast.success("Contrato anexado com sucesso!", { id: toastId });
@@ -197,7 +197,7 @@ export const ProjectDrawer: React.FC<{
 
   const handleRemoveContract = async () => {
     if (!project.contractFilename) return;
-    
+
     setIsUploadingContract(true);
     const toastId = toast.loading("Removendo contrato...");
 
@@ -341,7 +341,7 @@ export const ProjectDrawer: React.FC<{
   // Workspace Creation Logic
   const handleCreateWorkspace = async () => {
     setIsCreatingWorkspace(true);
-    
+
     // Initialize starting state as 'creating'
     updateProject(project.id, {
       workspaceStatus: {
@@ -369,19 +369,19 @@ export const ProjectDrawer: React.FC<{
         const teamPhones = team?.map(t => (t.member as any)?.phone).filter(Boolean) || [];
 
         const fixedEmails = ['tiago.bardini@v4company.com', 'patrick.rosavianna@v4company.com', 'gabriel.sartori@v4company.com'];
-        
+
         // Fetch correct phones for fixed members
         const { data: fixedMembersData } = await supabase
           .from('member')
           .select('phone')
           .in('email', fixedEmails);
-        
+
         const fetchedFixedPhones = fixedMembersData?.map(m => m.phone).filter(Boolean) || [];
 
         // Apenas Tiago como fixo
         const fixedPhones = ['554796769946'];
         const fixedAdminPhones = ['554796769946'];
-        
+
         // Buscar Coordenador para fone e email extra, se necessário
         let coordEmail = '';
         let coordPhone = '';
@@ -465,7 +465,7 @@ export const ProjectDrawer: React.FC<{
               [key]: 'created'
             } as any
           });
-          
+
           completed++;
           if (completed === 4) {
             setIsCreatingWorkspace(false);
@@ -497,7 +497,7 @@ export const ProjectDrawer: React.FC<{
   const isPastAguardandoComercial = project.stage !== "aguardando_comercial";
   const isPastCoordenador = !["aguardando_comercial", "atribuir_coordenador"].includes(project.stage);
   const isPastEquipe = !["aguardando_comercial", "atribuir_coordenador", "atribuir_equipe"].includes(project.stage);
-  
+
   const assignedTeam = getAssignedTeamObject();
 
   const allEnvsCreated = () => {
@@ -507,7 +507,7 @@ export const ProjectDrawer: React.FC<{
   };
 
   const renderEnvStatusIcon = (status?: string) => {
-    switch(status) {
+    switch (status) {
       case 'created': return <CheckCircle2 size={16} className="text-[var(--color-v4-success)]" />;
       case 'creating': return <Loader2 size={16} className="text-blue-400 animate-spin" />;
       case 'error': return <XCircle size={16} className="text-[var(--color-v4-error)]" />;
@@ -516,19 +516,19 @@ export const ProjectDrawer: React.FC<{
   };
 
   const renderEnvRow = (
-    label: string, 
-    key: 'gchat' | 'whatsapp' | 'gdrive' | 'ekyte', 
-    link?: string, 
+    label: string,
+    key: 'gchat' | 'whatsapp' | 'gdrive' | 'ekyte',
+    link?: string,
     linkText: string = "Acessar ↗"
   ) => {
     const status = project.workspaceStatus?.[key] || 'pending';
-    
+
     return (
       <div className="flex items-center justify-between text-sm py-1.5 border-b border-[var(--color-v4-border-strong)] last:border-0 last:pb-0">
         <div className="flex items-center gap-2">
           {renderEnvStatusIcon(status)}
           <span className={status === 'pending' ? 'text-[var(--color-v4-text-disabled)]' : 'text-white'}>
-            {label} 
+            {label}
             {status === 'creating' && <span className="ml-2 text-xs text-blue-400 italic">Criando...</span>}
           </span>
         </div>
@@ -553,9 +553,9 @@ export const ProjectDrawer: React.FC<{
       case "aguardando_comercial":
         return (
           <div className="p-4 bg-[var(--color-v4-card)] border-t border-[var(--color-v4-border)]">
-             <button
+            <button
               onClick={() => {
-                if(isEditingClient) handleSaveProjectInfo();
+                if (isEditingClient) handleSaveProjectInfo();
                 confirmAdvance("atribuir_coordenador");
               }}
               className="w-full py-3 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white rounded-xl font-medium transition-colors"
@@ -619,7 +619,7 @@ export const ProjectDrawer: React.FC<{
         const canAdvance = allEnvsCreated();
         return (
           <div className="p-4 bg-[var(--color-v4-card)] border-t border-[var(--color-v4-border)] space-y-3">
-             <button
+            <button
               onClick={handleCreateWorkspace}
               disabled={isCreatingWorkspace || canAdvance}
               className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
@@ -725,7 +725,7 @@ export const ProjectDrawer: React.FC<{
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
-          
+
           {/* Seção 1: Dados do Cliente */}
           <section>
             <div className="flex items-center justify-between mb-4">
@@ -794,29 +794,29 @@ export const ProjectDrawer: React.FC<{
                 <Building2 size={16} /> Escopo Fechado
               </h3>
             </div>
-            
+
             <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
               {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
                 <div className="space-y-4">
                   <div>
                     <label className="block text-xs text-slate-400 mb-1">Produtos (Escopo)</label>
                     <div className="flex flex-wrap gap-2 mb-2">
-                       {(editedProject.produtosEscopo || []).map(pId => {
-                         const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
-                         return (
-                           <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
-                             {lbl}
-                             <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosEscopo: (editedProject.produtosEscopo || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
-                           </span>
-                         )
-                       })}
+                      {(editedProject.produtosEscopo || []).map(pId => {
+                        const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
+                        return (
+                          <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
+                            {lbl}
+                            <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosEscopo: (editedProject.produtosEscopo || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
+                          </span>
+                        )
+                      })}
                     </div>
                     <select
                       value=""
-                      onChange={(e) => { 
-                        if(e.target.value) {
-                           const opts = editedProject.produtosEscopo || [];
-                           if(!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosEscopo: [...opts, e.target.value] });
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          const opts = editedProject.produtosEscopo || [];
+                          if (!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosEscopo: [...opts, e.target.value] });
                         }
                       }}
                       className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
@@ -832,14 +832,14 @@ export const ProjectDrawer: React.FC<{
                     <input type="number" value={editedProject.valorEscopo || ""} onChange={(e) => setEditedProject({ ...editedProject, valorEscopo: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                     <div>
-                        <label className="block text-xs text-slate-400 mb-1">Data Início</label>
-                        <input type="date" value={editedProject.dataInicioEscopo ? editedProject.dataInicioEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataInicioEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                     </div>
-                     <div>
-                        <label className="block text-xs text-slate-400 mb-1">Data 1º Pgto</label>
-                        <input type="date" value={editedProject.dataPgtoEscopo ? editedProject.dataPgtoEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataPgtoEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                     </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Data Início</label>
+                      <input type="date" value={editedProject.dataInicioEscopo ? editedProject.dataInicioEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataInicioEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Data 1º Pgto</label>
+                      <input type="date" value={editedProject.dataPgtoEscopo ? editedProject.dataPgtoEscopo.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataPgtoEscopo: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -850,9 +850,9 @@ export const ProjectDrawer: React.FC<{
                       {project.produtosEscopo && project.produtosEscopo.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {project.produtosEscopo.map(p => (
-                             <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
-                               {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
-                             </span>
+                            <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                              {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
+                            </span>
                           ))}
                         </div>
                       ) : <p className="text-sm font-medium text-slate-500">—</p>}
@@ -864,16 +864,16 @@ export const ProjectDrawer: React.FC<{
                       </p>
                     </div>
                     <div>
-                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início do Projeto</p>
-                       <p className="text-sm font-medium text-white">
-                         {project.dataInicioEscopo ? new Date(project.dataInicioEscopo).toLocaleDateString('pt-BR') : '—'}
-                       </p>
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início do Projeto</p>
+                      <p className="text-sm font-medium text-white">
+                        {project.dataInicioEscopo ? new Date(project.dataInicioEscopo).toLocaleDateString('pt-BR') : '—'}
+                      </p>
                     </div>
                     <div>
-                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">1º Pagamento</p>
-                       <p className="text-sm font-medium text-white">
-                         {project.dataPgtoEscopo ? new Date(project.dataPgtoEscopo).toLocaleDateString('pt-BR') : '—'}
-                       </p>
+                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">1º Pagamento</p>
+                      <p className="text-sm font-medium text-white">
+                        {project.dataPgtoEscopo ? new Date(project.dataPgtoEscopo).toLocaleDateString('pt-BR') : '—'}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -883,98 +883,98 @@ export const ProjectDrawer: React.FC<{
 
           {/* Seção 3: Recorrente */}
           {((isEditingClient && (!isPastAguardandoComercial || canEditAnyStage)) || (project.produtosRecorrente?.length || project.valorRecorrente || project.dataInicioRecorrente || project.dataPgtoRecorrente)) ? (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
-                <Building2 size={16} /> Recorrente
-              </h3>
-            </div>
-            
-            <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
-              {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Produtos (Recorrente)</label>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                       {(editedProject.produtosRecorrente || []).map(pId => {
-                         const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
-                         return (
-                           <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
-                             {lbl}
-                             <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosRecorrente: (editedProject.produtosRecorrente || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
-                           </span>
-                         )
-                       })}
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider flex items-center gap-2">
+                  <Building2 size={16} /> Recorrente
+                </h3>
+              </div>
+
+              <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
+                {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Produtos (Recorrente)</label>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {(editedProject.produtosRecorrente || []).map(pId => {
+                          const lbl = pId === 'ee' ? 'EE' : pId === 'byline' ? 'Byline' : pId;
+                          return (
+                            <span key={pId} className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--color-v4-danger)]/20 text-[var(--color-v4-red)] border border-[var(--color-v4-red)]/30 text-xs font-medium">
+                              {lbl}
+                              <button type="button" onClick={() => setEditedProject({ ...editedProject, produtosRecorrente: (editedProject.produtosRecorrente || []).filter(p => p !== pId) })} className="hover:text-white"><X size={12} /></button>
+                            </span>
+                          )
+                        })}
+                      </div>
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            const opts = editedProject.produtosRecorrente || [];
+                            if (!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosRecorrente: [...opts, e.target.value] });
+                          }
+                        }}
+                        className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
+                      >
+                        <option value="">+ Adicionar produto</option>
+                        {PRODUCT_OPTIONS.filter(o => !(editedProject.produtosRecorrente || []).includes(o.id)).map(opt => (
+                          <option key={opt.id} value={opt.id}>{opt.label}</option>
+                        ))}
+                      </select>
                     </div>
-                    <select
-                      value=""
-                      onChange={(e) => { 
-                        if(e.target.value) {
-                           const opts = editedProject.produtosRecorrente || [];
-                           if(!opts.includes(e.target.value)) setEditedProject({ ...editedProject, produtosRecorrente: [...opts, e.target.value] });
-                        }
-                      }}
-                      className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-[var(--color-v4-text-muted)] focus:ring-1 focus:ring-[var(--color-v4-red)]"
-                    >
-                      <option value="">+ Adicionar produto</option>
-                      {PRODUCT_OPTIONS.filter(o => !(editedProject.produtosRecorrente || []).includes(o.id)).map(opt => (
-                        <option key={opt.id} value={opt.id}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">Valor Recorrente (R$)</label>
-                    <input type="number" value={editedProject.valorRecorrente || ""} onChange={(e) => setEditedProject({ ...editedProject, valorRecorrente: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                     <div>
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">Valor Recorrente (R$)</label>
+                      <input type="number" value={editedProject.valorRecorrente || ""} onChange={(e) => setEditedProject({ ...editedProject, valorRecorrente: Number(e.target.value) })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
                         <label className="block text-xs text-slate-400 mb-1">Data Início</label>
                         <input type="date" value={editedProject.dataInicioRecorrente ? editedProject.dataInicioRecorrente.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataInicioRecorrente: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                     </div>
-                     <div>
+                      </div>
+                      <div>
                         <label className="block text-xs text-slate-400 mb-1">Data 1º Pgto</label>
                         <input type="date" value={editedProject.dataPgtoRecorrente ? editedProject.dataPgtoRecorrente.split('T')[0] : ""} onChange={(e) => setEditedProject({ ...editedProject, dataPgtoRecorrente: e.target.value ? new Date(e.target.value).toISOString() : null })} className="w-full p-2 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-md text-sm text-white focus:ring-1 focus:ring-[var(--color-v4-red)]" />
-                     </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="col-span-1 sm:col-span-2">
-                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Produto(s)</p>
-                      {project.produtosRecorrente && project.produtosRecorrente.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {project.produtosRecorrente.map(p => (
-                             <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
-                               {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
-                             </span>
-                          ))}
-                        </div>
-                      ) : <p className="text-sm font-medium text-slate-500">—</p>}
-                    </div>
-                    <div>
-                      <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Valor</p>
-                      <p className="text-sm font-medium text-white font-mono">
-                        R$ {project.valorRecorrente?.toLocaleString("pt-BR", { minimumFractionDigits: 2, }) || "0,00"}
-                      </p>
-                    </div>
-                    <div>
-                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início do Projeto</p>
-                       <p className="text-sm font-medium text-white">
-                         {project.dataInicioRecorrente ? new Date(project.dataInicioRecorrente).toLocaleDateString('pt-BR') : '—'}
-                       </p>
-                    </div>
-                    <div>
-                       <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">1º Pagamento</p>
-                       <p className="text-sm font-medium text-white">
-                         {project.dataPgtoRecorrente ? new Date(project.dataPgtoRecorrente).toLocaleDateString('pt-BR') : '—'}
-                       </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          </section>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="col-span-1 sm:col-span-2">
+                        <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Produto(s)</p>
+                        {project.produtosRecorrente && project.produtosRecorrente.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {project.produtosRecorrente.map(p => (
+                              <span key={p} className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[10px] font-semibold tracking-wider text-slate-300">
+                                {p === 'ee' ? 'EE' : p === 'byline' ? 'Byline' : p}
+                              </span>
+                            ))}
+                          </div>
+                        ) : <p className="text-sm font-medium text-slate-500">—</p>}
+                      </div>
+                      <div>
+                        <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Valor</p>
+                        <p className="text-sm font-medium text-white font-mono">
+                          R$ {project.valorRecorrente?.toLocaleString("pt-BR", { minimumFractionDigits: 2, }) || "0,00"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">Início do Projeto</p>
+                        <p className="text-sm font-medium text-white">
+                          {project.dataInicioRecorrente ? new Date(project.dataInicioRecorrente).toLocaleDateString('pt-BR') : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-[var(--color-v4-text-muted)] mb-1">1º Pagamento</p>
+                        <p className="text-sm font-medium text-white">
+                          {project.dataPgtoRecorrente ? new Date(project.dataPgtoRecorrente).toLocaleDateString('pt-BR') : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
           ) : null}
 
           {/* Seção 4: Informações */}
@@ -984,7 +984,7 @@ export const ProjectDrawer: React.FC<{
                 <Building2 size={16} /> Informações
               </h3>
             </div>
-            
+
             <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
               {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) ? (
                 <div className="space-y-4">
@@ -1005,11 +1005,11 @@ export const ProjectDrawer: React.FC<{
                 <div className="space-y-4">
                   <div className="flex flex-col gap-2">
                     {project.linkCallVendas ? (
-                       <a href={project.linkCallVendas} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Call</a>
+                      <a href={project.linkCallVendas} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Call</a>
                     ) : <p className="text-sm font-medium text-slate-500">Call não informada</p>}
-                    
+
                     {project.linkTranscricao ? (
-                       <a href={project.linkTranscricao} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Transcrição</a>
+                      <a href={project.linkTranscricao} target="_blank" rel="noreferrer" className="text-sm text-blue-400 hover:underline flex items-center gap-1 w-fit"><LinkIcon size={14} /> Abrir Transcrição</a>
                     ) : <p className="text-sm font-medium text-slate-500">Transcrição não informada</p>}
                   </div>
                   {project.observacoes && (
@@ -1040,7 +1040,7 @@ export const ProjectDrawer: React.FC<{
                 <FileText size={16} /> Contrato
               </h3>
             </div>
-            
+
             <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
               <div className="space-y-4">
                 {project.contractUrl ? (
@@ -1056,7 +1056,7 @@ export const ProjectDrawer: React.FC<{
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <a href={project.contractUrl} target="_blank" rel="noreferrer" className="text-sm bg-slate-800 border border-[var(--color-v4-border)] hover:bg-slate-700 text-white py-1.5 px-3 rounded flex items-center justify-center transition-colors">Visualizar</a>
-                      
+
                       {(!isPastAguardandoComercial || canEditAnyStage) && (
                         <button onClick={handleRemoveContract} disabled={isUploadingContract} className="text-sm bg-[var(--color-v4-red)]/20 hover:bg-[var(--color-v4-red)]/30 text-[var(--color-v4-red)] py-1.5 px-3 rounded flex items-center justify-center transition-colors disabled:opacity-50">
                           {isUploadingContract ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
@@ -1085,14 +1085,14 @@ export const ProjectDrawer: React.FC<{
               </div>
             </div>
           </section>
-          
+
           {/* Botão Global de Salvar, exibido se estiver em modo edição */}
           {isEditingClient && (!isPastAguardandoComercial || canEditAnyStage) && (
-             <div className="sticky bottom-4 z-10 flex flex-col items-center">
-                 <button onClick={handleSaveProjectInfo} className="w-full py-3 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] transition-colors text-white rounded shadow-lg text-sm font-bold mt-2 flex justify-center items-center gap-2">
-                    <CheckCircle2 size={18} /> Salvar Todas as Alterações
-                 </button>
-             </div>
+            <div className="sticky bottom-4 z-10 flex flex-col items-center">
+              <button onClick={handleSaveProjectInfo} className="w-full py-3 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] transition-colors text-white rounded shadow-lg text-sm font-bold mt-2 flex justify-center items-center gap-2">
+                <CheckCircle2 size={18} /> Salvar Todas as Alterações
+              </button>
+            </div>
           )}
 
           {/* Coordenador Designado */}
@@ -1243,14 +1243,14 @@ export const ProjectDrawer: React.FC<{
                       onClick={() => {
                         const currentTeam = projectMembers.filter((pm) => pm.projectId === project.id);
                         currentTeam.forEach((pm) => removeProjectMember(pm.id));
-                
+
                         const roles: { [key: string]: string } = {
                           gestor_projetos: teamSelection.gestor_projetos,
                           designer: teamSelection.designer,
                           gestor_trafego: teamSelection.gestor_trafego,
                           copywriter: teamSelection.copywriter,
                         };
-                
+
                         Object.entries(roles).forEach(([role, memberId]) => {
                           if (memberId) {
                             addProjectMember({

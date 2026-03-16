@@ -1,15 +1,17 @@
 import React, { useState } from "react";
 import { useAppStore } from "../store";
-import { FolderKanban, Search, Filter } from "lucide-react";
+import { FolderKanban, Search, Filter, Plus } from "lucide-react";
 import { cn } from "./Layout";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { CreateProjectDrawer } from "./CreateProjectDrawer";
 
 export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
   onProjectClick,
 }) => {
-  const { projects, members } = useAppStore();
+  const { projects, members, currentUser } = useAppStore();
   const [searchTerm, setSearchTerm] = useState("");
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
 
   const filteredProjects = projects.filter(
     (p) =>
@@ -19,18 +21,28 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
   );
 
   return (
-    <div className="flex-1 h-full overflow-y-auto bg-[var(--color-v4-bg)] p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h2 className="text-2xl font-display font-bold text-white">
-              Projetos
-            </h2>
-            <p className="text-sm text-[var(--color-v4-text-muted)]">
-              Lista completa de clientes em onboarding.
-            </p>
+    <>
+      <div className="flex-1 h-full overflow-y-auto bg-[var(--color-v4-bg)] p-6">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <h2 className="text-2xl font-display font-bold text-white">
+                Projetos
+              </h2>
+              <p className="text-sm text-[var(--color-v4-text-muted)]">
+                Lista completa de clientes em onboarding.
+              </p>
+            </div>
+            {(currentUser?.role === "owner" || currentUser?.role === "admin" || currentUser?.role === "coord_geral") && (
+              <button
+                onClick={() => setIsCreatingProject(true)}
+                className="px-4 py-2 border border-[var(--color-v4-border)] hover:bg-[var(--color-v4-surface)] text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+              >
+                <Plus size={16} />
+                Novo Projeto
+              </button>
+            )}
           </div>
-        </div>
 
         <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl overflow-hidden shadow-sm">
           <div className="p-4 border-b border-[var(--color-v4-border)] flex items-center gap-4">
@@ -155,5 +167,10 @@ export const ProjectsView: React.FC<{ onProjectClick: (p: any) => void }> = ({
         </div>
       </div>
     </div>
+    
+    {isCreatingProject && (
+      <CreateProjectDrawer onClose={() => setIsCreatingProject(false)} />
+    )}
+  </>
   );
 };

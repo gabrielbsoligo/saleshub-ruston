@@ -9,8 +9,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Link as LinkIcon,
+  Plus,
 } from "lucide-react";
 import { cn } from "./Layout";
+import { CreateProjectDrawer } from "./CreateProjectDrawer";
 
 const STAGES: { id: Stage; title: string; role: string }[] = [
   {
@@ -121,6 +123,7 @@ export const KanbanBoard: React.FC<{
   onProjectClick: (p: Project) => void;
 }> = ({ onProjectClick }) => {
   const { projects, currentUser } = useAppStore();
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
 
   const filteredProjects = useMemo(() => {
     if (!currentUser) return [];
@@ -142,15 +145,27 @@ export const KanbanBoard: React.FC<{
   }, [projects, currentUser]);
 
   return (
-    <div className="flex-1 h-full overflow-x-auto overflow-y-hidden bg-[var(--color-v4-bg)] p-6">
-      <div className="mb-6">
-        <h2 className="text-2xl font-display font-bold text-white">
-          Jornada do Cliente
-        </h2>
-        <p className="text-sm text-[var(--color-v4-text-muted)]">
-          Clique nos cards para visualizar e avançar as etapas.
-        </p>
-      </div>
+    <>
+      <div className="flex-1 h-full overflow-x-auto overflow-y-hidden bg-[var(--color-v4-bg)] p-6">
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h2 className="text-2xl font-display font-bold text-white">
+              Jornada do Cliente
+            </h2>
+            <p className="text-sm text-[var(--color-v4-text-muted)]">
+              Clique nos cards para visualizar e avançar as etapas.
+            </p>
+          </div>
+          {(currentUser?.role === "owner" || currentUser?.role === "admin" || currentUser?.role === "coord_geral") && (
+            <button
+              onClick={() => setIsCreatingProject(true)}
+              className="px-4 py-2 border border-[var(--color-v4-border)] hover:bg-[var(--color-v4-surface)] text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+            >
+              <Plus size={16} />
+              Novo Projeto
+            </button>
+          )}
+        </div>
 
       <div className="flex h-[calc(100%-80px)] gap-6 pb-4">
         {STAGES.map((stage) => {
@@ -186,5 +201,10 @@ export const KanbanBoard: React.FC<{
         })}
       </div>
     </div>
+    
+    {isCreatingProject && (
+      <CreateProjectDrawer onClose={() => setIsCreatingProject(false)} />
+    )}
+  </>
   );
 };

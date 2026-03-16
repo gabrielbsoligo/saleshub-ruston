@@ -27,6 +27,7 @@ interface AppState {
 
   updateProject: (id: string, updates: Partial<Project>) => void;
   moveProject: (id: string, newStage: Stage) => void;
+  addProject: (payload: any, teamRoles: any) => Promise<void>;
 
   addMember: (member: Member) => void;
   updateMember: (id: string, updates: Partial<Member>) => void;
@@ -360,6 +361,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
+  const addProject = async (payload: any, teamRoles: any) => {
+    try {
+      // 1. Inserir na tabela project
+      const { data: newProjectData, error: insertError } = await supabase
+        .from('project')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // 2. Inserir equipe na tabela project_member se fornecido
+      if (teamRoles && Object.keys(teamRoles).length > 0) {
+        const teamPromises = Object.entries(teamRoles).map(([role, memberId]) => {
+          if (memberId) {
+            return supabase.from('project_member').insert({
+              project_id: newProjectData.id,
+              member_id: memberId,
+              role_in_project: role,
+            });
+          }
+          return Promise.resolve();
+        });
+
+        await Promise.all(teamPromises);
+      }
+
+      // 3. Atualizar o estado pegando os dados frescos
+      await fetchProjectsOnly();
+      await fetchInitialData(); // Para garantir que os projectMembers também atualizem caso abra o drawer
+
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Erro ao criar projeto manual: ${err.message}`);
+      throw err;
+    }
+  };
+
   const addMember = async (member: Member) => {
     try {
       const { data, error } = await supabase.from('member').insert({
@@ -503,6 +542,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
         checkSession,
         updateProject,
         moveProject,
+        addProject,
         addMember,
         updateMember,
         removeMember,
