@@ -156,7 +156,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
           gchatSpaceId: p.gchat_space_id, gchatLink: p.gchat_link, wppGroupId: p.wpp_group_id, wppGroupLink: p.wpp_group_link, gdriveFolderId: p.gdrive_folder_id,
           gdriveFolderLink: p.gdrive_folder_link, ekyteLink: p.ekyte_link, gdriveSharedFolderId: p.gdrive_shared_folder_id, gdriveSharedFolderLink: p.gdrive_shared_folder_link,
           metaAdsAccountId: p.meta_ads_account_id, googleAdsAccountId: p.google_ads_account_id,
-          workspaceStatus: p.workspace_status, stage: p.stage, welcomeSent: p.welcome_sent,
+          workspaceStatus: p.workspace_status, workspaceCreationStarted: p.workspace_creation_started, stage: p.stage, welcomeSent: p.welcome_sent,
           stageChangedAt: p.stage_changed_at, createdAt: p.created_at, updatedAt: p.updated_at
         } as any)));
       }
@@ -327,6 +327,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
       if (updates.ekyteId !== undefined) payload.ekyte_id = updates.ekyteId;
       if (updates.ekyteLink !== undefined) payload.ekyte_link = updates.ekyteLink;
       if (updates.welcomeSent !== undefined) payload.welcome_sent = updates.welcomeSent;
+      if (updates.workspaceCreationStarted !== undefined) payload.workspace_creation_started = updates.workspaceCreationStarted;
 
       if (Object.keys(payload).length > 0) {
         const { error } = await supabase.from('project').update(payload).eq('id', id);

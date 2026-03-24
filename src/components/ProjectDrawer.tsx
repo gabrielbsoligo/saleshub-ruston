@@ -62,6 +62,7 @@ export const ProjectDrawer: React.FC<{
   const [editedProject, setEditedProject] = useState<Project | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [nextStage, setNextStage] = useState<Stage | null>(null);
+  const [manualStageToChange, setManualStageToChange] = useState<Stage | null>(null);
 
   // Link states
   const [newLink, setNewLink] = useState("");
@@ -95,6 +96,7 @@ export const ProjectDrawer: React.FC<{
   }, [project, projectMembers]);
 
   const canEditAnyStage = ["owner", "admin", "coord_geral"].includes(currentUser?.role || "");
+  const canChangeStage = ["owner", "admin"].includes(currentUser?.role || "");
 
   if (!project || !editedProject) return null;
 
@@ -252,11 +254,22 @@ export const ProjectDrawer: React.FC<{
   };
 
   const confirmAdvance = (stage: Stage) => {
+    setManualStageToChange(null);
     setNextStage(stage);
     setShowConfirmModal(true);
   };
 
   const handleAdvance = async () => {
+    if (manualStageToChange) {
+      await supabase.from('project').update({ stage: manualStageToChange }).eq('id', project.id);
+      updateProject(project.id, { stage: manualStageToChange });
+      setShowConfirmModal(false);
+      setManualStageToChange(null);
+      toast.success("Etapa alterada manualmente.");
+      onClose();
+      return;
+    }
+
     if (nextStage) {
       if (project.stage === "atribuir_coordenador") {
         const isWebhookEnabled = !!import.meta.env.VITE_N8N_WEBHOOK_URL;
@@ -340,16 +353,19 @@ export const ProjectDrawer: React.FC<{
 
   // Workspace Creation Logic
   const handleCreateWorkspace = async () => {
+    if (project.workspaceCreationStarted) return;
     setIsCreatingWorkspace(true);
 
-    // Initialize starting state as 'creating'
+    const prevStatus = project.workspaceStatus || { gchat: 'pending', whatsapp: 'pending', gdrive: 'pending', ekyte: 'pending' };
+    const newStatus: any = { ...prevStatus };
+    if (prevStatus.gchat !== 'created') newStatus.gchat = 'creating';
+    if (prevStatus.whatsapp !== 'created') newStatus.whatsapp = 'creating';
+    if (prevStatus.gdrive !== 'created') newStatus.gdrive = 'creating';
+    if (prevStatus.ekyte !== 'created') newStatus.ekyte = 'creating';
+
     updateProject(project.id, {
-      workspaceStatus: {
-        gchat: 'creating',
-        whatsapp: 'creating',
-        gdrive: 'creating',
-        ekyte: 'creating'
-      }
+      workspaceCreationStarted: true,
+      workspaceStatus: newStatus
     });
 
     const isWebhookEnabled = !!import.meta.env.VITE_N8N_WEBHOOK_URL;
@@ -357,7 +373,8 @@ export const ProjectDrawer: React.FC<{
     if (isWebhookEnabled) {
       try {
         await supabase.from('project').update({
-          workspace_status: { gchat: 'creating', whatsapp: 'creating', gdrive: 'creating', ekyte: 'creating' }
+          workspace_creation_started: true,
+          workspace_status: newStatus
         }).eq('id', project.id);
 
         const { data: team } = await supabase
@@ -422,25 +439,33 @@ export const ProjectDrawer: React.FC<{
           coordPhone
         ])].filter(Boolean);
 
-        createGChatSpace(project.id, project.clientName, allEmails).catch(err => {
-          console.error('GChat falhou:', err);
-          supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gchat: 'error' } }).eq('id', project.id);
-        });
+        if (prevStatus.gchat !== 'created') {
+          createGChatSpace(project.id, project.clientName, allEmails).catch(err => {
+            console.error('GChat falhou:', err);
+            supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gchat: 'error' } }).eq('id', project.id);
+          });
+        }
 
-        createWppGroup(project.id, project.clientName, allPhones, adminPhones).catch(err => {
-          console.error('WhatsApp falhou:', err);
-          supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), whatsapp: 'error' } }).eq('id', project.id);
-        });
+        if (prevStatus.whatsapp !== 'created') {
+          createWppGroup(project.id, project.clientName, allPhones, adminPhones).catch(err => {
+            console.error('WhatsApp falhou:', err);
+            supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), whatsapp: 'error' } }).eq('id', project.id);
+          });
+        }
 
-        createDriveFolders(project.id, project.clientName, coordEmail).catch(err => {
-          console.error('Drive falhou:', err);
-          supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gdrive: 'error' } }).eq('id', project.id);
-        });
+        if (prevStatus.gdrive !== 'created') {
+          createDriveFolders(project.id, project.clientName, coordEmail).catch(err => {
+            console.error('Drive falhou:', err);
+            supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gdrive: 'error' } }).eq('id', project.id);
+          });
+        }
 
-        createEkyteWorkspace(project.id, project.clientName, allEmails).catch(err => {
-          console.error('Ekyte falhou:', err);
-          supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), ekyte: 'error' } }).eq('id', project.id);
-        });
+        if (prevStatus.ekyte !== 'created') {
+          createEkyteWorkspace(project.id, project.clientName, allEmails).catch(err => {
+            console.error('Ekyte falhou:', err);
+            supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), ekyte: 'error' } }).eq('id', project.id);
+          });
+        }
 
       } catch (err) {
         console.error("Erro geral criar workspace:", err);
@@ -455,19 +480,25 @@ export const ProjectDrawer: React.FC<{
       ];
 
       let completed = 0;
+      let totalToRun = timers.filter(t => prevStatus[t.key as keyof typeof prevStatus] !== 'created').length;
+      
+      if (totalToRun === 0) {
+        setIsCreatingWorkspace(false);
+      }
 
       timers.forEach(({ key, delay, updates }) => {
+        if (prevStatus[key as keyof typeof prevStatus] === 'created') return;
+
         setTimeout(() => {
           updateProject(project.id, {
             ...updates,
             workspaceStatus: {
-              // we rely on the specific partial update keeping other status safe due to our merge logic in store
               [key]: 'created'
             } as any
           });
 
           completed++;
-          if (completed === 4) {
+          if (completed === totalToRun) {
             setIsCreatingWorkspace(false);
             toast.success("Todos os ambientes foram criados com sucesso!");
           }
@@ -476,21 +507,101 @@ export const ProjectDrawer: React.FC<{
     }
   };
 
-  // Mock a retry
-  const handleRetryEnv = (envKey: 'gchat' | 'whatsapp' | 'gdrive' | 'ekyte') => {
+  const handleRetryEnv = async (envKey: 'gchat' | 'whatsapp' | 'gdrive' | 'ekyte') => {
     updateProject(project.id, { workspaceStatus: { [envKey]: 'creating' } as any });
-    setTimeout(() => {
-      let extraUpdates = {};
-      if (envKey === 'gchat') extraUpdates = { gchatSpaceId: 'spaces/mock_retry' };
-      if (envKey === 'whatsapp') extraUpdates = { wppGroupId: 'mock_retry@g.us' };
-      if (envKey === 'gdrive') extraUpdates = { gdriveFolderId: 'folder_retry', gdriveFolderLink: 'https://drive.google.com' };
-      if (envKey === 'ekyte') extraUpdates = { ekyteId: 'ekyte_retry' };
+    
+    const isWebhookEnabled = !!import.meta.env.VITE_N8N_WEBHOOK_URL;
 
-      updateProject(project.id, {
-        ...extraUpdates,
-        workspaceStatus: { [envKey]: 'created' } as any
-      });
-    }, 2000);
+    if (isWebhookEnabled) {
+      await supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), [envKey]: 'creating' } }).eq('id', project.id);
+      
+      try {
+        const { data: team } = await supabase
+          .from('project_member')
+          .select('role_in_project, member:member_id(email, phone)')
+          .eq('project_id', project.id);
+
+        const teamEmails = team?.map(t => (t.member as any)?.email).filter(Boolean) || [];
+        const teamPhones = team?.map(t => (t.member as any)?.phone).filter(Boolean) || [];
+
+        const fixedEmails = ['tiago.bardini@v4company.com', 'patrick.rosavianna@v4company.com', 'gabriel.sartori@v4company.com'];
+        // Fetch correct phones for fixed members
+        const { data: fixedMembersData } = await supabase.from('member').select('phone').in('email', fixedEmails);
+        const fetchedFixedPhones = fixedMembersData?.map(m => m.phone).filter(Boolean) || [];
+        const fixedPhones = ['554796769946'];
+        const fixedAdminPhones = ['554796769946'];
+
+        let coordEmail = '';
+        let coordPhone = '';
+        if (project.assignedCoordinatorId) {
+          const { data: coord } = await supabase.from('member').select('email, phone').eq('id', project.assignedCoordinatorId).single();
+          coordEmail = coord?.email || '';
+          coordPhone = coord?.phone || '';
+        }
+
+        const allEmails = [...new Set([...fixedEmails, coordEmail, ...teamEmails])].filter(Boolean);
+
+        const { data: stakeholders } = await supabase.from('stakeholder').select('phone').order('created_at', { ascending: true }).eq('project_id', project.id);
+        const stakeholderPhones = stakeholders?.map(s => s.phone).filter(Boolean) || [];
+
+        const clientPhone = project.clientPhone || '';
+
+        const allPhones = [...new Set([
+          ...fixedPhones,
+          coordPhone,
+          ...teamPhones,
+          clientPhone,
+          ...stakeholderPhones
+        ])].filter(Boolean);
+
+        const adminPhones = [...new Set([
+          ...fixedAdminPhones,
+          coordPhone
+        ])].filter(Boolean);
+
+        switch (envKey) {
+          case 'gchat':
+            await createGChatSpace(project.id, project.clientName, allEmails).catch(err => {
+              console.error('GChat falhou no retry:', err);
+              supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gchat: 'error' } }).eq('id', project.id);
+            });
+            break;
+          case 'whatsapp':
+            await createWppGroup(project.id, project.clientName, allPhones, adminPhones).catch(err => {
+              console.error('WhatsApp falhou no retry:', err);
+              supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), whatsapp: 'error' } }).eq('id', project.id);
+            });
+            break;
+          case 'gdrive':
+            await createDriveFolders(project.id, project.clientName, coordEmail).catch(err => {
+              console.error('Drive falhou no retry:', err);
+              supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), gdrive: 'error' } }).eq('id', project.id);
+            });
+            break;
+          case 'ekyte':
+            await createEkyteWorkspace(project.id, project.clientName, allEmails).catch(err => {
+              console.error('Ekyte falhou no retry:', err);
+              supabase.from('project').update({ workspace_status: { ...(project.workspaceStatus || {}), ekyte: 'error' } }).eq('id', project.id);
+            });
+            break;
+        }
+      } catch (err) {
+        console.error("Erro no retry:", err);
+      }
+    } else {
+      setTimeout(() => {
+        let extraUpdates = {};
+        if (envKey === 'gchat') extraUpdates = { gchatSpaceId: 'spaces/mock_retry' };
+        if (envKey === 'whatsapp') extraUpdates = { wppGroupId: 'mock_retry@g.us' };
+        if (envKey === 'gdrive') extraUpdates = { gdriveFolderId: 'folder_retry', gdriveFolderLink: 'https://drive.google.com' };
+        if (envKey === 'ekyte') extraUpdates = { ekyteId: 'ekyte_retry' };
+
+        updateProject(project.id, {
+          ...extraUpdates,
+          workspaceStatus: { [envKey]: 'created' } as any
+        });
+      }, 2000);
+    }
   };
 
   // Check stage conditions
@@ -621,13 +732,15 @@ export const ProjectDrawer: React.FC<{
           <div className="p-4 bg-[var(--color-v4-card)] border-t border-[var(--color-v4-border)] space-y-3">
             <button
               onClick={handleCreateWorkspace}
-              disabled={isCreatingWorkspace || canAdvance}
+              disabled={isCreatingWorkspace || canAdvance || project.workspaceCreationStarted}
               className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
             >
               {isCreatingWorkspace ? (
                 <><Loader2 size={18} className="animate-spin" /> Criando ambientes...</>
               ) : canAdvance ? (
                 <><CheckCircle2 size={18} /> Ambientes Criados</>
+              ) : project.workspaceCreationStarted ? (
+                <><Building2 size={18} /> Criação Inicializada</>
               ) : (
                 <><Building2 size={18} /> Criar Ambientes (Automático)</>
               )}
@@ -713,6 +826,33 @@ export const ProjectDrawer: React.FC<{
               <span className="px-2 py-0.5 rounded bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] uppercase text-[10px] font-semibold tracking-wider">
                 {project.stage.replace("_", " ")}
               </span>
+              
+              {canChangeStage && (
+                <div className="flex items-center gap-2 ml-4">
+                  <select
+                    value={project.stage}
+                    onChange={(e) => {
+                      const stage = e.target.value as Stage;
+                      if (stage !== project.stage) {
+                        setNextStage(null);
+                        setManualStageToChange(stage);
+                        setShowConfirmModal(true);
+                      }
+                    }}
+                    className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-0.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)] cursor-pointer"
+                  >
+                    <option value="" disabled>Alterar Etapa</option>
+                    <option value="aguardando_comercial">Aguardando Comercial</option>
+                    <option value="atribuir_coordenador">Atribuir Coordenador</option>
+                    <option value="atribuir_equipe">Atribuir Equipe</option>
+                    <option value="criar_workspace">Criar Workspace</option>
+                    <option value="boas_vindas">Boas Vindas</option>
+                    <option value="kickoff">Kickoff</option>
+                    <option value="planejamento">Planejamento</option>
+                    <option value="ongoing">Ongoing</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
           <button
@@ -1321,11 +1461,27 @@ export const ProjectDrawer: React.FC<{
               Confirmar Avanço
             </h3>
             <p className="text-[var(--color-v4-text-muted)] text-sm mb-6">
-              Tem certeza que deseja avançar para a etapa{" "}
-              <span className="font-semibold text-white">
-                {nextStage?.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
-              </span>
-              ?
+              {manualStageToChange ? (
+                <>
+                  Tem certeza que deseja mover para{" "}
+                  <span className="font-semibold text-white">
+                    {manualStageToChange.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                  </span>
+                  ?
+                  <br />
+                  <span className="text-[var(--color-v4-red)] mt-2 block">
+                    Aviso: Isso pula as validações normais e não dispara webhooks. Ferramenta de emergência!
+                  </span>
+                </>
+              ) : (
+                <>
+                  Tem certeza que deseja avançar para a etapa{" "}
+                  <span className="font-semibold text-white">
+                    {nextStage?.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
+                  </span>
+                  ?
+                </>
+              )}
             </p>
             <div className="flex gap-3">
               <button

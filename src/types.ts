@@ -90,6 +90,7 @@ export interface Project {
 
   stage: Stage;
   welcomeSent: boolean;
+  workspaceCreationStarted?: boolean;
 
   createdAt: string;
   updatedAt: string;
