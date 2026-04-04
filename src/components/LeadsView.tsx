@@ -29,7 +29,7 @@ const STAGE_BORDER: Record<string, string> = {
 };
 
 export const LeadsView: React.FC = () => {
-  const { leads, members, addReuniao, updateLead, updateReuniao, reunioes } = useAppStore();
+  const { leads, members, addReuniao, updateLead, updateReuniao, reunioes, currentUser } = useAppStore();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showMktlab, setShowMktlab] = useState(false);
@@ -41,7 +41,7 @@ export const LeadsView: React.FC = () => {
   const [filterSdr, setFilterSdr] = useState('');
   const [search, setSearch] = useState('');
 
-  const sdrs = members.filter(m => m.role === 'sdr' || m.role === 'gestor');
+  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
   const filtered = leads.filter(l => {
     if (filterCanal && l.canal !== filterCanal) return false;
@@ -86,7 +86,7 @@ export const LeadsView: React.FC = () => {
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
   const [pendingAgendar, setPendingAgendar] = useState<{ iso: string; closerId: string } | null>(null);
 
-  const handleAgendarConfirm = async (dataReuniaoISO: string, closerId: string) => {
+  const handleAgendarConfirm = async (dataReuniaoISO: string, closerId: string, participantesExtras?: string[], leadEmail?: string) => {
     if (!agendarLead) return;
     try {
       await addReuniao({
@@ -94,11 +94,13 @@ export const LeadsView: React.FC = () => {
         empresa: agendarLead.empresa,
         nome_contato: agendarLead.nome_contato || undefined,
         canal: agendarLead.canal,
-        sdr_id: agendarLead.sdr_id || undefined,
+        sdr_id: agendarLead.sdr_id || currentUser?.id || undefined,
         closer_id: closerId || undefined,
         kommo_id: agendarLead.kommo_id || undefined,
         data_agendamento: new Date().toISOString().split('T')[0],
         data_reuniao: dataReuniaoISO,
+        participantes_extras: participantesExtras || undefined,
+        lead_email: leadEmail || undefined,
       } as any);
       setAgendarLead(null);
     } catch (e: any) {
@@ -119,7 +121,7 @@ export const LeadsView: React.FC = () => {
       empresa: agendarLead.empresa,
       nome_contato: agendarLead.nome_contato || undefined,
       canal: agendarLead.canal,
-      sdr_id: agendarLead.sdr_id || undefined,
+      sdr_id: agendarLead.sdr_id || currentUser?.id || undefined,
       closer_id: pendingAgendar.closerId || undefined,
       kommo_id: agendarLead.kommo_id || undefined,
       data_agendamento: new Date().toISOString().split('T')[0],
@@ -152,7 +154,7 @@ export const LeadsView: React.FC = () => {
             <button onClick={() => setView('kanban')} className={`p-2 rounded ${view === 'kanban' ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)]'}`}><LayoutGrid size={16} /></button>
             <button onClick={() => setView('table')} className={`p-2 rounded ${view === 'table' ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)]'}`}><List size={16} /></button>
           </div>
-          <button onClick={() => setShowMktlab(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm">⚡ MKTLAB</button>
+          <a href="/extensao.html" target="_blank" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm no-underline">⚡ MKTLAB</a>
           <button onClick={() => setShowNew(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm"><Plus size={16} /> Novo Lead</button>
         </div>
       </div>

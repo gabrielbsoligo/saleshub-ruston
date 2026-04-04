@@ -1,16 +1,30 @@
 import React, { useState, useEffect } from "react";
 import { useAppStore } from "../store";
 import { X, Save, Trash2 } from "lucide-react";
-import { LEAD_STATUS_LABELS, CANAL_LABELS, ALL_PRODUTOS, type Lead, type LeadStatus, type LeadCanal } from "../types";
+import { CANAL_LABELS, ALL_PRODUTOS, type Lead, type LeadCanal } from "../types";
+import { DateInput } from "./ui/DateInput";
+import toast from "react-hot-toast";
+
+// Status que o usuario pode selecionar manualmente
+const EDITABLE_STATUSES = [
+  { value: 'sem_contato', label: 'Sem Contato' },
+  { value: 'em_follow', label: 'Em Follow' },
+  { value: 'reuniao_marcada', label: 'Reunião Marcada' },
+  { value: 'reuniao_realizada', label: 'Reunião Realizada' },
+  { value: 'noshow', label: 'No Show' },
+  { value: 'perdido', label: 'Perdido' },
+  { value: 'estorno', label: 'Estorno' },
+];
 
 export const LeadDrawer: React.FC<{ lead: Lead | null; onClose: () => void }> = ({ lead, onClose }) => {
   const { addLead, updateLead, deleteLead, members } = useAppStore();
-  const sdrs = members.filter(m => m.role === 'sdr' || m.role === 'gestor');
+  // Filtrar apenas membros ativos
+  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
   const [form, setForm] = useState({
-    empresa: '', nome_contato: '', telefone: '', cnpj: '', faturamento: '',
+    empresa: '', nome_contato: '', telefone: '', email: '', cnpj: '', faturamento: '',
     canal: 'blackbox' as LeadCanal, fonte: '', produto: '', sdr_id: '',
-    kommo_id: '', kommo_link: '', status: 'sem_contato' as LeadStatus,
+    kommo_id: '', kommo_link: '', mktlab_link: '', status: 'sem_contato',
     data_cadastro: '', valor_lead: 0,
   });
 
@@ -18,11 +32,11 @@ export const LeadDrawer: React.FC<{ lead: Lead | null; onClose: () => void }> = 
     if (lead) {
       setForm({
         empresa: lead.empresa || '', nome_contato: lead.nome_contato || '',
-        telefone: lead.telefone || '', cnpj: lead.cnpj || '',
+        telefone: lead.telefone || '', email: lead.email || '', cnpj: lead.cnpj || '',
         faturamento: lead.faturamento || '', canal: lead.canal,
         fonte: lead.fonte || '', produto: lead.produto || '',
         sdr_id: lead.sdr_id || '', kommo_id: lead.kommo_id || '',
-        kommo_link: lead.kommo_link || '', status: lead.status,
+        kommo_link: lead.kommo_link || '', mktlab_link: lead.mktlab_link || '', status: lead.status,
         data_cadastro: lead.data_cadastro || '', valor_lead: lead.valor_lead || 0,
       });
     }
@@ -31,14 +45,31 @@ export const LeadDrawer: React.FC<{ lead: Lead | null; onClose: () => void }> = 
   const [isProcessing, setIsProcessing] = useState(false);
 
   const handleSave = async () => {
-    if (isProcessing) return;
+    if (isProcessing || !form.empresa) return;
     setIsProcessing(true);
     try {
-      const payload: any = { ...form };
+      // Limpar campos vazios - converter "" pra null pra evitar erros de tipo no Supabase
+      const payload: any = {};
+      for (const [k, v] of Object.entries(form)) {
+        if (v === '' || v === null || v === undefined) {
+          payload[k] = null;
+        } else if (v === 0 && k === 'valor_lead') {
+          payload[k] = null;
+        } else {
+          payload[k] = v;
+        }
+      }
+      // empresa e canal sao obrigatorios, nao podem ser null
+      payload.empresa = form.empresa;
+      payload.canal = form.canal;
+      payload.status = form.status || 'sem_contato';
       if (!payload.sdr_id) delete payload.sdr_id;
+
       if (lead) { await updateLead(lead.id, payload); }
       else { await addLead(payload); }
       onClose();
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao salvar lead');
     } finally { setIsProcessing(false); }
   };
 
@@ -70,6 +101,7 @@ export const LeadDrawer: React.FC<{ lead: Lead | null; onClose: () => void }> = 
             <div><label className={labelClass}>Contato</label><input className={inputClass} value={form.nome_contato} onChange={e => set('nome_contato', e.target.value)} /></div>
             <div><label className={labelClass}>Telefone</label><input className={inputClass} value={form.telefone} onChange={e => set('telefone', e.target.value)} /></div>
           </div>
+          <div><label className={labelClass}>Email</label><input type="email" className={inputClass} value={form.email || ''} onChange={e => set('email', e.target.value)} placeholder="email@empresa.com" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className={labelClass}>CNPJ</label><input className={inputClass} value={form.cnpj} onChange={e => set('cnpj', e.target.value)} /></div>
             <div><label className={labelClass}>Faturamento</label>
@@ -120,14 +152,37 @@ export const LeadDrawer: React.FC<{ lead: Lead | null; onClose: () => void }> = 
           </div>
           <div><label className={labelClass}>Status</label>
             <select className={inputClass} value={form.status} onChange={e => set('status', e.target.value)}>
-              {Object.entries(LEAD_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              {EDITABLE_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className={labelClass}>ID Kommo</label><input className={inputClass} value={form.kommo_id} onChange={e => set('kommo_id', e.target.value)} /></div>
-            <div><label className={labelClass}>Data Cadastro</label><input type="date" className={inputClass} value={form.data_cadastro} onChange={e => set('data_cadastro', e.target.value)} /></div>
+            <DateInput label="Data Cadastro" value={form.data_cadastro} onChange={v => set('data_cadastro', v)} />
           </div>
-          <div><label className={labelClass}>Link Kommo</label><input className={inputClass} value={form.kommo_link} onChange={e => set('kommo_link', e.target.value)} /></div>
+          <div>
+            <label className={labelClass}>Link Kommo</label>
+            <div className="flex gap-2">
+              <input className={inputClass + " flex-1"} value={form.kommo_link} onChange={e => set('kommo_link', e.target.value)} />
+              {form.kommo_link && (
+                <a href={form.kommo_link} target="_blank" rel="noopener"
+                  className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:text-white text-sm flex items-center">
+                  Abrir ↗
+                </a>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className={labelClass}>Link MKTLAB</label>
+            <div className="flex gap-2">
+              <input className={inputClass + " flex-1"} value={form.mktlab_link} onChange={e => set('mktlab_link', e.target.value)} placeholder="Preenchido automaticamente pela extensão" />
+              {form.mktlab_link && (
+                <a href={form.mktlab_link} target="_blank" rel="noopener"
+                  className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:text-white text-sm flex items-center">
+                  Abrir ↗
+                </a>
+              )}
+            </div>
+          </div>
           {form.canal === 'leadbroker' && (
             <div><label className={labelClass}>Valor do Lead (R$)</label><input type="number" className={inputClass} value={form.valor_lead} onChange={e => set('valor_lead', Number(e.target.value))} /></div>
           )}

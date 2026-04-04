@@ -7,14 +7,18 @@ import { MultiSelect } from "./ui/MultiSelect";
 import { ContractUpload } from "./ui/ContractUpload";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { validateGanho } from "../lib/ganhoValidation";
+import { Plus, Trash2 as Trash2Icon } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import toast from "react-hot-toast";
 
 export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ deal, onClose }) => {
   const { updateDeal, members } = useAppStore();
-  const closers = members.filter(m => m.role === 'closer' || m.role === 'gestor');
+  const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [recomendacoes, setRecomendacoes] = useState<{ empresa: string; nome_contato: string; telefone: string }[]>([]);
   const [form, setForm] = useState({
     closer_id: deal.closer_id || '',
     temperatura: '' as Temperatura | '',
@@ -86,6 +90,35 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     };
 
     await updateDeal(deal.id, updates);
+
+    // Save recomendacoes and create leads
+    const validRecs = recomendacoes.filter(r => r.empresa.trim());
+    if (validRecs.length > 0) {
+      for (const rec of validRecs) {
+        // Create lead from recommendation
+        const { data: newLead } = await supabase.from('leads').insert({
+          empresa: rec.empresa.trim(),
+          nome_contato: rec.nome_contato.trim() || null,
+          telefone: rec.telefone.trim() || null,
+          canal: 'recomendacao',
+          status: 'sem_contato',
+          sdr_id: deal.sdr_id || null,
+        }).select('id').single();
+
+        // Save recomendacao record
+        await supabase.from('recomendacoes').insert({
+          deal_id: deal.id,
+          closer_id: form.closer_id || deal.closer_id,
+          sdr_id: deal.sdr_id || null,
+          empresa: rec.empresa.trim(),
+          nome_contato: rec.nome_contato.trim() || null,
+          telefone: rec.telefone.trim() || null,
+          lead_criado_id: newLead?.id || null,
+        });
+      }
+      toast.success(`${validRecs.length} recomendação(ões) salva(s) como lead!`, { icon: '🎯' });
+    }
+
     onClose();
     } finally { setIsProcessing(false); }
   };
@@ -159,6 +192,30 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
           </>)}
 
           {step === 2 && (<>
+            {/* Recomendacoes */}
+            <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4 mb-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-bold text-purple-400 uppercase">Recomendações Coletadas</h4>
+                <button type="button" onClick={() => setRecomendacoes(prev => [...prev, { empresa: '', nome_contato: '', telefone: '' }])}
+                  className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300">
+                  <Plus size={12} /> Adicionar
+                </button>
+              </div>
+              {recomendacoes.length === 0 && <p className="text-xs text-[var(--color-v4-text-muted)]">Nenhuma recomendação coletada nesta reunião</p>}
+              {recomendacoes.map((rec, i) => (
+                <div key={i} className="flex gap-2 mb-2">
+                  <input className={inputClass + " flex-1"} placeholder="Empresa *" value={rec.empresa}
+                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, empresa: e.target.value } : r))} />
+                  <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
+                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, nome_contato: e.target.value } : r))} />
+                  <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
+                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, telefone: e.target.value } : r))} />
+                  <button type="button" onClick={() => setRecomendacoes(prev => prev.filter((_, j) => j !== i))}
+                    className="p-2 text-red-400 hover:text-red-300"><Trash2Icon size={14} /></button>
+                </div>
+              ))}
+            </div>
+
             <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
               <h4 className="text-xs font-bold text-blue-400 uppercase mb-3">Escopo Fechado (OT)</h4>
               <MultiSelect options={[...PRODUTOS_OT]} selected={form.produtos_ot} onChange={v => set('produtos_ot', v)} placeholder="Produtos OT..." />

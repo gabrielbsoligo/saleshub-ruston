@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useAppStore } from "../store";
 import { ROLE_LABELS, type TeamRole } from "../types";
-import { Plus, Save, X, UserCheck, UserX } from "lucide-react";
+import { Plus, Save, X, UserCheck, UserX, Calendar } from "lucide-react";
+import { getGoogleAuthUrl } from "../lib/googleCalendar";
 
 export const EquipeView: React.FC = () => {
   const { members, addMember, updateMember } = useAppStore();
@@ -63,12 +64,29 @@ export const EquipeView: React.FC = () => {
                 {ROLE_LABELS[member.role]}
               </span>
             </div>
-            <button
-              onClick={() => updateMember(member.id, { active: false })}
-              className="flex items-center gap-1 text-xs text-[var(--color-v4-text-muted)] hover:text-red-400 transition-colors"
-            >
-              <UserX size={12} /> Desativar
-            </button>
+            {member.ramal_4com && (
+              <span className="text-[10px] text-[var(--color-v4-text-muted)] mb-2 block">Ramal: {member.ramal_4com}</span>
+            )}
+            <div className="flex items-center gap-3">
+              {member.google_calendar_connected ? (
+                <span className="flex items-center gap-1 text-xs text-green-400"><Calendar size={12} /> Calendar conectado</span>
+              ) : (
+                <button onClick={async () => {
+                  try {
+                    const url = await getGoogleAuthUrl(member.id);
+                    window.open(url, '_blank', 'width=500,height=600');
+                  } catch { /* ignore */ }
+                }} className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors">
+                  <Calendar size={12} /> Conectar Calendar
+                </button>
+              )}
+              <button
+                onClick={() => updateMember(member.id, { active: false })}
+                className="flex items-center gap-1 text-xs text-[var(--color-v4-text-muted)] hover:text-red-400 transition-colors"
+              >
+                <UserX size={12} /> Desativar
+              </button>
+            </div>
           </div>
         ))}
       </div>

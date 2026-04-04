@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus } from './types';
+import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com } from './types';
+// Kommo integration is handled server-side via Postgres trigger (pg_net)
+import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
 import toast from 'react-hot-toast';
 
 interface AppState {
@@ -15,6 +17,7 @@ interface AppState {
   performanceSdr: PerformanceSdr[];
   performanceCloser: PerformanceCloser[];
   custos: CustoComercial[];
+  ligacoes: Ligacao4com[];
 
   login: (email: string, password?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -50,6 +53,7 @@ interface AppState {
 
   fetchCustos: () => Promise<void>;
   saveCusto: (c: Partial<CustoComercial>) => Promise<void>;
+  fetchLigacoes: () => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -72,6 +76,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [performanceSdr, setPerformanceSdr] = useState<PerformanceSdr[]>([]);
   const [performanceCloser, setPerformanceCloser] = useState<PerformanceCloser[]>([]);
   const [custos, setCustos] = useState<CustoComercial[]>([]);
+  const [ligacoes, setLigacoes] = useState<Ligacao4com[]>([]);
 
   // ===================== AUTH =====================
   const checkSession = useCallback(async () => {
@@ -180,7 +185,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addLead = async (l: Partial<Lead>) => {
     const { data, error } = await supabase.from('leads').insert(l).select('*, sdr:team_members!sdr_id(*)').single();
     if (error) { toast.error(error.message); return null; }
-    if (data) setLeads(prev => [data, ...prev]);
+    if (data) {
+      setLeads(prev => [data, ...prev]);
+      // Poll for Kommo ID (trigger runs server-side, response processed by pg_cron)
+      if (data.id) {
+        setTimeout(async () => {
+          const { data: updated } = await supabase.from('leads').select('kommo_id, kommo_link').eq('id', data.id).single();
+          if (updated?.kommo_id) {
+            setLeads(prev => prev.map(l => l.id === data.id ? { ...l, ...updated } : l));
+            toast.success('Kommo sincronizado!', { icon: '🔗' });
+          }
+        }, 5000); // Check after 5 seconds
+      }
+    }
     toast.success('Lead cadastrado!');
     return data;
   };
@@ -222,7 +239,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateDeal = async (id: string, updates: Partial<Deal>) => {
     const { error } = await supabase.from('deals').update(updates).eq('id', id);
     if (error) { toast.error(error.message); return; }
+
+    const deal = deals.find(d => d.id === id);
+    const wasNotGanho = deal && deal.status !== 'contrato_assinado';
+    const isNowGanho = updates.status === 'contrato_assinado';
+
     setDeals(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
+
+    // Auto-generate comissao records when deal becomes ganho
+    if (wasNotGanho && isNowGanho) {
+      const merged = { ...deal, ...updates };
+      const categoria = ['blackbox', 'leadbroker'].includes(merged.origem || '') ? 'inbound' : 'outbound';
+      const comissaoRecords: any[] = [];
+
+      const buildRecord = (memberId: string | undefined, memberName: string, role: string, tipo: 'mrr' | 'ot', valor: number, dataPgto: string | null) => {
+        if (!valor || valor <= 0) return;
+        const rule = comissoes.find(c => c.role === role && c.tipo_origem === categoria && c.tipo_valor === tipo);
+        const pct = rule?.percentual || 0;
+        const dataLib = dataPgto ? new Date(new Date(dataPgto).getTime() + 30 * 86400000).toISOString().split('T')[0] : null;
+        comissaoRecords.push({
+          deal_id: id, member_id: memberId || null, member_name: memberName,
+          role_comissao: role, tipo, categoria, valor_base: valor,
+          percentual: pct, valor_comissao: valor * pct,
+          data_pgto: dataPgto, data_liberacao: dataLib,
+          empresa: merged.empresa, origem: merged.origem,
+        });
+      };
+
+      // Closer
+      if (merged.closer_id) {
+        const closer = members.find(m => m.id === merged.closer_id);
+        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+      }
+      // SDR
+      if (merged.sdr_id) {
+        const sdr = members.find(m => m.id === merged.sdr_id);
+        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+      }
+
+      if (comissaoRecords.length > 0) {
+        await supabase.from('comissoes_registros').insert(comissaoRecords);
+      }
+    }
+
     toast.success('Negociação atualizada!');
   };
 
@@ -258,6 +319,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         throw new Error('REUNIAO_ATIVA_EXISTENTE');
       }
       if (existingActive && replaceExisting) {
+        // Delete Google Calendar event if exists
+        const calEventId = (existingActive as any).calendar_event_id;
+        if (calEventId) {
+          const organizer = existingActive.sdr_id || existingActive.closer_id;
+          if (organizer) {
+            deleteCalendarEvent(organizer, calEventId).catch(e => console.error('Failed to delete calendar event:', e));
+          }
+        }
         // Marca a anterior como realizada (cancelada) antes de criar nova
         await supabase.from('reunioes').update({ realizada: true, show: false, notas: 'Substituída por nova reunião' }).eq('id', existingActive.id);
         setReunioes(prev => prev.map(re => re.id === existingActive.id ? { ...re, realizada: true, show: false, notas: 'Substituída por nova reunião' } : re));
@@ -273,7 +342,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('leads').update({ status: 'reuniao_marcada' }).eq('id', r.lead_id);
       setLeads(prev => prev.map(l => l.id === r.lead_id ? { ...l, status: 'reuniao_marcada' } : l));
     }
-    toast.success('Reunião agendada! Lead atualizado automaticamente.');
+
+    // Google Calendar - create event
+    if (data && data.data_reuniao) {
+      const closerId = data.closer_id || r.closer_id;
+      const sdrId = data.sdr_id || r.sdr_id;
+      const closer = closerId ? members.find(m => m.id === closerId) : null;
+      const sdrMember = sdrId ? members.find(m => m.id === sdrId) : null;
+      const calendarAvailable = sdrMember?.google_calendar_connected || closer?.google_calendar_connected;
+
+      if (calendarAvailable) {
+        const lead = (r.lead_id || data.lead_id) ? leads.find(l => l.id === (r.lead_id || data.lead_id)) : null;
+        try {
+          const calResult = await createCalendarEvent({
+            empresa: data.empresa || lead?.empresa || 'Reunião',
+            nome_contato: data.nome_contato || lead?.nome_contato || undefined,
+            canal: data.canal || lead?.canal || undefined,
+            data_reuniao: data.data_reuniao,
+            closer_id: closerId || undefined,
+            sdr_id: sdrId || undefined,
+            lead_email: (r as any).lead_email || lead?.email || undefined,
+            participantes_extras: (r as any).participantes_extras || undefined,
+            lead_id: data.lead_id || r.lead_id || undefined,
+            reuniao_id: data.id,
+          } as any);
+
+          if (calResult) {
+            const { error: calUpdateErr } = await supabase.from('reunioes').update({
+              calendar_event_id: calResult.event_id,
+              meet_link: calResult.meet_link,
+            }).eq('id', data.id);
+
+            if (calUpdateErr) {
+              console.error('Meet link save failed:', calUpdateErr);
+              toast.error('Evento criado mas link do Meet não salvou. Recarregue a página.');
+            } else {
+              setReunioes(prev => prev.map(re => re.id === data.id ? { ...re, calendar_event_id: calResult.event_id, meet_link: calResult.meet_link } : re));
+              toast.success('Google Meet criado!', { icon: '📅' });
+            }
+          }
+        } catch (e: any) {
+          console.error('Calendar failed:', e);
+          if (e.message === 'GOOGLE_NOT_CONNECTED') {
+            toast.error('Google Calendar não conectado. Conecte na tela de Equipe.');
+          } else {
+            toast.error('Erro ao criar evento no Calendar: ' + (e.message || 'erro desconhecido'));
+          }
+        }
+      }
+    }
+
+    toast.success('Reunião agendada!');
   };
 
   // Lock para impedir dupla execução
@@ -435,6 +554,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toast.success('Custo salvo!');
   };
 
+  // ===================== LIGACOES 4COM =====================
+  const fetchLigacoes = useCallback(async () => {
+    const { data } = await supabase.from('ligacoes_4com').select('*').order('started_at', { ascending: false }).limit(2000);
+    if (data) setLigacoes(data);
+  }, []);
+
   // ===================== LOAD DATA ON LOGIN =====================
   useEffect(() => {
     if (currentUser) {
@@ -447,6 +572,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchPerformanceSdr();
       fetchPerformanceCloser();
       fetchCustos();
+      fetchLigacoes();
     }
   }, [currentUser, fetchMembers, fetchDeals, fetchLeads, fetchReunioes, fetchMetas, fetchComissoes, fetchPerformanceSdr, fetchPerformanceCloser, fetchCustos]);
 
@@ -463,6 +589,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchPerformanceCloser, savePerformanceCloser,
       fetchComissoes,
       fetchCustos, saveCusto,
+      ligacoes, fetchLigacoes,
     }}>
       {children}
     </AppContext.Provider>

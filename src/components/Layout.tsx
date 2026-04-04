@@ -11,6 +11,7 @@ import {
   Menu,
   X,
   Briefcase,
+  Box,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -20,7 +21,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "equipe" | "dashboard";
+export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "equipe" | "dashboard" | "blackbox";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -38,7 +39,9 @@ export const Layout: React.FC<{
     { id: "leads" as const, label: "Leads", icon: Target },
     { id: "reunioes" as const, label: "Reuniões", icon: Calendar },
     { id: "performance" as const, label: "Performance", icon: BarChart3 },
-    { id: "metas" as const, label: "Metas & Comissões", icon: DollarSign },
+    { id: "metas" as const, label: "Metas", icon: Target },
+    { id: "comissoes" as const, label: "Comissões", icon: DollarSign },
+    { id: "blackbox" as const, label: "BlackBox", icon: Box },
     { id: "equipe" as const, label: "Equipe", icon: Users },
   ];
 

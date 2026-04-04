@@ -8,7 +8,8 @@ function formatCurrency(value: number) {
 }
 
 export const MetasView: React.FC = () => {
-  const { members, metas, saveMeta, deals, comissoes } = useAppStore();
+  const { members, metas, saveMeta, deals, comissoes, reunioes, currentUser } = useAppStore();
+  const isGestor = currentUser?.role === 'gestor';
   const [selectedMes, setSelectedMes] = useState(new Date().toISOString().slice(0, 7));
 
   const mesDate = `${selectedMes}-01`;
@@ -36,7 +37,13 @@ export const MetasView: React.FC = () => {
     const comissaoOt = comissoes.find(c => c.role === member.role && c.tipo_valor === 'ot');
     const valorComissao = (realizadoMrr * (comissaoMrr?.percentual || 0)) + (realizadoOt * (comissaoOt?.percentual || 0));
 
-    return { member, meta, realizadoMrr, realizadoOt, deals: memberDeals.length, valorComissao };
+    // Reunioes realizadas no mes
+    const realizadoReunioes = reunioes.filter(r => {
+      const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
+      return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show && (r.sdr_id === member.id || r.closer_id === member.id);
+    }).length;
+
+    return { member, meta, realizadoMrr, realizadoOt, realizadoReunioes, deals: memberDeals.length, valorComissao };
   });
 
   const [editingMeta, setEditingMeta] = useState<{ memberId: string; metaMrr: number; metaOt: number; metaReunioes: number; metaLeads: number } | null>(null);
@@ -71,13 +78,14 @@ export const MetasView: React.FC = () => {
               <th className="px-4 py-3">Realiz. MRR</th>
               <th className="px-4 py-3">Meta OT</th>
               <th className="px-4 py-3">Realiz. OT</th>
+              <th className="px-4 py-3">Meta Reuniões</th>
+              <th className="px-4 py-3">Realiz. Reun.</th>
               <th className="px-4 py-3">Deals</th>
-              <th className="px-4 py-3">Comissão</th>
-              <th className="px-4 py-3"></th>
+              {isGestor && <th className="px-4 py-3"></th>}
             </tr>
           </thead>
           <tbody>
-            {memberStats.map(({ member, meta, realizadoMrr, realizadoOt, deals: dealCount, valorComissao }) => {
+            {memberStats.map(({ member, meta, realizadoMrr, realizadoOt, realizadoReunioes, deals: dealCount, valorComissao }) => {
               const isEditing = editingMeta?.memberId === member.id;
               const pctMrr = meta?.meta_mrr ? (realizadoMrr / meta.meta_mrr * 100) : 0;
 
@@ -106,18 +114,28 @@ export const MetasView: React.FC = () => {
                   <td className="px-4 py-3">
                     <span className={realizadoOt > 0 ? 'text-blue-400' : 'text-[var(--color-v4-text-muted)]'}>{formatCurrency(realizadoOt)}</span>
                   </td>
-                  <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{dealCount}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-yellow-400 flex items-center gap-1"><DollarSign size={12} />{formatCurrency(valorComissao)}</span>
-                  </td>
                   <td className="px-4 py-3">
                     {isEditing ? (
-                      <button onClick={handleSaveMeta} className="text-green-400 hover:text-green-300"><Save size={14} /></button>
+                      <input type="number" className={inputClass} value={editingMeta.metaReunioes} onChange={e => setEditingMeta(p => p ? { ...p, metaReunioes: Number(e.target.value) } : p)} />
                     ) : (
-                      <button onClick={() => setEditingMeta({ memberId: member.id, metaMrr: meta?.meta_mrr || 0, metaOt: meta?.meta_ot || 0, metaReunioes: meta?.meta_reunioes || 0, metaLeads: meta?.meta_leads || 0 })}
-                        className="text-[var(--color-v4-text-muted)] hover:text-white text-xs">Editar</button>
+                      <span className="text-[var(--color-v4-text-muted)]">{meta?.meta_reunioes || '—'}</span>
                     )}
                   </td>
+                  <td className="px-4 py-3">
+                    <span className={realizadoReunioes > 0 ? 'text-yellow-400' : 'text-[var(--color-v4-text-muted)]'}>{realizadoReunioes}</span>
+                    {meta?.meta_reunioes ? <span className={`ml-1 text-xs ${realizadoReunioes >= meta.meta_reunioes ? 'text-green-400' : 'text-yellow-400'}`}>({((realizadoReunioes / meta.meta_reunioes) * 100).toFixed(0)}%)</span> : null}
+                  </td>
+                  <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{dealCount}</td>
+                  {isGestor && (
+                    <td className="px-4 py-3">
+                      {isEditing ? (
+                        <button onClick={handleSaveMeta} className="text-green-400 hover:text-green-300"><Save size={14} /></button>
+                      ) : (
+                        <button onClick={() => setEditingMeta({ memberId: member.id, metaMrr: meta?.meta_mrr || 0, metaOt: meta?.meta_ot || 0, metaReunioes: meta?.meta_reunioes || 0, metaLeads: meta?.meta_leads || 0 })}
+                          className="text-[var(--color-v4-text-muted)] hover:text-white text-xs">Editar</button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -125,18 +143,7 @@ export const MetasView: React.FC = () => {
         </table>
       </div>
 
-      {/* Tabela de comissões */}
-      <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">Tabela de Comissões</h3>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {comissoes.map(c => (
-            <div key={c.id} className="bg-[var(--color-v4-surface)] rounded-lg p-3">
-              <div className="text-xs text-[var(--color-v4-text-muted)] uppercase">{c.role} · {c.tipo_origem} · {c.tipo_valor}</div>
-              <div className="text-lg font-bold text-white">{(c.percentual * 100).toFixed(0)}%</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Comissoes moved to separate tab */}
     </div>
   );
 };

@@ -11,7 +11,7 @@ interface Props {
 
 export const ConfirmarReuniaoModal: React.FC<Props> = ({ reuniao, onConfirm, onClose }) => {
   const { members } = useAppStore();
-  const closers = members.filter(m => m.role === 'closer' || m.role === 'gestor');
+  const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const [closerConfirmadoId, setCloserConfirmadoId] = useState(reuniao.closer_id || '');
   const [isProcessing, setIsProcessing] = useState(false);
 

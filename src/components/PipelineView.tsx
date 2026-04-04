@@ -41,7 +41,7 @@ export const PipelineView: React.FC = () => {
   // Deal que precisa completar dados para mover (abre FeedbackDrawer pra completar)
   const [dealToComplete, setDealToComplete] = useState<{ deal: Deal; targetStatus: DealStatus } | null>(null);
 
-  const closers = members.filter(m => m.role === 'closer' || m.role === 'gestor');
+  const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
 
   const filteredDeals = deals.filter(d => {
     if (filterCloser && d.closer_id !== filterCloser) return false;

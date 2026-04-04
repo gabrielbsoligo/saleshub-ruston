@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>SalesHub - Importador MKTLAB</title>
+  <style>
+    body { background: #121212; color: #f5f5f5; font-family: 'DM Sans', sans-serif; margin: 0; padding: 40px; }
+    .container { max-width: 600px; margin: 0 auto; }
+    h1 { color: #e63946; font-size: 24px; }
+    h2 { color: #fff; font-size: 18px; margin-top: 30px; }
+    p { color: #a0a0a0; line-height: 1.6; }
+    .step { background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 12px; padding: 20px; margin: 15px 0; }
+    .step-num { background: #e63946; color: #fff; width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; margin-right: 10px; }
+    .bookmarklet-btn { display: inline-block; padding: 12px 24px; background: #e63946; color: #fff; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; cursor: grab; margin: 10px 0; }
+    .bookmarklet-btn:hover { background: #ff4d5a; }
+    code { background: #252525; padding: 2px 8px; border-radius: 4px; font-size: 13px; color: #22c55e; }
+    .warning { background: #facc1520; border: 1px solid #facc1540; border-radius: 8px; padding: 12px; margin: 15px 0; color: #facc15; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚡ Importador MKTLAB → SalesHub</h1>
+    <p>Importe leads do CRM V4 (mktlab.app) para o SalesHub com 1 clique.</p>
+
+    <h2>Como instalar</h2>
+
+    <div class="step">
+      <span class="step-num">1</span>
+      <strong>Mostre a barra de favoritos</strong><br>
+      <p>Aperte <code>Ctrl+Shift+B</code> no Chrome para mostrar a barra de favoritos.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">2</span>
+      <strong>Arraste o botão abaixo para a barra de favoritos:</strong><br><br>
+      <a class="bookmarklet-btn" href="javascript:void(fetch('https://gestao-comercial-rosy.vercel.app/mktlab-extractor.js').then(r=>r.text()).then(t=>eval(t)))">
+        ⚡ Importar → SalesHub
+      </a>
+      <p style="font-size:12px; color:#666;">Arraste este botão vermelho para a barra de favoritos do Chrome.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">3</span>
+      <strong>Use no MKTLAB</strong><br>
+      <p>Abra um lead no <code>mktlab.app</code> → Clique no bookmarklet na barra de favoritos → Lead é criado automaticamente no SalesHub + Kommo.</p>
+    </div>
+
+    <div class="warning">
+      ⚠️ <strong>Importante:</strong> Você precisa estar logado no SalesHub para o import funcionar. O lead é criado automaticamente e a página redireciona para a lista de leads.
+    </div>
+
+    <h2>O que é extraído automaticamente</h2>
+    <ul style="color: #a0a0a0; line-height: 2;">
+      <li>Nome da empresa</li>
+      <li>Nome do contato</li>
+      <li>Celular</li>
+      <li>Email</li>
+      <li>CNPJ</li>
+      <li>Canal de aquisição (BlackBox, LeadBroker, etc)</li>
+      <li>Canal de origem (Google, Facebook, etc)</li>
+      <li>Faturamento</li>
+      <li>Produto</li>
+      <li>Valor do lead</li>
+    </ul>
+  </div>
+</body>
+</html>

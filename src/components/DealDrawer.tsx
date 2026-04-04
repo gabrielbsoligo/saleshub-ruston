@@ -10,8 +10,8 @@ import { validateGanho } from "../lib/ganhoValidation";
 
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
   const { addDeal, updateDeal, deleteDeal, members } = useAppStore();
-  const closers = members.filter(m => m.role === 'closer' || m.role === 'gestor');
-  const sdrs = members.filter(m => m.role === 'sdr' || m.role === 'gestor');
+  const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
+  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
   const [tab, setTab] = useState<'geral' | 'produtos' | 'ganho'>('geral');
   const [missingFields, setMissingFields] = useState<string[] | null>(null);

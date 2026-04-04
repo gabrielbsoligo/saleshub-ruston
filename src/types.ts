@@ -74,6 +74,24 @@ export interface TeamMember {
   active: boolean;
   avatar_url?: string;
   auth_user_id?: string;
+  kommo_user_id?: number;
+  ramal_4com?: string;
+  created_at: string;
+}
+
+export interface Ligacao4com {
+  id: string;
+  call_id: string;
+  direction: string;
+  caller: string;
+  called: string;
+  started_at: string;
+  ended_at: string;
+  duration: number;
+  hangup_cause: string;
+  record_url?: string;
+  member_id?: string;
+  atendida: boolean;
   created_at: string;
 }
 
@@ -82,6 +100,7 @@ export interface Lead {
   empresa: string;
   nome_contato?: string;
   telefone?: string;
+  email?: string;
   cnpj?: string;
   faturamento?: string;
   canal: LeadCanal;
@@ -91,6 +110,7 @@ export interface Lead {
   sdr?: TeamMember;
   kommo_id?: string;
   kommo_link?: string;
+  mktlab_link?: string;
   status: LeadStatus;
   data_cadastro?: string;
   mes_referencia?: string;

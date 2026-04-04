@@ -8,7 +8,7 @@ const BOOKMARKLET_CODE = `javascript:void(function(){try{var d=document;var getD
 
 export const MktlabImporter: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const { addLead, members } = useAppStore();
-  const sdrs = members.filter(m => m.role === 'sdr' || m.role === 'gestor');
+  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
   const [copied, setCopied] = useState(false);
   const [pastedData, setPastedData] = useState('');
   const [form, setForm] = useState({
