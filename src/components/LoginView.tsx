@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 
 export const LoginView: React.FC = () => {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAppStore();
@@ -14,12 +15,8 @@ export const LoginView: React.FC = () => {
     setError("");
     setIsLoading(true);
     try {
-      if (!email.endsWith("@v4company.com")) {
-        throw new Error("Acesso restrito a emails @v4company.com");
-      }
-      await login(email);
-      toast.success("Link enviado! Verifique seu email para acessar o sistema.");
-      setEmail("");
+      await login(email, password);
+      toast.success("Login realizado com sucesso!");
     } catch (err: any) {
       setError(err.message || "Erro ao tentar fazer login.");
     } finally {
@@ -32,29 +29,42 @@ export const LoginView: React.FC = () => {
       <div className="w-full max-w-md bg-[var(--color-v4-card)] rounded-2xl shadow-2xl border border-[var(--color-v4-border)] p-8">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-display font-bold text-white tracking-tight mb-2">
-            V4 <span className="text-[var(--color-v4-red)]">Rokko</span>
+            Ruston <span className="text-[var(--color-v4-red)]">Comercial</span>
           </h1>
           <p className="text-[var(--color-v4-text-muted)]">
-            Gestão de Onboarding
+            Gestão do Time Comercial
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-[var(--color-v4-text-muted)] mb-2"
-            >
-              Email Corporativo
+            <label htmlFor="email" className="block text-sm font-medium text-[var(--color-v4-text-muted)] mb-2">
+              Email
             </label>
             <input
               id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="seu.nome@v4company.com"
+              placeholder="seu@email.com"
               className="w-full px-4 py-3 rounded-xl bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-v4-red)] focus:border-transparent transition-all"
               required
+            />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-[var(--color-v4-text-muted)] mb-2">
+              Senha
+            </label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Sua senha"
+              className="w-full px-4 py-3 rounded-xl bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white focus:outline-none focus:ring-2 focus:ring-[var(--color-v4-red)] focus:border-transparent transition-all"
+              required
+              minLength={6}
             />
           </div>
 
@@ -70,16 +80,13 @@ export const LoginView: React.FC = () => {
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors shadow-lg shadow-[var(--color-v4-red-muted)]"
           >
             <LogIn size={18} />
-            {isLoading ? "Enviando..." : "Enviar Login"}
+            {isLoading ? "Entrando..." : "Entrar"}
           </button>
         </form>
 
-        <div className="mt-8 text-center text-xs text-[var(--color-v4-text-muted)]">
-          <p>Acesso restrito a colaboradores V4 Company.</p>
-          <p className="mt-2">
-            Emails de teste: ruston@v4company.com, tiago@v4company.com,
-            ana@v4company.com
-          </p>
+        <div className="mt-6 text-center text-xs text-[var(--color-v4-text-muted)]">
+          <p>Primeiro acesso? Use seu email cadastrado e crie uma senha.</p>
+          <p className="mt-1">O sistema criará sua conta automaticamente.</p>
         </div>
       </div>
     </div>

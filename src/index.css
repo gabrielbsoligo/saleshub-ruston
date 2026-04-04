@@ -30,6 +30,12 @@ body {
   @apply bg-[var(--color-v4-bg)] text-[var(--color-v4-text)] font-sans antialiased;
 }
 
+/* Prevent text selection on draggable cards */
+[data-rfd-draggable-id] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Custom scrollbar for dark mode */
 ::-webkit-scrollbar {
   width: 8px;

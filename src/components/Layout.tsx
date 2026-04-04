@@ -4,20 +4,23 @@ import {
   LogOut,
   LayoutDashboard,
   Users,
-  FolderKanban,
-  Contact,
-  Building2,
+  Target,
+  Calendar,
+  BarChart3,
+  DollarSign,
   Menu,
   X,
+  Briefcase,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { ROLE_LABELS } from "../types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-type View = "dashboard" | "projects" | "members" | "stakeholders" | "company";
+export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "equipe" | "dashboard";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -30,16 +33,17 @@ export const Layout: React.FC<{
   if (!currentUser) return null;
 
   const navItems = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "projects", label: "Projetos", icon: FolderKanban },
-    { id: "members", label: "Colaboradores", icon: Users },
-    { id: "stakeholders", label: "Stakeholders", icon: Contact },
-    { id: "company", label: "Empresa", icon: Building2 },
-  ] as const;
+    { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
+    { id: "pipeline" as const, label: "Pipeline", icon: Briefcase },
+    { id: "leads" as const, label: "Leads", icon: Target },
+    { id: "reunioes" as const, label: "Reuniões", icon: Calendar },
+    { id: "performance" as const, label: "Performance", icon: BarChart3 },
+    { id: "metas" as const, label: "Metas & Comissões", icon: DollarSign },
+    { id: "equipe" as const, label: "Equipe", icon: Users },
+  ];
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-v4-bg)]">
-      {/* Mobile Menu Toggle */}
       <div className="md:hidden fixed top-4 left-4 z-50">
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -49,18 +53,15 @@ export const Layout: React.FC<{
         </button>
       </div>
 
-      {/* Sidebar */}
       <aside
         className={cn(
           "fixed md:static inset-y-0 left-0 z-40 w-64 bg-[var(--color-v4-card)] border-r border-[var(--color-v4-border)] flex flex-col transition-transform duration-300 ease-in-out",
-          isMobileMenuOpen
-            ? "translate-x-0"
-            : "-translate-x-full md:translate-x-0",
+          isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         )}
       >
         <div className="p-6 flex items-center justify-center border-b border-[var(--color-v4-border)]">
           <h1 className="text-xl font-display font-bold text-white tracking-tight">
-            V4 <span className="text-[var(--color-v4-red)]">Rokko</span>
+            Ruston <span className="text-[var(--color-v4-red)]">Comercial</span>
           </h1>
         </div>
 
@@ -91,17 +92,15 @@ export const Layout: React.FC<{
 
         <div className="p-4 border-t border-[var(--color-v4-border)]">
           <div className="flex items-center gap-3 mb-4 px-2">
-            <img
-              src={currentUser.avatarUrl}
-              alt={currentUser.name}
-              className="w-10 h-10 rounded-full bg-[var(--color-v4-surface)]"
-            />
+            <div className="w-10 h-10 rounded-full bg-[var(--color-v4-red)] flex items-center justify-center text-white font-bold text-sm">
+              {currentUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+            </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-white truncate">
                 {currentUser.name}
               </p>
               <p className="text-xs text-[var(--color-v4-text-muted)] truncate">
-                {currentUser.role}
+                {ROLE_LABELS[currentUser.role]}
               </p>
             </div>
           </div>
@@ -115,7 +114,6 @@ export const Layout: React.FC<{
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {children}
       </main>
