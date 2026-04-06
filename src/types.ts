@@ -2,7 +2,7 @@
 // Types - Sistema de Gestão Comercial Ruston
 // =============================================
 
-export type TeamRole = 'sdr' | 'closer' | 'gestor';
+export type TeamRole = 'sdr' | 'closer' | 'gestor' | 'financeiro';
 
 export type LeadStatus =
   | 'sem_contato'
@@ -289,6 +289,7 @@ export const ROLE_LABELS: Record<TeamRole, string> = {
   sdr: 'SDR',
   closer: 'Closer',
   gestor: 'Gestor',
+  financeiro: 'Financeiro',
 };
 
 export const TEMPERATURA_LABELS: Record<Temperatura, string> = {

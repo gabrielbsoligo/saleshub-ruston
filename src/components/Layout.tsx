@@ -33,7 +33,7 @@ export const Layout: React.FC<{
 
   if (!currentUser) return null;
 
-  const navItems = [
+  const allNavItems = [
     { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
     { id: "pipeline" as const, label: "Pipeline", icon: Briefcase },
     { id: "leads" as const, label: "Leads", icon: Target },
@@ -44,6 +44,10 @@ export const Layout: React.FC<{
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
     { id: "equipe" as const, label: "Equipe", icon: Users },
   ];
+
+  const navItems = currentUser.role === 'financeiro'
+    ? allNavItems.filter(item => item.id === 'comissoes')
+    : allNavItems;
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-v4-bg)]">

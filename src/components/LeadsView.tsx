@@ -1,13 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
 import { LEAD_STATUS_LABELS, CANAL_LABELS, type Lead, type LeadCanal, type LeadStatus } from "../types";
 import { cn } from "./Layout";
-import { Plus, Search, ExternalLink, Phone, Building2, Calendar, LayoutGrid, List } from "lucide-react";
+import { Plus, Search, ExternalLink, Phone, Building2, Calendar, LayoutGrid, List, ChevronUp, ChevronDown } from "lucide-react";
 import { LeadDrawer } from "./LeadDrawer";
 import { MktlabImporter } from "./MktlabImporter";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
+import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
 import type { Reuniao } from "../types";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -28,6 +29,27 @@ const STAGE_BORDER: Record<string, string> = {
   reuniao_realizada: 'border-green-500', noshow: 'border-orange-500',
 };
 
+type SortField = 'empresa' | 'created_at' | 'canal' | 'status';
+type SortDir = 'asc' | 'desc';
+
+const STATUS_ORDER: Record<string, number> = {
+  sem_contato: 0, em_follow: 1, reuniao_marcada: 2, reuniao_realizada: 3,
+  aguardando_feedback: 4, noshow: 5, perdido: 6, estorno: 7, convertido: 8,
+};
+
+function sortLeads(leads: Lead[], field: SortField, dir: SortDir): Lead[] {
+  return [...leads].sort((a, b) => {
+    let cmp = 0;
+    switch (field) {
+      case 'empresa': cmp = a.empresa.localeCompare(b.empresa); break;
+      case 'created_at': cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime(); break;
+      case 'canal': cmp = (a.canal || '').localeCompare(b.canal || ''); break;
+      case 'status': cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99); break;
+    }
+    return dir === 'desc' ? -cmp : cmp;
+  });
+}
+
 export const LeadsView: React.FC = () => {
   const { leads, members, addReuniao, updateLead, updateReuniao, reunioes, currentUser } = useAppStore();
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -40,16 +62,45 @@ export const LeadsView: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<LeadStatus | ''>('');
   const [filterSdr, setFilterSdr] = useState('');
   const [search, setSearch] = useState('');
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortField, setSortField] = useState<SortField>('created_at');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
-  const filtered = leads.filter(l => {
-    if (filterCanal && l.canal !== filterCanal) return false;
-    if (filterStatus && l.status !== filterStatus) return false;
-    if (filterSdr && l.sdr_id !== filterSdr) return false;
-    if (search && !l.empresa.toLowerCase().includes(search.toLowerCase()) && !(l.nome_contato || '').toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const activeFilterCount = [filterCanal, filterStatus, filterSdr, search, datePreset !== 'all' ? 'x' : ''].filter(Boolean).length;
+
+  const filtered = useMemo(() => {
+    let result = leads.filter(l => {
+      if (filterCanal && l.canal !== filterCanal) return false;
+      if (filterStatus && l.status !== filterStatus) return false;
+      if (filterSdr && l.sdr_id !== filterSdr) return false;
+      if (search && !l.empresa.toLowerCase().includes(search.toLowerCase()) && !(l.nome_contato || '').toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+    result = filterByDate(result, l => l.created_at, datePreset, dateFrom, dateTo);
+    return result;
+  }, [leads, filterCanal, filterStatus, filterSdr, search, datePreset, dateFrom, dateTo]);
+
+  const sortedForTable = useMemo(() => sortLeads(filtered, sortField, sortDir), [filtered, sortField, sortDir]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir(field === 'empresa' || field === 'canal' ? 'asc' : 'desc');
+    }
+  };
+
+  const SortIcon: React.FC<{ field: SortField }> = ({ field }) => {
+    if (sortField !== field) return <ChevronDown size={12} className="text-[var(--color-v4-text-muted)]/40" />;
+    return sortDir === 'asc'
+      ? <ChevronUp size={12} className="text-[var(--color-v4-red)]" />
+      : <ChevronDown size={12} className="text-[var(--color-v4-red)]" />;
+  };
 
   const handleLeadDragEnd = async (result: DropResult) => {
     if (!result.destination) return;
@@ -58,23 +109,18 @@ export const LeadsView: React.FC = () => {
     const lead = leads.find(l => l.id === leadId);
     if (!lead || lead.status === newStatus) return;
 
-    // Mover para reuniao_marcada → abre modal de agendar (se nao tem reuniao ativa)
     if (newStatus === 'reuniao_marcada') {
       const hasActive = reunioes.find(r => r.lead_id === lead.id && !r.realizada);
-      if (hasActive && lead.status === 'reuniao_marcada') {
-        return; // Ja esta em reuniao_marcada com reuniao ativa, nao faz nada
-      }
+      if (hasActive && lead.status === 'reuniao_marcada') return;
       setAgendarLead(lead);
-      return; // Nao move ate confirmar no modal
+      return;
     }
 
-    // Mover para reuniao_realizada → abre modal de confirmar reuniao
     if (newStatus === 'reuniao_realizada') {
       const leadReuniao = reunioes.find(r => r.lead_id === lead.id && !r.realizada);
       if (leadReuniao) {
         setConfirmarLead({ lead, reuniao: leadReuniao });
       } else {
-        // Nao tem reuniao agendada, nao pode mover
         alert('Este lead não tem reunião agendada. Agende uma reunião primeiro.');
       }
       return;
@@ -126,7 +172,7 @@ export const LeadsView: React.FC = () => {
       kommo_id: agendarLead.kommo_id || undefined,
       data_agendamento: new Date().toISOString().split('T')[0],
       data_reuniao: pendingAgendar.iso,
-    } as any, true); // replaceExisting = true
+    } as any, true);
     setShowReplaceConfirm(false);
     setPendingAgendar(null);
     setAgendarLead(null);
@@ -141,6 +187,12 @@ export const LeadsView: React.FC = () => {
       closer_confirmado_id: closerConfirmadoId,
     });
     setConfirmarLead(null);
+  };
+
+  const handleDateChange = (preset: DatePreset, from?: string, to?: string) => {
+    setDatePreset(preset);
+    setDateFrom(from || '');
+    setDateTo(to || '');
   };
 
   return (
@@ -159,26 +211,36 @@ export const LeadsView: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-v4-text-muted)]" />
           <input type="text" placeholder="Buscar empresa ou contato..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]" />
         </div>
-        <select value={filterCanal} onChange={e => setFilterCanal(e.target.value as any)} className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
+        <select value={filterCanal} onChange={e => setFilterCanal(e.target.value as any)}
+          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterCanal ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
           <option value="">Todos os Canais</option>
           {Object.entries(CANAL_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         {view === 'table' && (
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)} className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)}
+            className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterStatus ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
             <option value="">Todos os Status</option>
             {Object.entries(LEAD_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
         )}
-        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)} className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
+        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)}
+          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterSdr ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
           <option value="">Todos os SDRs</option>
           {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        <DateFilter value={datePreset} customFrom={dateFrom} customTo={dateTo} onChange={handleDateChange} />
+        {activeFilterCount > 0 && (
+          <button onClick={() => { setFilterCanal(''); setFilterStatus(''); setFilterSdr(''); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); }}
+            className="px-2.5 py-2 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)] transition-colors">
+            Limpar filtros ({activeFilterCount})
+          </button>
+        )}
       </div>
 
       {/* KANBAN VIEW */}
@@ -204,7 +266,7 @@ export const LeadsView: React.FC = () => {
                             snapshot.isDraggingOver && "bg-[var(--color-v4-surface)] border-[var(--color-v4-border-strong)]"
                           )}>
                           {stageLeads.slice(0, 50).map((lead, index) => (
-                            <Draggable draggableId={lead.id} index={index}>
+                            <Draggable draggableId={lead.id} index={index} key={lead.id}>
                               {(provided, snapshot) => (
                                 <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
                                   onClick={() => setSelectedLead(lead)}
@@ -249,16 +311,25 @@ export const LeadsView: React.FC = () => {
           <table className="w-full text-sm">
             <thead className="bg-[var(--color-v4-card)] sticky top-0">
               <tr className="text-left text-[var(--color-v4-text-muted)]">
-                <th className="px-4 py-3 font-medium">Empresa</th>
+                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleSort('empresa')}>
+                  <span className="flex items-center gap-1">Empresa <SortIcon field="empresa" /></span>
+                </th>
                 <th className="px-4 py-3 font-medium">Contato</th>
-                <th className="px-4 py-3 font-medium">Canal</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleSort('canal')}>
+                  <span className="flex items-center gap-1">Canal <SortIcon field="canal" /></span>
+                </th>
+                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleSort('status')}>
+                  <span className="flex items-center gap-1">Status <SortIcon field="status" /></span>
+                </th>
                 <th className="px-4 py-3 font-medium">SDR</th>
+                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleSort('created_at')}>
+                  <span className="flex items-center gap-1">Criado <SortIcon field="created_at" /></span>
+                </th>
                 <th className="px-4 py-3 font-medium">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, 100).map(lead => (
+              {sortedForTable.slice(0, 100).map(lead => (
                 <tr key={lead.id} onClick={() => setSelectedLead(lead)}
                   className="border-t border-[var(--color-v4-border)] hover:bg-[var(--color-v4-card-hover)] cursor-pointer transition-colors">
                   <td className="px-4 py-3">
@@ -274,6 +345,9 @@ export const LeadsView: React.FC = () => {
                   <td className="px-4 py-3"><span className="text-xs px-2 py-1 rounded bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)]">{CANAL_LABELS[lead.canal]}</span></td>
                   <td className="px-4 py-3"><span className={cn("text-xs px-2 py-1 rounded", STATUS_COLORS[lead.status])}>{LEAD_STATUS_LABELS[lead.status]}</span></td>
                   <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{lead.sdr?.name?.split(' ')[0] || '—'}</td>
+                  <td className="px-4 py-3 text-xs text-[var(--color-v4-text-muted)]">
+                    {new Date(lead.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                  </td>
                   <td className="px-4 py-3">
                     {['sem_contato', 'em_follow'].includes(lead.status) && (
                       <button onClick={e => { e.stopPropagation(); setAgendarLead(lead); }}
@@ -284,7 +358,7 @@ export const LeadsView: React.FC = () => {
                   </td>
                 </tr>
               ))}
-              {filtered.length === 0 && <tr><td colSpan={6} className="px-4 py-12 text-center text-[var(--color-v4-text-muted)]">Nenhum lead encontrado</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-[var(--color-v4-text-muted)]">Nenhum lead encontrado</td></tr>}
             </tbody>
           </table>
         </div>

@@ -183,6 +183,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addLead = async (l: Partial<Lead>) => {
+    // Verificação de duplicata por empresa (case insensitive)
+    if (l.empresa) {
+      const nomeNorm = l.empresa.trim().toLowerCase();
+      const duplicata = leads.find(existing => existing.empresa.trim().toLowerCase() === nomeNorm);
+      if (duplicata) {
+        toast.error(`Lead "${l.empresa}" já existe no sistema!`, { duration: 4000, icon: '⚠️' });
+        return null;
+      }
+    }
+
     const { data, error } = await supabase.from('leads').insert(l).select('*, sdr:team_members!sdr_id(*)').single();
     if (error) { toast.error(error.message); return null; }
     if (data) {

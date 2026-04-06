@@ -39,6 +39,7 @@ export const EquipeView: React.FC = () => {
               <option value="sdr">SDR</option>
               <option value="closer">Closer</option>
               <option value="gestor">Gestor</option>
+              <option value="financeiro">Financeiro</option>
             </select>
             <button onClick={handleAdd} disabled={!form.name || !form.email} className="px-4 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 text-white text-sm">Adicionar</button>
           </div>
@@ -59,6 +60,7 @@ export const EquipeView: React.FC = () => {
               <span className={`text-xs px-2 py-1 rounded ${
                 member.role === 'gestor' ? 'bg-purple-500/20 text-purple-400' :
                 member.role === 'closer' ? 'bg-blue-500/20 text-blue-400' :
+                member.role === 'financeiro' ? 'bg-orange-500/20 text-orange-400' :
                 'bg-green-500/20 text-green-400'
               }`}>
                 {ROLE_LABELS[member.role]}

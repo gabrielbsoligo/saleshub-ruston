@@ -1,13 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
-import { DEAL_STATUS_LABELS, TEMPERATURA_LABELS, type Deal, type DealStatus } from "../types";
+import { DEAL_STATUS_LABELS, TEMPERATURA_LABELS, type Deal, type DealStatus, type Temperatura } from "../types";
 import { cn } from "./Layout";
-import { Plus, ExternalLink, Thermometer, Search } from "lucide-react";
+import { Plus, ExternalLink, Search, ArrowUpDown } from "lucide-react";
 import { DealDrawer } from "./DealDrawer";
 import { FeedbackDrawer } from "./FeedbackDrawer";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { validateGanho, validateContratoNaRua } from "../lib/ganhoValidation";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
+import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
 
 // Nova ordem do kanban
 const PIPELINE_STAGES: DealStatus[] = ['dar_feedback', 'follow_longo', 'negociacao', 'contrato_na_rua', 'contrato_assinado', 'perdido'];
@@ -27,6 +28,33 @@ const TEMP_COLORS: Record<string, string> = {
   frio: 'text-blue-400 bg-blue-400/10',
 };
 
+type SortOption = 'default' | 'valor_mrr_desc' | 'valor_mrr_asc' | 'created_at_desc' | 'created_at_asc' | 'temperatura';
+
+const SORT_LABELS: Record<SortOption, string> = {
+  default: 'Padrão',
+  valor_mrr_desc: 'Maior MRR',
+  valor_mrr_asc: 'Menor MRR',
+  created_at_desc: 'Mais recente',
+  created_at_asc: 'Mais antigo',
+  temperatura: 'Temperatura',
+};
+
+const TEMP_ORDER: Record<string, number> = { quente: 0, morno: 1, frio: 2 };
+
+function sortDeals(deals: Deal[], sort: SortOption): Deal[] {
+  if (sort === 'default') return deals;
+  return [...deals].sort((a, b) => {
+    switch (sort) {
+      case 'valor_mrr_desc': return (b.valor_recorrente || b.valor_mrr || 0) - (a.valor_recorrente || a.valor_mrr || 0);
+      case 'valor_mrr_asc': return (a.valor_recorrente || a.valor_mrr || 0) - (b.valor_recorrente || b.valor_mrr || 0);
+      case 'created_at_desc': return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      case 'created_at_asc': return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      case 'temperatura': return (TEMP_ORDER[a.temperatura || ''] ?? 3) - (TEMP_ORDER[b.temperatura || ''] ?? 3);
+      default: return 0;
+    }
+  });
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 }).format(value);
 }
@@ -36,18 +64,32 @@ export const PipelineView: React.FC = () => {
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [filterCloser, setFilterCloser] = useState('');
+  const [filterSdr, setFilterSdr] = useState('');
+  const [filterTemp, setFilterTemp] = useState<Temperatura | ''>('');
   const [search, setSearch] = useState('');
+  const [datePreset, setDatePreset] = useState<DatePreset>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sortBy, setSortBy] = useState<SortOption>('default');
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
-  // Deal que precisa completar dados para mover (abre FeedbackDrawer pra completar)
   const [dealToComplete, setDealToComplete] = useState<{ deal: Deal; targetStatus: DealStatus } | null>(null);
 
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
+  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
-  const filteredDeals = deals.filter(d => {
-    if (filterCloser && d.closer_id !== filterCloser) return false;
-    if (search && !d.empresa.toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const activeFilterCount = [filterCloser, filterSdr, filterTemp, search, datePreset !== 'all' ? 'x' : ''].filter(Boolean).length;
+
+  const filteredDeals = useMemo(() => {
+    let result = deals.filter(d => {
+      if (filterCloser && d.closer_id !== filterCloser) return false;
+      if (filterSdr && d.sdr_id !== filterSdr) return false;
+      if (filterTemp && d.temperatura !== filterTemp) return false;
+      if (search && !d.empresa.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    });
+    result = filterByDate(result, d => d.created_at, datePreset, dateFrom, dateTo);
+    return sortDeals(result, sortBy);
+  }, [deals, filterCloser, filterSdr, filterTemp, search, datePreset, dateFrom, dateTo, sortBy]);
 
   const handleDragEnd = async (result: DropResult) => {
     if (!result.destination) return;
@@ -68,7 +110,6 @@ export const PipelineView: React.FC = () => {
         valor_recorrente: deal.valor_recorrente || 0,
       });
       if (!validation.valid) {
-        // Abre o deal pra completar, mostrando o que falta
         setMissingFields(validation.missing);
         setDealToComplete({ deal, targetStatus: newStatus });
         return;
@@ -108,11 +149,16 @@ export const PipelineView: React.FC = () => {
 
   const handleMissingClose = () => {
     setMissingFields(null);
-    // Abre o drawer do deal pra completar
     if (dealToComplete) {
       setSelectedDeal(dealToComplete.deal);
       setDealToComplete(null);
     }
+  };
+
+  const handleDateChange = (preset: DatePreset, from?: string, to?: string) => {
+    setDatePreset(preset);
+    setDateFrom(from || '');
+    setDateTo(to || '');
   };
 
   return (
@@ -125,17 +171,43 @@ export const PipelineView: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex gap-3 mb-4">
-        <div className="relative flex-1 max-w-xs">
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
+        <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-v4-text-muted)]" />
           <input type="text" placeholder="Buscar empresa..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]" />
         </div>
         <select value={filterCloser} onChange={e => setFilterCloser(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
+          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterCloser ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
           <option value="">Todos os Closers</option>
           {closers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)}
+          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterSdr ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
+          <option value="">Todos os SDRs</option>
+          {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select value={filterTemp} onChange={e => setFilterTemp(e.target.value as any)}
+          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterTemp ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
+          <option value="">Temperatura</option>
+          <option value="quente">🔥 Quente</option>
+          <option value="morno">🌤 Morno</option>
+          <option value="frio">❄️ Frio</option>
+        </select>
+        <DateFilter value={datePreset} customFrom={dateFrom} customTo={dateTo} onChange={handleDateChange} />
+        <div className="flex items-center gap-1.5">
+          <ArrowUpDown size={14} className="text-[var(--color-v4-text-muted)]" />
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as SortOption)}
+            className={`px-3 py-2 rounded-lg border text-sm transition-colors ${sortBy !== 'default' ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
+            {Object.entries(SORT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </div>
+        {activeFilterCount > 0 && (
+          <button onClick={() => { setFilterCloser(''); setFilterSdr(''); setFilterTemp(''); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); setSortBy('default'); }}
+            className="px-2.5 py-2 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)] transition-colors">
+            Limpar filtros ({activeFilterCount})
+          </button>
+        )}
       </div>
 
       <DragDropContext onDragEnd={handleDragEnd}>
@@ -167,7 +239,7 @@ export const PipelineView: React.FC = () => {
                           snapshot.isDraggingOver && "bg-[var(--color-v4-surface)] border-[var(--color-v4-border-strong)]"
                         )}>
                         {stageDeals.map((deal, index) => (
-                          <Draggable draggableId={deal.id} index={index}>
+                          <Draggable draggableId={deal.id} index={index} key={deal.id}>
                             {(provided, snapshot) => (
                               <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}
                                 onClick={() => setSelectedDeal(deal)}

@@ -16,7 +16,9 @@ import toast from "react-hot-toast";
 
 const MainApp: React.FC = () => {
   const { currentUser, isLoadingAuth, addLead } = useAppStore();
-  const [currentView, setCurrentView] = useState<View>("dashboard");
+  const [currentView, setCurrentView] = useState<View>(
+    currentUser?.role === 'financeiro' ? 'comissoes' : 'dashboard'
+  );
   const [importProcessed, setImportProcessed] = useState(false);
 
   // Auto-import from mktlab via URL parameter

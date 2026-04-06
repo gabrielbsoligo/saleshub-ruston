@@ -98,6 +98,9 @@ Deno.serve(async (req) => {
         if (sdr?.email) attendees.push({ email: sdr.email })
       }
 
+      // Gestor (always invited)
+      attendees.push({ email: 'ruston@v4company.com' })
+
       // Lead email
       if (data.lead_email) attendees.push({ email: data.lead_email })
 

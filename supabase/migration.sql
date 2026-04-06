@@ -8,7 +8,7 @@ CREATE TABLE team_members (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   email TEXT UNIQUE NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('sdr', 'closer', 'gestor')),
+  role TEXT NOT NULL CHECK (role IN ('sdr', 'closer', 'gestor', 'financeiro')),
   active BOOLEAN DEFAULT true,
   avatar_url TEXT,
   auth_user_id UUID REFERENCES auth.users(id),
@@ -198,10 +198,14 @@ RETURNS UUID AS $$
   SELECT id FROM team_members WHERE auth_user_id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- TEAM_MEMBERS: todos veem, só gestor edita
+-- TEAM_MEMBERS: todos veem, gestor edita, usuario pode linkar seu proprio auth_user_id no primeiro login
 CREATE POLICY "team_members_select" ON team_members FOR SELECT USING (true);
 CREATE POLICY "team_members_insert" ON team_members FOR INSERT WITH CHECK (get_user_role() = 'gestor');
-CREATE POLICY "team_members_update" ON team_members FOR UPDATE USING (get_user_role() = 'gestor');
+CREATE POLICY "tm_update" ON team_members FOR UPDATE USING (
+  get_user_role() = 'gestor'
+  OR id = get_member_id()
+  OR (auth_user_id IS NULL AND email = auth.jwt() ->> 'email')
+);
 CREATE POLICY "team_members_delete" ON team_members FOR DELETE USING (get_user_role() = 'gestor');
 
 -- LEADS: gestor vê tudo, SDR vê os próprios
@@ -219,7 +223,7 @@ CREATE POLICY "deals_select" ON deals FOR SELECT USING (
 );
 CREATE POLICY "deals_insert" ON deals FOR INSERT WITH CHECK (true);
 CREATE POLICY "deals_update" ON deals FOR UPDATE USING (
-  get_user_role() = 'gestor' OR closer_id = get_member_id()
+  get_user_role() = 'gestor' OR closer_id = get_member_id() OR sdr_id = get_member_id()
 );
 
 -- REUNIOES: gestor vê tudo, SDR vê as próprias
@@ -228,7 +232,7 @@ CREATE POLICY "reunioes_select" ON reunioes FOR SELECT USING (
 );
 CREATE POLICY "reunioes_insert" ON reunioes FOR INSERT WITH CHECK (true);
 CREATE POLICY "reunioes_update" ON reunioes FOR UPDATE USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id()
+  get_user_role() = 'gestor' OR sdr_id = get_member_id() OR closer_id = get_member_id() OR closer_confirmado_id = get_member_id()
 );
 
 -- METAS: gestor vê/edita tudo, membro vê as próprias

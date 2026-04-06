@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
 import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead } from "../types";
-import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle } from "lucide-react";
+import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
+import { createCalendarEvent } from "../lib/googleCalendar";
+import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import type { Reuniao } from "../types";
@@ -150,6 +152,31 @@ export const ReunioesView: React.FC = () => {
     return reunioes.some(other => other.id !== r.id && other.lead_id === r.lead_id && new Date(other.created_at) > new Date(r.created_at));
   };
 
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+
+  const handleRetryInvite = async (r: Reuniao) => {
+    if (retryingId) return;
+    setRetryingId(r.id);
+    try {
+      const lead = r.lead_id ? leads.find(l => l.id === r.lead_id) : null;
+      const result = await createCalendarEvent({
+        empresa: r.empresa,
+        data_reuniao: r.data_reuniao,
+        closer_id: r.closer_id || undefined,
+        sdr_id: r.sdr_id || undefined,
+        lead_id: r.lead_id || undefined,
+        reuniao_id: r.id,
+        lead_email: lead?.email || undefined,
+      });
+      if (result) {
+        await updateReuniao(r.id, { calendar_event_id: result.event_id, meet_link: result.meet_link } as any);
+        toast.success(`Invite enviado para ${r.empresa}!`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao criar invite');
+    } finally { setRetryingId(null); }
+  };
+
   const ReuniaoCard: React.FC<{ r: Reuniao; showActions?: boolean; showReagendar?: boolean }> = ({ r, showActions = false, showReagendar = false }) => {
     const { faturamento, nome_contato } = getLeadInfo(r);
     const rescheduled = showReagendar && isRescheduled(r);
@@ -175,11 +202,16 @@ export const ReunioesView: React.FC = () => {
           <span className="text-xs text-[var(--color-v4-text-muted)]">{r.sdr?.name?.split(' ')[0] || ''}</span>
           {r.closer && <span className="text-xs text-blue-400 flex items-center gap-1"><User size={10} />{r.closer.name.split(' ')[0]}</span>}
           {r.data_reuniao && <span className="text-xs text-white">{new Date(r.data_reuniao).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>}
-          {(r as any).meet_link && (
+          {(r as any).meet_link ? (
             <a href={(r as any).meet_link} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}
               className="px-2 py-1 rounded text-xs font-medium bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 flex items-center gap-1">
               <Video size={10} /> Meet
             </a>
+          ) : !r.realizada && (
+            <button onClick={(e) => { e.stopPropagation(); handleRetryInvite(r); }} disabled={retryingId === r.id}
+              className="px-2 py-1 rounded text-xs font-medium bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25 flex items-center gap-1 disabled:opacity-50">
+              <RefreshCw size={10} className={retryingId === r.id ? 'animate-spin' : ''} /> {retryingId === r.id ? '...' : 'Enviar Invite'}
+            </button>
           )}
           {showActions && !r.realizada && (
             <button onClick={() => setConfirmar(r)}

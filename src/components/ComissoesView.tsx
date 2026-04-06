@@ -34,6 +34,9 @@ interface ComissaoRegistro {
 export const ComissoesView: React.FC = () => {
   const { deals, members, comissoes: comissoesConfig, currentUser } = useAppStore();
   const isGestor = currentUser?.role === 'gestor';
+  const isFinanceiro = currentUser?.role === 'financeiro';
+  const canEdit = isGestor;
+  const canViewAll = isGestor || isFinanceiro;
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -215,7 +218,7 @@ export const ComissoesView: React.FC = () => {
         <div className="flex items-center gap-3">
           <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
             className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm" />
-          {isGestor && (
+          {canEdit && (
             <button onClick={addManual}
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs">
               + Manual
@@ -263,6 +266,27 @@ export const ComissoesView: React.FC = () => {
           </div>
         </div>
         <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-3">Liberação: 30 dias após 1º pagamento. Registros editáveis pelo gestor.</p>
+        <div className="border-t border-[var(--color-v4-border)] mt-4 pt-3">
+          <h4 className="text-[10px] text-[var(--color-v4-text-muted)] uppercase mb-2">Monetização</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-[10px] text-[var(--color-v4-text-muted)] uppercase mb-2">EE {'>'} Assessoria</p>
+              <div className="grid grid-cols-4 gap-1 text-xs">
+                <span></span><span className="text-center text-[var(--color-v4-text-muted)]">Account</span><span className="text-center text-[var(--color-v4-text-muted)]">GT</span><span className="text-center text-[var(--color-v4-text-muted)]">Designer</span>
+                <span className="text-white">MRR</span><span className="text-center text-white">20%</span><span className="text-center text-white">5%</span><span className="text-center text-white">5%</span>
+                <span className="text-white">OT</span><span className="text-center text-white">10%</span><span className="text-center text-white">2.5%</span><span className="text-center text-white">2.5%</span>
+              </div>
+            </div>
+            <div>
+              <p className="text-[10px] text-[var(--color-v4-text-muted)] uppercase mb-2">Upsell</p>
+              <div className="grid grid-cols-3 gap-1 text-xs">
+                <span></span><span className="text-center text-[var(--color-v4-text-muted)]">Levantou</span><span className="text-center text-[var(--color-v4-text-muted)]">Fechou</span>
+                <span className="text-white">MRR</span><span className="text-center text-white">10%</span><span className="text-center text-white">20%</span>
+                <span className="text-white">OT</span><span className="text-center text-white">5%</span><span className="text-center text-white">10%</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Por membro */}
@@ -326,7 +350,7 @@ export const ComissoesView: React.FC = () => {
                                 </td>
                                 <td className="px-3 py-2"><input className={inputClass + " w-16"} value={editForm.role_comissao || ''} onChange={e => setEditForm(p => ({ ...p, role_comissao: e.target.value }))} /></td>
                                 <td className="px-3 py-2"><select className={inputClass} value={editForm.tipo} onChange={e => setEditForm(p => ({ ...p, tipo: e.target.value as any }))}><option value="mrr">MRR</option><option value="ot">OT</option></select></td>
-                                <td className="px-3 py-2"><select className={inputClass} value={editForm.categoria} onChange={e => setEditForm(p => ({ ...p, categoria: e.target.value }))}><option value="inbound">Inbound</option><option value="outbound">Outbound</option></select></td>
+                                <td className="px-3 py-2"><select className={inputClass} value={editForm.categoria} onChange={e => setEditForm(p => ({ ...p, categoria: e.target.value }))}><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="upsell_mrr">Upsell MRR</option><option value="upsell_ot">Upsell OT</option><option value="ee_assessoria">EE Assessoria</option><option value="ee_ot">EE OT</option></select></td>
                                 <td className="px-3 py-2"><input type="number" className={inputClass + " w-20"} value={editForm.valor_base} onChange={e => { const v = Number(e.target.value); setEditForm(p => ({ ...p, valor_base: v, valor_comissao: v * (p.percentual || 0) })); }} /></td>
                                 <td className="px-3 py-2"><input type="number" step="0.01" className={inputClass + " w-14"} value={editForm.percentual} onChange={e => { const pct = Number(e.target.value); setEditForm(p => ({ ...p, percentual: pct, valor_comissao: (p.valor_base || 0) * pct })); }} /></td>
                                 <td className="px-3 py-2"><input type="number" className={inputClass + " w-20"} value={editForm.valor_comissao} onChange={e => setEditForm(p => ({ ...p, valor_comissao: Number(e.target.value) }))} /></td>
@@ -343,17 +367,17 @@ export const ComissoesView: React.FC = () => {
 
                           return (
                             <tr key={line.id} className={`border-t border-[var(--color-v4-border)] ${line.editado_manualmente ? 'bg-yellow-500/5' : ''}`}>
-                              <td className="px-3 py-2 text-white">{line.empresa} {line.editado_manualmente && <span className="text-[8px] text-yellow-400">editado</span>}</td>
+                              <td className="px-3 py-2 text-white">{line.empresa} {line.origem === 'monetizacao' && <span className="text-[8px] text-purple-400 ml-1">monet.</span>}{line.editado_manualmente && line.origem !== 'monetizacao' && <span className="text-[8px] text-yellow-400 ml-1">editado</span>}</td>
                               <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{line.role_comissao}</td>
                               <td className="px-3 py-2 text-center"><span className={`px-1.5 py-0.5 rounded ${line.tipo === 'mrr' ? 'bg-green-500/15 text-green-400' : 'bg-blue-500/15 text-blue-400'}`}>{line.tipo.toUpperCase()}</span></td>
-                              <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{line.categoria}</td>
+                              <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{{inbound:'Inbound',outbound:'Outbound',upsell_mrr:'Upsell',upsell_ot:'Upsell',ee_assessoria:'EE Assess.',ee_ot:'EE OT'}[line.categoria] || line.categoria}</td>
                               <td className="px-3 py-2 text-center text-white">{fmt(line.valor_base)}</td>
                               <td className="px-3 py-2 text-center text-white">{(line.percentual * 100).toFixed(0)}%</td>
                               <td className="px-3 py-2 text-center font-bold text-white">{fmt(line.valor_comissao)}</td>
                               <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{line.data_pgto ? new Date(line.data_pgto + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</td>
                               <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{line.data_liberacao ? new Date(line.data_liberacao + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}</td>
                               <td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded text-[10px] font-medium ${liberada ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{liberada ? 'Liberado' : 'Pendente'}</span></td>
-                              {isGestor && (
+                              {canEdit && (
                                 <td className="px-3 py-2 flex gap-1">
                                   <button onClick={() => startEdit(line)} className="text-[var(--color-v4-text-muted)] hover:text-white"><Edit2 size={12} /></button>
                                   <button onClick={() => deleteRegistro(line.id)} className="text-[var(--color-v4-text-muted)] hover:text-red-400"><X size={12} /></button>
