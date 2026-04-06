@@ -111,6 +111,7 @@ export interface Lead {
   kommo_id?: string;
   kommo_link?: string;
   mktlab_link?: string;
+  mktlab_id?: string;
   status: LeadStatus;
   data_cadastro?: string;
   mes_referencia?: string;

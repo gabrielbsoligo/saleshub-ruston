@@ -193,11 +193,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addLead = async (l: Partial<Lead>) => {
-    // Verificação de duplicata por empresa (case insensitive)
+    // Verificação de duplicata SERVER-SIDE (query no banco, não depende do array em memória)
+    // 1. Checa mktlab_link (identificador único mais confiável)
+    if (l.mktlab_link) {
+      const { data: dupLink } = await supabase
+        .from('leads')
+        .select('id, empresa')
+        .eq('mktlab_link', l.mktlab_link)
+        .limit(1)
+        .maybeSingle();
+      if (dupLink) {
+        toast.error(`Lead "${dupLink.empresa}" já importado do MKTLAB!`, { duration: 5000, icon: '⚠️' });
+        return null;
+      }
+    }
+    // 2. Checa mktlab_id (caso link mude mas ID seja o mesmo)
+    if (l.mktlab_id) {
+      const { data: dupId } = await supabase
+        .from('leads')
+        .select('id, empresa')
+        .eq('mktlab_id', l.mktlab_id)
+        .limit(1)
+        .maybeSingle();
+      if (dupId) {
+        toast.error(`Lead "${dupId.empresa}" já existe (MKTLAB ID: ${l.mktlab_id})!`, { duration: 5000, icon: '⚠️' });
+        return null;
+      }
+    }
+    // 3. Checa empresa por nome (case insensitive) — fallback no banco
     if (l.empresa) {
       const nomeNorm = l.empresa.trim().toLowerCase();
-      const duplicata = leads.find(existing => existing.empresa.trim().toLowerCase() === nomeNorm);
-      if (duplicata) {
+      const { data: dupEmpresa } = await supabase
+        .from('leads')
+        .select('id, empresa')
+        .ilike('empresa', nomeNorm)
+        .limit(1)
+        .maybeSingle();
+      if (dupEmpresa) {
         toast.error(`Lead "${l.empresa}" já existe no sistema!`, { duration: 4000, icon: '⚠️' });
         return null;
       }

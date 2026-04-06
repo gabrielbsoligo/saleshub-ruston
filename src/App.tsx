@@ -63,6 +63,7 @@ const MainApp: React.FC = () => {
         status: 'sem_contato',
         valor_lead: data.valor_lead ? Number(data.valor_lead) : null,
         mktlab_link: data.mktlab_link || null,
+        mktlab_id: data.mktlab_id || null,
         sdr_id: data.auto_assign_sdr ? currentUser.id : null,
       };
 

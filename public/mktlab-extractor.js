@@ -64,6 +64,11 @@
 
   data.telefone = data.telefone.replace(/[^\d+() -]/g, '').trim();
 
+  // Extrair ID do MKTLAB da URL (ex: mktlab.app/lead/12345 → "12345")
+  var mktlab_id = '';
+  var urlMatch = data.mktlab_link.match(/\/lead[s]?\/([a-zA-Z0-9-]+)/);
+  if (urlMatch) mktlab_id = urlMatch[1];
+
   var payload = {
     empresa: data.empresa,
     nome_contato: data.nome_contato,
@@ -76,6 +81,7 @@
     canal: data.canal,
     fonte: data.fonte,
     mktlab_link: data.mktlab_link,
+    mktlab_id: mktlab_id,
     auto_assign_sdr: true,
   };
 

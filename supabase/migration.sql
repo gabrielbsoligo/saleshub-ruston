@@ -360,3 +360,13 @@ ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS confirmado_por UUID REF
 DROP POLICY IF EXISTS comreg_write ON comissoes_registros;
 CREATE POLICY comreg_write ON comissoes_registros FOR ALL
   USING (get_user_role() IN ('gestor', 'financeiro'));
+
+-- =============================================
+-- MKTLAB: ID + unique indexes para prevenir duplicatas
+-- =============================================
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS mktlab_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_id ON leads(mktlab_id) WHERE mktlab_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_link ON leads(mktlab_link) WHERE mktlab_link IS NOT NULL;
+-- Backfill mktlab_id from link
+UPDATE leads SET mktlab_id = substring(mktlab_link from '/leads/([a-zA-Z0-9-]+)$')
+  WHERE mktlab_link IS NOT NULL AND mktlab_id IS NULL;
