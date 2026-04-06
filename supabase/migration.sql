@@ -303,3 +303,60 @@ SELECT
 FROM deals d
 LEFT JOIN team_members tm ON d.closer_id = tm.id
 GROUP BY d.closer_id, tm.name, DATE_TRUNC('month', d.data_call);
+
+-- =============================================
+-- AUTO-LINK: Vincula auth.users ao team_members por email
+-- Roda automaticamente no INSERT (signup) e UPDATE (confirmação email)
+-- SECURITY DEFINER = bypassa RLS, nunca falha silenciosamente
+-- =============================================
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  UPDATE public.team_members
+  SET auth_user_id = NEW.id
+  WHERE email = NEW.email AND auth_user_id IS NULL;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+CREATE OR REPLACE FUNCTION public.handle_user_updated()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.email IS NOT NULL THEN
+    UPDATE public.team_members
+    SET auth_user_id = NEW.id
+    WHERE email = NEW.email AND auth_user_id IS NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_updated ON auth.users;
+CREATE TRIGGER on_auth_user_updated
+  AFTER UPDATE OF email_confirmed_at ON auth.users
+  FOR EACH ROW
+  WHEN (OLD.email_confirmed_at IS NULL AND NEW.email_confirmed_at IS NOT NULL)
+  EXECUTE FUNCTION public.handle_user_updated();
+
+-- =============================================
+-- COMISSÕES: Novo fluxo de confirmação de pagamento
+-- Status: aguardando_pgto → liberada → paga
+-- =============================================
+
+ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS status_comissao TEXT DEFAULT 'aguardando_pgto'
+  CHECK (status_comissao IN ('aguardando_pgto', 'liberada', 'paga'));
+ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS data_pgto_real DATE;
+ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS valor_recebido NUMERIC;
+ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS data_pgto_vendedor DATE;
+ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS confirmado_por UUID REFERENCES team_members(id);
+
+-- Financeiro pode confirmar pagamentos (write access)
+DROP POLICY IF EXISTS comreg_write ON comissoes_registros;
+CREATE POLICY comreg_write ON comissoes_registros FOR ALL
+  USING (get_user_role() IN ('gestor', 'financeiro'));

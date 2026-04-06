@@ -83,6 +83,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
+        // 1) Tenta achar por auth_user_id (já vinculado)
         const { data: member } = await supabase
           .from('team_members')
           .select('*')
@@ -92,6 +93,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (member) {
           setCurrentUser(member);
         } else {
+          // 2) Busca por email (primeiro login — trigger do banco já deveria ter vinculado)
           const { data: memberByEmail } = await supabase
             .from('team_members')
             .select('*')
@@ -99,10 +101,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             .single();
 
           if (memberByEmail) {
-            await supabase
-              .from('team_members')
-              .update({ auth_user_id: session.user.id })
-              .eq('id', memberByEmail.id);
+            if (!memberByEmail.auth_user_id) {
+              // Trigger não rodou ainda — tenta vincular pelo frontend como fallback
+              const { error: updateError } = await supabase
+                .from('team_members')
+                .update({ auth_user_id: session.user.id })
+                .eq('id', memberByEmail.id);
+
+              if (updateError) {
+                console.warn('Auto-link fallback failed (trigger should handle):', updateError.message);
+                // Mesmo falhando, seta o user local pra não bloquear a UI
+              }
+            }
             setCurrentUser({ ...memberByEmail, auth_user_id: session.user.id });
           }
         }
