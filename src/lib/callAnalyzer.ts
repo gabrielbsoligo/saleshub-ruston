@@ -1,23 +1,22 @@
 // =============================================
-// CallAnalyzer - Analisa transcrições de calls de vendas com Gemini
+// CallAnalyzer - Analisa transcrições de calls de vendas com Claude (Anthropic)
+// Fallback: Gemini se Anthropic não configurada
 // =============================================
 
-import { GoogleGenAI, Type } from '@google/genai';
 import {
   PRODUTOS_MRR,
   PRODUTOS_OT,
   TIER_LABELS,
   type CallAnalysisResult,
-  type DealTier,
-  type Temperatura,
 } from '../types';
 
-// API Key injetada pelo Vite (vite.config.ts define process.env.GEMINI_API_KEY)
+const ANTHROPIC_API_KEY = (process.env as any).ANTHROPIC_API_KEY || '';
 const GEMINI_API_KEY = (process.env as any).GEMINI_API_KEY || '';
 
 const SYSTEM_INSTRUCTION = `Voce e um analista especializado em calls de vendas da V4 Company, uma assessoria de marketing digital.
 Sua funcao e analisar transcricoes de reunioes de vendas e extrair dados estruturados para alimentar o CRM automaticamente.
-Responda SEMPRE em portugues brasileiro. Seja preciso e objetivo.`;
+Responda SEMPRE em portugues brasileiro. Seja preciso e objetivo.
+Retorne APENAS um JSON valido, sem texto adicional, sem markdown, sem code blocks.`;
 
 function buildPrompt(transcript: string): string {
   const produtosMrrList = PRODUTOS_MRR.join(', ');
@@ -27,13 +26,14 @@ function buildPrompt(transcript: string): string {
     .join('\n');
 
   return `Analise a seguinte transcricao de uma call de vendas e extraia os dados estruturados.
+Retorne APENAS um JSON valido com os campos especificados.
 
 ## Regras de Classificacao
 
 ### Temperatura
-- **quente**: Proposta foi formalizada, cliente demonstrou alta intencao de fechar, pediu contrato ou proximos passos concretos
-- **morno**: Cliente demonstrou interesse mas tem objecoes, marcou segunda call, pediu para pensar
-- **frio**: Cliente deu negativa, nao demonstrou interesse, nao quer prosseguir
+- "quente": Proposta foi formalizada, cliente demonstrou alta intencao de fechar, pediu contrato ou proximos passos concretos
+- "morno": Cliente demonstrou interesse mas tem objecoes, marcou segunda call, pediu para pensar
+- "frio": Cliente deu negativa, nao demonstrou interesse, nao quer prosseguir
 
 ### BANT Score (1-4)
 - 1: Apenas Budget (orcamento) foi discutido
@@ -52,7 +52,7 @@ IMPORTANTE: So inclua produtos que foram EXPLICITAMENTE discutidos na call. Use 
 
 ### Valores (OT e MRR)
 - valor_escopo (OT): e o VALOR TOTAL do projeto one-time. Se o closer mencionar parcelas (ex: "12x de R$3.746"), calcule o total (ex: 12 x 3746 = R$44.952). Nunca use o valor da parcela como valor do escopo.
-- valor_recorrente (MRR): e o valor MENSAL recorrente que o cliente pagara apos o projeto inicial. Ex: "R$4.900 por mes".
+- valor_recorrente (MRR): e o valor MENSAL recorrente que o cliente pagara apos o projeto inicial.
 
 ### Indicacoes / Recomendacoes
 Extraia nomes de pessoas/empresas que o lead INDICOU ou RECOMENDOU durante a conversa. Inclua telefone se mencionado.
@@ -60,101 +60,73 @@ Extraia nomes de pessoas/empresas que o lead INDICOU ou RECOMENDOU durante a con
 ### Proxima Reuniao
 Se foi combinada uma proxima reuniao, extraia data e horario. Se nao foi mencionada, retorne null.
 
+## Formato do JSON de resposta
+{
+  "temperatura": "quente" | "morno" | "frio",
+  "valor_escopo": number,
+  "valor_recorrente": number,
+  "produtos_ot": ["nome exato do produto"],
+  "produtos_mrr": ["nome exato do produto"],
+  "bant": number (1-4),
+  "tier": "tiny" | "small" | "medium" | "large" | "enterprise",
+  "resumo_executivo": "string max 200 palavras em pt-br",
+  "indicacoes": [{"nome": "string", "empresa": "string", "telefone": "string ou undefined"}],
+  "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"} | null
+}
+
 ## Transcricao da Call
 
 ${transcript}`;
 }
 
-const responseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    temperatura: {
-      type: Type.STRING,
-      enum: ['quente', 'morno', 'frio'],
-      description: 'Temperatura/qualificacao do lead',
+/**
+ * Analisa via Anthropic Claude API (chamada direta via fetch)
+ */
+async function analyzeWithClaude(transcript: string): Promise<CallAnalysisResult> {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
     },
-    valor_escopo: {
-      type: Type.NUMBER,
-      description: 'Valor total do escopo OT (one-time) em reais. 0 se nao mencionado.',
-    },
-    valor_recorrente: {
-      type: Type.NUMBER,
-      description: 'Valor recorrente mensal (MRR) em reais. 0 se nao mencionado.',
-    },
-    produtos_ot: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: 'Produtos one-time discutidos (usar nomes exatos da taxonomia)',
-    },
-    produtos_mrr: {
-      type: Type.ARRAY,
-      items: { type: Type.STRING },
-      description: 'Produtos recorrentes discutidos (usar nomes exatos da taxonomia)',
-    },
-    bant: {
-      type: Type.NUMBER,
-      description: 'BANT score de 1 a 4',
-    },
-    tier: {
-      type: Type.STRING,
-      enum: ['tiny', 'small', 'medium', 'large', 'enterprise'],
-      description: 'Tier do cliente baseado no faturamento mencionado',
-    },
-    resumo_executivo: {
-      type: Type.STRING,
-      description: 'Resumo executivo da call em portugues: pontos-chave, objecoes, proximos passos. Maximo 200 palavras.',
-    },
-    indicacoes: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          nome: { type: Type.STRING, description: 'Nome da pessoa indicada' },
-          empresa: { type: Type.STRING, description: 'Empresa da pessoa indicada' },
-          telefone: { type: Type.STRING, description: 'Telefone se mencionado' },
-        },
-        required: ['nome', 'empresa'],
-      },
-      description: 'Indicacoes/recomendacoes extraidas da conversa',
-    },
-    proxima_reuniao: {
-      type: Type.OBJECT,
-      properties: {
-        data: { type: Type.STRING, description: 'Data no formato YYYY-MM-DD' },
-        hora: { type: Type.STRING, description: 'Horario no formato HH:MM' },
-      },
-      required: ['data', 'hora'],
-      nullable: true,
-      description: 'Proxima reuniao combinada, ou null se nao mencionada',
-    },
-  },
-  required: [
-    'temperatura',
-    'valor_escopo',
-    'valor_recorrente',
-    'produtos_ot',
-    'produtos_mrr',
-    'bant',
-    'tier',
-    'resumo_executivo',
-    'indicacoes',
-    'proxima_reuniao',
-  ],
-};
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      system: SYSTEM_INSTRUCTION,
+      messages: [
+        { role: 'user', content: buildPrompt(transcript) },
+      ],
+      temperature: 0.2,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Claude API ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const text = data.content?.[0]?.text;
+  if (!text) throw new Error('Claude retornou resposta vazia');
+
+  // Extrair JSON da resposta (pode vir com markdown code block)
+  let jsonStr = text;
+  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonMatch) jsonStr = jsonMatch[1];
+  // Ou pode ter texto antes/depois do JSON
+  const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (braceMatch) jsonStr = braceMatch[0];
+
+  return JSON.parse(jsonStr.trim());
+}
 
 /**
- * Analisa a transcricao de uma call de vendas usando Google Gemini.
- * Retorna dados estruturados para preencher o deal automaticamente.
+ * Analisa via Google Gemini API (fallback)
  */
-export async function analyzeTranscript(transcript: string): Promise<CallAnalysisResult> {
-  if (!GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY nao configurada. Adicione no .env.local');
-  }
-
-  if (!transcript || transcript.trim().length < 50) {
-    throw new Error('Transcricao muito curta ou vazia para analise');
-  }
-
+async function analyzeWithGemini(transcript: string): Promise<CallAnalysisResult> {
+  const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
   const response = await ai.models.generateContent({
@@ -163,32 +135,56 @@ export async function analyzeTranscript(transcript: string): Promise<CallAnalysi
     config: {
       systemInstruction: SYSTEM_INSTRUCTION,
       responseMimeType: 'application/json',
-      responseSchema,
-      temperature: 0.2, // baixa temperatura para respostas mais consistentes
+      temperature: 0.2,
     },
   });
 
   const text = response.text;
-  if (!text) {
-    throw new Error('Gemini retornou resposta vazia');
+  if (!text) throw new Error('Gemini retornou resposta vazia');
+  return JSON.parse(text);
+}
+
+/**
+ * Analisa a transcricao de uma call de vendas.
+ * Usa Claude (Anthropic) como primario, Gemini como fallback.
+ */
+export async function analyzeTranscript(transcript: string): Promise<CallAnalysisResult> {
+  if (!ANTHROPIC_API_KEY && !GEMINI_API_KEY) {
+    throw new Error('Nenhuma API key configurada. Adicione ANTHROPIC_API_KEY ou GEMINI_API_KEY no .env.local');
   }
 
-  const result: CallAnalysisResult = JSON.parse(text);
+  if (!transcript || transcript.trim().length < 50) {
+    throw new Error('Transcricao muito curta ou vazia para analise');
+  }
+
+  let result: CallAnalysisResult;
+
+  if (ANTHROPIC_API_KEY) {
+    try {
+      result = await analyzeWithClaude(transcript);
+    } catch (e: any) {
+      console.warn('Claude falhou, tentando Gemini:', e.message);
+      if (!GEMINI_API_KEY) throw e;
+      result = await analyzeWithGemini(transcript);
+    }
+  } else {
+    result = await analyzeWithGemini(transcript);
+  }
 
   // Validar e sanitizar produtos (so aceitar nomes da taxonomia)
-  result.produtos_ot = result.produtos_ot.filter((p) =>
+  result.produtos_ot = (result.produtos_ot || []).filter((p) =>
     (PRODUTOS_OT as readonly string[]).includes(p)
   );
-  result.produtos_mrr = result.produtos_mrr.filter((p) =>
+  result.produtos_mrr = (result.produtos_mrr || []).filter((p) =>
     (PRODUTOS_MRR as readonly string[]).includes(p)
   );
 
   // Validar BANT range
-  result.bant = Math.max(1, Math.min(4, Math.round(result.bant)));
+  result.bant = Math.max(1, Math.min(4, Math.round(result.bant || 1)));
 
   // Validar valores nao-negativos
-  result.valor_escopo = Math.max(0, result.valor_escopo);
-  result.valor_recorrente = Math.max(0, result.valor_recorrente);
+  result.valor_escopo = Math.max(0, result.valor_escopo || 0);
+  result.valor_recorrente = Math.max(0, result.valor_recorrente || 0);
 
   return result;
 }
