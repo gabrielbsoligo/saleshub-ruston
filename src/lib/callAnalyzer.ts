@@ -50,6 +50,10 @@ ${tierList}
 
 IMPORTANTE: So inclua produtos que foram EXPLICITAMENTE discutidos na call. Use os nomes EXATOS da lista acima.
 
+### Valores (OT e MRR)
+- valor_escopo (OT): e o VALOR TOTAL do projeto one-time. Se o closer mencionar parcelas (ex: "12x de R$3.746"), calcule o total (ex: 12 x 3746 = R$44.952). Nunca use o valor da parcela como valor do escopo.
+- valor_recorrente (MRR): e o valor MENSAL recorrente que o cliente pagara apos o projeto inicial. Ex: "R$4.900 por mes".
+
 ### Indicacoes / Recomendacoes
 Extraia nomes de pessoas/empresas que o lead INDICOU ou RECOMENDOU durante a conversa. Inclua telefone se mencionado.
 
