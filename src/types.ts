@@ -300,3 +300,37 @@ export const TEMPERATURA_LABELS: Record<Temperatura, string> = {
   morno: 'Morno',
   frio: 'Frio',
 };
+
+// =============================================
+// Post-Meeting Automation Types
+// =============================================
+
+export type AutomationStatus = 'pending' | 'fetching_transcript' | 'analyzing' | 'applying' | 'completed' | 'error';
+
+export interface CallAnalysisResult {
+  temperatura: Temperatura;
+  valor_escopo: number;
+  valor_recorrente: number;
+  produtos_ot: string[];
+  produtos_mrr: string[];
+  bant: number;
+  tier: DealTier;
+  resumo_executivo: string;
+  indicacoes: Array<{ nome: string; empresa: string; telefone?: string }>;
+  proxima_reuniao: { data: string; hora: string } | null;
+}
+
+export interface PostMeetingAutomation {
+  id: string;
+  reuniao_id: string;
+  deal_id?: string;
+  status: AutomationStatus;
+  transcript_text?: string;
+  ai_result?: CallAnalysisResult;
+  actions_taken?: Record<string, any>;
+  leads_created?: string[];
+  next_reuniao_id?: string;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
