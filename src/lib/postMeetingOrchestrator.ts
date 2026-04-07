@@ -6,6 +6,7 @@
 import { supabase } from './supabase';
 import { fetchTranscriptWithPolling, type TranscriptResult } from './googleDrive';
 import { analyzeTranscript } from './callAnalyzer';
+import { getLeadMessages, complementReferralsFromChat } from './kommoChat';
 import type {
   CallAnalysisResult,
   PostMeetingAutomation,
@@ -281,11 +282,26 @@ async function applyActions(
     }
   }
 
-  // ====== 4b: Criar leads de indicacao ======
-  if (analysis.indicacoes.length > 0) {
+  // ====== 4b: Complementar indicacoes via Kommo WhatsApp ======
+  let indicacoesFinais = analysis.indicacoes;
+  if (analysis.indicacoes.length > 0 && reuniao.kommo_id) {
+    try {
+      const messages = await getLeadMessages(reuniao.kommo_id);
+      if (messages.length > 0) {
+        indicacoesFinais = await complementReferralsFromChat(messages, analysis.indicacoes);
+        console.log(`Kommo WhatsApp: ${messages.length} mensagens analisadas, indicacoes complementadas`);
+      }
+    } catch (e) {
+      // Kommo WhatsApp e opcional - nao deve bloquear o fluxo
+      console.warn('Kommo WhatsApp complemento falhou (graceful degradation):', e);
+    }
+  }
+
+  // ====== 4c: Criar leads de indicacao ======
+  if (indicacoesFinais.length > 0) {
     const larySdrId = await findLarySdrId();
 
-    for (const indicacao of analysis.indicacoes) {
+    for (const indicacao of indicacoesFinais) {
       if (!indicacao.nome || !indicacao.empresa) continue;
 
       const newLead: Partial<Lead> = {
@@ -315,7 +331,7 @@ async function applyActions(
     }
   }
 
-  // ====== 4c: Agendar proxima reuniao ======
+  // ====== 4d: Agendar proxima reuniao ======
   if (analysis.proxima_reuniao) {
     try {
       const { data: dataStr, hora } = analysis.proxima_reuniao;
