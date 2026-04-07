@@ -1,27 +1,20 @@
 // Google Calendar Integration
 // Uses Supabase Edge Functions for OAuth and event management
 
-import { supabase } from './supabase';
-
 const SUPABASE_FUNCTIONS_URL = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
+function getAuthHeaders(): Record<string, string> {
+  // Edge functions use service_role internally — anon key is sufficient to pass gateway
+  return {
     'Content-Type': 'application/json',
     'apikey': SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
   };
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session?.access_token) {
-    headers['Authorization'] = `Bearer ${session.access_token}`;
-  } else {
-    headers['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
-  }
-  return headers;
 }
 
 export async function getGoogleAuthUrl(memberId: string): Promise<string> {
-  const headers = await getAuthHeaders();
+  const headers = getAuthHeaders();
   const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/google-auth?action=auth_url&member_id=${memberId}`, { headers });
   if (!resp.ok) throw new Error('Failed to get auth URL');
   const data = await resp.json();
@@ -47,7 +40,7 @@ export async function createCalendarEvent(data: CreateCalendarEventData): Promis
   html_link: string;
 } | null> {
   try {
-    const headers = await getAuthHeaders();
+    const headers = getAuthHeaders();
     const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
       method: 'POST',
       headers,
@@ -55,11 +48,19 @@ export async function createCalendarEvent(data: CreateCalendarEventData): Promis
     });
 
     if (!resp.ok) {
-      const err = await resp.json();
-      if (err.error?.includes('não conectado')) {
-        throw new Error('GOOGLE_NOT_CONNECTED');
+      let errMsg = `Erro ${resp.status}`;
+      try {
+        const err = await resp.json();
+        if (err.error?.includes('não conectado')) {
+          throw new Error('Google Calendar não conectado. Peça pro SDR ou Closer reconectar na tela de Equipe.');
+        }
+        errMsg = err.error || errMsg;
+      } catch (parseErr) {
+        // Response wasn't JSON (e.g. gateway error)
+        const text = await resp.text().catch(() => '');
+        errMsg = text || errMsg;
       }
-      throw new Error(err.error || 'Calendar error');
+      throw new Error(errMsg);
     }
 
     return await resp.json();
@@ -70,7 +71,7 @@ export async function createCalendarEvent(data: CreateCalendarEventData): Promis
 }
 
 export async function deleteCalendarEvent(memberId: string, eventId: string): Promise<void> {
-  const headers = await getAuthHeaders();
+  const headers = getAuthHeaders();
   await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
     method: 'POST',
     headers,
