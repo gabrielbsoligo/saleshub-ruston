@@ -208,9 +208,11 @@ CREATE POLICY "tm_update" ON team_members FOR UPDATE USING (
 );
 CREATE POLICY "team_members_delete" ON team_members FOR DELETE USING (get_user_role() = 'gestor');
 
--- LEADS: gestor vê tudo, SDR vê os próprios
+-- LEADS: gestor vê tudo, SDR vê os próprios, closer vê os que tem reunião/deal
 CREATE POLICY "leads_select" ON leads FOR SELECT USING (
   get_user_role() = 'gestor' OR sdr_id = get_member_id()
+  OR id IN (SELECT lead_id FROM reunioes WHERE closer_id = get_member_id())
+  OR id IN (SELECT lead_id FROM deals WHERE closer_id = get_member_id())
 );
 CREATE POLICY "leads_insert" ON leads FOR INSERT WITH CHECK (true);
 CREATE POLICY "leads_update" ON leads FOR UPDATE USING (
@@ -226,9 +228,9 @@ CREATE POLICY "deals_update" ON deals FOR UPDATE USING (
   get_user_role() = 'gestor' OR closer_id = get_member_id() OR sdr_id = get_member_id()
 );
 
--- REUNIOES: gestor vê tudo, SDR vê as próprias
+-- REUNIOES: gestor vê tudo, SDR vê as próprias, closer vê as que vai tocar
 CREATE POLICY "reunioes_select" ON reunioes FOR SELECT USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id()
+  get_user_role() = 'gestor' OR sdr_id = get_member_id() OR closer_id = get_member_id()
 );
 CREATE POLICY "reunioes_insert" ON reunioes FOR INSERT WITH CHECK (true);
 CREATE POLICY "reunioes_update" ON reunioes FOR UPDATE USING (
