@@ -180,7 +180,7 @@
     return result;
   }
 
-  // ---- Map canal/fonte ----
+  // ---- Map canal ----
   function mapCanal(detail) {
     var ca = (
       (detail.customFields || {})['Canal de Aquisição'] ||
@@ -197,13 +197,6 @@
     return 'leadbroker';
   }
 
-  function mapFonte(detail) {
-    var co = ((detail.customFields || {})['Canal de Origem'] || '').toUpperCase();
-    if (co.includes('GOOGLE')) return 'GOOGLE';
-    if (co.includes('FACEBOOK') || co.includes('META')) return 'FACEBOOK';
-    if (co.includes('ORG')) return 'ORGANICO';
-    return null;
-  }
 
   // ============================================================
   // UI - Inject side panel into the MKTLAB page
@@ -746,8 +739,6 @@
       // Fetch detail
       var selectedCanal = $('sh-canal').value || 'outbound';
       fetchLeadDetail(lead.mktlabId).then(function(detail) {
-        var fonte = mapFonte(detail);
-
         var payload = {
           empresa: lead.empresa || 'Sem nome',
           nome_contato: lead.contato || detail.basicData.contactName || null,
@@ -757,7 +748,6 @@
           faturamento: (detail.customFields || {})['Faturamento da LP'] || (detail.customFields || {})['Faturamento'] || null,
           produto: (detail.customFields || {})['Produtos Marketing'] || (detail.customFields || {})['Produto'] || null,
           canal: selectedCanal,
-          fonte: fonte,
           status: 'sem_contato',
           valor_lead: parseFloat((detail.customFields || {})['Valor Leadbroker'] || (detail.customFields || {})['Valor'] || '0') || null,
           mktlab_link: lead.mktlabLink,
