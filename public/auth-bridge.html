@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head><title>SalesHub Auth Bridge</title></head>
+<body>
+<script>
+// This page runs on the SalesHub domain (gestao-comercial-rosy.vercel.app)
+// It reads the Supabase session from localStorage and sends it to the parent via postMessage
+(function() {
+  var SUPABASE_KEY = 'sb-iaompeiokjxbffwehhrx-auth-token';
+  var session = null;
+
+  try {
+    var raw = localStorage.getItem(SUPABASE_KEY);
+    if (raw) {
+      session = JSON.parse(raw);
+    }
+  } catch(e) {}
+
+  // Send to parent (the mktlab.app page that loaded this iframe)
+  if (window.parent && window.parent !== window) {
+    window.parent.postMessage({
+      type: 'SALESHUB_AUTH',
+      session: session,
+    }, '*');
+  }
+})();
+</script>
+</body>
+</html>

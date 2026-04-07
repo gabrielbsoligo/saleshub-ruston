@@ -10,6 +10,7 @@ const CANAL_TO_PIPELINE: Record<string, { pipeline_id: number; status_id: number
   outbound:     { pipeline_id: 13250384, status_id: 102173864 }, // PV - Outbound > RICHLIST
   recomendacao: { pipeline_id: 13250384, status_id: 102173864 }, // PV - Outbound > RICHLIST
   indicacao:    { pipeline_id: 13250384, status_id: 102173864 }, // PV - Outbound > RICHLIST
+  recovery:     { pipeline_id: 13250384, status_id: 102173864 }, // PV - Outbound > RICHLIST
 };
 
 // Custom Field IDs
@@ -26,6 +27,7 @@ const FIELDS = {
     leadbroker: 823308,
     indicacao: 823330,
     blackbox: 863643,
+    recovery: 863727,
   } as Record<string, number>,
   PRODUTO_ENUM: {
     'Assessoria': 839446,

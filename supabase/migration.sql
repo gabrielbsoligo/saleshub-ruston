@@ -23,7 +23,7 @@ CREATE TABLE leads (
   telefone TEXT,
   cnpj TEXT,
   faturamento TEXT,
-  canal TEXT NOT NULL CHECK (canal IN ('blackbox', 'leadbroker', 'outbound', 'recomendacao', 'indicacao')),
+  canal TEXT NOT NULL CHECK (canal IN ('blackbox', 'leadbroker', 'outbound', 'recomendacao', 'indicacao', 'recovery')),
   fonte TEXT,
   produto TEXT,
   sdr_id UUID REFERENCES team_members(id),

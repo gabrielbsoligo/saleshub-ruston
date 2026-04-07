@@ -49,6 +49,32 @@
       ⚠️ <strong>Importante:</strong> Você precisa estar logado no SalesHub para o import funcionar. O lead é criado automaticamente e a página redireciona para a lista de leads.
     </div>
 
+    <hr style="border-color:#2e2e2e; margin:30px 0;">
+
+    <h1>📦 Importador em Lote</h1>
+    <p>Importe uma coluna inteira do MKTLAB para o SalesHub. Detecta duplicatas automaticamente.</p>
+
+    <div class="step">
+      <span class="step-num">1</span>
+      <strong>Arraste o botão abaixo para a barra de favoritos:</strong><br><br>
+      <a class="bookmarklet-btn" href="javascript:void(fetch('https://gestao-comercial-rosy.vercel.app/mktlab-batch-importer.js').then(r=>r.text()).then(t=>eval(t)))" style="background:#3b82f6;">
+        📦 Importar Lote → SalesHub
+      </a>
+      <p style="font-size:12px; color:#666;">Arraste este botão azul para a barra de favoritos.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">2</span>
+      <strong>Use na pagina de Leads do MKTLAB</strong><br>
+      <p>Abra <code>mktlab.app/crm/leads</code> (Kanban view) → Clique no bookmarklet → Painel lateral abre → Login no SalesHub → Selecione coluna → Preview → Importe!</p>
+    </div>
+
+    <div class="warning">
+      ⚠️ <strong>Importante:</strong> Use na pagina de Leads (view Kanban). O script detecta as colunas do funil automaticamente. Leads duplicados (mesmo mktlab_id, link ou empresa) sao identificados e pulados.
+    </div>
+
+    <hr style="border-color:#2e2e2e; margin:30px 0;">
+
     <h2>O que é extraído automaticamente</h2>
     <ul style="color: #a0a0a0; line-height: 2;">
       <li>Nome da empresa</li>
