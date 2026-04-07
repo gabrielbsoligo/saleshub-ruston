@@ -8,40 +8,41 @@ import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import type { Reuniao } from "../types";
 
-function formatRelativeDate(dateStr: string): string {
-  const date = new Date(dateStr);
+function formatRelativeDate(isoStr: string): string {
+  const date = new Date(isoStr);
   const now = new Date();
 
-  // Compare using local date strings to avoid timezone issues
-  const targetDate = date.toLocaleDateString('pt-BR');
-  const todayDate = now.toLocaleDateString('pt-BR');
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowDate = tomorrow.toLocaleDateString('pt-BR');
-
-  if (targetDate === todayDate) return 'Hoje';
-  if (targetDate === tomorrowDate) return 'Amanhã';
-
-  // Check if past
   const targetDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (targetDayStart < todayStart) return `${targetDate} (atrasada)`;
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
 
-  return date.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  if (targetDayStart.getTime() === todayStart.getTime()) return 'Hoje';
+  if (targetDayStart.getTime() === tomorrowStart.getTime()) return 'Amanhã';
+
+  const formatted = date.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  if (targetDayStart < todayStart) return `${date.toLocaleDateString('pt-BR')} (atrasada)`;
+
+  return formatted;
+}
+
+function getDayKey(isoStr: string): string {
+  const d = new Date(isoStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: Reuniao[] }[] {
-  const groups: Record<string, Reuniao[]> = {};
+  const groups: Record<string, { iso: string; items: Reuniao[] }> = {};
   for (const r of reunioes) {
-    const day = r.data_reuniao ? new Date(r.data_reuniao).toLocaleDateString('pt-BR') : 'sem-data';
-    if (!groups[day]) groups[day] = [];
-    groups[day].push(r);
+    const key = r.data_reuniao ? getDayKey(r.data_reuniao) : 'sem-data';
+    if (!groups[key]) groups[key] = { iso: r.data_reuniao || '', items: [] };
+    groups[key].items.push(r);
   }
   return Object.entries(groups)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, items]) => ({
-      label: date === 'sem-data' ? 'Sem data' : formatRelativeDate(date),
-      date,
+    .map(([key, { iso, items }]) => ({
+      label: key === 'sem-data' ? 'Sem data' : formatRelativeDate(iso),
+      date: key,
       items: items.sort((a, b) => (a.data_reuniao || '').localeCompare(b.data_reuniao || '')),
     }));
 }

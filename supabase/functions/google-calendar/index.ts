@@ -63,25 +63,18 @@ Deno.serve(async (req) => {
       const organizerId = data.sdr_id || data.closer_id
       if (!organizerId) throw new Error('No SDR or closer ID')
 
-      const token = await getValidToken(supabase, organizerId)
-      if (!token) {
-        // Try closer as fallback
-        if (data.closer_id && data.closer_id !== organizerId) {
-          const fallbackToken = await getValidToken(supabase, data.closer_id)
-          if (!fallbackToken) {
-            return new Response(JSON.stringify({ error: 'Google Calendar não conectado. O SDR ou Closer precisa conectar o Calendar na tela de Equipe.' }), {
-              status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            })
-          }
-          // Use closer token but still add SDR as attendee
-        } else {
-          return new Response(JSON.stringify({ error: 'Google Calendar não conectado. Conecte na tela de Equipe.' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          })
-        }
+      let activeToken = await getValidToken(supabase, organizerId)
+
+      // Fallback to closer token if SDR token failed
+      if (!activeToken && data.closer_id && data.closer_id !== organizerId) {
+        activeToken = await getValidToken(supabase, data.closer_id)
       }
 
-      const activeToken = token || await getValidToken(supabase, data.closer_id)
+      if (!activeToken) {
+        return new Response(JSON.stringify({ error: 'Google Calendar não conectado. O SDR ou Closer precisa conectar o Calendar na tela de Equipe.' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
 
       // Build attendees
       const attendees: { email: string }[] = []
