@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase';
 import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
+import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
 import toast from 'react-hot-toast';
 
 interface AppState {
@@ -60,6 +61,7 @@ interface AppState {
   createAutomation: (reuniaoId: string, dealId?: string) => Promise<PostMeetingAutomation | null>;
   updateAutomation: (id: string, updates: Partial<PostMeetingAutomation>) => Promise<void>;
   getAutomationByReuniao: (reuniaoId: string) => Promise<PostMeetingAutomation | null>;
+  startPostMeetingAutomation: (reuniaoId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -670,6 +672,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return data;
   };
 
+  const startPostMeetingAutomation = async (reuniaoId: string) => {
+    // Verificar se ja existe automacao para esta reuniao
+    const existing = await getAutomationByReuniao(reuniaoId);
+    if (existing && existing.status === 'completed') {
+      toast.error('Automacao ja foi executada para esta reuniao');
+      return;
+    }
+    if (existing && existing.status !== 'error') {
+      toast.error('Automacao ja esta em andamento');
+      return;
+    }
+
+    toast.success('Iniciando automacao pos-reuniao...', { icon: '🤖', duration: 3000 });
+
+    await runPostMeetingAutomation(reuniaoId, {
+      onStatusChange: (automationId, status) => {
+        setAutomations(prev => {
+          const exists = prev.find(a => a.id === automationId);
+          if (exists) return prev.map(a => a.id === automationId ? { ...a, status } : a);
+          return [{ id: automationId, reuniao_id: reuniaoId, status, created_at: new Date().toISOString() } as PostMeetingAutomation, ...prev];
+        });
+
+        const statusMessages: Record<string, string> = {
+          fetching_transcript: '🔍 Buscando transcricao no Google Drive...',
+          analyzing: '🧠 Analisando call com IA...',
+          applying: '⚡ Aplicando acoes automaticas...',
+        };
+        if (statusMessages[status]) toast(statusMessages[status], { duration: 2000 });
+      },
+      onPollingUpdate: (attempt, maxAttempts) => {
+        if (attempt === 1) return; // primeira tentativa ja foi notificada
+        if (attempt % 5 === 0) { // a cada 10 minutos
+          toast(`🔍 Ainda buscando transcricao... (tentativa ${attempt}/${maxAttempts})`, { duration: 3000 });
+        }
+      },
+      onComplete: (automationId, actions) => {
+        setAutomations(prev => prev.map(a => a.id === automationId ? { ...a, status: 'completed', actions_taken: actions } : a));
+
+        // Refresh dados que podem ter mudado
+        fetchDeals();
+        fetchLeads();
+        fetchReunioes();
+
+        const parts: string[] = [];
+        if (actions.deal_updated) parts.push(`Deal atualizado (${actions.deal_fields.length} campos)`);
+        if (actions.leads_created > 0) parts.push(`${actions.leads_created} indicacao(oes) criada(s)`);
+        if (actions.meeting_scheduled) parts.push('Proxima reuniao agendada');
+
+        toast.success(`✅ Automacao concluida!\n${parts.join(' | ')}`, { duration: 6000 });
+      },
+      onError: (automationId, error) => {
+        if (automationId) {
+          setAutomations(prev => prev.map(a => a.id === automationId ? { ...a, status: 'error', error_message: error } : a));
+        }
+        toast.error(`❌ Erro na automacao: ${error}`, { duration: 8000 });
+      },
+    });
+  };
+
   // ===================== LOAD DATA ON LOGIN =====================
   useEffect(() => {
     if (currentUser) {
@@ -700,7 +761,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchComissoes,
       fetchCustos, saveCusto,
       ligacoes, fetchLigacoes,
-      automations, createAutomation, updateAutomation, getAutomationByReuniao,
+      automations, createAutomation, updateAutomation, getAutomationByReuniao, startPostMeetingAutomation,
     }}>
       {children}
     </AppContext.Provider>
