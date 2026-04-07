@@ -8,11 +8,22 @@ import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import type { Reuniao } from "../types";
 
-function formatRelativeDate(isoStr: string): string {
+// Parse date preserving the intended day (avoid timezone shift for midnight UTC dates)
+function parseReuniaoDate(isoStr: string): { year: number; month: number; day: number; date: Date } {
   const date = new Date(isoStr);
+  // If stored as midnight UTC (T00:00:00), use UTC components to avoid day shift in BRT
+  const isMidnightUtc = isoStr.includes('T00:00:00');
+  const year = isMidnightUtc ? date.getUTCFullYear() : date.getFullYear();
+  const month = isMidnightUtc ? date.getUTCMonth() : date.getMonth();
+  const day = isMidnightUtc ? date.getUTCDate() : date.getDate();
+  return { year, month, day, date };
+}
+
+function formatRelativeDate(isoStr: string): string {
+  const { year, month, day } = parseReuniaoDate(isoStr);
   const now = new Date();
 
-  const targetDayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const targetDayStart = new Date(year, month, day);
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const tomorrowStart = new Date(todayStart);
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
@@ -20,15 +31,19 @@ function formatRelativeDate(isoStr: string): string {
   if (targetDayStart.getTime() === todayStart.getTime()) return 'Hoje';
   if (targetDayStart.getTime() === tomorrowStart.getTime()) return 'Amanhã';
 
-  const formatted = date.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
-  if (targetDayStart < todayStart) return `${date.toLocaleDateString('pt-BR')} (atrasada)`;
+  // Build display using correct day/month
+  const dayStr = String(day).padStart(2, '0');
+  const monthStr = String(month + 1).padStart(2, '0');
+  const weekday = targetDayStart.toLocaleDateString('pt-BR', { weekday: 'short' });
 
-  return formatted;
+  if (targetDayStart < todayStart) return `${dayStr}/${monthStr}/${year} (atrasada)`;
+
+  return `${weekday}, ${dayStr}/${monthStr}`;
 }
 
 function getDayKey(isoStr: string): string {
-  const d = new Date(isoStr);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const { year, month, day } = parseReuniaoDate(isoStr);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: Reuniao[] }[] {
