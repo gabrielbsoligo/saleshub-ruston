@@ -215,12 +215,6 @@ async function applyActions(
     const dealUpdates: Partial<Deal> = {};
     const updatedFields: string[] = [];
 
-    // MOVER DE "dar_feedback" PARA "negociacao" — a IA ja fez o feedback!
-    if (deal.status === 'dar_feedback') {
-      dealUpdates.status = 'negociacao';
-      updatedFields.push('status');
-    }
-
     // Temperatura
     if (analysis.temperatura) {
       dealUpdates.temperatura = analysis.temperatura;
