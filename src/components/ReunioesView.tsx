@@ -74,8 +74,15 @@ export const ReunioesView: React.FC = () => {
   const [showHistorico, setShowHistorico] = useState(false);
   const [filterNoshowReagendados, setFilterNoshowReagendados] = useState(false);
   const [showNoshowsAntigos, setShowNoshowsAntigos] = useState(false);
+  const isCloser = useAppStore().currentUser?.role === 'closer';
+  const myId = useAppStore().currentUser?.id || '';
   const [filterCloser, setFilterCloser] = useState('');
   const [filterSdr, setFilterSdr] = useState('');
+
+  // Closer vê só as próprias reuniões por padrão
+  React.useEffect(() => {
+    if (isCloser && myId && !filterCloser) setFilterCloser(myId);
+  }, [isCloser, myId]);
 
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
