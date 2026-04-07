@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../store";
-import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead } from "../types";
-import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
+import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type PostMeetingAutomation } from "../types";
+import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { createCalendarEvent } from "../lib/googleCalendar";
 import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
@@ -63,7 +63,7 @@ function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: 
 }
 
 export const ReunioesView: React.FC = () => {
-  const { reunioes, leads, addReuniao, updateReuniao, members } = useAppStore();
+  const { reunioes, leads, addReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
@@ -193,6 +193,92 @@ export const ReunioesView: React.FC = () => {
     } finally { setRetryingId(null); }
   };
 
+  // ==================== POST-MEETING IA BUTTON ====================
+  const PostMeetingButton: React.FC<{ reuniao: Reuniao }> = ({ reuniao }) => {
+    const [automation, setAutomation] = useState<PostMeetingAutomation | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [running, setRunning] = useState(false);
+
+    // Buscar status da automacao ao montar
+    useEffect(() => {
+      let mounted = true;
+      getAutomationByReuniao(reuniao.id).then(data => {
+        if (mounted) { setAutomation(data); setLoading(false); }
+      });
+      return () => { mounted = false; };
+    }, [reuniao.id]);
+
+    // Sincronizar com state global
+    useEffect(() => {
+      const fromStore = automations.find(a => a.reuniao_id === reuniao.id);
+      if (fromStore) setAutomation(fromStore);
+    }, [automations, reuniao.id]);
+
+    const handleClick = async (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (running) return;
+      setRunning(true);
+      await startPostMeetingAutomation(reuniao.id);
+      setRunning(false);
+    };
+
+    if (loading) return null;
+
+    // Ja concluido
+    if (automation?.status === 'completed') {
+      const actions = automation.actions_taken as any;
+      const parts: string[] = [];
+      if (actions?.deal_updated) parts.push(`Deal atualizado`);
+      if (actions?.leads_created > 0) parts.push(`${actions.leads_created} indicacao(oes)`);
+      if (actions?.meeting_scheduled) parts.push(`Proxima agendada`);
+      const summary = parts.join(' · ') || 'Concluido';
+
+      return (
+        <div className="flex items-center gap-1.5" title={summary}>
+          <CheckCircle2 size={12} className="text-green-400" />
+          <span className="text-[10px] text-green-400 max-w-[120px] truncate">{summary}</span>
+        </div>
+      );
+    }
+
+    // Erro - permite retry
+    if (automation?.status === 'error') {
+      return (
+        <button onClick={handleClick} disabled={running}
+          title={automation.error_message || 'Erro na automacao'}
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium bg-red-500/15 text-red-400 hover:bg-red-500/25 disabled:opacity-50 transition-colors">
+          <XCircle size={12} />
+          {running ? <Loader2 size={12} className="animate-spin" /> : 'Retry IA'}
+        </button>
+      );
+    }
+
+    // Em andamento
+    if (automation && !['completed', 'error'].includes(automation.status)) {
+      const statusLabels: Record<string, string> = {
+        pending: 'Iniciando...',
+        fetching_transcript: 'Buscando transcricao...',
+        analyzing: 'Analisando...',
+        applying: 'Aplicando...',
+      };
+      return (
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-purple-500/15 text-purple-400">
+          <Loader2 size={12} className="animate-spin" />
+          <span className="text-[10px]">{statusLabels[automation.status] || 'Processando...'}</span>
+        </div>
+      );
+    }
+
+    // Botao padrao - nao executado ainda
+    return (
+      <button onClick={handleClick} disabled={running}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 disabled:opacity-50 transition-colors">
+        {running ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+        {running ? 'Iniciando...' : 'Pos-Reuniao IA'}
+      </button>
+    );
+  };
+
   const ReuniaoCard: React.FC<{ r: Reuniao; showActions?: boolean; showReagendar?: boolean }> = ({ r, showActions = false, showReagendar = false }) => {
     const { faturamento, nome_contato } = getLeadInfo(r);
     const rescheduled = showReagendar && isRescheduled(r);
@@ -249,6 +335,8 @@ export const ReunioesView: React.FC = () => {
               {r.show ? 'Show' : 'No-show'}
             </span>
           )}
+          {/* Botao Pos-Reuniao IA - so aparece em reunioes realizadas com show */}
+          {r.realizada && r.show && <PostMeetingButton reuniao={r} />}
         </div>
       </div>
     );
