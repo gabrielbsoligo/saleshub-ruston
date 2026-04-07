@@ -39,60 +39,34 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
 
   // Campos de controle
   const [isApplying, setIsApplying] = useState(false);
+  const [manualTranscript, setManualTranscript] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Buscar deal associado
   const deal = deals.find(d => d.lead_id === reuniao.lead_id) || null;
 
-  // Step 1: Buscar transcricao
+  // Step 1: Tentar buscar transcricao automaticamente
   useEffect(() => {
     let cancelled = false;
 
     async function fetchTranscript() {
       try {
         const result = await fetchMeetingTranscript(reuniao.id);
-
         if (cancelled) return;
 
-        if (result.status === 'not_found' || !result.transcript_text) {
+        if (result.status === 'found' && result.transcript_text) {
+          setTranscriptUrl(result.transcript_url || '');
+          setRecordingUrl(result.recording_url || '');
+          // Analisar automaticamente
+          await runAnalysis(result.transcript_text);
+        } else {
+          // Nao encontrou - mostrar opcao de colar manualmente
           setStep('not_found');
-          return;
         }
-
-        if (result.needs_reauth) {
-          setError('Google Drive nao autorizado. Peca ao organizador reconectar na tela de Equipe.');
-          setStep('error');
-          return;
-        }
-
-        setTranscriptUrl(result.transcript_url || '');
-        setRecordingUrl(result.recording_url || '');
-
-        // Step 2: Analisar com Gemini
-        setStep('analyzing');
-        const analysisResult = await analyzeTranscript(result.transcript_text);
-
-        if (cancelled) return;
-
-        setAnalysis(analysisResult);
-        setTemperatura(analysisResult.temperatura);
-        setValorOt(analysisResult.valor_escopo);
-        setValorMrr(analysisResult.valor_recorrente);
-        setProdutosOt(analysisResult.produtos_ot);
-        setProdutosMrr(analysisResult.produtos_mrr);
-        setBant(analysisResult.bant);
-        setTier(analysisResult.tier);
-        setResumo(analysisResult.resumo_executivo);
-        setIndicacoes(analysisResult.indicacoes);
-        if (analysisResult.proxima_reuniao) {
-          setProximaData(analysisResult.proxima_reuniao.data);
-          setProximaHora(analysisResult.proxima_reuniao.hora);
-          setAgendarReuniao(true);
-        }
-        setStep('review');
       } catch (e: any) {
         if (!cancelled) {
-          setError(e.message || 'Erro desconhecido');
-          setStep('error');
+          // Edge Function nao disponivel - mostrar opcao manual
+          setStep('not_found');
         }
       }
     }
@@ -100,6 +74,45 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
     fetchTranscript();
     return () => { cancelled = true; };
   }, [reuniao.id]);
+
+  // Funcao de analise reutilizavel (para automatico e manual)
+  const runAnalysis = async (text: string) => {
+    setStep('analyzing');
+    setIsAnalyzing(true);
+    try {
+      const analysisResult = await analyzeTranscript(text);
+      setAnalysis(analysisResult);
+      setTemperatura(analysisResult.temperatura);
+      setValorOt(analysisResult.valor_escopo);
+      setValorMrr(analysisResult.valor_recorrente);
+      setProdutosOt(analysisResult.produtos_ot);
+      setProdutosMrr(analysisResult.produtos_mrr);
+      setBant(analysisResult.bant);
+      setTier(analysisResult.tier);
+      setResumo(analysisResult.resumo_executivo);
+      setIndicacoes(analysisResult.indicacoes);
+      if (analysisResult.proxima_reuniao) {
+        setProximaData(analysisResult.proxima_reuniao.data);
+        setProximaHora(analysisResult.proxima_reuniao.hora);
+        setAgendarReuniao(true);
+      }
+      setStep('review');
+    } catch (e: any) {
+      setError(e.message || 'Erro na analise');
+      setStep('error');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Analisar transcricao colada manualmente
+  const handleManualAnalyze = () => {
+    if (manualTranscript.trim().length < 50) {
+      toast.error('Cole a transcricao completa da reuniao');
+      return;
+    }
+    runAnalysis(manualTranscript);
+  };
 
   // Aplicar tudo apos confirmacao
   const handleConfirm = async () => {
@@ -234,18 +247,40 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
             </div>
           )}
 
-          {/* NOT FOUND */}
+          {/* NOT FOUND - opcao de colar manualmente */}
           {step === 'not_found' && (
-            <div className="flex flex-col items-center justify-center py-12 gap-4">
-              <AlertTriangle size={32} className="text-yellow-400" />
-              <p className="text-sm text-white font-medium">Transcricao ainda nao disponivel</p>
-              <p className="text-xs text-[var(--color-v4-text-muted)] text-center max-w-md">
-                O Google Meet leva aproximadamente 30 minutos para gerar a transcricao apos a reuniao.
-                Tente novamente mais tarde.
-              </p>
-              <button onClick={onClose} className="mt-4 px-6 py-2 rounded-xl bg-[var(--color-v4-surface)] text-white text-sm hover:bg-[var(--color-v4-card-hover)]">
-                Fechar
-              </button>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <AlertTriangle size={16} className="text-yellow-400 flex-shrink-0" />
+                <p className="text-xs text-yellow-400">
+                  Transcricao automatica nao disponivel. Cole a transcricao do Google Meet abaixo para a IA analisar.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--color-v4-text-muted)] mb-2">
+                  Cole a transcricao da reuniao aqui:
+                </label>
+                <textarea
+                  value={manualTranscript}
+                  onChange={e => setManualTranscript(e.target.value)}
+                  rows={10}
+                  placeholder="Cole aqui o resumo ou transcricao completa da call do Google Meet..."
+                  className="w-full bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-lg px-3 py-2 text-xs text-white resize-none focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">
+                  Copie do Google Meet → Registros da reuniao → Transcricao
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] text-sm">
+                  Cancelar
+                </button>
+                <button onClick={handleManualAnalyze} disabled={manualTranscript.trim().length < 50 || isAnalyzing}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 disabled:opacity-30 text-white font-bold text-sm">
+                  {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                  {isAnalyzing ? 'Analisando...' : 'Analisar com IA'}
+                </button>
+              </div>
             </div>
           )}
 

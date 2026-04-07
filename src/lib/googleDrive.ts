@@ -1,7 +1,7 @@
 // Google Drive Integration
 // Busca transcricoes e gravacoes de reunioes do Google Meet via Edge Function
 
-const SUPABASE_FUNCTIONS_URL = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1';
+const SUPABASE_FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 function getAuthHeaders(): Record<string, string> {
