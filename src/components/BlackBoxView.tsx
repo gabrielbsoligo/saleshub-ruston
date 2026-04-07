@@ -17,10 +17,18 @@ const TIER_FATURAMENTO: Record<TierName, string[]> = {
   tiny: ['Até 50 mil', 'De 51 mil à 70 mil', 'De 71 mil à 100 mil'],
 };
 
+function normalize(s: string): string {
+  return s.normalize('NFC').replace(/[\u00a0\u00c0-\u00ff]/g, c => {
+    const map: Record<string, string> = { '\u00e0': 'a', '\u00e1': 'a', '\u00e3': 'a', '\u00e9': 'e', '\u00f5': 'o', '\u00e7': 'c', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u', '\u00a0': ' ' };
+    return map[c.toLowerCase()] || c;
+  }).toLowerCase().trim();
+}
+
 function getTier(faturamento?: string): TierName | null {
   if (!faturamento) return null;
+  const norm = normalize(faturamento);
   for (const [tier, values] of Object.entries(TIER_FATURAMENTO)) {
-    if (values.includes(faturamento)) return tier as TierName;
+    if (values.some(v => normalize(v) === norm)) return tier as TierName;
   }
   return null;
 }
