@@ -372,3 +372,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_link ON leads(mktlab_link) WH
 -- Backfill mktlab_id from link
 UPDATE leads SET mktlab_id = substring(mktlab_link from '/leads/([a-zA-Z0-9-]+)$')
   WHERE mktlab_link IS NOT NULL AND mktlab_id IS NULL;
+
+-- =============================================
+-- POST-MEETING AUTOMATIONS
+-- Rastreia execucoes da automacao pos-reuniao com IA
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS post_meeting_automations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reuniao_id UUID NOT NULL REFERENCES reunioes(id),
+  deal_id UUID REFERENCES deals(id),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'fetching_transcript', 'analyzing', 'applying', 'completed', 'error')),
+  transcript_text TEXT,
+  ai_result JSONB,
+  actions_taken JSONB,
+  leads_created UUID[],
+  next_reuniao_id UUID REFERENCES reunioes(id),
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
+-- Garantir apenas 1 automacao por reuniao (idempotencia)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automations_reuniao ON post_meeting_automations(reuniao_id);
+CREATE INDEX IF NOT EXISTS idx_automations_status ON post_meeting_automations(status);
+
+-- RLS
+ALTER TABLE post_meeting_automations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "automations_select" ON post_meeting_automations FOR SELECT USING (true);
+CREATE POLICY "automations_insert" ON post_meeting_automations FOR INSERT WITH CHECK (true);
+CREATE POLICY "automations_update" ON post_meeting_automations FOR UPDATE USING (
+  get_user_role() = 'gestor' OR true
+);
