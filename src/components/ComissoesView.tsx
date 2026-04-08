@@ -32,7 +32,7 @@ interface ComissaoRegistro {
   member_id?: string;
   member_name: string;
   role_comissao: string;
-  tipo: 'mrr' | 'ot';
+  tipo: 'mrr' | 'ot' | 'variavel';
   categoria: string;
   valor_base: number;
   percentual: number;
@@ -492,7 +492,7 @@ export const ComissoesView: React.FC = () => {
                                       <input className={inputClass + " w-24"} value={editForm.member_name || ''} onChange={e => setEditForm(p => ({ ...p, member_name: e.target.value }))} />
                                     </td>
                                     <td className="px-3 py-2"><input className={inputClass + " w-16"} value={editForm.role_comissao || ''} onChange={e => setEditForm(p => ({ ...p, role_comissao: e.target.value }))} /></td>
-                                    <td className="px-3 py-2"><select className={inputClass} value={editForm.tipo} onChange={e => setEditForm(p => ({ ...p, tipo: e.target.value as any }))}><option value="mrr">MRR</option><option value="ot">OT</option></select></td>
+                                    <td className="px-3 py-2"><select className={inputClass} value={editForm.tipo} onChange={e => setEditForm(p => ({ ...p, tipo: e.target.value as any }))}><option value="mrr">MRR</option><option value="ot">OT</option><option value="variavel">Variável</option></select></td>
                                     <td className="px-3 py-2"><select className={inputClass} value={editForm.categoria} onChange={e => setEditForm(p => ({ ...p, categoria: e.target.value }))}><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="upsell_mrr">Upsell MRR</option><option value="upsell_ot">Upsell OT</option><option value="ee_assessoria">EE Assessoria</option><option value="ee_ot">EE OT</option></select></td>
                                     <td className="px-3 py-2"><input type="number" className={inputClass + " w-20"} value={editForm.valor_base} onChange={e => { const v = Number(e.target.value); setEditForm(p => ({ ...p, valor_base: v, valor_comissao: v * (p.percentual || 0) })); }} /></td>
                                     <td className="px-3 py-2"><input type="number" step="0.01" className={inputClass + " w-14"} value={editForm.percentual} onChange={e => { const pct = Number(e.target.value); setEditForm(p => ({ ...p, percentual: pct, valor_comissao: (p.valor_base || 0) * pct })); }} /></td>
@@ -510,7 +510,7 @@ export const ComissoesView: React.FC = () => {
                                 <tr key={line.id} className={`border-t border-[var(--color-v4-border)] ${line.editado_manualmente ? 'bg-yellow-500/5' : ''}`}>
                                   <td className="px-3 py-2 text-white">{line.empresa} {line.origem === 'monetizacao' && <span className="text-[8px] text-purple-400 ml-1">monet.</span>}</td>
                                   <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{line.role_comissao}</td>
-                                  <td className="px-3 py-2 text-center"><span className={`px-1.5 py-0.5 rounded ${line.tipo === 'mrr' ? 'bg-green-500/15 text-green-400' : 'bg-blue-500/15 text-blue-400'}`}>{line.tipo.toUpperCase()}</span></td>
+                                  <td className="px-3 py-2 text-center"><span className={`px-1.5 py-0.5 rounded ${line.tipo === 'mrr' ? 'bg-green-500/15 text-green-400' : line.tipo === 'variavel' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>{line.tipo === 'variavel' ? 'Variável' : line.tipo.toUpperCase()}</span></td>
                                   <td className="px-3 py-2 text-center text-[var(--color-v4-text-muted)]">{{inbound:'Inbound',outbound:'Outbound',upsell_mrr:'Upsell',upsell_ot:'Upsell',ee_assessoria:'EE Assess.',ee_ot:'EE OT'}[line.categoria] || line.categoria}</td>
                                   <td className="px-3 py-2 text-center text-white">{fmt(line.valor_base)}</td>
                                   <td className="px-3 py-2 text-center text-white">{(line.percentual * 100).toFixed(0)}%</td>
@@ -624,7 +624,7 @@ export const ComissoesView: React.FC = () => {
                       <td className="px-4 py-3 text-white">{line.member_name}</td>
                       <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{line.role_comissao}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`px-1.5 py-0.5 rounded ${line.tipo === 'mrr' ? 'bg-green-500/15 text-green-400' : 'bg-blue-500/15 text-blue-400'}`}>{line.tipo.toUpperCase()}</span>
+                        <span className={`px-1.5 py-0.5 rounded ${line.tipo === 'mrr' ? 'bg-green-500/15 text-green-400' : line.tipo === 'variavel' ? 'bg-purple-500/15 text-purple-400' : 'bg-blue-500/15 text-blue-400'}`}>{line.tipo === 'variavel' ? 'Variável' : line.tipo.toUpperCase()}</span>
                       </td>
                       <td className="px-4 py-3 text-right text-white">{fmt(line.valor_base)}</td>
                       <td className="px-4 py-3 text-center text-white">{(line.percentual * 100).toFixed(0)}%</td>
