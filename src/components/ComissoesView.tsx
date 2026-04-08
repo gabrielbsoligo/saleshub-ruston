@@ -92,17 +92,12 @@ export const ComissoesView: React.FC = () => {
 
     let query = supabase.from('comissoes_registros').select('*').order('empresa');
 
-    // For client view, fetch broader (all non-paid) + month range
-    if (viewTab === 'cliente' && filterStatus === 'aguardando_pgto') {
-      query = query.eq('status_comissao', 'aguardando_pgto');
-    } else if (viewTab === 'cliente' && filterStatus === 'liberada') {
-      query = query.eq('status_comissao', 'liberada');
-    } else if (viewTab === 'cliente' && filterStatus === 'paga') {
-      query = query.eq('status_comissao', 'paga').gte('data_pgto_vendedor', start).lte('data_pgto_vendedor', end);
-    } else if (viewTab === 'cliente' && !filterStatus) {
-      // Show all for the month based on data_liberacao or aguardando
-      query = query.or(`data_liberacao.gte.${start},data_liberacao.lte.${end},status_comissao.eq.aguardando_pgto`);
+    if (viewTab === 'cliente') {
+      // Client view: filter by data_pgto (contract payment date) within month
+      query = query.gte('data_pgto', start).lte('data_pgto', end);
+      if (filterStatus) query = query.eq('status_comissao', filterStatus);
     } else {
+      // Employee view: filter by data_liberacao within month
       query = query.gte('data_liberacao', start).lte('data_liberacao', end);
     }
 
