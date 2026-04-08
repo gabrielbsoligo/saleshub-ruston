@@ -12,7 +12,7 @@ import {
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-function buildPrompt(transcript: string): string {
+function buildPrompt(transcript: string, meetingDate: string): string {
   const produtosMrrList = PRODUTOS_MRR.join(', ');
   const produtosOtList = PRODUTOS_OT.join(', ');
   const tierList = Object.entries(TIER_LABELS)
@@ -80,6 +80,11 @@ Extraia a data e horario da proxima reuniao combinada. Preste MUITA ATENCAO a es
   "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"} | null
 }
 
+## Data da Reuniao
+A reuniao ocorreu em: ${meetingDate}
+Use esta data como referencia para calcular datas relativas como "amanha", "semana que vem", "proxima quinta", etc.
+Exemplo: se a reuniao foi em 2026-04-07 e disseram "amanha as 10h", a proxima reuniao e 2026-04-08 as 10:00.
+
 ## Transcricao da Call
 
 ${transcript}`;
@@ -87,13 +92,14 @@ ${transcript}`;
 
 /**
  * Analisa a transcricao via Edge Function (Claude server-side).
+ * @param meetingDate - data da reuniao no formato YYYY-MM-DD (para calcular datas relativas)
  */
-export async function analyzeTranscript(transcript: string): Promise<CallAnalysisResult> {
+export async function analyzeTranscript(transcript: string, meetingDate?: string): Promise<CallAnalysisResult> {
   if (!transcript || transcript.trim().length < 50) {
     throw new Error('Transcricao muito curta ou vazia para analise');
   }
 
-  const prompt = buildPrompt(transcript);
+  const prompt = buildPrompt(transcript, meetingDate || new Date().toISOString().split('T')[0]);
 
   const response = await fetch(`${SUPABASE_URL}/functions/v1/analyze-call`, {
     method: 'POST',
