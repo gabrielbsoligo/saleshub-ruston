@@ -81,7 +81,9 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
     setStep('analyzing');
     setIsAnalyzing(true);
     try {
-      const analysisResult = await analyzeTranscript(text);
+      // Passar data da reuniao para a IA calcular datas relativas ("amanha", "quinta")
+      const meetingDate = reuniao.data_reuniao ? reuniao.data_reuniao.split('T')[0] : new Date().toISOString().split('T')[0];
+      const analysisResult = await analyzeTranscript(text, meetingDate);
       setAnalysis(analysisResult);
       setTemperatura(analysisResult.temperatura);
       setValorOt(analysisResult.valor_escopo);
