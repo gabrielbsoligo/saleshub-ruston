@@ -16,7 +16,7 @@ interface Props {
 }
 
 export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) => {
-  const { deals, updateDeal, addLead, fetchDeals, fetchLeads, fetchReunioes, members } = useAppStore();
+  const { deals, updateDeal, addLead, addReuniao, fetchDeals, fetchLeads, fetchReunioes, members } = useAppStore();
   const [step, setStep] = useState<Step>('fetching');
   const [error, setError] = useState('');
   const [analysis, setAnalysis] = useState<CallAnalysisResult | null>(null);
@@ -158,30 +158,23 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
         });
       }
 
-      // 3. Agendar proxima reuniao (se confirmado)
+      // 3. Agendar proxima reuniao via addReuniao (cria evento no Google Calendar)
       if (agendarReuniao && proximaData && proximaHora) {
         const dataReuniaoISO = `${proximaData}T${proximaHora}:00-03:00`;
-        const { error: reuniaoErr } = await supabase.from('reunioes').insert({
-          lead_id: reuniao.lead_id || undefined,
-          closer_id: reuniao.closer_confirmado_id || reuniao.closer_id || undefined,
-          sdr_id: reuniao.sdr_id || undefined,
-          empresa: reuniao.empresa,
-          nome_contato: reuniao.nome_contato,
-          canal: reuniao.canal,
-          data_agendamento: new Date().toISOString().split('T')[0],
-          data_reuniao: dataReuniaoISO,
-          realizada: false,
-        }).select('*').single();
-
-        if (reuniaoErr) {
-          console.error('Erro ao agendar reuniao:', reuniaoErr);
-          toast.error('Deal atualizado, mas erro ao agendar reuniao: ' + reuniaoErr.message);
-        } else {
-          // Atualizar lead para reuniao_marcada
-          if (reuniao.lead_id) {
-            await supabase.from('leads').update({ status: 'reuniao_marcada' }).eq('id', reuniao.lead_id);
-          }
-          toast.success('Proxima reuniao agendada!', { icon: '📅' });
+        try {
+          await addReuniao({
+            lead_id: reuniao.lead_id || undefined,
+            closer_id: reuniao.closer_confirmado_id || reuniao.closer_id || undefined,
+            sdr_id: reuniao.sdr_id || undefined,
+            empresa: reuniao.empresa,
+            nome_contato: reuniao.nome_contato,
+            canal: reuniao.canal,
+            data_agendamento: new Date().toISOString().split('T')[0],
+            data_reuniao: dataReuniaoISO,
+          } as any, true); // replaceExisting=true caso tenha reuniao ativa
+        } catch (e: any) {
+          console.error('Erro ao agendar reuniao:', e);
+          toast.error('Deal atualizado, mas erro ao agendar: ' + e.message);
         }
       }
 
