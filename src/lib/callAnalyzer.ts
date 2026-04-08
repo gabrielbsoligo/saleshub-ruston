@@ -35,8 +35,14 @@ Retorne APENAS um JSON valido com os campos especificados.
 - 3: Budget + Authority + Need (necessidade clara)
 - 4: Todos - Budget + Authority + Need + Timeline (prazo definido)
 
-### Tier (por faturamento mensal do cliente)
+### Tier (classificar pelo FATURAMENTO MENSAL do cliente)
+O tier e baseado no faturamento MENSAL da empresa do lead (NAO o valor da proposta V4):
 ${tierList}
+ATENCAO: Use o faturamento que o LEAD menciona sobre a empresa DELE, nao o valor da proposta.
+Exemplo: se o lead diz "faturamos 120 mil por mes", o tier e "small" (101k-400k).
+Exemplo: se o lead diz "faturamento de 300k mensal", o tier e "small" (101k-400k).
+Exemplo: se o lead diz "50 mil por mes", o tier e "tiny" (51k-100k).
+Se o faturamento nao for mencionado, use "small" como padrao.
 
 ### Produtos Disponiveis
 **MRR (recorrentes):** ${produtosMrrList}
@@ -52,7 +58,13 @@ IMPORTANTE: So inclua produtos que foram EXPLICITAMENTE discutidos na call. Use 
 Extraia nomes de pessoas/empresas que o lead INDICOU ou RECOMENDOU durante a conversa. Inclua telefone se mencionado.
 
 ### Proxima Reuniao
-Se foi combinada uma proxima reuniao, extraia data e horario. Se nao foi mencionada, retorne null.
+Extraia a data e horario da proxima reuniao combinada. Preste MUITA ATENCAO a este campo:
+- Procure frases como "amanha as 10h", "quinta-feira as 14h", "semana que vem", "dia 15 as 14h"
+- Se disser "amanha as 10h", calcule a data de amanha a partir da data da reuniao atual
+- Se disser "quinta-feira", calcule qual e a proxima quinta a partir da data da reuniao
+- SEMPRE inclua o horario no formato HH:MM (ex: "10:00", "14:00", "09:30")
+- Se nao foi mencionada NENHUMA proxima reuniao, retorne null
+- Se mencionou data mas nao horario, use "10:00" como padrao
 
 ## Formato do JSON de resposta
 {
@@ -64,7 +76,7 @@ Se foi combinada uma proxima reuniao, extraia data e horario. Se nao foi mencion
   "bant": number (1-4),
   "tier": "tiny" | "small" | "medium" | "large" | "enterprise",
   "resumo_executivo": "string max 200 palavras em pt-br",
-  "indicacoes": [{"nome": "string", "empresa": "string", "telefone": "string ou undefined"}],
+  "indicacoes": [{"nome": "string", "empresa": "string", "telefone": "string ou null"}],
   "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"} | null
 }
 
