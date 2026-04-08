@@ -417,34 +417,42 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
                     <Users size={14} className="text-amber-400" />
                     <span className="text-xs font-bold text-white uppercase">Indicacoes ({indicacoes.length})</span>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {indicacoes.map((ind, i) => (
-                      <div key={i} className="flex items-center gap-3 bg-[var(--color-v4-bg)] rounded-lg px-3 py-2">
-                        <div className="flex-1">
-                          <input value={ind.nome} onChange={e => {
-                            const updated = [...indicacoes];
-                            updated[i] = { ...updated[i], nome: e.target.value };
-                            setIndicacoes(updated);
-                          }} className="bg-transparent text-xs text-white w-full outline-none" placeholder="Nome" />
+                      <div key={i} className="bg-[var(--color-v4-bg)] rounded-lg p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-amber-400 font-medium">Indicacao {i + 1}</span>
+                          <button onClick={() => setIndicacoes(indicacoes.filter((_, j) => j !== i))}
+                            className="text-red-400 hover:text-red-300">
+                            <XIcon size={12} />
+                          </button>
                         </div>
-                        <div className="flex-1">
-                          <input value={ind.empresa} onChange={e => {
-                            const updated = [...indicacoes];
-                            updated[i] = { ...updated[i], empresa: e.target.value };
-                            setIndicacoes(updated);
-                          }} className="bg-transparent text-xs text-[var(--color-v4-text-muted)] w-full outline-none" placeholder="Empresa" />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[10px] text-[var(--color-v4-text-muted)] block mb-0.5">Nome</label>
+                            <input value={ind.nome} onChange={e => {
+                              const updated = [...indicacoes];
+                              updated[i] = { ...updated[i], nome: e.target.value };
+                              setIndicacoes(updated);
+                            }} className="w-full bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-1.5 text-xs text-white outline-none" placeholder="Nome do contato" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[var(--color-v4-text-muted)] block mb-0.5">Empresa</label>
+                            <input value={ind.empresa} onChange={e => {
+                              const updated = [...indicacoes];
+                              updated[i] = { ...updated[i], empresa: e.target.value };
+                              setIndicacoes(updated);
+                            }} className="w-full bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-1.5 text-xs text-white outline-none" placeholder="Nome da empresa" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[var(--color-v4-text-muted)] block mb-0.5">Telefone</label>
+                            <input value={ind.telefone && ind.telefone !== 'undefined' ? ind.telefone : ''} onChange={e => {
+                              const updated = [...indicacoes];
+                              updated[i] = { ...updated[i], telefone: e.target.value };
+                              setIndicacoes(updated);
+                            }} className="w-full bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-1.5 text-xs text-white outline-none" placeholder="(00) 00000-0000" />
+                          </div>
                         </div>
-                        <div className="w-32">
-                          <input value={ind.telefone || ''} onChange={e => {
-                            const updated = [...indicacoes];
-                            updated[i] = { ...updated[i], telefone: e.target.value };
-                            setIndicacoes(updated);
-                          }} className="bg-transparent text-xs text-[var(--color-v4-text-muted)] w-full outline-none" placeholder="Telefone" />
-                        </div>
-                        <button onClick={() => setIndicacoes(indicacoes.filter((_, j) => j !== i))}
-                          className="text-red-400 hover:text-red-300">
-                          <XIcon size={12} />
-                        </button>
                       </div>
                     ))}
                   </div>

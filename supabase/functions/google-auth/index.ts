@@ -4,7 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
 const REDIRECT_URI = 'https://tawnlzdfykpwlhgmoprk.supabase.co/functions/v1/google-auth'
-const SALESHUB_URL = 'http://localhost:3001'
+const SALESHUB_URL = 'http://localhost:3000'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
