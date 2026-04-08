@@ -62,6 +62,9 @@ Deno.serve(async (req) => {
     const braceMatch = jsonStr.match(/\{[\s\S]*\}/)
     if (braceMatch) jsonStr = braceMatch[0]
 
+    // Sanitizar: trocar undefined por null (Claude as vezes retorna undefined literal)
+    jsonStr = jsonStr.replace(/:\s*undefined/g, ': null')
+
     const result = JSON.parse(jsonStr.trim())
 
     return new Response(JSON.stringify(result), {

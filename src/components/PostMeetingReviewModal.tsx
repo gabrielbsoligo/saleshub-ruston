@@ -3,6 +3,7 @@ import { useAppStore } from '../store';
 import { X as XIcon, Sparkles, Loader2, Check, AlertTriangle, Calendar, Users, FileText, ThermometerSun, DollarSign, Package, Target, Building2 } from 'lucide-react';
 import { fetchMeetingTranscript } from '../lib/googleDrive';
 import { analyzeTranscript } from '../lib/callAnalyzer';
+import { getLeadMessages, complementReferralsFromChat } from '../lib/kommoChat';
 import { supabase } from '../lib/supabase';
 import type { Reuniao, CallAnalysisResult, Deal } from '../types';
 import { TEMPERATURA_LABELS, TIER_LABELS } from '../types';
@@ -16,7 +17,7 @@ interface Props {
 }
 
 export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) => {
-  const { deals, updateDeal, addLead, addReuniao, fetchDeals, fetchLeads, fetchReunioes, members } = useAppStore();
+  const { deals, leads, updateDeal, addLead, addReuniao, fetchDeals, fetchLeads, fetchReunioes, members } = useAppStore();
   const [step, setStep] = useState<Step>('fetching');
   const [error, setError] = useState('');
   const [analysis, setAnalysis] = useState<CallAnalysisResult | null>(null);
@@ -90,7 +91,22 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
       setBant(analysisResult.bant);
       setTier(analysisResult.tier);
       setResumo(analysisResult.resumo_executivo);
-      setIndicacoes(analysisResult.indicacoes);
+
+      // Tentar complementar telefones das indicacoes via Kommo WhatsApp
+      let finalIndicacoes = analysisResult.indicacoes;
+      const lead = reuniao.lead_id ? leads.find(l => l.id === reuniao.lead_id) : null;
+      if (finalIndicacoes.length > 0 && lead?.kommo_id) {
+        try {
+          const messages = await getLeadMessages(lead.kommo_id);
+          if (messages.length > 0) {
+            finalIndicacoes = await complementReferralsFromChat(messages, finalIndicacoes);
+          }
+        } catch (e) {
+          console.warn('Kommo complemento falhou (usando dados da transcricao):', e);
+        }
+      }
+      setIndicacoes(finalIndicacoes);
+
       if (analysisResult.proxima_reuniao) {
         setProximaData(analysisResult.proxima_reuniao.data);
         setProximaHora(analysisResult.proxima_reuniao.hora);
@@ -159,8 +175,11 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
       }
 
       // 3. Agendar proxima reuniao via addReuniao (cria evento no Google Calendar)
+      //    Duplica participantes da reuniao anterior (email do lead)
       if (agendarReuniao && proximaData && proximaHora) {
         const dataReuniaoISO = `${proximaData}T${proximaHora}:00-03:00`;
+        // Buscar email do lead para incluir no convite
+        const lead = reuniao.lead_id ? leads.find(l => l.id === reuniao.lead_id) : null;
         try {
           await addReuniao({
             lead_id: reuniao.lead_id || undefined,
@@ -171,6 +190,7 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
             canal: reuniao.canal,
             data_agendamento: new Date().toISOString().split('T')[0],
             data_reuniao: dataReuniaoISO,
+            lead_email: lead?.email || undefined,
           } as any, true); // replaceExisting=true caso tenha reuniao ativa
         } catch (e: any) {
           console.error('Erro ao agendar reuniao:', e);
