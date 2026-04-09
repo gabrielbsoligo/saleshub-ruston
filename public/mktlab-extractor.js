@@ -35,7 +35,11 @@
     telefone: getField('Celular') || getField('Telefone') || '',
     email: getField('Email') || '',
     cnpj: getField('CNPJ/EIN') || getField('CNPJ') || '',
-    faturamento: getField('Faturamento da LP') || getField('Faturamento') || '',
+    faturamento: getField('Faturamento da LP') || getField('Faturamento') || (function() {
+      var spans = document.querySelectorAll('span.text-sm.leading-0.font-normal.text-content-foreground');
+      for (var i = 0; i < spans.length; i++) { if (/\d+.*mil|milh/i.test(spans[i].textContent)) return spans[i].textContent.trim(); }
+      return '';
+    })(),
     produto: getField('Produtos Marketing') || getField('Produto') || '',
     valor_lead: getField('Valor Leadbroker') || getField('Valor') || '',
     canal_aquisicao: getField('Canal de Aquisição') || getField('Canal de aquisição') || getField('Status Leadbroker') || '',

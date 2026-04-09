@@ -175,9 +175,22 @@
           if (sel.length > 0) value = sel.join('; ');
         }
         result[item.title] = value;
+        // Also store by normalized key (strip accents/special chars) for resilient matching
+        var normKey = item.title.normalize('NFC').replace(/[^\w\s]/g, '').toLowerCase().trim();
+        if (!result['_norm_' + normKey]) result['_norm_' + normKey] = value;
       });
     });
     return result;
+  }
+
+  function findFieldByValue(customFields, pattern) {
+    var keys = Object.keys(customFields);
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i].indexOf('_norm_') === 0) continue;
+      var v = customFields[keys[i]];
+      if (v && pattern.test(v)) return v;
+    }
+    return null;
   }
 
   // ---- Map canal ----
@@ -745,8 +758,8 @@
           telefone: lead.telefone || null,
           email: lead.email || detail.basicData.email || null,
           cnpj: lead.cnpj || detail.basicData.taxId || null,
-          faturamento: (detail.customFields || {})['Faturamento da LP'] || (detail.customFields || {})['Faturamento'] || null,
-          produto: (detail.customFields || {})['Produtos Marketing'] || (detail.customFields || {})['Produto'] || null,
+          faturamento: (detail.customFields || {})['Faturamento da LP'] || (detail.customFields || {})['Faturamento'] || (detail.customFields || {})['_norm_faturamento da lp'] || findFieldByValue(detail.customFields || {}, /mil|milh/i) || null,
+          produto: (detail.customFields || {})['Produtos Marketing'] || (detail.customFields || {})['Produto'] || (detail.customFields || {})['_norm_produtos marketing'] || null,
           canal: selectedCanal,
           status: 'sem_contato',
           valor_lead: parseFloat((detail.customFields || {})['Valor Leadbroker'] || (detail.customFields || {})['Valor'] || '0') || null,
