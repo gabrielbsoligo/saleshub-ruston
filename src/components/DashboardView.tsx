@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { DEAL_STATUS_LABELS, CANAL_LABELS, ROLE_LABELS } from "../types";
-import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight } from "lucide-react";
+import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
 
@@ -79,13 +79,21 @@ function PaceLineChart({ title, data, isCurrency = true, color = '#22c55e' }: {
 }
 
 export const DashboardView: React.FC = () => {
-  const { deals, leads, reunioes, members, metas } = useAppStore();
+  const { deals, leads, reunioes, members, metas, ligacoes, fetchLeads, fetchDeals, fetchReunioes, fetchMetas, fetchLigacoes } = useAppStore();
   const [viewMode, setViewMode] = useState<'geral' | 'individual'>('geral');
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [showPendentes, setShowPendentes] = useState(true);
+
+  // Auto-refresh every 30s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchLeads(); fetchDeals(); fetchReunioes(); fetchMetas(); fetchLigacoes();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [fetchLeads, fetchDeals, fetchReunioes, fetchMetas, fetchLigacoes]);
 
   const [year, month] = selectedMonth.split('-').map(Number);
   const mesStart = new Date(year, month - 1, 1);
@@ -168,6 +176,20 @@ export const DashboardView: React.FC = () => {
   const pendentes = deals.filter(d => d.status === 'dar_feedback');
   const activeMembers = members.filter(m => m.active);
 
+  // Daily calls by SDR (today)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const ligacoesHoje = useMemo(() => ligacoes.filter(l => l.started_at && l.started_at.slice(0, 10) === todayStr), [ligacoes, todayStr]);
+  const callsBySdr = useMemo(() => {
+    const sdrs = activeMembers.filter(m => m.role === 'sdr' || m.role === 'gestor');
+    return sdrs.map(sdr => {
+      const sdrCalls = ligacoesHoje.filter(l => l.member_id === sdr.id);
+      const total = sdrCalls.length;
+      const atendidas = sdrCalls.filter(l => l.atendida).length;
+      const durTotal = sdrCalls.filter(l => l.atendida).reduce((a, l) => a + (l.duration || 0), 0);
+      return { sdr, total, atendidas, naoAtendidas: total - atendidas, durMedia: atendidas > 0 ? Math.round(durTotal / atendidas) : 0 };
+    }).sort((a, b) => b.total - a.total);
+  }, [activeMembers, ligacoesHoje]);
+
   const individualData = useMemo(() => activeMembers.map(member => {
     const meta = metasDoMes.find(m => m.member_id === member.id);
     const memberDeals = dealsGanhosMes.filter(d => d.closer_id === member.id || d.sdr_id === member.id);
@@ -213,26 +235,48 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* PENDENTES */}
-      {pendentes.length > 0 && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
-          <button onClick={() => setShowPendentes(!showPendentes)} className="flex items-center gap-2 w-full">
-            <AlertCircle size={16} className="text-amber-400" />
-            <span className="text-sm font-bold text-amber-400 flex-1 text-left">Pendentes de Feedback ({pendentes.length})</span>
-            {showPendentes ? <ChevronDown size={14} className="text-amber-400" /> : <ChevronRight size={14} className="text-amber-400" />}
-          </button>
-          {showPendentes && (
-            <div className="space-y-2 mt-3">
-              {pendentes.map(d => (
-                <div key={d.id} className="flex items-center justify-between bg-[var(--color-v4-card)] rounded-lg px-3 py-2">
-                  <span className="text-sm text-white font-medium">{d.empresa} <span className="text-xs text-[var(--color-v4-text-muted)]">{d.closer?.name || ''}</span></span>
-                  <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 animate-pulse">Aguardando</span>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* LIGACOES DO DIA POR SDR */}
+      <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Phone size={16} className="text-[var(--color-v4-red)]" />
+            <h3 className="text-sm font-bold text-white">Ligações do Dia</h3>
+            <span className="text-xs text-[var(--color-v4-text-muted)]">({ligacoesHoje.length} total)</span>
+          </div>
+          <span className="text-[10px] text-[var(--color-v4-text-muted)]">Atualiza a cada 30s</span>
         </div>
-      )}
+        {callsBySdr.length > 0 ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {callsBySdr.map(({ sdr, total, atendidas, naoAtendidas, durMedia }) => (
+              <div key={sdr.id} className="bg-[var(--color-v4-surface)] rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-6 h-6 rounded-full bg-[var(--color-v4-red)] flex items-center justify-center text-white font-bold text-[10px]">
+                    {sdr.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                  </div>
+                  <span className="text-xs font-medium text-white truncate">{sdr.name.split(' ')[0]}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-white">{total}</p>
+                    <p className="text-[9px] text-[var(--color-v4-text-muted)]">Total</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-green-400">{atendidas}</p>
+                    <p className="text-[9px] text-[var(--color-v4-text-muted)]">Atendidas</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-lg font-bold text-red-400">{naoAtendidas}</p>
+                    <p className="text-[9px] text-[var(--color-v4-text-muted)]">N/A</p>
+                  </div>
+                </div>
+                {durMedia > 0 && <p className="text-[9px] text-[var(--color-v4-text-muted)] mt-1 text-center">{Math.floor(durMedia / 60)}m{durMedia % 60}s média</p>}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--color-v4-text-muted)] text-center py-2">Nenhuma ligação registrada hoje</p>
+        )}
+      </div>
 
       {/* GERAL */}
       {viewMode === 'geral' && (
@@ -261,6 +305,27 @@ export const DashboardView: React.FC = () => {
             <PaceLineChart title="Pace OT" data={dailyOt} color="#3b82f6" />
             <PaceLineChart title="Pace Reuniões" data={dailyReunioes} isCurrency={false} color="#f59e0b" />
           </div>
+
+          {/* PENDENTES (after paces) */}
+          {pendentes.length > 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-6">
+              <button onClick={() => setShowPendentes(!showPendentes)} className="flex items-center gap-2 w-full">
+                <AlertCircle size={16} className="text-amber-400" />
+                <span className="text-sm font-bold text-amber-400 flex-1 text-left">Pendentes de Feedback ({pendentes.length})</span>
+                {showPendentes ? <ChevronDown size={14} className="text-amber-400" /> : <ChevronRight size={14} className="text-amber-400" />}
+              </button>
+              {showPendentes && (
+                <div className="space-y-2 mt-3">
+                  {pendentes.map(d => (
+                    <div key={d.id} className="flex items-center justify-between bg-[var(--color-v4-card)] rounded-lg px-3 py-2">
+                      <span className="text-sm text-white font-medium">{d.empresa} <span className="text-xs text-[var(--color-v4-text-muted)]">{d.closer?.name || ''}</span></span>
+                      <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 animate-pulse">Aguardando</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
