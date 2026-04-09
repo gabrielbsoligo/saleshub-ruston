@@ -7,10 +7,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Hangup causes that indicate the call was answered
+// Hangup causes that indicate the call was answered (only if duration > 0)
 const ANSWERED_CAUSES = [
   'NORMAL_CLEARING',        // Normal hangup after conversation
-  'ORIGINATOR_CANCEL',      // Caller hung up (but was connected)
   'SUCCESS',
 ]
 
@@ -54,8 +53,8 @@ Deno.serve(async (req) => {
     const hangupCause = data.hangupCause || ''
 
     // Determine if call was answered
-    // If duration > 0, it was answered. Also check hangup cause.
-    const atendida = duration > 0 || ANSWERED_CAUSES.includes(hangupCause)
+    // Must have duration > 0 (actual conversation happened) AND not a failed cause
+    const atendida = duration > 0 && !NOT_ANSWERED_CAUSES.includes(hangupCause)
 
     // Match caller (ramal) to team member
     let memberId: string | null = null
