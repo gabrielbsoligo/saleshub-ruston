@@ -1,6 +1,6 @@
 -- =============================================
--- Migration: Sistema de Gestão Comercial Ruston
--- Executar no Supabase SQL Editor
+-- Migration COMPLETA para banco novo (Supabase fresh)
+-- Cola TUDO no SQL Editor do Supabase e clica Run
 -- =============================================
 
 -- 1. EQUIPE
@@ -12,6 +12,12 @@ CREATE TABLE team_members (
   active BOOLEAN DEFAULT true,
   avatar_url TEXT,
   auth_user_id UUID REFERENCES auth.users(id),
+  kommo_user_id INTEGER,
+  ramal_4com TEXT,
+  google_calendar_connected BOOLEAN DEFAULT false,
+  google_access_token TEXT,
+  google_refresh_token TEXT,
+  google_token_expiry TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -21,6 +27,7 @@ CREATE TABLE leads (
   empresa TEXT NOT NULL,
   nome_contato TEXT,
   telefone TEXT,
+  email TEXT,
   cnpj TEXT,
   faturamento TEXT,
   canal TEXT NOT NULL CHECK (canal IN ('blackbox', 'leadbroker', 'outbound', 'recomendacao', 'indicacao', 'recovery')),
@@ -29,7 +36,9 @@ CREATE TABLE leads (
   sdr_id UUID REFERENCES team_members(id),
   kommo_id TEXT,
   kommo_link TEXT,
-  status TEXT DEFAULT 'sem_contato' CHECK (status IN ('sem_contato', 'em_follow', 'reuniao_marcada', 'reuniao_realizada', 'noshow', 'perdido', 'estorno')),
+  mktlab_link TEXT,
+  mktlab_id TEXT,
+  status TEXT DEFAULT 'sem_contato' CHECK (status IN ('sem_contato', 'em_follow', 'reuniao_marcada', 'reuniao_realizada', 'noshow', 'perdido', 'estorno', 'aguardando_feedback', 'convertido')),
   data_cadastro DATE,
   mes_referencia TEXT,
   valor_lead NUMERIC,
@@ -37,7 +46,7 @@ CREATE TABLE leads (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 3. DEALS (Negociações)
+-- 3. DEALS
 CREATE TABLE deals (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id UUID REFERENCES leads(id),
@@ -52,23 +61,41 @@ CREATE TABLE deals (
   data_retorno DATE,
   valor_mrr NUMERIC DEFAULT 0,
   valor_ot NUMERIC DEFAULT 0,
-  status TEXT DEFAULT 'negociacao' CHECK (status IN ('negociacao', 'contrato_na_rua', 'contrato_assinado', 'follow_longo', 'perdido')),
+  status TEXT DEFAULT 'dar_feedback' CHECK (status IN ('dar_feedback', 'negociacao', 'contrato_na_rua', 'contrato_assinado', 'follow_longo', 'perdido')),
   produto TEXT,
   origem TEXT,
   temperatura TEXT CHECK (temperatura IN ('quente', 'morno', 'frio')),
   bant INTEGER CHECK (bant BETWEEN 1 AND 4),
   motivo_perda TEXT,
   curva_dias INTEGER,
+  -- Multi-produto
+  produtos_ot TEXT[] DEFAULT '{}',
+  produtos_mrr TEXT[] DEFAULT '{}',
+  valor_escopo NUMERIC DEFAULT 0,
+  valor_recorrente NUMERIC DEFAULT 0,
+  data_inicio_escopo DATE,
+  data_pgto_escopo DATE,
+  data_inicio_recorrente DATE,
+  data_pgto_recorrente DATE,
+  -- Campos de ganho
+  link_call_vendas TEXT,
+  link_transcricao TEXT,
+  contrato_url TEXT,
+  contrato_filename TEXT,
+  tier TEXT CHECK (tier IN ('tiny', 'small', 'medium', 'large', 'enterprise')),
+  observacoes TEXT,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 4. REUNIÕES
+-- 4. REUNIOES
 CREATE TABLE reunioes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id UUID REFERENCES leads(id),
   deal_id UUID REFERENCES deals(id),
   sdr_id UUID REFERENCES team_members(id),
+  closer_id UUID REFERENCES team_members(id),
+  closer_confirmado_id UUID REFERENCES team_members(id),
   empresa TEXT,
   nome_contato TEXT,
   canal TEXT,
@@ -78,10 +105,12 @@ CREATE TABLE reunioes (
   realizada BOOLEAN DEFAULT false,
   show BOOLEAN,
   notas TEXT,
+  calendar_event_id TEXT,
+  meet_link TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 5. METAS MENSAIS
+-- 5. METAS
 CREATE TABLE metas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   member_id UUID REFERENCES team_members(id) NOT NULL,
@@ -95,7 +124,7 @@ CREATE TABLE metas (
   UNIQUE(member_id, mes)
 );
 
--- 6. COMISSÕES CONFIG
+-- 6. COMISSOES CONFIG
 CREATE TABLE comissoes_config (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   role TEXT NOT NULL CHECK (role IN ('closer', 'sdr')),
@@ -105,7 +134,31 @@ CREATE TABLE comissoes_config (
   active BOOLEAN DEFAULT true
 );
 
--- 7. PERFORMANCE SDR
+-- 7. COMISSOES REGISTROS
+CREATE TABLE comissoes_registros (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  deal_id UUID REFERENCES deals(id),
+  member_id UUID REFERENCES team_members(id),
+  member_name TEXT,
+  role_comissao TEXT CHECK (role_comissao IN ('closer', 'sdr')),
+  tipo TEXT CHECK (tipo IN ('mrr', 'ot')),
+  categoria TEXT,
+  valor_base NUMERIC DEFAULT 0,
+  percentual NUMERIC DEFAULT 0,
+  valor_comissao NUMERIC DEFAULT 0,
+  data_pgto DATE,
+  data_liberacao DATE,
+  empresa TEXT,
+  origem TEXT,
+  status_comissao TEXT DEFAULT 'aguardando_pgto' CHECK (status_comissao IN ('aguardando_pgto', 'liberada', 'paga')),
+  data_pgto_real DATE,
+  valor_recebido NUMERIC,
+  data_pgto_vendedor DATE,
+  confirmado_por UUID REFERENCES team_members(id),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 8. PERFORMANCE SDR
 CREATE TABLE performance_sdr (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   member_id UUID REFERENCES team_members(id) NOT NULL,
@@ -121,7 +174,7 @@ CREATE TABLE performance_sdr (
   UNIQUE(member_id, data)
 );
 
--- 8. PERFORMANCE CLOSER
+-- 9. PERFORMANCE CLOSER
 CREATE TABLE performance_closer (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   member_id UUID REFERENCES team_members(id) NOT NULL,
@@ -134,7 +187,7 @@ CREATE TABLE performance_closer (
   UNIQUE(member_id, mes, canal)
 );
 
--- 9. CUSTOS COMERCIAL
+-- 10. CUSTOS COMERCIAL
 CREATE TABLE custos_comercial (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   descricao TEXT NOT NULL,
@@ -144,12 +197,54 @@ CREATE TABLE custos_comercial (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- 11. LIGACOES 4COM
+CREATE TABLE ligacoes_4com (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  call_id TEXT,
+  direction TEXT,
+  caller TEXT,
+  called TEXT,
+  started_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  duration INTEGER DEFAULT 0,
+  hangup_cause TEXT,
+  record_url TEXT,
+  member_id UUID REFERENCES team_members(id),
+  atendida BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 12. INTEGRACAO CONFIG (tokens Kommo, etc)
+CREATE TABLE integracao_config (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 13. POST-MEETING AUTOMATIONS
+CREATE TABLE post_meeting_automations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reuniao_id UUID NOT NULL REFERENCES reunioes(id),
+  deal_id UUID REFERENCES deals(id),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'fetching_transcript', 'analyzing', 'applying', 'completed', 'error')),
+  transcript_text TEXT,
+  ai_result JSONB,
+  actions_taken JSONB,
+  leads_created UUID[],
+  next_reuniao_id UUID REFERENCES reunioes(id),
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
 -- =============================================
--- INDEXES para performance
+-- INDEXES
 -- =============================================
 CREATE INDEX idx_leads_sdr ON leads(sdr_id);
 CREATE INDEX idx_leads_canal ON leads(canal);
 CREATE INDEX idx_leads_status ON leads(status);
+CREATE UNIQUE INDEX idx_leads_mktlab_id ON leads(mktlab_id) WHERE mktlab_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_leads_mktlab_link ON leads(mktlab_link) WHERE mktlab_link IS NOT NULL;
 CREATE INDEX idx_deals_closer ON deals(closer_id);
 CREATE INDEX idx_deals_sdr ON deals(sdr_id);
 CREATE INDEX idx_deals_status ON deals(status);
@@ -158,9 +253,11 @@ CREATE INDEX idx_reunioes_sdr ON reunioes(sdr_id);
 CREATE INDEX idx_reunioes_data ON reunioes(data_reuniao);
 CREATE INDEX idx_performance_sdr_member ON performance_sdr(member_id, data);
 CREATE INDEX idx_performance_closer_member ON performance_closer(member_id, mes);
+CREATE UNIQUE INDEX idx_automations_reuniao ON post_meeting_automations(reuniao_id);
+CREATE INDEX idx_automations_status ON post_meeting_automations(status);
 
 -- =============================================
--- TRIGGER para updated_at automático
+-- TRIGGERS
 -- =============================================
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
@@ -182,23 +279,26 @@ ALTER TABLE deals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reunioes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE metas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE comissoes_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE comissoes_registros ENABLE ROW LEVEL SECURITY;
 ALTER TABLE performance_sdr ENABLE ROW LEVEL SECURITY;
 ALTER TABLE performance_closer ENABLE ROW LEVEL SECURITY;
 ALTER TABLE custos_comercial ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ligacoes_4com ENABLE ROW LEVEL SECURITY;
+ALTER TABLE integracao_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE post_meeting_automations ENABLE ROW LEVEL SECURITY;
 
--- Função helper: pega o role do user logado
+-- Helper functions
 CREATE OR REPLACE FUNCTION get_user_role()
 RETURNS TEXT AS $$
   SELECT role FROM team_members WHERE auth_user_id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- Função helper: pega o team_member_id do user logado
 CREATE OR REPLACE FUNCTION get_member_id()
 RETURNS UUID AS $$
   SELECT id FROM team_members WHERE auth_user_id = auth.uid() LIMIT 1;
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 
--- TEAM_MEMBERS: todos veem, gestor edita, usuario pode linkar seu proprio auth_user_id no primeiro login
+-- TEAM_MEMBERS
 CREATE POLICY "team_members_select" ON team_members FOR SELECT USING (true);
 CREATE POLICY "team_members_insert" ON team_members FOR INSERT WITH CHECK (get_user_role() = 'gestor');
 CREATE POLICY "tm_update" ON team_members FOR UPDATE USING (
@@ -208,110 +308,66 @@ CREATE POLICY "tm_update" ON team_members FOR UPDATE USING (
 );
 CREATE POLICY "team_members_delete" ON team_members FOR DELETE USING (get_user_role() = 'gestor');
 
--- LEADS: gestor vê tudo, SDR vê os próprios, closer vê os que tem reunião/deal
-CREATE POLICY "leads_select" ON leads FOR SELECT USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id()
-  OR id IN (SELECT lead_id FROM reunioes WHERE closer_id = get_member_id())
-  OR id IN (SELECT lead_id FROM deals WHERE closer_id = get_member_id())
-);
+-- LEADS
+CREATE POLICY "leads_select" ON leads FOR SELECT USING (true);
 CREATE POLICY "leads_insert" ON leads FOR INSERT WITH CHECK (true);
-CREATE POLICY "leads_update" ON leads FOR UPDATE USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id()
-);
+CREATE POLICY "leads_update" ON leads FOR UPDATE USING (true);
+CREATE POLICY "leads_delete" ON leads FOR DELETE USING (get_user_role() = 'gestor');
 
--- DEALS: gestor vê tudo, closer vê os próprios, SDR vê os que originou
-CREATE POLICY "deals_select" ON deals FOR SELECT USING (
-  get_user_role() = 'gestor' OR closer_id = get_member_id() OR sdr_id = get_member_id()
-);
+-- DEALS
+CREATE POLICY "deals_select" ON deals FOR SELECT USING (true);
 CREATE POLICY "deals_insert" ON deals FOR INSERT WITH CHECK (true);
-CREATE POLICY "deals_update" ON deals FOR UPDATE USING (
-  get_user_role() = 'gestor' OR closer_id = get_member_id() OR sdr_id = get_member_id()
-);
+CREATE POLICY "deals_update" ON deals FOR UPDATE USING (true);
+CREATE POLICY "deals_delete" ON deals FOR DELETE USING (get_user_role() = 'gestor');
 
--- REUNIOES: gestor vê tudo, SDR vê as próprias, closer vê as que vai tocar
-CREATE POLICY "reunioes_select" ON reunioes FOR SELECT USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id() OR closer_id = get_member_id()
-);
+-- REUNIOES
+CREATE POLICY "reunioes_select" ON reunioes FOR SELECT USING (true);
 CREATE POLICY "reunioes_insert" ON reunioes FOR INSERT WITH CHECK (true);
-CREATE POLICY "reunioes_update" ON reunioes FOR UPDATE USING (
-  get_user_role() = 'gestor' OR sdr_id = get_member_id() OR closer_id = get_member_id() OR closer_confirmado_id = get_member_id()
-);
+CREATE POLICY "reunioes_update" ON reunioes FOR UPDATE USING (true);
 
--- METAS: gestor vê/edita tudo, membro vê as próprias
-CREATE POLICY "metas_select" ON metas FOR SELECT USING (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
-CREATE POLICY "metas_insert" ON metas FOR INSERT WITH CHECK (get_user_role() = 'gestor');
-CREATE POLICY "metas_update" ON metas FOR UPDATE USING (get_user_role() = 'gestor');
+-- METAS
+CREATE POLICY "metas_select" ON metas FOR SELECT USING (true);
+CREATE POLICY "metas_insert" ON metas FOR INSERT WITH CHECK (true);
+CREATE POLICY "metas_update" ON metas FOR UPDATE USING (true);
 
--- COMISSOES_CONFIG: todos veem, gestor edita
+-- COMISSOES
 CREATE POLICY "comissoes_select" ON comissoes_config FOR SELECT USING (true);
 CREATE POLICY "comissoes_insert" ON comissoes_config FOR INSERT WITH CHECK (get_user_role() = 'gestor');
 CREATE POLICY "comissoes_update" ON comissoes_config FOR UPDATE USING (get_user_role() = 'gestor');
 
--- PERFORMANCE_SDR: gestor vê tudo, membro vê/edita o próprio
-CREATE POLICY "perf_sdr_select" ON performance_sdr FOR SELECT USING (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
-CREATE POLICY "perf_sdr_insert" ON performance_sdr FOR INSERT WITH CHECK (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
-CREATE POLICY "perf_sdr_update" ON performance_sdr FOR UPDATE USING (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
+CREATE POLICY "comreg_select" ON comissoes_registros FOR SELECT USING (true);
+CREATE POLICY "comreg_write" ON comissoes_registros FOR ALL USING (true);
 
--- PERFORMANCE_CLOSER: gestor vê tudo, membro vê/edita o próprio
-CREATE POLICY "perf_closer_select" ON performance_closer FOR SELECT USING (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
-CREATE POLICY "perf_closer_insert" ON performance_closer FOR INSERT WITH CHECK (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
-CREATE POLICY "perf_closer_update" ON performance_closer FOR UPDATE USING (
-  get_user_role() = 'gestor' OR member_id = get_member_id()
-);
+-- PERFORMANCE
+CREATE POLICY "perf_sdr_select" ON performance_sdr FOR SELECT USING (true);
+CREATE POLICY "perf_sdr_insert" ON performance_sdr FOR INSERT WITH CHECK (true);
+CREATE POLICY "perf_sdr_update" ON performance_sdr FOR UPDATE USING (true);
 
--- CUSTOS: gestor vê/edita, demais veem
+CREATE POLICY "perf_closer_select" ON performance_closer FOR SELECT USING (true);
+CREATE POLICY "perf_closer_insert" ON performance_closer FOR INSERT WITH CHECK (true);
+CREATE POLICY "perf_closer_update" ON performance_closer FOR UPDATE USING (true);
+
+-- CUSTOS
 CREATE POLICY "custos_select" ON custos_comercial FOR SELECT USING (true);
-CREATE POLICY "custos_insert" ON custos_comercial FOR INSERT WITH CHECK (get_user_role() = 'gestor');
-CREATE POLICY "custos_update" ON custos_comercial FOR UPDATE USING (get_user_role() = 'gestor');
+CREATE POLICY "custos_insert" ON custos_comercial FOR INSERT WITH CHECK (true);
+CREATE POLICY "custos_update" ON custos_comercial FOR UPDATE USING (true);
+
+-- LIGACOES
+CREATE POLICY "ligacoes_select" ON ligacoes_4com FOR SELECT USING (true);
+CREATE POLICY "ligacoes_insert" ON ligacoes_4com FOR INSERT WITH CHECK (true);
+
+-- INTEGRACAO CONFIG
+CREATE POLICY "integracao_select" ON integracao_config FOR SELECT USING (true);
+CREATE POLICY "integracao_write" ON integracao_config FOR ALL USING (true);
+
+-- AUTOMATIONS
+CREATE POLICY "automations_select" ON post_meeting_automations FOR SELECT USING (true);
+CREATE POLICY "automations_insert" ON post_meeting_automations FOR INSERT WITH CHECK (true);
+CREATE POLICY "automations_update" ON post_meeting_automations FOR UPDATE USING (true);
 
 -- =============================================
--- SEED: Comissões padrão
+-- AUTO-LINK auth.users → team_members
 -- =============================================
-INSERT INTO comissoes_config (role, tipo_origem, tipo_valor, percentual) VALUES
-  ('closer', 'inbound', 'mrr', 0.10),
-  ('closer', 'inbound', 'ot', 0.10),
-  ('closer', 'outbound', 'mrr', 0.10),
-  ('closer', 'outbound', 'ot', 0.10),
-  ('sdr', 'inbound', 'mrr', 0.05),
-  ('sdr', 'inbound', 'ot', 0.05),
-  ('sdr', 'outbound', 'mrr', 0.05),
-  ('sdr', 'outbound', 'ot', 0.05);
-
--- =============================================
--- VIEW: Resumo de deals por closer/mês
--- =============================================
-CREATE VIEW v_deals_summary AS
-SELECT
-  d.closer_id,
-  tm.name AS closer_name,
-  DATE_TRUNC('month', d.data_call) AS mes,
-  COUNT(*) AS total_deals,
-  COUNT(*) FILTER (WHERE d.status = 'contrato_assinado') AS deals_ganhos,
-  SUM(d.valor_mrr) FILTER (WHERE d.status = 'contrato_assinado') AS mrr_ganho,
-  SUM(d.valor_ot) FILTER (WHERE d.status = 'contrato_assinado') AS ot_ganho,
-  AVG(d.curva_dias) AS media_curva_dias
-FROM deals d
-LEFT JOIN team_members tm ON d.closer_id = tm.id
-GROUP BY d.closer_id, tm.name, DATE_TRUNC('month', d.data_call);
-
--- =============================================
--- AUTO-LINK: Vincula auth.users ao team_members por email
--- Roda automaticamente no INSERT (signup) e UPDATE (confirmação email)
--- SECURITY DEFINER = bypassa RLS, nunca falha silenciosamente
--- =============================================
-
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
@@ -347,61 +403,35 @@ CREATE TRIGGER on_auth_user_updated
   EXECUTE FUNCTION public.handle_user_updated();
 
 -- =============================================
--- COMISSÕES: Novo fluxo de confirmação de pagamento
--- Status: aguardando_pgto → liberada → paga
+-- SEED: Comissoes padrao + Gestor inicial
 -- =============================================
+INSERT INTO comissoes_config (role, tipo_origem, tipo_valor, percentual) VALUES
+  ('closer', 'inbound', 'mrr', 0.10),
+  ('closer', 'inbound', 'ot', 0.10),
+  ('closer', 'outbound', 'mrr', 0.10),
+  ('closer', 'outbound', 'ot', 0.10),
+  ('sdr', 'inbound', 'mrr', 0.05),
+  ('sdr', 'inbound', 'ot', 0.05),
+  ('sdr', 'outbound', 'mrr', 0.05),
+  ('sdr', 'outbound', 'ot', 0.05);
 
-ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS status_comissao TEXT DEFAULT 'aguardando_pgto'
-  CHECK (status_comissao IN ('aguardando_pgto', 'liberada', 'paga'));
-ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS data_pgto_real DATE;
-ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS valor_recebido NUMERIC;
-ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS data_pgto_vendedor DATE;
-ALTER TABLE comissoes_registros ADD COLUMN IF NOT EXISTS confirmado_por UUID REFERENCES team_members(id);
+-- Criar membro gestor para primeiro acesso
+-- IMPORTANTE: troque o email pelo seu email real
+INSERT INTO team_members (name, email, role, active) VALUES
+  ('Yuri Ryan', 'yuriryan@email.com', 'gestor', true),
+  ('Lary', 'lary@email.com', 'sdr', true);
 
--- Financeiro pode confirmar pagamentos (write access)
-DROP POLICY IF EXISTS comreg_write ON comissoes_registros;
-CREATE POLICY comreg_write ON comissoes_registros FOR ALL
-  USING (get_user_role() IN ('gestor', 'financeiro'));
-
--- =============================================
--- MKTLAB: ID + unique indexes para prevenir duplicatas
--- =============================================
-ALTER TABLE leads ADD COLUMN IF NOT EXISTS mktlab_id TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_id ON leads(mktlab_id) WHERE mktlab_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_link ON leads(mktlab_link) WHERE mktlab_link IS NOT NULL;
--- Backfill mktlab_id from link
-UPDATE leads SET mktlab_id = substring(mktlab_link from '/leads/([a-zA-Z0-9-]+)$')
-  WHERE mktlab_link IS NOT NULL AND mktlab_id IS NULL;
-
--- =============================================
--- POST-MEETING AUTOMATIONS
--- Rastreia execucoes da automacao pos-reuniao com IA
--- =============================================
-
-CREATE TABLE IF NOT EXISTS post_meeting_automations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  reuniao_id UUID NOT NULL REFERENCES reunioes(id),
-  deal_id UUID REFERENCES deals(id),
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'fetching_transcript', 'analyzing', 'applying', 'completed', 'error')),
-  transcript_text TEXT,
-  ai_result JSONB,
-  actions_taken JSONB,
-  leads_created UUID[],
-  next_reuniao_id UUID REFERENCES reunioes(id),
-  error_message TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  completed_at TIMESTAMPTZ
-);
-
--- Garantir apenas 1 automacao por reuniao (idempotencia)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_automations_reuniao ON post_meeting_automations(reuniao_id);
-CREATE INDEX IF NOT EXISTS idx_automations_status ON post_meeting_automations(status);
-
--- RLS
-ALTER TABLE post_meeting_automations ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "automations_select" ON post_meeting_automations FOR SELECT USING (true);
-CREATE POLICY "automations_insert" ON post_meeting_automations FOR INSERT WITH CHECK (true);
-CREATE POLICY "automations_update" ON post_meeting_automations FOR UPDATE USING (
-  get_user_role() = 'gestor' OR true
-);
+-- VIEW
+CREATE VIEW v_deals_summary AS
+SELECT
+  d.closer_id,
+  tm.name AS closer_name,
+  DATE_TRUNC('month', d.data_call) AS mes,
+  COUNT(*) AS total_deals,
+  COUNT(*) FILTER (WHERE d.status = 'contrato_assinado') AS deals_ganhos,
+  SUM(d.valor_mrr) FILTER (WHERE d.status = 'contrato_assinado') AS mrr_ganho,
+  SUM(d.valor_ot) FILTER (WHERE d.status = 'contrato_assinado') AS ot_ganho,
+  AVG(d.curva_dias) AS media_curva_dias
+FROM deals d
+LEFT JOIN team_members tm ON d.closer_id = tm.id
+GROUP BY d.closer_id, tm.name, DATE_TRUNC('month', d.data_call);

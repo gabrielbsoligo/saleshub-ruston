@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com } from './types';
+import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
+import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
 import toast from 'react-hot-toast';
 
 interface AppState {
@@ -54,6 +55,13 @@ interface AppState {
   fetchCustos: () => Promise<void>;
   saveCusto: (c: Partial<CustoComercial>) => Promise<void>;
   fetchLigacoes: () => Promise<void>;
+
+  // Post-Meeting Automations
+  automations: PostMeetingAutomation[];
+  createAutomation: (reuniaoId: string, dealId?: string) => Promise<PostMeetingAutomation | null>;
+  updateAutomation: (id: string, updates: Partial<PostMeetingAutomation>) => Promise<void>;
+  getAutomationByReuniao: (reuniaoId: string) => Promise<PostMeetingAutomation | null>;
+  startPostMeetingAutomation: (reuniaoId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppState | null>(null);
@@ -77,6 +85,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [performanceCloser, setPerformanceCloser] = useState<PerformanceCloser[]>([]);
   const [custos, setCustos] = useState<CustoComercial[]>([]);
   const [ligacoes, setLigacoes] = useState<Ligacao4com[]>([]);
+  const [automations, setAutomations] = useState<PostMeetingAutomation[]>([]);
 
   // ===================== AUTH =====================
   const checkSession = useCallback(async () => {
@@ -612,6 +621,100 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) setLigacoes(data);
   }, []);
 
+  // ===================== POST-MEETING AUTOMATIONS =====================
+  const createAutomation = async (reuniaoId: string, dealId?: string): Promise<PostMeetingAutomation | null> => {
+    const { data, error } = await supabase.from('post_meeting_automations')
+      .insert({ reuniao_id: reuniaoId, deal_id: dealId || null, status: 'pending' })
+      .select('*')
+      .single();
+    if (error) {
+      if (error.code === '23505') { // unique violation - ja existe automacao para esta reuniao
+        toast.error('Automacao ja foi executada para esta reuniao');
+      } else {
+        toast.error(error.message);
+      }
+      return null;
+    }
+    if (data) setAutomations(prev => [data, ...prev]);
+    return data;
+  };
+
+  const updateAutomation = async (id: string, updates: Partial<PostMeetingAutomation>) => {
+    const { error } = await supabase.from('post_meeting_automations')
+      .update(updates)
+      .eq('id', id);
+    if (error) { toast.error(error.message); return; }
+    setAutomations(prev => prev.map(a => a.id === id ? { ...a, ...updates } : a));
+  };
+
+  const getAutomationByReuniao = async (reuniaoId: string): Promise<PostMeetingAutomation | null> => {
+    const { data, error } = await supabase.from('post_meeting_automations')
+      .select('*')
+      .eq('reuniao_id', reuniaoId)
+      .maybeSingle();
+    if (error) { console.error('Erro ao buscar automacao:', error); return null; }
+    return data;
+  };
+
+  const startPostMeetingAutomation = async (reuniaoId: string) => {
+    // Verificar se ja existe automacao para esta reuniao
+    const existing = await getAutomationByReuniao(reuniaoId);
+    if (existing && existing.status === 'completed') {
+      toast.error('Automacao ja foi executada para esta reuniao');
+      return;
+    }
+    if (existing && existing.status !== 'error') {
+      toast.error('Automacao ja esta em andamento');
+      return;
+    }
+
+    toast.success('Iniciando automacao pos-reuniao...', { icon: '🤖', duration: 3000 });
+
+    await runPostMeetingAutomation(reuniaoId, {
+      onStatusChange: (automationId, status) => {
+        setAutomations(prev => {
+          const exists = prev.find(a => a.id === automationId);
+          if (exists) return prev.map(a => a.id === automationId ? { ...a, status } : a);
+          return [{ id: automationId, reuniao_id: reuniaoId, status, created_at: new Date().toISOString() } as PostMeetingAutomation, ...prev];
+        });
+
+        const statusMessages: Record<string, string> = {
+          fetching_transcript: '🔍 Buscando transcricao no Google Drive...',
+          analyzing: '🧠 Analisando call com IA...',
+          applying: '⚡ Aplicando acoes automaticas...',
+        };
+        if (statusMessages[status]) toast(statusMessages[status], { duration: 2000 });
+      },
+      onPollingUpdate: (attempt, maxAttempts) => {
+        if (attempt === 1) return; // primeira tentativa ja foi notificada
+        if (attempt % 5 === 0) { // a cada 10 minutos
+          toast(`🔍 Ainda buscando transcricao... (tentativa ${attempt}/${maxAttempts})`, { duration: 3000 });
+        }
+      },
+      onComplete: (automationId, actions) => {
+        setAutomations(prev => prev.map(a => a.id === automationId ? { ...a, status: 'completed', actions_taken: actions } : a));
+
+        // Refresh dados que podem ter mudado
+        fetchDeals();
+        fetchLeads();
+        fetchReunioes();
+
+        const parts: string[] = [];
+        if (actions.deal_updated) parts.push(`Deal atualizado (${actions.deal_fields.length} campos)`);
+        if (actions.leads_created > 0) parts.push(`${actions.leads_created} indicacao(oes) criada(s)`);
+        if (actions.meeting_scheduled) parts.push('Proxima reuniao agendada');
+
+        toast.success(`✅ Automacao concluida!\n${parts.join(' | ')}`, { duration: 6000 });
+      },
+      onError: (automationId, error) => {
+        if (automationId) {
+          setAutomations(prev => prev.map(a => a.id === automationId ? { ...a, status: 'error', error_message: error } : a));
+        }
+        toast.error(`❌ Erro na automacao: ${error}`, { duration: 8000 });
+      },
+    });
+  };
+
   // ===================== LOAD DATA ON LOGIN =====================
   useEffect(() => {
     if (currentUser) {
@@ -642,6 +745,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchComissoes,
       fetchCustos, saveCusto,
       ligacoes, fetchLigacoes,
+      automations, createAutomation, updateAutomation, getAutomationByReuniao, startPostMeetingAutomation,
     }}>
       {children}
     </AppContext.Provider>
