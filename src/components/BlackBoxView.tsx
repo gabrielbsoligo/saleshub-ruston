@@ -19,9 +19,9 @@ const TIER_FATURAMENTO: Record<TierName, string[]> = {
 
 function normalize(s: string): string {
   return s.normalize('NFC').replace(/[\u00a0\u00c0-\u00ff]/g, c => {
-    const map: Record<string, string> = { '\u00e0': 'a', '\u00e1': 'a', '\u00e3': 'a', '\u00e9': 'e', '\u00f5': 'o', '\u00e7': 'c', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u', '\u00a0': ' ' };
-    return map[c.toLowerCase()] || c;
-  }).toLowerCase().trim();
+    const map: Record<string, string> = { '\u00e0': 'a', '\u00e1': 'a', '\u00e3': 'a', '\u00c3': '', '\u00e9': 'e', '\u00f5': 'o', '\u00e7': 'c', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u', '\u00a0': ' ' };
+    return map[c.toLowerCase()] ?? c;
+  }).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 function getTier(faturamento?: string): TierName | null {
