@@ -17,10 +17,11 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const [showPostMeeting, setShowPostMeeting] = useState(false);
 
-  // Buscar reuniao associada a este deal (show=true, mais recente)
-  const reuniaoAssociada = reunioes.find(r =>
-    r.lead_id === deal.lead_id && r.realizada && r.show
-  ) || null;
+  // Buscar reuniao associada a este deal (show=true, de fato a MAIS recente).
+  // .find retornava a primeira do array; a ordem de reunioes não garante recência.
+  const reuniaoAssociada = reunioes
+    .filter(r => r.lead_id === deal.lead_id && r.realizada && r.show)
+    .sort((a, b) => new Date(b.data_reuniao || 0).getTime() - new Date(a.data_reuniao || 0).getTime())[0] || null;
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);

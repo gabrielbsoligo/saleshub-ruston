@@ -7,9 +7,12 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
+    // IMPORTANTE: não injetar chaves de IA no bundle do cliente.
+    // Claude API é chamada server-side via Edge Function `analyze-call`.
+    // Se alguém puser ANTHROPIC_API_KEY no .env local, ela ficaria como
+    // string literal no JS servido ao navegador.
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.ANTHROPIC_API_KEY': JSON.stringify(env.ANTHROPIC_API_KEY),
     },
     resolve: {
       alias: {
