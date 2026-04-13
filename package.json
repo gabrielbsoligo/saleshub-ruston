@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
     "@google/genai": "^1.29.0",
     "@hello-pangea/dnd": "^18.0.1",
     "@supabase/supabase-js": "^2.98.0",

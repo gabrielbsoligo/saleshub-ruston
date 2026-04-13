@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { Sparkles, Copy, Check, Zap } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Sparkles, Zap, Loader2, AlertCircle } from "lucide-react";
 import toast from "react-hot-toast";
+import { DiagnosticoSlideDeck, type Diagnostico } from "./DiagnosticoSlideDeck";
 
 const SEGMENTOS = [
   "E-commerce",
@@ -30,96 +31,16 @@ function fmtFat(v: string) {
   return "R$ " + n.toLocaleString("pt-BR") + "/mês";
 }
 
-function buildPrompt(f: {
-  empresa: string;
-  site: string;
-  instagram: string;
-  adsLink: string;
-  adsDesc: string;
-  contexto: string;
-  fat: string;
-  fatMeta: string;
-  concorr: string;
-  segmento: string;
-}): string {
-  const adsLibUrl =
-    f.adsLink ||
-    (f.empresa
-      ? "https://www.facebook.com/ads/library/?q=" +
-        encodeURIComponent(f.empresa) +
-        "&country=BR"
-      : "");
-
-  const linhas = [
-    "Empresa: " + (f.empresa || "não informado"),
-    "Segmento: " + f.segmento,
-    "Site: " + (f.site || "não informado"),
-    "Instagram: " + (f.instagram || "não informado"),
-    f.adsLink
-      ? "Meta Ads Library (link): " + f.adsLink
-      : "Meta Ads: não informado — buscar automaticamente em " + adsLibUrl,
-    f.adsDesc ? "Anúncios ativos conhecidos: " + f.adsDesc : null,
-    f.fat ? "Faturamento atual: " + fmtFat(f.fat) : null,
-    f.fatMeta ? "Meta de faturamento: " + f.fatMeta : null,
-    f.concorr
-      ? "Concorrentes conhecidos: " + f.concorr
-      : "Concorrentes: pesquisar automaticamente os principais do segmento e região",
-    f.contexto ? "Contexto: " + f.contexto : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return `Você é um Especialista em Growth Marketing da V4 Company. Realize uma análise diagnóstica completa do lead abaixo para uma reunião de vendas, seguindo o método V4 (Tráfego, Engajamento, Conversão, Retenção).
-
-ETAPA 0 — RECLASSIFICAÇÃO DE SEGMENTO
-Antes de analisar, verifique se o segmento informado está correto com base no contexto. Se não estiver, corrija e justifique em uma linha.
-
-ETAPA 1 — ANÁLISE DO LEAD
-1. Site — acesse o site informado antes de analisar. Verifique velocidade/percepção, proposta de valor, rastreamento (Pixel/GTM), UX/UI, CTA, mobile.
-2. Instagram — posicionamento (autoridade vs vitrine), engajamento, narrativa, link da bio.
-3. Meta Ads — se não houver link ou descrição, use web_search para buscar anúncios ativos na Meta Ads Library. Analise presença, variedade de criativos e níveis de consciência.
-4. Gaps — onde está perdendo dinheiro hoje + 3 Quick Wins imediatos.
-
-Use tabelas para comparações e bullet points para gaps.
-
-ETAPA 2 — ANÁLISE COMPETITIVA
-Use web_search para identificar os 3 principais concorrentes diretos da empresa no mesmo segmento e região (ou nicho digital, se for nacional). Para cada concorrente:
-- Pesquise o site, Instagram e presença em anúncios
-- Monte uma tabela comparativa com as colunas: Concorrente | Site | Instagram (seguidores) | Meta Ads | Diferencial percebido | Vantagem sobre o lead
-- Identifique qual é a maior ameaça e por quê
-- Aponte 1 oportunidade que o lead tem que nenhum concorrente está explorando
-
-ETAPA 3 — SCORE DE MATURIDADE DIGITAL
-Atribua uma nota de 0 a 10 para cada dimensão V4:
-- Tráfego (presença paga + orgânica)
-- Engajamento (social + conteúdo)
-- Conversão (site + CTA + funil)
-- Retenção (remarketing + nutrição + CRM)
-Calcule a média total. Apresente em tabela com nota, status (Crítico / Fraco / Médio / Bom / Excelente) e justificativa de 1 linha por dimensão.
-
-ETAPA 4 — PERGUNTA DE IMPACTO
-Finalize o diagnóstico com uma "Pergunta de Impacto" personalizada para usar na abertura da reunião.
-
-ETAPA 5 — APRESENTAÇÃO PDF
-Gere uma apresentação com identidade visual V4 (vermelho #E50914, preto #000000, fonte Montserrat) com os seguintes slides:
-1. Capa com nome da empresa, segmento e faturamento atual
-2. Sumário executivo (4 cards de status)
-3. Análise do site (tabela com badges crítico/atenção/ok)
-4. Instagram + Meta Ads (lado a lado)
-5. Score de maturidade digital (tabela com notas e barras visuais usando formas)
-6. Análise competitiva — tabela comparativa com os 3 concorrentes + 1 oportunidade exclusiva do lead
-7. Gaps — onde está perdendo dinheiro (4 cards)
-8. 3 Quick Wins imediatos (com timeline e impacto)
-9. Primeiros 90 dias com a V4 — 3 fases: Mês 1 (fundação), Mês 2 (ativação), Mês 3 (escala)
-10. Pergunta de Impacto (slide final)
-
-Use a skill de PPTX para criar o arquivo, converta para PDF e entregue o PDF para download. Não entregue o PPTX.
-
-Responda em português do Brasil.
-
----
-${linhas}`;
-}
+const LOADING_STEPS = [
+  { t: 0, msg: "Conectando no agente V4..." },
+  { t: 4, msg: "Acessando site e checando rastreamento..." },
+  { t: 12, msg: "Analisando presença no Instagram..." },
+  { t: 20, msg: "Buscando anúncios na Meta Ads Library..." },
+  { t: 28, msg: "Mapeando concorrentes diretos..." },
+  { t: 38, msg: "Calculando score de maturidade..." },
+  { t: 48, msg: "Identificando gaps e quick wins..." },
+  { t: 55, msg: "Montando plano de 90 dias..." },
+];
 
 export const DiagnosticoV4View: React.FC = () => {
   const [empresa, setEmpresa] = useState("");
@@ -132,51 +53,72 @@ export const DiagnosticoV4View: React.FC = () => {
   const [fatMeta, setFatMeta] = useState("");
   const [concorr, setConcorr] = useState("");
   const [segmento, setSegmento] = useState("E-commerce");
-  const [copied, setCopied] = useState(false);
+
+  const [loading, setLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading) return;
+    const start = Date.now();
+    const iv = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 500);
+    return () => clearInterval(iv);
+  }, [loading]);
+
+  const currentStep = LOADING_STEPS.filter((s) => s.t <= elapsed).slice(-1)[0] || LOADING_STEPS[0];
 
   const handleGenerate = async () => {
     if (!empresa.trim() && !contexto.trim()) {
       toast.error("Preencha ao menos o nome da empresa ou o contexto do lead.");
       return;
     }
-    const prompt = buildPrompt({
-      empresa: empresa.trim(),
-      site: site.trim(),
-      instagram: instagram.trim(),
-      adsLink: adsLink.trim(),
-      adsDesc: adsDesc.trim(),
-      contexto: contexto.trim(),
-      fat: fat.trim(),
-      fatMeta,
-      concorr: concorr.trim(),
-      segmento,
-    });
+    setError(null);
+    setLoading(true);
+    setElapsed(0);
 
     try {
-      await navigator.clipboard.writeText(prompt);
-      setCopied(true);
-      toast.success("Prompt copiado! Cole no Claude para gerar o diagnóstico.", {
-        icon: "📋",
-        duration: 4000,
+      const res = await fetch("/api/diagnostico", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          empresa: empresa.trim(),
+          site: site.trim(),
+          instagram: instagram.trim(),
+          adsLink: adsLink.trim(),
+          adsDesc: adsDesc.trim(),
+          contexto: contexto.trim(),
+          fat: fat ? fmtFat(fat.trim()) : "",
+          fatMeta,
+          concorrentes: concorr.trim(),
+          segmento,
+        }),
       });
-      setTimeout(() => setCopied(false), 4000);
-    } catch {
-      const ta = document.createElement("textarea");
-      ta.value = prompt;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      setCopied(true);
-      toast.success("Prompt copiado!", { icon: "📋" });
-      setTimeout(() => setCopied(false), 4000);
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || `Erro HTTP ${res.status}`);
+      }
+      if (!data?.diagnostico) {
+        throw new Error("Resposta sem diagnóstico");
+      }
+      setDiagnostico(data.diagnostico);
+      toast.success("Diagnóstico gerado!", { icon: "✨" });
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "Erro ao gerar diagnóstico");
+      toast.error("Falhou ao gerar diagnóstico");
+    } finally {
+      setLoading(false);
     }
   };
 
+  if (diagnostico) {
+    return <DiagnosticoSlideDeck diagnostico={diagnostico} onClose={() => setDiagnostico(null)} />;
+  }
+
   const inputCls =
-    "w-full bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-md px-3 py-2 text-sm text-white placeholder:text-[var(--color-v4-text-disabled)] focus:outline-none focus:border-[var(--color-v4-red)] focus:bg-[var(--color-v4-card-hover)] transition-colors";
+    "w-full bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-md px-3 py-2 text-sm text-white placeholder:text-[var(--color-v4-text-disabled)] focus:outline-none focus:border-[var(--color-v4-red)] focus:bg-[var(--color-v4-card-hover)] transition-colors disabled:opacity-50";
   const labelCls =
     "text-[11px] font-semibold uppercase tracking-wider text-[var(--color-v4-text-muted)] flex items-center gap-1.5";
   const optCls =
@@ -201,18 +143,18 @@ export const DiagnosticoV4View: React.FC = () => {
             </p>
           </div>
           <span className="bg-[var(--color-v4-red)] text-white text-[10px] font-bold px-2.5 py-1 rounded-full tracking-wider">
-            v2.1
+            v3.0 · AI
           </span>
         </div>
 
         {/* Chips */}
         <div className="flex gap-2 flex-wrap mb-5">
           {[
-            { label: "Meta Ads automático", color: "bg-green-500" },
+            { label: "Pesquisa automática", color: "bg-green-500" },
             { label: "Score de maturidade", color: "bg-green-500" },
-            { label: "90 dias com a V4", color: "bg-green-500" },
-            { label: "Análise competitiva", color: "bg-blue-500" },
-            { label: "PDF 10 slides", color: "bg-green-500" },
+            { label: "3 concorrentes", color: "bg-green-500" },
+            { label: "Plano 90 dias", color: "bg-blue-500" },
+            { label: "10 slides + PDF", color: "bg-green-500" },
           ].map((c) => (
             <div
               key={c.label}
@@ -224,57 +166,42 @@ export const DiagnosticoV4View: React.FC = () => {
           ))}
         </div>
 
-        {/* Tip bar */}
         <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-600/30 border-l-[3px] border-l-amber-500 rounded-md px-3.5 py-2.5 text-xs text-amber-400 leading-relaxed mb-5">
           <Zap size={14} className="flex-shrink-0 mt-0.5" />
-          Preencha os dados do lead. Concorrentes e Meta Ads são pesquisados
-          automaticamente — deixe em branco se não souber.
+          Preencha os dados do lead. O agente pesquisa automaticamente site, Instagram, Meta Ads e concorrentes. Demora ~40-60s pra gerar.
         </div>
+
+        {/* Error */}
+        {error && (
+          <div className="flex items-start gap-2.5 bg-red-500/10 border border-red-500/30 border-l-[3px] border-l-red-500 rounded-md px-3.5 py-2.5 text-xs text-red-400 mb-5">
+            <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+            <div>
+              <strong className="block mb-1">Falhou ao gerar diagnóstico</strong>
+              {error}
+            </div>
+          </div>
+        )}
 
         {/* Identificação */}
         <div className={sectionLabel}>Identificação</div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>Empresa</label>
-            <input
-              type="text"
-              value={empresa}
-              onChange={(e) => setEmpresa(e.target.value)}
-              placeholder="Ex: APM Brasil"
-              className={inputCls}
-            />
+            <input type="text" disabled={loading} value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Ex: APM Brasil" className={inputCls} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>Site</label>
-            <input
-              type="text"
-              value={site}
-              onChange={(e) => setSite(e.target.value)}
-              placeholder="https://..."
-              className={inputCls}
-            />
+            <input type="text" disabled={loading} value={site} onChange={(e) => setSite(e.target.value)} placeholder="https://..." className={inputCls} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>Instagram</label>
-            <input
-              type="text"
-              value={instagram}
-              onChange={(e) => setInstagram(e.target.value)}
-              placeholder="@usuario"
-              className={inputCls}
-            />
+            <input type="text" disabled={loading} value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@usuario" className={inputCls} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>
               Meta Ads <span className={optCls}>opcional</span>
             </label>
-            <input
-              type="text"
-              value={adsLink}
-              onChange={(e) => setAdsLink(e.target.value)}
-              placeholder="Link da biblioteca ou deixe em branco"
-              className={inputCls}
-            />
+            <input type="text" disabled={loading} value={adsLink} onChange={(e) => setAdsLink(e.target.value)} placeholder="Link da biblioteca ou deixe em branco" className={inputCls} />
           </div>
         </div>
 
@@ -283,18 +210,8 @@ export const DiagnosticoV4View: React.FC = () => {
         <div className="flex flex-col gap-1.5">
           <label className={labelCls}>Faturamento mensal</label>
           <div className="flex gap-2.5 flex-col sm:flex-row">
-            <input
-              type="text"
-              value={fat}
-              onChange={(e) => setFat(e.target.value)}
-              placeholder="Ex: 350000"
-              className={inputCls + " flex-1"}
-            />
-            <select
-              value={fatMeta}
-              onChange={(e) => setFatMeta(e.target.value)}
-              className={inputCls + " sm:w-52 sm:flex-shrink-0 cursor-pointer"}
-            >
+            <input type="text" disabled={loading} value={fat} onChange={(e) => setFat(e.target.value)} placeholder="Ex: 350000" className={inputCls + " flex-1"} />
+            <select disabled={loading} value={fatMeta} onChange={(e) => setFatMeta(e.target.value)} className={inputCls + " sm:w-52 sm:flex-shrink-0 cursor-pointer"}>
               {METAS_FAT.map((m) => (
                 <option key={m.value} value={m.value} className="bg-[var(--color-v4-card)]">
                   {m.label}
@@ -312,9 +229,10 @@ export const DiagnosticoV4View: React.FC = () => {
             return (
               <button
                 key={s}
+                disabled={loading}
                 onClick={() => setSegmento(s)}
                 className={
-                  "px-3.5 py-1.5 text-xs font-medium border rounded-full transition-all " +
+                  "px-3.5 py-1.5 text-xs font-medium border rounded-full transition-all disabled:opacity-50 " +
                   (active
                     ? "bg-[var(--color-v4-red-muted)] border-[var(--color-v4-red)] text-[var(--color-v4-red-hover)]"
                     : "bg-transparent border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:border-[var(--color-v4-text-muted)] hover:text-white")
@@ -331,93 +249,85 @@ export const DiagnosticoV4View: React.FC = () => {
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>Contexto do lead</label>
-            <textarea
-              value={contexto}
-              onChange={(e) => setContexto(e.target.value)}
-              placeholder="Dores, objetivos, histórico de marketing, resultados atuais, ciclo de vendas..."
-              className={inputCls + " min-h-[80px] resize-y leading-relaxed"}
-            />
+            <textarea disabled={loading} value={contexto} onChange={(e) => setContexto(e.target.value)} placeholder="Dores, objetivos, histórico de marketing, resultados atuais, ciclo de vendas..." className={inputCls + " min-h-[80px] resize-y leading-relaxed"} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>
               Concorrentes conhecidos <span className={optCls}>opcional</span>
             </label>
-            <input
-              type="text"
-              value={concorr}
-              onChange={(e) => setConcorr(e.target.value)}
-              placeholder="Ex: APVS Brasil, Security Proteção (agente pesquisa automaticamente se vazio)"
-              className={inputCls}
-            />
+            <input type="text" disabled={loading} value={concorr} onChange={(e) => setConcorr(e.target.value)} placeholder="Ex: APVS Brasil, Security Proteção (vazio = pesquisa automática)" className={inputCls} />
           </div>
           <div className="flex flex-col gap-1.5">
             <label className={labelCls}>
               Anúncios ativos <span className={optCls}>opcional</span>
             </label>
-            <textarea
-              value={adsDesc}
-              onChange={(e) => setAdsDesc(e.target.value)}
-              placeholder="Cole o texto dos anúncios ou descreva o que está rodando. Se vazio, busca automática na Meta Ads Library."
-              className={inputCls + " min-h-[60px] resize-y leading-relaxed"}
-            />
+            <textarea disabled={loading} value={adsDesc} onChange={(e) => setAdsDesc(e.target.value)} placeholder="Cole o texto dos anúncios ou descreva o que está rodando. Se vazio, busca automática na Meta Ads Library." className={inputCls + " min-h-[60px] resize-y leading-relaxed"} />
           </div>
         </div>
 
-        {/* Divider */}
         <div className="h-px bg-[var(--color-v4-border)] my-6" />
 
         {/* CTA */}
         <button
           onClick={handleGenerate}
-          className="w-full py-3.5 px-5 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] active:scale-[0.99] text-white rounded-md text-sm font-semibold flex items-center justify-center gap-2 transition-all shadow-md shadow-[var(--color-v4-red-muted)]"
+          disabled={loading}
+          className="w-full py-3.5 px-5 bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] active:scale-[0.99] disabled:opacity-80 disabled:cursor-not-allowed text-white rounded-md text-sm font-semibold flex items-center justify-center gap-2 transition-all shadow-md shadow-[var(--color-v4-red-muted)]"
         >
-          {copied ? <Check size={16} /> : <Sparkles size={16} />}
-          {copied ? "Prompt copiado" : "Gerar Diagnóstico Completo + PDF V4"}
+          {loading ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              Gerando diagnóstico... ({elapsed}s)
+            </>
+          ) : (
+            <>
+              <Sparkles size={16} />
+              Gerar Diagnóstico Completo + Apresentação
+            </>
+          )}
         </button>
 
-        {/* What happens */}
-        <div className="mt-4 bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-lg px-4 py-3.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-v4-text-muted)] mb-2.5">
-            O que será gerado
-          </div>
-          {[
-            {
-              n: 1,
-              t: "Análise do lead",
-              d: "site, Instagram, Meta Ads, gaps e 3 Quick Wins.",
-            },
-            {
-              n: 2,
-              t: "Análise competitiva",
-              d: "3 concorrentes com tabela comparativa + oportunidade exclusiva.",
-            },
-            {
-              n: 3,
-              t: "Score de maturidade",
-              d: "nota 0–10 por dimensão V4 + status e justificativa.",
-            },
-            {
-              n: 4,
-              t: "PDF com 10 slides",
-              d: "identidade V4 (vermelho/preto/Montserrat), 90 dias, pergunta de impacto.",
-            },
-          ].map((s) => (
-            <div key={s.n} className="flex items-start gap-2.5 mb-2 last:mb-0">
-              <div className="w-5 h-5 bg-[var(--color-v4-red)] rounded-full text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5 text-white">
-                {s.n}
-              </div>
-              <div className="text-xs text-[var(--color-v4-text-muted)] leading-relaxed">
-                <strong className="text-white font-semibold">{s.t}</strong> — {s.d}
-              </div>
+        {/* Loading progress */}
+        {loading && (
+          <div className="mt-4 bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-lg px-4 py-3.5">
+            <div className="flex items-center gap-2 mb-2">
+              <Loader2 size={12} className="animate-spin text-[var(--color-v4-red)]" />
+              <span className="text-xs text-[var(--color-v4-text-muted)]">{currentStep.msg}</span>
             </div>
-          ))}
-        </div>
+            <div className="h-1 bg-[var(--color-v4-border)] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-[var(--color-v4-red)] transition-all duration-500"
+                style={{ width: `${Math.min(95, (elapsed / 60) * 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-[var(--color-v4-text-disabled)] mt-2">
+              Claude Sonnet 4.5 + web_search está analisando em tempo real. Pode levar até 60s.
+            </p>
+          </div>
+        )}
 
-        {/* Hint */}
-        <div className="mt-4 text-[11px] text-[var(--color-v4-text-disabled)] flex items-center gap-1.5">
-          <Copy size={11} />
-          Atalho: Ctrl + Enter para copiar o prompt.
-        </div>
+        {/* What happens */}
+        {!loading && (
+          <div className="mt-4 bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-lg px-4 py-3.5">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-v4-text-muted)] mb-2.5">
+              O que será gerado
+            </div>
+            {[
+              { n: 1, t: "Análise do lead", d: "site, Instagram, Meta Ads, gaps e 3 Quick Wins." },
+              { n: 2, t: "Análise competitiva", d: "3 concorrentes + maior ameaça + oportunidade exclusiva." },
+              { n: 3, t: "Score de maturidade", d: "nota 0–10 por dimensão V4 + status e justificativa." },
+              { n: 4, t: "Apresentação 10 slides", d: "renderizada no app com botão exportar PDF." },
+            ].map((s) => (
+              <div key={s.n} className="flex items-start gap-2.5 mb-2 last:mb-0">
+                <div className="w-5 h-5 bg-[var(--color-v4-red)] rounded-full text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5 text-white">
+                  {s.n}
+                </div>
+                <div className="text-xs text-[var(--color-v4-text-muted)] leading-relaxed">
+                  <strong className="text-white font-semibold">{s.t}</strong> — {s.d}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
