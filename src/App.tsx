@@ -11,6 +11,7 @@ import { MetasView } from "./components/MetasView";
 import { EquipeView } from "./components/EquipeView";
 import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
+import { DiagnosticoV4View } from "./components/DiagnosticoV4View";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
 
@@ -117,6 +118,7 @@ const MainApp: React.FC = () => {
       case "metas": return <MetasView />;
       case "comissoes": return <ComissoesView />;
       case "blackbox": return <BlackBoxView />;
+      case "diagnostico": return <DiagnosticoV4View />;
       case "equipe": return <EquipeView />;
       default: return <DashboardView />;
     }
