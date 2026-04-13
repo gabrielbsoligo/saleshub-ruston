@@ -7,7 +7,50 @@ import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { PostMeetingReviewModal } from "./PostMeetingReviewModal";
+import { supabase } from "../lib/supabase";
 import type { Reuniao } from "../types";
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+/**
+ * Cria automation row + dispara tick imediato no Edge Function.
+ * Idempotente: UNIQUE(reuniao_id) garante que não duplica se o usuário
+ * mexer no show duas vezes. Erro 23505 é silencioso.
+ */
+async function kickoffPostMeetingAutomation(reuniaoId: string) {
+  try {
+    // Resolver deal_id (best-effort)
+    let dealId: string | null = null;
+    const { data: dealByReuniao } = await supabase.from('deals').select('id').eq('reuniao_id', reuniaoId).maybeSingle();
+    if (dealByReuniao?.id) dealId = dealByReuniao.id;
+    else {
+      const { data: r } = await supabase.from('reunioes').select('lead_id').eq('id', reuniaoId).maybeSingle();
+      if (r?.lead_id) {
+        const { data: dealByLead } = await supabase.from('deals')
+          .select('id').eq('lead_id', r.lead_id)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        dealId = dealByLead?.id || null;
+      }
+    }
+
+    const { error } = await supabase.from('post_meeting_automations')
+      .insert({ reuniao_id: reuniaoId, deal_id: dealId, status: 'pending' });
+    if (error && error.code !== '23505') {
+      console.warn('kickoff automation falhou:', error);
+      return;
+    }
+
+    // Tick imediato (best-effort; pg_cron pega no proximo intervalo se falhar)
+    fetch(`${SUPABASE_URL}/functions/v1/google-drive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ action: 'process_pending' }),
+    }).catch(() => {});
+  } catch (e) {
+    console.warn('kickoff automation erro:', e);
+  }
+}
 
 // Parse date preserving the intended day (avoid timezone shift for midnight UTC dates)
 function parseReuniaoDate(isoStr: string): { year: number; month: number; day: number; date: Date } {
@@ -167,8 +210,14 @@ export const ReunioesView: React.FC = () => {
 
   const handleConfirm = async (show: boolean, closerConfirmadoId: string) => {
     if (!confirmar) return;
-    await updateReuniao(confirmar.id, { realizada: true, show, closer_confirmado_id: closerConfirmadoId });
+    const reuniaoId = confirmar.id;
+    await updateReuniao(reuniaoId, { realizada: true, show, closer_confirmado_id: closerConfirmadoId });
     setConfirmar(null);
+    // Auto-disparar automacao pos-reuniao quando marcado como show
+    if (show) {
+      kickoffPostMeetingAutomation(reuniaoId);
+      toast.success('Automação pós-reunião iniciada (transcrição em até 1h)', { duration: 4000 });
+    }
   };
 
   // Check if a noshow has been rescheduled (newer reuniao exists for same lead)
