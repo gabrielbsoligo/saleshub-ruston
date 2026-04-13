@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAppStore } from "../store";
-import { X, Send, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
+import { X, Send, AlertCircle, ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { PRODUTOS_OT, PRODUTOS_MRR, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
@@ -9,11 +9,19 @@ import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { validateGanho } from "../lib/ganhoValidation";
 import { Plus, Trash2 as Trash2Icon } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { PostMeetingReviewModal } from "./PostMeetingReviewModal";
 import toast from "react-hot-toast";
 
 export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ deal, onClose }) => {
-  const { updateDeal, members } = useAppStore();
+  const { updateDeal, members, reunioes } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
+  const [showPostMeeting, setShowPostMeeting] = useState(false);
+
+  // Buscar reuniao associada a este deal (show=true, de fato a MAIS recente).
+  // .find retornava a primeira do array; a ordem de reunioes não garante recência.
+  const reuniaoAssociada = reunioes
+    .filter(r => r.lead_id === deal.lead_id && r.realizada && r.show)
+    .sort((a, b) => new Date(b.data_reuniao || 0).getTime() - new Date(a.data_reuniao || 0).getTime())[0] || null;
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
@@ -135,6 +143,13 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             <h3 className="text-sm font-bold text-amber-400">Feedback - {deal.empresa}</h3>
             <p className="text-xs text-[var(--color-v4-text-muted)]">{step === 1 ? 'Qualificação' : step === 2 ? 'Produtos' : 'Fechamento'}</p>
           </div>
+          {reuniaoAssociada && (
+            <button onClick={() => setShowPostMeeting(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 transition-colors">
+              <Sparkles size={14} />
+              Preencher com IA
+            </button>
+          )}
           <span className="text-[10px] px-2 py-1 rounded bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)]">{stepLabel}</span>
           <button onClick={onClose} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
         </div>
@@ -301,6 +316,12 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
       </div>
 
       {missingFields && <MissingFieldsPopup missing={missingFields} onClose={() => setMissingFields(null)} />}
+      {showPostMeeting && reuniaoAssociada && (
+        <PostMeetingReviewModal
+          reuniao={reuniaoAssociada}
+          onClose={() => { setShowPostMeeting(false); onClose(); }}
+        />
+      )}
     </div>
   );
 };

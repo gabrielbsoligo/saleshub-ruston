@@ -8,3 +8,6 @@ coverage/
 !.env.example
 .env.local
 .vercel
+
+# Claude Code local settings
+.claude/

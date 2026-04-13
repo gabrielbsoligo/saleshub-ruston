@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../store";
-import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead } from "../types";
-import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
+import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type PostMeetingAutomation } from "../types";
+import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { createCalendarEvent } from "../lib/googleCalendar";
 import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
+import { PostMeetingReviewModal } from "./PostMeetingReviewModal";
 import type { Reuniao } from "../types";
 
 // Parse date preserving the intended day (avoid timezone shift for midnight UTC dates)
@@ -63,10 +64,11 @@ function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: 
 }
 
 export const ReunioesView: React.FC = () => {
-  const { reunioes, leads, addReuniao, updateReuniao, members } = useAppStore();
+  const { reunioes, leads, addReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
+  const [postMeetingReuniao, setPostMeetingReuniao] = useState<Reuniao | null>(null);
   const [leadSearch, setLeadSearch] = useState('');
   const [showReplace, setShowReplace] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -200,6 +202,51 @@ export const ReunioesView: React.FC = () => {
     } finally { setRetryingId(null); }
   };
 
+  // ==================== POST-MEETING IA BUTTON ====================
+  const PostMeetingButton: React.FC<{ reuniao: Reuniao }> = ({ reuniao }) => {
+    const [automation, setAutomation] = useState<PostMeetingAutomation | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+      let mounted = true;
+      getAutomationByReuniao(reuniao.id).then(data => {
+        if (mounted) { setAutomation(data); setLoading(false); }
+      });
+      return () => { mounted = false; };
+    }, [reuniao.id]);
+
+    useEffect(() => {
+      const fromStore = automations.find(a => a.reuniao_id === reuniao.id);
+      if (fromStore) setAutomation(fromStore);
+    }, [automations, reuniao.id]);
+
+    if (loading) return null;
+
+    // Ja concluido
+    if (automation?.status === 'completed') {
+      const actions = automation.actions_taken as any;
+      const parts: string[] = [];
+      if (actions?.deal_updated) parts.push('Deal atualizado');
+      if (actions?.leads_created > 0) parts.push(`${actions.leads_created} indicacao(oes)`);
+      if (actions?.meeting_scheduled) parts.push('Proxima agendada');
+      return (
+        <div className="flex items-center gap-1.5" title={parts.join(' · ')}>
+          <CheckCircle2 size={12} className="text-green-400" />
+          <span className="text-[10px] text-green-400 max-w-[120px] truncate">{parts.join(' · ') || 'Concluido'}</span>
+        </div>
+      );
+    }
+
+    // Botao para abrir modal
+    return (
+      <button onClick={(e) => { e.stopPropagation(); setPostMeetingReuniao(reuniao); }}
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors">
+        <Sparkles size={12} />
+        Pos-Reuniao IA
+      </button>
+    );
+  };
+
   const ReuniaoCard: React.FC<{ r: Reuniao; showActions?: boolean; showReagendar?: boolean }> = ({ r, showActions = false, showReagendar = false }) => {
     const { faturamento, nome_contato } = getLeadInfo(r);
     const rescheduled = showReagendar && isRescheduled(r);
@@ -256,6 +303,8 @@ export const ReunioesView: React.FC = () => {
               {r.show ? 'Show' : 'No-show'}
             </span>
           )}
+          {/* Botao Pos-Reuniao IA - so aparece em reunioes realizadas com show */}
+          {r.realizada && r.show && <PostMeetingButton reuniao={r} />}
         </div>
       </div>
     );
@@ -418,6 +467,7 @@ export const ReunioesView: React.FC = () => {
 
       {selectedLead && !showReplace && <AgendarReuniaoModal lead={selectedLead} onConfirm={handleAgendarConfirm} onClose={() => setSelectedLead(null)} />}
       {confirmar && <ConfirmarReuniaoModal reuniao={confirmar} onConfirm={handleConfirm} onClose={() => setConfirmar(null)} />}
+      {postMeetingReuniao && <PostMeetingReviewModal reuniao={postMeetingReuniao} onClose={() => setPostMeetingReuniao(null)} />}
 
       {showReplace && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center">

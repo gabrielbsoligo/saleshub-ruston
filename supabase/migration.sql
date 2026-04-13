@@ -372,3 +372,113 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_mktlab_link ON leads(mktlab_link) WH
 -- Backfill mktlab_id from link
 UPDATE leads SET mktlab_id = substring(mktlab_link from '/leads/([a-zA-Z0-9-]+)$')
   WHERE mktlab_link IS NOT NULL AND mktlab_id IS NULL;
+
+-- =============================================
+-- POST-MEETING AUTOMATIONS
+-- Rastreia execucoes da automacao pos-reuniao com IA
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS post_meeting_automations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  reuniao_id UUID NOT NULL REFERENCES reunioes(id),
+  deal_id UUID REFERENCES deals(id),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'fetching_transcript', 'analyzing', 'applying', 'completed', 'error')),
+  transcript_text TEXT,
+  ai_result JSONB,
+  actions_taken JSONB,
+  leads_created UUID[],
+  next_reuniao_id UUID REFERENCES reunioes(id),
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
+-- Garantir apenas 1 automacao por reuniao (idempotencia)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automations_reuniao ON post_meeting_automations(reuniao_id);
+CREATE INDEX IF NOT EXISTS idx_automations_status ON post_meeting_automations(status);
+
+-- RLS: alinhado com política de reunioes (gestor / sdr / closer da reunião)
+ALTER TABLE post_meeting_automations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "automations_select" ON post_meeting_automations;
+DROP POLICY IF EXISTS "automations_insert" ON post_meeting_automations;
+DROP POLICY IF EXISTS "automations_update" ON post_meeting_automations;
+
+CREATE POLICY "automations_select" ON post_meeting_automations FOR SELECT USING (
+  get_user_role() = 'gestor' OR EXISTS (
+    SELECT 1 FROM reunioes r
+    WHERE r.id = post_meeting_automations.reuniao_id
+      AND (r.sdr_id = get_member_id() OR r.closer_id = get_member_id() OR r.closer_confirmado_id = get_member_id())
+  )
+);
+CREATE POLICY "automations_insert" ON post_meeting_automations FOR INSERT WITH CHECK (
+  get_user_role() = 'gestor' OR EXISTS (
+    SELECT 1 FROM reunioes r
+    WHERE r.id = post_meeting_automations.reuniao_id
+      AND (r.sdr_id = get_member_id() OR r.closer_id = get_member_id() OR r.closer_confirmado_id = get_member_id())
+  )
+);
+CREATE POLICY "automations_update" ON post_meeting_automations FOR UPDATE USING (
+  get_user_role() = 'gestor' OR EXISTS (
+    SELECT 1 FROM reunioes r
+    WHERE r.id = post_meeting_automations.reuniao_id
+      AND (r.sdr_id = get_member_id() OR r.closer_id = get_member_id() OR r.closer_confirmado_id = get_member_id())
+  )
+);
+-- pg_cron/Edge Functions usam service_role e bypassam RLS automaticamente.
+
+-- =============================================
+-- INTEGRACAO_CONFIG: chaves/valores (Kommo tokens, SDR de recomendacao etc.)
+-- =============================================
+CREATE TABLE IF NOT EXISTS integracao_config (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE integracao_config ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "intconf_select" ON integracao_config;
+DROP POLICY IF EXISTS "intconf_write" ON integracao_config;
+CREATE POLICY "intconf_select" ON integracao_config FOR SELECT USING (get_user_role() = 'gestor');
+CREATE POLICY "intconf_write"  ON integracao_config FOR ALL USING (get_user_role() = 'gestor');
+
+-- Documentacao das chaves usadas por automacao pos-reuniao:
+--   recomendacao_sdr_id  -> UUID do team_member (SDR) que recebe leads de indicacao
+-- Configurar via UI (tela de Equipe/Integracoes) ou:
+--   INSERT INTO integracao_config(key,value) VALUES ('recomendacao_sdr_id','<uuid>')
+--     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
+
+-- =============================================
+-- pg_cron: roda processPending da Edge Function google-drive a cada 5 min
+-- Avanca automacoes em 'pending'/'fetching_transcript' sem depender do browser.
+-- =============================================
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_net;
+
+-- Salvar URL/Service-Role como GUC do banco (executar UMA vez no Supabase SQL Editor):
+--   ALTER DATABASE postgres SET app.supabase_url = 'https://<projeto>.supabase.co';
+--   ALTER DATABASE postgres SET app.service_role_key = '<service_role_jwt>';
+-- Sem isso, o cron abaixo nao consegue chamar a Edge Function.
+
+DO $cron$
+BEGIN
+  IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'post-meeting-process-pending') THEN
+    PERFORM cron.unschedule('post-meeting-process-pending');
+  END IF;
+  PERFORM cron.schedule(
+    'post-meeting-process-pending',
+    '*/5 * * * *',
+    $job$
+      SELECT net.http_post(
+        url := current_setting('app.supabase_url', true) || '/functions/v1/google-drive',
+        headers := jsonb_build_object(
+          'Content-Type', 'application/json',
+          'Authorization', 'Bearer ' || current_setting('app.service_role_key', true)
+        ),
+        body := jsonb_build_object('action', 'process_pending')
+      );
+    $job$
+  );
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'pg_cron schedule skipped: %', SQLERRM;
+END
+$cron$;

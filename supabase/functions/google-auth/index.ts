@@ -3,8 +3,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
-const REDIRECT_URI = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/google-auth'
-const SALESHUB_URL = 'https://gestao-comercial-rosy.vercel.app'
+const REDIRECT_URI = 'https://tawnlzdfykpwlhgmoprk.supabase.co/functions/v1/google-auth'
+const SALESHUB_URL = 'http://localhost:3000'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
       `client_id=${GOOGLE_CLIENT_ID}&` +
       `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
       `response_type=code&` +
-      `scope=${encodeURIComponent('https://www.googleapis.com/auth/calendar')}&` +
+      `scope=${encodeURIComponent('https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly')}&` +
       `access_type=offline&` +
       `prompt=consent&` +
       `state=${memberId}`
