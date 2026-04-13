@@ -87,9 +87,19 @@ export const BlackBoxView: React.FC = () => {
   };
 
   // Filter BB leads by month
+  // IMPORTANTE: data_cadastro vem como 'YYYY-MM-DD'. `new Date('2026-04-01')`
+  // parseia como UTC → em BRT (UTC-3) vira 2026-03-31 21:00, ficando ANTES
+  // de mesStart (local). Parse manual evita o shift de timezone.
+  const parseLocalDate = (s: string | null | undefined): Date | null => {
+    if (!s) return null;
+    // Aceita 'YYYY-MM-DD' e 'YYYY-MM-DDTHH:MM:SS...' (ISO)
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  };
   const bbLeads = useMemo(() => leads.filter(l => {
     if (l.canal !== 'blackbox') return false;
-    const d = l.data_cadastro ? new Date(l.data_cadastro) : l.created_at ? new Date(l.created_at) : null;
+    const d = parseLocalDate(l.data_cadastro) || parseLocalDate(l.created_at);
     return d && d >= mesStart && d <= mesEnd;
   }), [leads, mesStart, mesEnd]);
 

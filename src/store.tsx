@@ -184,12 +184,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // ===================== LEADS =====================
+  // Paginação manual para contornar limite padrão de 1000 linhas do PostgREST.
+  // Sem isso, leads além dos 1000 mais recentes por created_at não apareciam
+  // nas views (BlackBox pace mostrava 84 ao invés de 91, etc).
   const fetchLeads = useCallback(async () => {
-    const { data } = await supabase
-      .from('leads')
-      .select('*, sdr:team_members!sdr_id(*)')
-      .order('created_at', { ascending: false });
-    if (data) setLeads(data);
+    const pageSize = 1000;
+    let from = 0;
+    const acc: any[] = [];
+    // Loop até a página vir vazia ou menor que pageSize
+    // (limite defensivo de 50 páginas = 50k leads)
+    for (let i = 0; i < 50; i++) {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*, sdr:team_members!sdr_id(*)')
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+      if (error) break;
+      if (!data || data.length === 0) break;
+      acc.push(...data);
+      if (data.length < pageSize) break;
+      from += pageSize;
+    }
+    setLeads(acc);
   }, []);
 
   const addLead = async (l: Partial<Lead>) => {
