@@ -193,21 +193,158 @@
     return null;
   }
 
-  // ---- Map canal ----
-  function mapCanal(detail) {
-    var ca = (
-      (detail.customFields || {})['Canal de Aquisição'] ||
-      (detail.customFields || {})['Canal de aquisição'] ||
-      (detail.customFields || {})['Status Leadbroker'] ||
-      ((detail.basicData || {}).acquisitionChannel || {}).title ||
-      ''
-    ).toLowerCase();
-    if (ca.includes('black')) return 'blackbox';
-    if (ca.includes('lead')) return 'leadbroker';
-    if (ca.includes('out')) return 'outbound';
-    if (ca.includes('recom')) return 'recomendacao';
-    if (ca.includes('indic')) return 'indicacao';
-    return 'leadbroker';
+  // ============================================================
+  // normalizeLead / validatePayload — Shape B (transformer with metadata)
+  // RFC: gabrielbsoligo/saleshub-ruston#5
+  // ============================================================
+
+  var VALID_CANAIS = ['blackbox', 'leadbroker', 'outbound', 'indicacao', 'recomendacao', 'recovery'];
+
+  function mapCanalFromText(raw) {
+    var s = String(raw || '').toLowerCase();
+    if (!s) return null;
+    if (s.indexOf('black') >= 0) return 'blackbox';
+    if (s.indexOf('lead') >= 0) return 'leadbroker';
+    if (s.indexOf('out') >= 0) return 'outbound';
+    if (s.indexOf('recom') >= 0) return 'recomendacao';
+    if (s.indexOf('indic') >= 0) return 'indicacao';
+    if (s.indexOf('recov') >= 0) return 'recovery';
+    return null;
+  }
+
+  // Detect canal from MKTLAB data. Returns { canal, source, raw }.
+  // source: 'basic_data' | 'custom_field' | 'column_name' | 'fallback_dropdown'
+  function detectCanal(rawLead, detail, fallbackDropdown) {
+    var cf = (detail && detail.customFields) || {};
+    var bd = (detail && detail.basicData) || {};
+
+    // 1) basicData.acquisitionChannel.title — fonte estruturada (UI do MKTLAB)
+    var bdText = (bd.acquisitionChannel && bd.acquisitionChannel.title) || '';
+    var m = mapCanalFromText(bdText);
+    if (m) return { canal: m, source: 'basic_data', raw: bdText };
+
+    // 2) custom fields conhecidos
+    var cfCandidates = [
+      cf['Canal de Aquisição'], cf['Canal de aquisição'],
+      cf['_norm_canal de aquisicao'], cf['_norm_canal de aquisio'],
+      cf['Status Leadbroker'], cf['_norm_status leadbroker'],
+    ];
+    for (var i = 0; i < cfCandidates.length; i++) {
+      m = mapCanalFromText(cfCandidates[i]);
+      if (m) return { canal: m, source: 'custom_field', raw: cfCandidates[i] };
+    }
+
+    // 3) column name do board MKTLAB
+    var col = (rawLead && rawLead.columnName) || '';
+    m = mapCanalFromText(col);
+    if (m) return { canal: m, source: 'column_name', raw: col };
+
+    // 4) fallback: dropdown selecionado na UI
+    var drop = mapCanalFromText(fallbackDropdown) || fallbackDropdown || null;
+    return { canal: drop, source: 'fallback_dropdown', raw: fallbackDropdown || '' };
+  }
+
+  // Returns ISO date 'YYYY-MM-DD' or null.
+  function toIsoDate(v) {
+    if (!v) return null;
+    var d = new Date(v);
+    if (isNaN(d.getTime())) return null;
+    return d.toISOString().split('T')[0];
+  }
+
+  function detectDataCadastro(rawLead, detail) {
+    var bd = (detail && detail.basicData) || {};
+    // 1) data específica de aquisição se existir
+    var d = toIsoDate(bd.acquisitionDate || bd.acquiredAt);
+    if (d) return { data_cadastro: d, source: 'basic_data' };
+    // 2) última movimentação da coluna (mais próximo do "recebi hoje")
+    d = toIsoDate(rawLead && rawLead.columnUpdatedAt);
+    if (d) return { data_cadastro: d, source: 'column_updated_at' };
+    // 3) createdAt do lead
+    d = toIsoDate(rawLead && rawLead.createdAt);
+    if (d) return { data_cadastro: d, source: 'created_at' };
+    return { data_cadastro: null, source: 'none' };
+  }
+
+  // Pure transformer: (rawLead from list, detail from /basic-data+/custom-fields, fallbackDropdown)
+  // -> { payload, canalSource, canalRaw, dateSource, warnings }
+  function normalizeLead(rawLead, detail, fallbackDropdown) {
+    rawLead = rawLead || {};
+    detail = detail || { basicData: {}, customFields: {} };
+    var cf = detail.customFields || {};
+    var bd = detail.basicData || {};
+
+    var c = detectCanal(rawLead, detail, fallbackDropdown);
+    var dc = detectDataCadastro(rawLead, detail);
+
+    var warnings = [];
+    if (c.source === 'fallback_dropdown') warnings.push('canal por fallback do dropdown');
+    if (!c.canal) warnings.push('canal não detectado');
+    if (!dc.data_cadastro) warnings.push('data_cadastro ausente');
+    if (dc.source === 'created_at') warnings.push('data_cadastro usou createdAt (fallback)');
+
+    var payload = {
+      empresa: (rawLead.companyName || rawLead.title || bd.companyName || '').trim() || null,
+      nome_contato: rawLead.title || bd.contactName || null,
+      telefone: rawLead.phone || bd.phone || null,
+      email: rawLead.email || bd.email || null,
+      cnpj: rawLead.taxId || bd.taxId || null,
+      faturamento: cf['Faturamento da LP'] || cf['Faturamento'] ||
+                   cf['_norm_faturamento da lp'] || findFieldByValue(cf, /mil|milh/i) || null,
+      produto: cf['Produtos Marketing'] || cf['Produto'] ||
+               cf['_norm_produtos marketing'] || null,
+      canal: c.canal,
+      status: 'sem_contato',
+      valor_lead: parseFloat(cf['Valor Leadbroker'] || cf['Valor'] || '0') || null,
+      mktlab_link: 'https://mktlab.app/crm/leads/' + (rawLead.id || ''),
+      mktlab_id: rawLead.id || null,
+      data_cadastro: dc.data_cadastro,
+    };
+
+    return {
+      payload: payload,
+      canalSource: c.source,
+      canalRaw: c.raw,
+      dateSource: dc.source,
+      warnings: warnings,
+    };
+  }
+
+  // Validates a payload. Returns { ok, errors }.
+  function validatePayload(payload) {
+    var errors = [];
+    if (!payload) return { ok: false, errors: ['payload vazio'] };
+    if (!payload.empresa) errors.push('empresa obrigatória');
+    if (!payload.canal) errors.push('canal ausente');
+    else if (VALID_CANAIS.indexOf(payload.canal) < 0) errors.push('canal inválido: ' + payload.canal);
+    if (!payload.data_cadastro) errors.push('data_cadastro obrigatória');
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.data_cadastro)) errors.push('data_cadastro em formato inválido');
+    return { ok: errors.length === 0, errors: errors };
+  }
+
+  // Dev tests — ativar via window.__TEST_NORMALIZE__ = true no console
+  if (typeof window !== 'undefined' && window.__TEST_NORMALIZE__) {
+    var rawBB = { id: 'x1', companyName: 'Acme', phone: '+5511999', columnUpdatedAt: '2026-04-07T10:00:00Z' };
+    var detBB = { basicData: { acquisitionChannel: { title: 'Blackbox' } }, customFields: {} };
+    var nBB = normalizeLead(rawBB, detBB, 'outbound');
+    console.assert(nBB.payload.canal === 'blackbox', 'T1 canal=blackbox');
+    console.assert(nBB.canalSource === 'basic_data', 'T1 source=basic_data');
+    console.assert(nBB.payload.data_cadastro === '2026-04-07', 'T1 data_cadastro');
+    console.assert(validatePayload(nBB.payload).ok, 'T1 valid');
+
+    var rawLB = { id: 'x2', companyName: 'Foo', columnName: 'Leadbroker' };
+    var detLB = { basicData: {}, customFields: { 'Status Leadbroker': 'Leadbroker ativo' } };
+    var nLB = normalizeLead(rawLB, detLB, 'blackbox');
+    console.assert(nLB.payload.canal === 'leadbroker', 'T2 canal=leadbroker (custom_field vence dropdown)');
+
+    var rawUnk = { id: 'x3', companyName: 'Bar' };
+    var nUnk = normalizeLead(rawUnk, { basicData: {}, customFields: {} }, 'outbound');
+    console.assert(nUnk.canalSource === 'fallback_dropdown', 'T3 source=fallback');
+    console.assert(nUnk.warnings.length > 0, 'T3 warnings');
+
+    var invalid = { empresa: null, canal: 'foo', data_cadastro: null };
+    console.assert(!validatePayload(invalid).ok, 'T4 validator rejeita');
+    console.log('[normalizeLead] tests OK');
   }
 
 
@@ -621,7 +758,7 @@
     });
   };
 
-  // ---- Enrich leads + check duplicates ----
+  // ---- Enrich leads + check duplicates + normalize (canal + data_cadastro) ----
   function enrichLeadsData() {
     return supaFetch('/rest/v1/leads?select=id,empresa,mktlab_id,mktlab_link')
       .then(function(existing) {
@@ -637,6 +774,9 @@
         enrichedLeads = [];
         selectedIds = {};
 
+        var fallbackDropdown = $('sh-canal').value || '';
+
+        // Stub first to preserve order, then fetch detail+normalize in sequence (throttle 150ms)
         fetchedLeads.forEach(function(lead) {
           var mktlabId = lead.id;
           var mktlabLink = 'https://mktlab.app/crm/leads/' + lead.id;
@@ -652,11 +792,64 @@
             email: lead.email || '',
             cnpj: lead.taxId || '',
             isDuplicate: isDup,
+            // Normalization slots — filled by enrich loop
+            _raw: lead,
+            _detail: null,
+            _normalized: null,
+            _validation: null,
           });
 
           if (!isDup) selectedIds[mktlabId] = true;
         });
+
+        // Sequential enrich (avoids MKTLAB rate limit)
+        return new Promise(function(resolve) {
+          var i = 0;
+          function step() {
+            if (i >= enrichedLeads.length) {
+              showToast('Enriquecimento concluído (' + enrichedLeads.length + ')', 'success');
+              return resolve();
+            }
+            var e = enrichedLeads[i];
+            // Skip detail fetch for duplicates (won't be imported anyway)
+            if (e.isDuplicate) {
+              var nDup = normalizeLead(e._raw, { basicData: {}, customFields: {} }, fallbackDropdown);
+              e._normalized = nDup;
+              e._validation = validatePayload(nDup.payload);
+              i++; return step();
+            }
+            showToast('Enriquecendo ' + (i + 1) + '/' + enrichedLeads.length + '...', 'success');
+            fetchLeadDetail(e.mktlabId).then(function(detail) {
+              e._detail = detail;
+              var n = normalizeLead(e._raw, detail, fallbackDropdown);
+              e._normalized = n;
+              e._validation = validatePayload(n.payload);
+            }).catch(function(err) {
+              console.warn('fetchLeadDetail falhou para', e.mktlabId, err && err.message);
+              var n = normalizeLead(e._raw, { basicData: {}, customFields: {} }, fallbackDropdown);
+              e._normalized = n;
+              e._validation = validatePayload(n.payload);
+            }).finally(function() {
+              i++;
+              setTimeout(step, 150);
+            });
+          }
+          step();
+        });
       });
+  }
+
+  // Cor do indicador de canal conforme fonte
+  function canalDot(source) {
+    if (source === 'basic_data') return 'sh-dot-green';
+    if (source === 'custom_field' || source === 'column_name') return 'sh-dot-green';
+    if (source === 'fallback_dropdown') return 'sh-dot-yellow';
+    return 'sh-dot-red';
+  }
+  function dateDot(source) {
+    if (source === 'basic_data' || source === 'column_updated_at') return 'sh-dot-green';
+    if (source === 'created_at') return 'sh-dot-yellow';
+    return 'sh-dot-red';
   }
 
   // ---- Preview ----
@@ -666,29 +859,57 @@
     var newCount = visible.filter(function(l) { return !l.isDuplicate; }).length;
     var dupCount = visible.filter(function(l) { return l.isDuplicate; }).length;
     var selCount = Object.keys(selectedIds).length;
+    var invalidCount = visible.filter(function(l) {
+      return !l.isDuplicate && l._validation && !l._validation.ok;
+    }).length;
 
     $('sh-preview-summary').innerHTML =
       '<div class="sh-card blue"><div class="n">' + visible.length + '</div><div class="l">Total</div></div>' +
       '<div class="sh-card green"><div class="n">' + newCount + '</div><div class="l">Novos</div></div>' +
       '<div class="sh-card red"><div class="n">' + dupCount + '</div><div class="l">Duplicados</div></div>' +
-      '<div class="sh-card yellow"><div class="n">' + selCount + '</div><div class="l">Selecionados</div></div>';
+      '<div class="sh-card ' + (invalidCount ? 'red' : 'yellow') + '"><div class="n">' + (invalidCount || selCount) + '</div><div class="l">' + (invalidCount ? 'Inválidos' : 'Selec.') + '</div></div>';
 
     var list = $('sh-lead-list');
     list.innerHTML = '';
 
     visible.forEach(function(lead) {
       var div = document.createElement('div');
+      var n = lead._normalized;
+      var v = lead._validation;
+      var invalid = !lead.isDuplicate && v && !v.ok;
       div.className = 'sh-lead' + (lead.isDuplicate ? ' dup' : '');
+      if (invalid) div.style.border = '1px solid #ef4444';
+
+      var canalHtml = '<span style="color:#666">...</span>';
+      var dateHtml = '<span style="color:#666">...</span>';
+      if (n) {
+        var canalTxt = n.payload.canal || '?';
+        var canalTitle = 'fonte: ' + n.canalSource + (n.canalRaw ? ' ("' + n.canalRaw + '")' : '');
+        canalHtml = '<span class="sh-dot ' + canalDot(n.canalSource) + '" title="' + esc(canalTitle) + '" style="display:inline-block;margin-right:3px"></span>' + esc(canalTxt);
+
+        var dateTxt = n.payload.data_cadastro || '—';
+        var dateTitle = 'fonte: ' + n.dateSource;
+        dateHtml = '<span class="sh-dot ' + dateDot(n.dateSource) + '" title="' + esc(dateTitle) + '" style="display:inline-block;margin-right:3px"></span>' + esc(dateTxt);
+      }
+
+      var tagHtml;
+      if (lead.isDuplicate) tagHtml = '<span class="sh-tag sh-tag-dup">JÁ EXISTE</span>';
+      else if (invalid) tagHtml = '<span class="sh-tag sh-tag-dup" title="' + esc((v.errors || []).join('; ')) + '">INVÁLIDO</span>';
+      else tagHtml = '<span class="sh-tag sh-tag-new">NOVO</span>';
+
       div.innerHTML =
         '<input type="checkbox" data-id="' + lead.mktlabId + '"' +
         (selectedIds[lead.mktlabId] ? ' checked' : '') +
-        (lead.isDuplicate ? ' disabled' : '') + '>' +
+        (lead.isDuplicate || invalid ? ' disabled' : '') + '>' +
         '<div class="sh-lead-info">' +
         '<div class="sh-lead-name">' + esc(lead.empresa || 'Sem nome') + '</div>' +
         '<div class="sh-lead-meta">' + esc(lead.contato) + (lead.telefone ? ' · ' + formatPhone(lead.telefone) : '') + '</div>' +
-        '<span class="sh-tag ' + (lead.isDuplicate ? 'sh-tag-dup' : 'sh-tag-new') + '">' +
-        (lead.isDuplicate ? 'JA EXISTE' : 'NOVO') + '</span>' +
+        '<div class="sh-lead-meta" style="margin-top:2px">canal: ' + canalHtml + ' · data: ' + dateHtml + '</div>' +
+        tagHtml +
         '</div>';
+
+      // Auto-deselect invalid entries
+      if (invalid) delete selectedIds[lead.mktlabId];
 
       var cb = div.querySelector('input');
       cb.onchange = function() {
@@ -729,7 +950,7 @@
 
     showStep('importing');
     var sdrId = $('sh-sdr').value || null;
-    var imported = 0, skipped = 0, errors = 0;
+    var imported = 0, skipped = 0, errors = 0, invalid = 0;
     var i = 0;
 
     function importNext() {
@@ -738,9 +959,9 @@
         $('sh-done-summary').innerHTML =
           '<div class="sh-card green"><div class="n">' + imported + '</div><div class="l">Importados</div></div>' +
           '<div class="sh-card yellow"><div class="n">' + skipped + '</div><div class="l">Pulados</div></div>' +
-          '<div class="sh-card red"><div class="n">' + errors + '</div><div class="l">Erros</div></div>' +
+          '<div class="sh-card red"><div class="n">' + (errors + invalid) + '</div><div class="l">Erros</div></div>' +
           '<div class="sh-card blue"><div class="n">' + toImport.length + '</div><div class="l">Total</div></div>';
-        showToast(imported + ' leads importados!', 'success');
+        showToast(imported + ' leads importados!' + (invalid ? ' (' + invalid + ' inválidos)' : ''), 'success');
         return;
       }
 
@@ -749,38 +970,33 @@
       $('sh-progress').style.width = pct + '%';
       $('sh-import-status').textContent = (i + 1) + '/' + toImport.length + ' - ' + lead.empresa;
 
-      // Fetch detail
-      var selectedCanal = $('sh-canal').value || 'outbound';
-      fetchLeadDetail(lead.mktlabId).then(function(detail) {
-        var payload = {
-          empresa: lead.empresa || 'Sem nome',
-          nome_contato: lead.contato || detail.basicData.contactName || null,
-          telefone: lead.telefone || null,
-          email: lead.email || detail.basicData.email || null,
-          cnpj: lead.cnpj || detail.basicData.taxId || null,
-          faturamento: (detail.customFields || {})['Faturamento da LP'] || (detail.customFields || {})['Faturamento'] || (detail.customFields || {})['_norm_faturamento da lp'] || findFieldByValue(detail.customFields || {}, /mil|milh/i) || null,
-          produto: (detail.customFields || {})['Produtos Marketing'] || (detail.customFields || {})['Produto'] || (detail.customFields || {})['_norm_produtos marketing'] || null,
-          canal: selectedCanal,
-          status: 'sem_contato',
-          valor_lead: parseFloat((detail.customFields || {})['Valor Leadbroker'] || (detail.customFields || {})['Valor'] || '0') || null,
-          mktlab_link: lead.mktlabLink,
-          mktlab_id: lead.mktlabId,
-        };
-        if (sdrId) payload.sdr_id = sdrId;
+      // Use normalized payload from enrich phase
+      var n = lead._normalized;
+      var v = lead._validation || (n ? validatePayload(n.payload) : { ok: false, errors: ['não normalizado'] });
 
-        // Remove nulls
-        Object.keys(payload).forEach(function(k) {
-          if (payload[k] === null || payload[k] === '' || payload[k] === 0) delete payload[k];
-        });
-        payload.empresa = payload.empresa || 'Sem nome';
-        payload.canal = payload.canal || 'leadbroker';
-        payload.status = 'sem_contato';
+      if (!n || !v.ok) {
+        invalid++;
+        console.error('Inválido ' + lead.empresa + ':', v.errors);
+        i++;
+        return setTimeout(importNext, 10);
+      }
 
-        return supaFetch('/rest/v1/leads', {
-          method: 'POST',
-          headers: { 'Prefer': 'return=representation' },
-          body: JSON.stringify(payload),
-        });
+      // Clone and attach sdr
+      var payload = {};
+      Object.keys(n.payload).forEach(function(k) {
+        if (n.payload[k] !== null && n.payload[k] !== '' && n.payload[k] !== 0) payload[k] = n.payload[k];
+      });
+      // Required fields must survive the null-strip
+      payload.empresa = n.payload.empresa || 'Sem nome';
+      payload.canal = n.payload.canal;
+      payload.data_cadastro = n.payload.data_cadastro;
+      payload.status = 'sem_contato';
+      if (sdrId) payload.sdr_id = sdrId;
+
+      supaFetch('/rest/v1/leads', {
+        method: 'POST',
+        headers: { 'Prefer': 'return=representation' },
+        body: JSON.stringify(payload),
       }).then(function() {
         imported++;
       }).catch(function(err) {
