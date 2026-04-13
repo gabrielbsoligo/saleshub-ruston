@@ -1,8 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-export const config = {
-  maxDuration: 60,
-};
+// Vercel serverless function — max execution time (Hobby tier supports up to 60s)
+export const maxDuration = 60;
 
 const SYSTEM_PROMPT = `Você é um Especialista em Growth Marketing da V4 Company. Realiza análise diagnóstica completa de leads pré-vendas seguindo o método V4 (Tráfego, Engajamento, Conversão, Retenção).
 
@@ -117,15 +116,17 @@ export default async function handler(req: any, res: any) {
   const client = new Anthropic({ apiKey });
 
   try {
+    // Use Haiku 4.5 + limited web_search to fit in 60s Hobby timeout.
+    // Sonnet is too slow when combined with web_search (can take 90-180s).
     const response = await client.messages.create({
-      model: "claude-sonnet-4-5-20250929",
-      max_tokens: 8000,
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 12000,
       system: SYSTEM_PROMPT,
       tools: [
         {
           type: "web_search_20250305",
           name: "web_search",
-          max_uses: 8,
+          max_uses: 4,
         } as any,
       ],
       messages: [{ role: "user", content: buildUserMessage(body) }],
