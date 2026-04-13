@@ -11,7 +11,7 @@
 // arquivo de transcrição no Drive do organizador via título + janela temporal
 // estreita. Mais robusto que assumir "V4 Company + {empresa}".
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
