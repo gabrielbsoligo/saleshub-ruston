@@ -17,12 +17,18 @@ const corsHeaders = {
 // Prompt
 // ============================================================
 
-const PARSE_PROMPT = `Analise TODAS as paginas deste contrato V4 Company (SOW - Statement of Work) e extraia os dados estruturados.
+const PARSE_PROMPT = `Analise este contrato V4 Company (SOW - Statement of Work) e extraia os dados estruturados.
 Retorne APENAS um JSON valido, sem texto adicional.
 
-IMPORTANTE: Leia o documento INTEIRO, pagina por pagina. Os produtos estao espalhados em MULTIPLAS paginas.
+## ESTRUTURA DO DOCUMENTO
 
-## PASSO 1: Valores e datas (secao "CONDICOES DA CONTRATACAO", geralmente pagina 1)
+O PDF tem duas partes:
+1. **SOW (primeiras paginas)**: dados da contratante, condicoes, servicos inclusos, descritivo dos produtos
+2. **MSA / Contrato-Mae (paginas finais)**: clausulas juridicas genericas — IGNORE esta parte, nao tem produtos
+
+PARE de procurar produtos quando encontrar "CONTRATO-MAE DE INTERMEDIACAO" ou "MASTER SERVICE AGREEMENT".
+
+## PASSO 1: Valores e datas (secao "CONDICOES DA CONTRATACAO")
 
 **Recorrente (MRR):**
 - "Valor mensal do projeto: R$ X.XXX,XX" → valor_recorrente
@@ -34,39 +40,38 @@ IMPORTANTE: Leia o documento INTEIRO, pagina por pagina. Os produtos estao espal
 - "Data de inicio do escopo fechado: DD de MMMM de AAAA" → data_inicio_escopo
 - "Data do primeiro pagamento: DD de MMMM de AAAA" → data_pgto_escopo
 
-## PASSO 2: Identificar produtos (DUAS fontes — use AMBAS)
+## PASSO 2: Identificar TODOS os produtos (DUAS fontes — use AMBAS)
 
-**Fonte A — Servicos inclusos na pagina 1 (logo apos condicoes):**
-Procure a frase "estao inclusos no presente contrato os seguintes servicos" e leia os itens (i, ii, iii...).
-Exemplo: "Landing Pages" → Landing Page Recorrente, "IA SDR" → IA, "e-mail marketing" → Email Mkt
+**Fonte A — Servicos adicionais listados na pagina 1:**
+Apos as condicoes, pode haver itens numerados (i, ii, iii...) com servicos inclusos.
+Ex: "Landing Pages" → Landing Page Recorrente, "IA SDR" → IA, "e-mail marketing" → Email Mkt
 
-**Fonte B — Secao "DESCRITIVO DO SERVICO/PRODUTO" (paginas 2, 3, 4...):**
-Cada produto tem um bloco "Entregaveis:" seguido de descricao e "Diretrizes Especificas:".
-Percorra TODAS as paginas e identifique CADA bloco "Entregaveis:".
-Exemplos reais de como aparecem:
-- "O Profissional de Midia Paga atua no planejamento..." → Gestor de Trafego
-- "O Profissional de Design Grafico e responsavel..." → Designer
-- "O Profissional de Social Media planeja..." → Social Media
-- "O Profissional de CRM..." → CRM
+**Fonte B — Secao "DESCRITIVO DO SERVICO/PRODUTO":**
+Cada produto tem um bloco que comeca com "Entregaveis:" seguido de descricao do profissional.
+Conte CADA bloco "Entregaveis:" — cada um e um produto separado.
+Exemplos reais:
+- "Entregaveis: O Profissional de Midia Paga atua..." → Gestor de Trafego
+- "Entregaveis: O Profissional de Design Grafico e responsavel..." → Designer
+- "Entregaveis: O Profissional de Social Media planeja..." → Social Media
 
-## Tabela de mapeamento (use EXATAMENTE estes nomes)
+## Tabela de mapeamento (use EXATAMENTE estes nomes no JSON)
 
 **Produtos MRR (recorrentes):**
-| Texto no contrato | Nome no sistema |
+| Texto no contrato | Nome no JSON |
 |---|---|
 | "Profissional de Midia Paga" ou "Midia Paga" | Gestor de Trafego |
 | "Profissional de Design Grafico" ou "Design Grafico" | Designer |
 | "Profissional de Social Media" ou "Social Media" | Social Media |
 | "IA SDR" ou "inteligencia artificial" ou "ferramenta de IA" | IA |
-| "Landing Page" (servico recorrente/manutencao) | Landing Page Recorrente |
+| "Landing Page" (criacao/manutencao recorrente) | Landing Page Recorrente |
 | "CRM" (servico recorrente) | CRM |
 | "e-mail marketing" ou "disparos mensais" | Email Mkt |
 
 **Produtos OT (one-time / escopo fechado):**
-| Texto no contrato | Nome no sistema |
+| Texto no contrato | Nome no JSON |
 |---|---|
 | "Diagnostico e Planejamento" ou "Estruturacao" | Estruturacao Estrategica |
-| "Landing Page (Wireframe)" (entrega pontual) | LP One Time |
+| "Landing Page (Wireframe)" (entrega pontual unica) | LP One Time |
 | "Manual de Identidade Visual" ou "MIV" | MIV |
 | "Site" (entrega pontual) | Site |
 | "Implementacao CRM" | Implementacao CRM |
