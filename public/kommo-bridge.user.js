@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.2.0
+// @version      0.2.1
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.2.0';
+  var VERSION = '0.2.1';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -242,7 +242,7 @@
     // Empurrar badge pra esquerda do sidebar
     if (badgeEl) badgeEl.style.right = (SIDEBAR_WIDTH + 12) + 'px';
 
-    win.console.log('[SalesHub Bridge] audit sidebar opened, session=' + sessionId);
+    win.console.log('[SalesHub Bridge] audit sidebar opened, session=' + sessionId + ', hasToken=' + !!accessToken);
   }
 
   function closeAuditSidebar() {
