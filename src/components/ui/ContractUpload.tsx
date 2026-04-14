@@ -9,9 +9,14 @@ interface ContractUploadProps {
   contractFilename?: string;
   onUploaded: (url: string, filename: string) => void;
   onRemoved: () => void;
+  onParsing?: (parsing: boolean) => void;
+  onParsed?: (result: any) => void;
 }
 
-export const ContractUpload: React.FC<ContractUploadProps> = ({ dealId, contractUrl, contractFilename, onUploaded, onRemoved }) => {
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const ContractUpload: React.FC<ContractUploadProps> = ({ dealId, contractUrl, contractFilename, onUploaded, onRemoved, onParsing, onParsed }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -42,6 +47,39 @@ export const ContractUpload: React.FC<ContractUploadProps> = ({ dealId, contract
 
       onUploaded(publicUrl, file.name);
       toast.success("Contrato anexado!", { id: toastId });
+
+      // Auto-parse contract with AI
+      if (onParsed) {
+        onParsing?.(true);
+        const parseToast = toast.loading("Analisando contrato com IA...");
+        try {
+          const resp = await fetch(`${SUPABASE_URL}/functions/v1/parse-contract`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({ contract_url: publicUrl }),
+          });
+          if (resp.ok) {
+            const parsed = await resp.json();
+            if (parsed.ok) {
+              onParsed(parsed);
+              toast.success("Contrato analisado! Campos preenchidos.", { id: parseToast, icon: '✨' });
+            } else {
+              toast.error(parsed.error || "Erro ao analisar", { id: parseToast });
+            }
+          } else {
+            const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+            toast.error(err.error || "Erro ao analisar contrato", { id: parseToast });
+          }
+        } catch (e: any) {
+          toast.error("Erro ao analisar: " + e.message, { id: parseToast });
+        } finally {
+          onParsing?.(false);
+        }
+      }
     } catch (err: any) {
       toast.error("Erro ao enviar: " + err.message, { id: toastId });
     } finally {

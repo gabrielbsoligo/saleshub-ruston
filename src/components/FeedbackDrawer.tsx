@@ -34,6 +34,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const [aiError, setAiError] = useState('');
   const [manualTranscript, setManualTranscript] = useState('');
   const [aiFilledFields, setAiFilledFields] = useState<Set<string>>(new Set());
+  const [contractParsing, setContractParsing] = useState(false);
 
   const [form, setForm] = useState({
     closer_id: deal.closer_id || '',
@@ -157,6 +158,26 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
       setAiStatus('error');
     }
   };
+
+  // ==============================
+  // Contract parsing auto-fill
+  // ==============================
+
+  const handleContractParsed = useCallback((result: any) => {
+    const filled = new Set(aiFilledFields);
+
+    if (result.produtos_ot?.length) { set('produtos_ot', result.produtos_ot); filled.add('produtos_ot'); }
+    if (result.produtos_mrr?.length) { set('produtos_mrr', result.produtos_mrr); filled.add('produtos_mrr'); }
+    if (result.valor_escopo > 0) { set('valor_escopo', result.valor_escopo); filled.add('valor_escopo'); }
+    if (result.valor_recorrente > 0) { set('valor_recorrente', result.valor_recorrente); filled.add('valor_recorrente'); }
+    if (result.data_inicio_escopo) { set('data_inicio_escopo', result.data_inicio_escopo); filled.add('data_inicio_escopo'); }
+    if (result.data_pgto_escopo) { set('data_pgto_escopo', result.data_pgto_escopo); filled.add('data_pgto_escopo'); }
+    if (result.data_inicio_recorrente) { set('data_inicio_recorrente', result.data_inicio_recorrente); filled.add('data_inicio_recorrente'); }
+    if (result.data_pgto_recorrente) { set('data_pgto_recorrente', result.data_pgto_recorrente); filled.add('data_pgto_recorrente'); }
+    if (result.tier) { set('tier', result.tier); filled.add('tier'); }
+
+    setAiFilledFields(filled);
+  }, [aiFilledFields]);
 
   // ==============================
   // Submit
@@ -545,7 +566,15 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               contractFilename={form.contrato_filename}
               onUploaded={(url, name) => { set('contrato_url', url); set('contrato_filename', name); }}
               onRemoved={() => { set('contrato_url', ''); set('contrato_filename', ''); }}
+              onParsing={setContractParsing}
+              onParsed={handleContractParsed}
             />
+            {contractParsing && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                <Loader2 size={14} className="text-purple-400 animate-spin" />
+                <span className="text-xs text-purple-400">Extraindo produtos, preços e datas do contrato...</span>
+              </div>
+            )}
             <div><label className={labelClass}>Observações</label>
               <textarea className={inputClass + " h-20 resize-none"} value={form.observacoes} onChange={e => set('observacoes', e.target.value)} /></div>
           </>)}
