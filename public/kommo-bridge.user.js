@@ -21,7 +21,7 @@
   'use strict';
 
   var VERSION = '0.1.4';
-  var win = pageWin;
+  var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
   var TOKEN_KEY = 'saleshub_bridge_token';
   var ENDPOINT_KEY = 'saleshub_bridge_endpoint';
