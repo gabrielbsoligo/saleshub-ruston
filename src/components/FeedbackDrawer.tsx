@@ -34,6 +34,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const [aiError, setAiError] = useState('');
   const [manualTranscript, setManualTranscript] = useState('');
   const [aiFilledFields, setAiFilledFields] = useState<Set<string>>(new Set());
+  const [contractFilledFields, setContractFilledFields] = useState<Set<string>>(new Set());
   const [contractParsing, setContractParsing] = useState(false);
 
   const [form, setForm] = useState({
@@ -64,7 +65,9 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const set = (k: string, v: any) => setForm(p => ({ ...p, [k]: v }));
   const inputClass = "w-full px-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
   const labelClass = "block text-xs font-medium text-[var(--color-v4-text-muted)] mb-1";
-  const aiHighlight = (field: string) => aiFilledFields.has(field) ? 'ring-1 ring-purple-500/50' : '';
+  const aiHighlight = (field: string) =>
+    contractFilledFields.has(field) ? 'ring-1 ring-green-500/50' :
+    aiFilledFields.has(field) ? 'ring-1 ring-purple-500/50' : '';
 
   const step1Valid = form.closer_id && form.temperatura && form.bant && form.proximo_passo;
   const isGanho = form.proximo_passo === 'contrato_assinado';
@@ -164,7 +167,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   // ==============================
 
   const handleContractParsed = useCallback((result: any) => {
-    const filled = new Set(aiFilledFields);
+    const filled = new Set<string>();
 
     if (result.produtos_ot?.length) { set('produtos_ot', result.produtos_ot); filled.add('produtos_ot'); }
     if (result.produtos_mrr?.length) { set('produtos_mrr', result.produtos_mrr); filled.add('produtos_mrr'); }
@@ -176,8 +179,13 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     if (result.data_pgto_recorrente) { set('data_pgto_recorrente', result.data_pgto_recorrente); filled.add('data_pgto_recorrente'); }
     if (result.tier) { set('tier', result.tier); filled.add('tier'); }
 
-    setAiFilledFields(filled);
-  }, [aiFilledFields]);
+    setContractFilledFields(filled);
+
+    // Auto-navigate to Step 2 to show contract-filled products
+    if (filled.has('produtos_ot') || filled.has('produtos_mrr')) {
+      setStep(2);
+    }
+  }, []);
 
   // ==============================
   // Submit
@@ -403,6 +411,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
                 {(['quente', 'morno', 'frio'] as const).map(t => (
                   <button key={t} type="button" onClick={() => set('temperatura', t)}
                     className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
+                      contractFilledFields.has('temperatura') && form.temperatura === t ? 'ring-1 ring-green-500/50 ' :
                       aiFilledFields.has('temperatura') && form.temperatura === t ? 'ring-1 ring-purple-500/50 ' : ''
                     }${form.temperatura === t
                       ? t === 'quente' ? 'bg-red-500 text-white' : t === 'morno' ? 'bg-yellow-500 text-black' : 'bg-blue-500 text-white'
@@ -418,6 +427,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
                 {[1,2,3,4].map(n => (
                   <button key={n} type="button" onClick={() => set('bant', n)}
                     className={`flex-1 py-3 rounded-lg text-lg font-bold transition-colors ${
+                      contractFilledFields.has('bant') && form.bant === n ? 'ring-1 ring-green-500/50 ' :
                       aiFilledFields.has('bant') && form.bant === n ? 'ring-1 ring-purple-500/50 ' : ''
                     }${form.bant === n ? 'bg-purple-500 text-white' : 'bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)]'}`}>{n}</button>
                 ))}
@@ -440,6 +450,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
                 ].map(opt => (
                   <button key={opt.value} type="button" onClick={() => set('proximo_passo', opt.value)}
                     className={`py-3 px-3 rounded-lg text-xs font-medium border transition-colors ${
+                      contractFilledFields.has('proximo_passo') && form.proximo_passo === opt.value ? 'ring-1 ring-green-500/50 ' :
                       aiFilledFields.has('proximo_passo') && form.proximo_passo === opt.value ? 'ring-1 ring-purple-500/50 ' : ''
                     }${form.proximo_passo === opt.value ? opt.color + ' border-current' : 'bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)] border-transparent'}`}>{opt.label}</button>
                 ))}
@@ -519,7 +530,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             {/* OT */}
             <div className={`bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 ${aiHighlight('produtos_ot')}`}>
               <h4 className="text-xs font-bold text-blue-400 uppercase mb-3">
-                Escopo Fechado (OT) {aiFilledFields.has('produtos_ot') && <span className="ml-1">✨</span>}
+                Escopo Fechado (OT) {contractFilledFields.has('produtos_ot') ? <span className="ml-1 text-green-400">📄 Contrato</span> : aiFilledFields.has('produtos_ot') ? <span className="ml-1">✨</span> : null}
               </h4>
               <MultiSelect options={[...PRODUTOS_OT]} selected={form.produtos_ot} onChange={v => set('produtos_ot', v)} placeholder="Produtos OT..." />
               {form.produtos_ot.length > 0 && (<>
@@ -535,7 +546,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             {/* MRR */}
             <div className={`bg-green-500/5 border border-green-500/20 rounded-xl p-4 ${aiHighlight('produtos_mrr')}`}>
               <h4 className="text-xs font-bold text-green-400 uppercase mb-3">
-                Recorrente (MRR) {aiFilledFields.has('produtos_mrr') && <span className="ml-1">✨</span>}
+                Recorrente (MRR) {contractFilledFields.has('produtos_mrr') ? <span className="ml-1 text-green-400">📄 Contrato</span> : aiFilledFields.has('produtos_mrr') ? <span className="ml-1">✨</span> : null}
               </h4>
               <MultiSelect options={[...PRODUTOS_MRR]} selected={form.produtos_mrr} onChange={v => set('produtos_mrr', v)} placeholder="Produtos MRR..." />
               {form.produtos_mrr.length > 0 && (<>
@@ -570,9 +581,9 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               onParsed={handleContractParsed}
             />
             {contractParsing && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                <Loader2 size={14} className="text-purple-400 animate-spin" />
-                <span className="text-xs text-purple-400">Extraindo produtos, preços e datas do contrato...</span>
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                <Loader2 size={14} className="text-green-400 animate-spin" />
+                <span className="text-xs text-green-400">📄 Extraindo produtos, preços e datas do contrato...</span>
               </div>
             )}
             <div><label className={labelClass}>Observações</label>

@@ -48,11 +48,23 @@ export const ContractUpload: React.FC<ContractUploadProps> = ({ dealId, contract
       onUploaded(publicUrl, file.name);
       toast.success("Contrato anexado!", { id: toastId });
 
-      // Auto-parse contract with AI
+      // Auto-parse contract with AI (send base64 directly — more reliable than URL)
       if (onParsed) {
         onParsing?.(true);
         const parseToast = toast.loading("Analisando contrato com IA...");
         try {
+          // Read file as base64 client-side
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              // Remove data:application/pdf;base64, prefix
+              resolve(result.split(',')[1] || result);
+            };
+            reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
+            reader.readAsDataURL(file);
+          });
+
           const resp = await fetch(`${SUPABASE_URL}/functions/v1/parse-contract`, {
             method: 'POST',
             headers: {
@@ -60,13 +72,13 @@ export const ContractUpload: React.FC<ContractUploadProps> = ({ dealId, contract
               'apikey': SUPABASE_ANON_KEY,
               'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
             },
-            body: JSON.stringify({ contract_url: publicUrl }),
+            body: JSON.stringify({ pdf_base64: base64 }),
           });
           if (resp.ok) {
             const parsed = await resp.json();
             if (parsed.ok) {
               onParsed(parsed);
-              toast.success("Contrato analisado! Campos preenchidos.", { id: parseToast, icon: '✨' });
+              toast.success("Contrato analisado! Campos preenchidos.", { id: parseToast, icon: '📄' });
             } else {
               toast.error(parsed.error || "Erro ao analisar", { id: parseToast });
             }
