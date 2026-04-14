@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.1.1
+// @version      0.1.2
 // @description  Extrai dados do Kommo (custom fields, notas, eventos) e envia pro SalesHub para auditoria de leads.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -20,7 +20,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.1';
+  const VERSION = '0.1.2';
   const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
   const TOKEN_KEY = 'saleshub_bridge_token';
@@ -263,7 +263,7 @@
         if (u.hostname.endsWith('.kommo.com')) {
           win.location.href = u.href;
         }
-      } catch { /* ignore */ }
+      } catch (_e) { /* ignore */ }
     }
     if (ev.data.action === 'extract') {
       const id = getCurrentLeadId();
@@ -282,7 +282,7 @@
       if (win.opener) {
         win.opener.postMessage({ source: 'kommo-bridge', type: 'ready', version: VERSION }, '*');
       }
-    } catch { /* ignore */ }
+    } catch (_e) { /* ignore */ }
   }
 
   if (document.readyState === 'loading') {
