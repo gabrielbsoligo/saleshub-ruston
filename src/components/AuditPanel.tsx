@@ -36,6 +36,23 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [registros, setRegistros] = useState<AuditoriaRegistro[]>([]);
   const [posicao, setPosicao] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
+
+  // Restore auth session from URL hash (passed by bridge to bypass 3p cookie block)
+  useEffect(() => {
+    (async () => {
+      const hash = window.location.hash.slice(1);
+      const params = new URLSearchParams(hash);
+      const at = params.get('at');
+      const rt = params.get('rt');
+      if (at && rt) {
+        await supabase.auth.setSession({ access_token: at, refresh_token: rt });
+        // Clear hash from URL
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      setAuthReady(true);
+    })();
+  }, []);
 
   // Form state
   const [observacao, setObservacao] = useState('');
@@ -59,7 +76,7 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     setLoading(false);
   }, [sessionId]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => { if (authReady) fetchAll(); }, [fetchAll, authReady]);
 
   const registroAtual = registros[posicao];
 

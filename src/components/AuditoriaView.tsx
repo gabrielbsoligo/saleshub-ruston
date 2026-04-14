@@ -283,34 +283,39 @@ const SessionRunner: React.FC<{
     return (item as any)?.kommo_link || null;
   }, [registros, leads, deals]);
 
-  const handleLaunch = () => {
+  const handleLaunch = async () => {
     if (!firstKommoLink) {
       toast.error('Nenhum item com link Kommo.');
       return;
     }
+    // Pega o access_token pra repassar ao iframe (cookies 3p bloqueados)
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token || '';
+    const refreshToken = session?.refresh_token || '';
+
     // Abre aba do Kommo
     kommoRef.current = window.open(firstKommoLink, 'kommo-audit');
     setLaunched(true);
 
-    // Espera o bridge carregar e manda start-audit
+    const msg = {
+      source: 'saleshub',
+      action: 'start-audit',
+      sessionId: sessionId,
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    };
+
+    // Espera o bridge carregar e manda start-audit com tokens
     setTimeout(function sendStart() {
       if (kommoRef.current && !kommoRef.current.closed) {
-        kommoRef.current.postMessage({
-          source: 'saleshub',
-          action: 'start-audit',
-          sessionId: sessionId,
-        }, '*');
+        kommoRef.current.postMessage(msg, '*');
       }
     }, 3000);
 
-    // Retry após 6s caso o bridge não tenha carregado
+    // Retry após 6s
     setTimeout(function retrySend() {
       if (kommoRef.current && !kommoRef.current.closed) {
-        kommoRef.current.postMessage({
-          source: 'saleshub',
-          action: 'start-audit',
-          sessionId: sessionId,
-        }, '*');
+        kommoRef.current.postMessage(msg, '*');
       }
     }, 6000);
   };

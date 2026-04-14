@@ -220,7 +220,7 @@
   var sidebarIframe = null;
   var SIDEBAR_WIDTH = 380;
 
-  function openAuditSidebar(sessionId) {
+  function openAuditSidebar(sessionId, accessToken, refreshToken) {
     if (sidebarEl) { closeAuditSidebar(); }
 
     // Container
@@ -228,9 +228,10 @@
     sidebarEl.id = 'saleshub-audit-sidebar';
     sidebarEl.style.cssText = 'position:fixed;top:0;right:0;width:' + SIDEBAR_WIDTH + 'px;height:100vh;z-index:99998;box-shadow:-4px 0 20px rgba(0,0,0,0.4);transition:transform 0.3s;transform:translateX(0);';
 
-    // Iframe
+    // Iframe — pass tokens via hash (not query, to avoid server logs)
     sidebarIframe = document.createElement('iframe');
-    var url = SALESHUB_ORIGIN + '/?audit_panel=1&session=' + sessionId;
+    var hashParts = 'at=' + encodeURIComponent(accessToken || '') + '&rt=' + encodeURIComponent(refreshToken || '');
+    var url = SALESHUB_ORIGIN + '/?audit_panel=1&session=' + sessionId + '#' + hashParts;
     sidebarIframe.src = url;
     sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;';
     sidebarIframe.setAttribute('allow', 'clipboard-write');
@@ -310,9 +311,9 @@
         var id = getCurrentLeadId();
         if (id) sendSnapshot(id, 'manual_command');
       }
-      // Abrir sidebar de auditoria
+      // Abrir sidebar de auditoria (com tokens de auth)
       if (ev.data.action === 'start-audit' && ev.data.sessionId) {
-        openAuditSidebar(ev.data.sessionId);
+        openAuditSidebar(ev.data.sessionId, ev.data.accessToken, ev.data.refreshToken);
       }
       // Fechar sidebar
       if (ev.data.action === 'stop-audit') {
