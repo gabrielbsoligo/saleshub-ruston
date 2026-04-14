@@ -1,27 +1,31 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
-import { X, Save, Trash2, Loader2 } from "lucide-react";
-import { PRODUTOS_OT, PRODUTOS_MRR, DEAL_STATUS_LABELS, CANAL_LABELS, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
+import { X, Save, Trash2, Loader2, Plus, Trash2 as Trash2Icon, Calendar } from "lucide-react";
+import { PRODUTOS_OT, PRODUTOS_MRR, CANAL_LABELS, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
 import { ContractUpload } from "./ui/ContractUpload";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { validateGanho } from "../lib/ganhoValidation";
+import { supabase } from "../lib/supabase";
+import toast from "react-hot-toast";
 
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
-  const { addDeal, updateDeal, deleteDeal, members } = useAppStore();
+  const { addDeal, updateDeal, deleteDeal, members, addReuniao, leads, fetchDeals, fetchLeads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
-  const [tab, setTab] = useState<'geral' | 'produtos' | 'ganho'>('geral');
+  const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'ganho'>('geral');
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [contractParsing, setContractParsing] = useState(false);
   const [contractFilledFields, setContractFilledFields] = useState<Set<string>>(new Set());
+  const [recomendacoes, setRecomendacoes] = useState<{ empresa: string; nome_contato: string; telefone: string }[]>([]);
 
   const [form, setForm] = useState({
     empresa: '', kommo_id: '', kommo_link: '', closer_id: '', sdr_id: '',
     data_call: '', data_fechamento: '', data_retorno: '',
+    agendar_reuniao: false,
     status: 'negociacao' as DealStatus, origem: '',
     temperatura: '' as Temperatura | '', bant: 0, motivo_perda: '',
     produtos_ot: [] as string[], produtos_mrr: [] as string[],
@@ -39,6 +43,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
         closer_id: deal.closer_id || '', sdr_id: deal.sdr_id || '',
         data_call: deal.data_call || '', data_fechamento: deal.data_fechamento || '',
         data_retorno: deal.data_retorno || '',
+        agendar_reuniao: false,
         status: deal.status, origem: deal.origem || '',
         temperatura: (deal.temperatura || '') as Temperatura | '', bant: deal.bant || 0,
         motivo_perda: deal.motivo_perda || '',
@@ -57,32 +62,88 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-    // Validate ganho
-    if (form.status === 'contrato_assinado') {
-      const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant });
-      if (!result.valid) {
-        setMissingFields(result.missing);
-        return;
+      // Validate ganho
+      if (form.status === 'contrato_assinado') {
+        const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant });
+        if (!result.valid) {
+          setMissingFields(result.missing);
+          return;
+        }
       }
-    }
 
-    const payload: any = { ...form, valor_mrr: form.valor_recorrente, valor_ot: form.valor_escopo };
-    if (!payload.closer_id) delete payload.closer_id;
-    if (!payload.sdr_id) delete payload.sdr_id;
-    if (!payload.temperatura) delete payload.temperatura;
-    if (!payload.bant) delete payload.bant;
-    if (!payload.tier) delete payload.tier;
-    Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
+      const payload: any = { ...form, valor_mrr: form.valor_recorrente, valor_ot: form.valor_escopo };
+      delete payload.agendar_reuniao;
+      if (!payload.closer_id) delete payload.closer_id;
+      if (!payload.sdr_id) delete payload.sdr_id;
+      if (!payload.temperatura) delete payload.temperatura;
+      if (!payload.bant) delete payload.bant;
+      if (!payload.tier) delete payload.tier;
+      Object.keys(payload).forEach(k => { if (payload[k] === '') payload[k] = null; });
 
-    if (deal) { await updateDeal(deal.id, payload); }
-    else { await addDeal(payload); }
-    onClose();
+      if (deal) { await updateDeal(deal.id, payload); }
+      else { await addDeal(payload); }
+
+      // Save recomendacoes as leads
+      if (deal) {
+        const validRecs = recomendacoes.filter(r => r.empresa.trim());
+        if (validRecs.length > 0) {
+          for (const rec of validRecs) {
+            const { data: newLead } = await supabase.from('leads').insert({
+              empresa: rec.empresa.trim(),
+              nome_contato: rec.nome_contato.trim() || null,
+              telefone: rec.telefone.trim() || null,
+              canal: 'recomendacao',
+              status: 'sem_contato',
+              sdr_id: deal.sdr_id || null,
+            }).select('id').single();
+
+            await supabase.from('recomendacoes').insert({
+              deal_id: deal.id,
+              closer_id: form.closer_id || deal.closer_id,
+              sdr_id: deal.sdr_id || null,
+              empresa: rec.empresa.trim(),
+              nome_contato: rec.nome_contato.trim() || null,
+              telefone: rec.telefone.trim() || null,
+              lead_criado_id: newLead?.id || null,
+            });
+          }
+          toast.success(`${validRecs.length} recomendacao(oes) salva(s) como lead!`, { icon: '\uD83C\uDFAF' });
+          fetchLeads();
+        }
+      }
+
+      // Agendar reuniao de retorno
+      if (deal && form.agendar_reuniao && form.data_retorno) {
+        try {
+          const dataRetornoISO = `${form.data_retorno}T10:00:00-03:00`;
+          const lead = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
+          await addReuniao({
+            tipo: 'retorno',
+            deal_id: deal.id,
+            lead_id: deal.lead_id || undefined,
+            closer_id: form.closer_id || deal.closer_id || undefined,
+            sdr_id: deal.sdr_id || undefined,
+            empresa: deal.empresa,
+            nome_contato: deal.nome_contato,
+            canal: deal.canal,
+            data_agendamento: new Date().toISOString().split('T')[0],
+            data_reuniao: dataRetornoISO,
+            lead_email: lead?.email || undefined,
+          } as any);
+          toast.success('Reuniao de retorno agendada!', { icon: '\uD83D\uDCC5' });
+        } catch (e: any) {
+          toast.error('Erro ao agendar reuniao: ' + e.message);
+        }
+      }
+
+      fetchDeals();
+      onClose();
     } finally { setIsProcessing(false); }
   };
 
   const handleDelete = async () => {
     if (isProcessing) return;
-    if (deal && confirm('Excluir esta negociação?')) {
+    if (deal && confirm('Excluir esta negociacao?')) {
       setIsProcessing(true);
       try { await deleteDeal(deal.id); onClose(); }
       finally { setIsProcessing(false); }
@@ -92,7 +153,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const set = (key: string, value: any) => setForm(prev => ({ ...prev, [key]: value }));
   const inputClass = "w-full px-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
   const labelClass = "block text-xs font-medium text-[var(--color-v4-text-muted)] mb-1";
-  const tabClass = (t: string) => `px-4 py-2 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)] hover:bg-[var(--color-v4-card-hover)]'}`;
+  const tabClass = (t: string) => `px-3 py-2 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)] hover:bg-[var(--color-v4-card-hover)]'}`;
   const isGanho = form.status === 'contrato_assinado';
   const contractHighlight = (field: string) => contractFilledFields.has(field) ? 'ring-1 ring-green-500/50' : '';
 
@@ -110,7 +171,6 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
     if (result.tier) { set('tier', result.tier); filled.add('tier'); }
 
     setContractFilledFields(filled);
-    // Auto-switch to Produtos tab to show filled fields
     if (filled.has('produtos_ot') || filled.has('produtos_mrr')) {
       setTab('produtos');
     }
@@ -122,17 +182,22 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
       <div className="relative w-full max-w-xl bg-[var(--color-v4-card)] border-l border-[var(--color-v4-border)] overflow-y-auto">
         <div className="sticky top-0 bg-[var(--color-v4-card)] border-b border-[var(--color-v4-border)] px-6 py-4 z-10">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-display font-bold text-white">{deal ? 'Editar Negociação' : 'Nova Negociação'}</h3>
+            <h3 className="text-lg font-display font-bold text-white">{deal ? 'Editar Negociacao' : 'Nova Negociacao'}</h3>
             <button onClick={onClose} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={20} /></button>
           </div>
           <div className="flex gap-2">
             <button onClick={() => setTab('geral')} className={tabClass('geral')}>Geral</button>
             <button onClick={() => setTab('produtos')} className={tabClass('produtos')}>Produtos</button>
+            <button onClick={() => setTab('recomendacoes')} className={tabClass('recomendacoes')}>
+              Recomendacoes {recomendacoes.length > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[10px]">{recomendacoes.length}</span>}
+            </button>
             <button onClick={() => setTab('ganho')} className={tabClass('ganho')}>Fechamento</button>
           </div>
         </div>
 
         <div className="p-6 space-y-4">
+
+          {/* ======== TAB: GERAL ======== */}
           {tab === 'geral' && (<>
             <div><label className={labelClass}>Empresa *</label><input className={inputClass} value={form.empresa} onChange={e => set('empresa', e.target.value)} /></div>
             <div className="grid grid-cols-2 gap-3">
@@ -145,21 +210,37 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                   <option value="">Selecionar</option>{sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select></div>
             </div>
+
+            {/* Proximo Passo - grid visual */}
+            <div>
+              <label className={labelClass}>Proximo Passo</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { value: 'negociacao', label: '\uD83D\uDCCB Em Negociacao', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+                  { value: 'contrato_na_rua', label: '\uD83D\uDCDD Contrato na Rua', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
+                  { value: 'contrato_assinado', label: '\u2705 Fechou!', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
+                  { value: 'follow_longo', label: '\u23F3 Follow Longo', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' },
+                  { value: 'perdido', label: '\u274C Perdido', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
+                ].map(opt => (
+                  <button key={opt.value} type="button" onClick={() => set('status', opt.value)}
+                    className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-colors ${
+                      form.status === opt.value ? opt.color + ' border-current' : 'bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)] border-transparent'
+                    }`}>{opt.label}</button>
+                ))}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
-              <div><label className={labelClass}>Status</label>
-                <select className={inputClass} value={form.status} onChange={e => set('status', e.target.value)}>
-                  {Object.entries(DEAL_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select></div>
               <div><label className={labelClass}>Origem</label>
                 <select className={inputClass} value={form.origem} onChange={e => set('origem', e.target.value)}>
                   <option value="">Selecionar</option>{Object.entries(CANAL_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select></div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
               <div><label className={labelClass}>Temperatura</label>
                 <select className={inputClass} value={form.temperatura} onChange={e => set('temperatura', e.target.value)}>
-                  <option value="">—</option><option value="quente">🔥 Quente</option><option value="morno">🌡️ Morno</option><option value="frio">❄️ Frio</option>
+                  <option value="">--</option><option value="quente">{'\uD83D\uDD25'} Quente</option><option value="morno">{'\uD83C\uDF21\uFE0F'} Morno</option><option value="frio">{'\u2744\uFE0F'} Frio</option>
                 </select></div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
               <div><label className={labelClass}>BANT (1-4)</label>
                 <div className="flex gap-1">{[1,2,3,4].map(n => (
                   <button key={n} type="button" onClick={() => set('bant', n)}
@@ -167,63 +248,143 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                 ))}</div></div>
               <div><label className={labelClass}>Tier</label>
                 <select className={inputClass} value={form.tier} onChange={e => set('tier', e.target.value)}>
-                  <option value="">—</option>{Object.entries(TIER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  <option value="">--</option>{Object.entries(TIER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select></div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <DateInput label="Data Call" value={form.data_call} onChange={v => set('data_call', v)} />
-              <DateInput label="Data Fechamento" value={form.data_fechamento} onChange={v => set('data_fechamento', v)} />
             </div>
-            <DateInput label="Data Retorno" value={form.data_retorno} onChange={v => set('data_retorno', v)} />
+
+            {form.status === 'perdido' && (
+              <div><label className={labelClass}>Motivo de Perda</label><input className={inputClass} value={form.motivo_perda} onChange={e => set('motivo_perda', e.target.value)} /></div>
+            )}
+
+            {/* Data Retorno + Agendar Reuniao */}
+            {(form.status === 'follow_longo' || form.status === 'negociacao' || form.status === 'contrato_na_rua') && (
+              <div className="bg-[var(--color-v4-surface)] rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Calendar size={14} className="text-yellow-400" />
+                    <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
+                  </div>
+                  {deal && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={form.agendar_reuniao} onChange={e => set('agendar_reuniao', e.target.checked)}
+                        className="rounded border-[var(--color-v4-border)]" />
+                      <span className="text-xs text-[var(--color-v4-text-muted)]">Agendar reuniao</span>
+                    </label>
+                  )}
+                </div>
+                <input type="date" value={form.data_retorno || ''} onChange={e => set('data_retorno', e.target.value)} className={inputClass} />
+              </div>
+            )}
+
+            {/* Resumo da Call */}
+            <div>
+              <label className={labelClass}>Resumo da Call</label>
+              <textarea
+                className={inputClass + " h-20 resize-none"}
+                value={form.observacoes}
+                onChange={e => set('observacoes', e.target.value)}
+                placeholder="Resumo executivo da reuniao..."
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div><label className={labelClass}>ID Kommo</label><input className={inputClass} value={form.kommo_id} onChange={e => set('kommo_id', e.target.value)} /></div>
               <div><label className={labelClass}>Link Kommo</label><input className={inputClass} value={form.kommo_link} onChange={e => set('kommo_link', e.target.value)} /></div>
             </div>
-            {form.status === 'perdido' && (
-              <div><label className={labelClass}>Motivo de Perda</label><input className={inputClass} value={form.motivo_perda} onChange={e => set('motivo_perda', e.target.value)} /></div>
-            )}
           </>)}
 
+          {/* ======== TAB: PRODUTOS ======== */}
           {tab === 'produtos' && (<>
             <div className={`bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 ${contractHighlight('produtos_ot')}`}>
               <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-3">
-                Escopo Fechado (OT) {contractFilledFields.has('produtos_ot') && <span className="ml-1 text-green-400">📄 Contrato</span>}
+                Escopo Fechado (OT) {contractFilledFields.has('produtos_ot') && <span className="ml-1 text-green-400">{'\uD83D\uDCC4'} Contrato</span>}
               </h4>
               <MultiSelect options={[...PRODUTOS_OT]} selected={form.produtos_ot} onChange={v => set('produtos_ot', v)} placeholder="Selecionar produtos OT..." />
               {form.produtos_ot.length > 0 && (<>
                 <div className="mt-3"><label className={labelClass}>Valor Escopo (R$) {isGanho && '*'}</label>
                   <input type="number" className={`${inputClass} ${contractHighlight('valor_escopo')}`} value={form.valor_escopo} onChange={e => set('valor_escopo', Number(e.target.value))} /></div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
-                  <DateInput label={`Início Escopo ${isGanho ? '*' : ''}`} value={form.data_inicio_escopo} onChange={v => set('data_inicio_escopo', v)} />
-                  <DateInput label={`1º Pgto Escopo ${isGanho ? '*' : ''}`} value={form.data_pgto_escopo} onChange={v => set('data_pgto_escopo', v)} />
+                  <DateInput label={`Inicio Escopo ${isGanho ? '*' : ''}`} value={form.data_inicio_escopo} onChange={v => set('data_inicio_escopo', v)} />
+                  <DateInput label={`1o Pgto Escopo ${isGanho ? '*' : ''}`} value={form.data_pgto_escopo} onChange={v => set('data_pgto_escopo', v)} />
                 </div>
               </>)}
             </div>
             <div className={`bg-green-500/5 border border-green-500/20 rounded-xl p-4 ${contractHighlight('produtos_mrr')}`}>
               <h4 className="text-xs font-bold text-green-400 uppercase tracking-wider mb-3">
-                Recorrente (MRR) {contractFilledFields.has('produtos_mrr') && <span className="ml-1 text-green-400">📄 Contrato</span>}
+                Recorrente (MRR) {contractFilledFields.has('produtos_mrr') && <span className="ml-1 text-green-400">{'\uD83D\uDCC4'} Contrato</span>}
               </h4>
               <MultiSelect options={[...PRODUTOS_MRR]} selected={form.produtos_mrr} onChange={v => set('produtos_mrr', v)} placeholder="Selecionar produtos MRR..." />
               {form.produtos_mrr.length > 0 && (<>
-                <div className="mt-3"><label className={labelClass}>Valor Recorrente (R$/mês) {isGanho && '*'}</label>
+                <div className="mt-3"><label className={labelClass}>Valor Recorrente (R$/mes) {isGanho && '*'}</label>
                   <input type="number" className={`${inputClass} ${contractHighlight('valor_recorrente')}`} value={form.valor_recorrente} onChange={e => set('valor_recorrente', Number(e.target.value))} /></div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
-                  <DateInput label={`Início Recorrente ${isGanho ? '*' : ''}`} value={form.data_inicio_recorrente} onChange={v => set('data_inicio_recorrente', v)} />
-                  <DateInput label={`1º Pgto Recorrente ${isGanho ? '*' : ''}`} value={form.data_pgto_recorrente} onChange={v => set('data_pgto_recorrente', v)} />
+                  <DateInput label={`Inicio Recorrente ${isGanho ? '*' : ''}`} value={form.data_inicio_recorrente} onChange={v => set('data_inicio_recorrente', v)} />
+                  <DateInput label={`1o Pgto Recorrente ${isGanho ? '*' : ''}`} value={form.data_pgto_recorrente} onChange={v => set('data_pgto_recorrente', v)} />
                 </div>
               </>)}
             </div>
           </>)}
 
+          {/* ======== TAB: RECOMENDACOES ======== */}
+          {tab === 'recomendacoes' && (<>
+            <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider">Recomendacoes Coletadas</h4>
+                  <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Indicacoes coletadas nas calls. Serao criadas como leads ao salvar.</p>
+                </div>
+                <button type="button" onClick={() => setRecomendacoes(prev => [...prev, { empresa: '', nome_contato: '', telefone: '' }])}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">
+                  <Plus size={12} /> Adicionar
+                </button>
+              </div>
+
+              {recomendacoes.length === 0 && (
+                <div className="text-center py-8">
+                  <p className="text-sm text-[var(--color-v4-text-muted)]">Nenhuma recomendacao adicionada</p>
+                  <button type="button" onClick={() => setRecomendacoes([{ empresa: '', nome_contato: '', telefone: '' }])}
+                    className="mt-3 flex items-center gap-1 mx-auto px-4 py-2 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">
+                    <Plus size={12} /> Adicionar primeira
+                  </button>
+                </div>
+              )}
+
+              {recomendacoes.map((rec, i) => (
+                <div key={i} className="flex gap-2 mb-3">
+                  <div className="flex-1 space-y-2">
+                    <input className={inputClass} placeholder="Empresa *" value={rec.empresa}
+                      onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, empresa: e.target.value } : r))} />
+                    <div className="flex gap-2">
+                      <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
+                        onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, nome_contato: e.target.value } : r))} />
+                      <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
+                        onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, telefone: e.target.value } : r))} />
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setRecomendacoes(prev => prev.filter((_, j) => j !== i))}
+                    className="p-2 text-red-400 hover:text-red-300 self-start mt-1"><Trash2Icon size={14} /></button>
+                </div>
+              ))}
+            </div>
+
+            {!deal && (
+              <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
+                <p className="text-xs text-yellow-400">Salve a negociacao primeiro para poder adicionar recomendacoes.</p>
+              </div>
+            )}
+          </>)}
+
+          {/* ======== TAB: FECHAMENTO ======== */}
           {tab === 'ganho' && (<>
-            <p className="text-xs text-[var(--color-v4-text-muted)]">Campos obrigatórios para dar ganho (status = Contrato Assinado).</p>
+            <p className="text-xs text-[var(--color-v4-text-muted)]">Campos obrigatorios para dar ganho (status = Contrato Assinado).</p>
             <div><label className={labelClass}>Tier {isGanho && '*'}</label>
               <select className={inputClass} value={form.tier} onChange={e => set('tier', e.target.value)}>
                 <option value="">Selecionar</option>{Object.entries(TIER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select></div>
             <div><label className={labelClass}>Link Call de Vendas {isGanho && '*'}</label>
               <input className={inputClass} value={form.link_call_vendas} onChange={e => set('link_call_vendas', e.target.value)} placeholder="https://drive.google.com/..." /></div>
-            <div><label className={labelClass}>Link Transcrição {isGanho && '*'}</label>
+            <div><label className={labelClass}>Link Transcricao {isGanho && '*'}</label>
               <input className={inputClass} value={form.link_transcricao} onChange={e => set('link_transcricao', e.target.value)} placeholder="https://docs.google.com/..." /></div>
             {deal ? (
               <ContractUpload
@@ -237,16 +398,15 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
               />
             ) : (
               <div><label className={labelClass}>Contrato (salve o deal primeiro para anexar)</label>
-                <div className="p-3 rounded-lg bg-[var(--color-v4-surface)] text-xs text-[var(--color-v4-text-muted)]">Salve a negociação e depois anexe o contrato</div></div>
+                <div className="p-3 rounded-lg bg-[var(--color-v4-surface)] text-xs text-[var(--color-v4-text-muted)]">Salve a negociacao e depois anexe o contrato</div></div>
             )}
             {contractParsing && (
               <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
                 <Loader2 size={14} className="text-green-400 animate-spin" />
-                <span className="text-xs text-green-400">📄 Extraindo produtos, preços e datas do contrato...</span>
+                <span className="text-xs text-green-400">{'\uD83D\uDCC4'} Extraindo produtos, precos e datas do contrato...</span>
               </div>
             )}
-            <div><label className={labelClass}>Observações</label>
-              <textarea className={inputClass + " h-20 resize-none"} value={form.observacoes} onChange={e => set('observacoes', e.target.value)} /></div>
+            <DateInput label="Data Fechamento" value={form.data_fechamento} onChange={v => set('data_fechamento', v)} />
           </>)}
         </div>
 
