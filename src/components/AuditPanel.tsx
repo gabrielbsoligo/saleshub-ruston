@@ -1,8 +1,9 @@
 // AuditPanel — componente standalone renderizado dentro do iframe no Kommo.
 // Comunica com o bridge (parent) via postMessage.
 // URL: /?audit_panel=1&session=<sessionId>
+// Layout: Floating Card (opcao B)
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
 import type {
@@ -19,10 +20,6 @@ import {
   snapshotLead,
 } from '../lib/auditoriaSnapshot';
 import toast from 'react-hot-toast';
-import { ArrowLeft, ArrowRight, Check, Loader2, SkipForward, X } from 'lucide-react';
-import { cn } from './Layout';
-
-const SALESHUB_ORIGIN = window.location.origin;
 
 function postToParent(data: any) {
   if (window.parent && window.parent !== window) {
@@ -37,8 +34,9 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [posicao, setPosicao] = useState(0);
   const [loading, setLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
+  const [minimized, setMinimized] = useState(false);
 
-  // Restore auth session from URL hash (passed by bridge to bypass 3p cookie block)
+  // Restore auth session from URL hash
   useEffect(() => {
     (async () => {
       const hash = window.location.hash.slice(1);
@@ -47,7 +45,6 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
       const rt = params.get('rt');
       if (at && rt) {
         await supabase.auth.setSession({ access_token: at, refresh_token: rt });
-        // Clear hash from URL
         window.history.replaceState(null, '', window.location.pathname + window.location.search);
       }
       setAuthReady(true);
@@ -103,27 +100,23 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     setMotivoSkip(registroAtual?.motivo_skip || '');
   }, [registroAtual?.id]);
 
-  // Navegar Kommo ao trocar item — só se URL mudou (evita loop de reload)
-  const lastNavigatedId = React.useRef<string | null>(null);
+  // Navegar Kommo ao trocar item — só se URL mudou
+  const lastNavigatedId = useRef<string | null>(null);
   useEffect(() => {
     if (!itemAtual) return;
     const link = (itemAtual as any)?.kommo_link;
     const itemId = (itemAtual as any)?.id;
-    // Só navega se for item diferente do último navegado
     if (link && itemId && itemId !== lastNavigatedId.current) {
       lastNavigatedId.current = itemId;
-      // Pergunta ao bridge a URL atual antes de navegar
       postToParent({ action: 'check-url-then-navigate', kommoUrl: link });
     }
-    // Também pede extração
     postToParent({ action: 'extract' });
   }, [itemAtual?.id]);
 
-  // Ouvir mensagens do bridge (lead changed)
+  // Ouvir mensagens do bridge
   useEffect(() => {
     function onMessage(ev: MessageEvent) {
       if (!ev.data || ev.data.source !== 'kommo-bridge') return;
-      // Futuro: sincronizar posição se lead mudar externamente
     }
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -163,7 +156,7 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
 
   const handleSave = async (avancar = true) => {
     if (!registroAtual || !snapshotSaleshub) return;
-    if (!observacao.trim()) { toast.error('Observação obrigatória'); return; }
+    if (!observacao.trim()) { toast.error('Observacao obrigatoria'); return; }
     const ok = await persistRegistro({
       status: 'auditado',
       observacao,
@@ -192,58 +185,163 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
       status: 'concluida',
       completed_at: new Date().toISOString(),
     }).eq('id', sessionId);
-    toast.success('Sessão concluída!');
+    toast.success('Sessao concluida!');
     postToParent({ action: 'close' });
   };
 
-  const handleClose = () => {
-    postToParent({ action: 'close' });
+  const handleClose = () => postToParent({ action: 'close' });
+
+  const toggleMinimize = () => {
+    const next = !minimized;
+    setMinimized(next);
+    postToParent({ action: next ? 'minimize' : 'maximize' });
   };
 
   const storeLoading = isLoadingAuth || (!currentUser && authReady);
 
+  // --- STYLES ---
+  const S = {
+    root: {
+      height: '100%', display: 'flex', flexDirection: 'column' as const,
+      background: '#0f1117', color: '#fff', fontFamily: 'system-ui, -apple-system, sans-serif',
+      borderRadius: 16, overflow: 'hidden',
+    },
+    header: {
+      padding: '10px 12px', background: '#161922',
+      borderBottom: '1px solid #2a3040',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      cursor: 'grab', userSelect: 'none' as const, minHeight: 44,
+    },
+    headerInfo: { display: 'flex', flexDirection: 'column' as const, gap: 1, minWidth: 0, flex: 1 },
+    leadName: { fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis' },
+    meta: { fontSize: 10, color: '#6b7280' },
+    controls: { display: 'flex', gap: 3, flexShrink: 0 },
+    ctrlBtn: {
+      width: 24, height: 24, border: 'none', background: '#2a3040',
+      color: '#9ca3af', borderRadius: 4, cursor: 'pointer', fontSize: 13,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    },
+    body: { flex: 1, overflow: 'auto', padding: 12, display: 'flex', flexDirection: 'column' as const, gap: 10 },
+    sevRow: { display: 'flex', gap: 4 },
+    sevBtn: (color: string, active: boolean) => ({
+      flex: 1, padding: '7px 0', border: 'none', borderRadius: 8, fontSize: 11,
+      fontWeight: 600, cursor: 'pointer', color: '#fff', background: color,
+      opacity: active ? 1 : 0.35,
+      boxShadow: active ? '0 0 0 2px rgba(255,255,255,0.25)' : 'none',
+      transition: 'all 0.15s',
+    }),
+    textarea: {
+      width: '100%', padding: '8px 10px', background: '#1a1f2e', border: '1px solid #2a3040',
+      borderRadius: 8, color: '#fff', fontSize: 12, resize: 'none' as const, height: 64,
+      outline: 'none', fontFamily: 'inherit',
+    },
+    btnSave: {
+      flex: 1, padding: '10px 0', background: '#dc2626', border: 'none', borderRadius: 8,
+      color: '#fff', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+    },
+    btnOnly: {
+      padding: '10px 12px', background: '#2a3040', border: 'none', borderRadius: 8,
+      color: '#9ca3af', fontSize: 11, cursor: 'pointer',
+    },
+    skipRow: { display: 'flex', gap: 4 },
+    skipInput: {
+      flex: 1, padding: '6px 8px', background: '#1a1f2e', border: '1px solid #2a3040',
+      borderRadius: 6, color: '#fff', fontSize: 11, outline: 'none', fontFamily: 'inherit',
+    },
+    btnSkip: {
+      padding: '6px 10px', background: 'rgba(180,130,0,0.25)', border: 'none', borderRadius: 6,
+      color: '#fbbf24', fontSize: 11, cursor: 'pointer',
+    },
+    progress: { display: 'flex', gap: 2 },
+    seg: (status: string, isCurrent: boolean) => ({
+      flex: 1, height: 4, borderRadius: 2,
+      background: isCurrent ? '#fff' : status === 'auditado' ? '#16a34a' : status === 'skipado' ? '#ca8a04' : '#2a3040',
+      cursor: 'pointer',
+    }),
+    footer: {
+      padding: '8px 12px', borderTop: '1px solid #2a3040', background: '#161922',
+    },
+    btnConcluir: {
+      width: '100%', padding: '8px 0', background: '#15803d', border: 'none', borderRadius: 8,
+      color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+    },
+    // minimized
+    miniRoot: {
+      height: '100%', display: 'flex', alignItems: 'center', gap: 8,
+      background: '#0f1117', color: '#fff', fontFamily: 'system-ui, sans-serif',
+      borderRadius: 12, padding: '0 12px', cursor: 'pointer',
+    },
+    miniDot: { width: 8, height: 8, borderRadius: '50%', background: '#16a34a', flexShrink: 0 },
+    miniText: { fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' as const },
+    label: { fontSize: 10, color: '#5a6478', textTransform: 'uppercase' as const, letterSpacing: 0.3 },
+    badge: (status: string) => ({
+      fontSize: 10, padding: '3px 8px', borderRadius: 6,
+      background: status === 'auditado' ? 'rgba(22,163,74,0.2)' : 'rgba(202,138,4,0.2)',
+      color: status === 'auditado' ? '#86efac' : '#fde047',
+    }),
+  };
+
+  // --- MINIMIZED ---
+  if (minimized) {
+    const totalDone = registros.filter(r => r.status !== 'pendente').length;
+    return (
+      <div style={S.miniRoot} onClick={toggleMinimize}>
+        <div style={S.miniDot} />
+        <span style={S.miniText}>Auditoria {totalDone}/{registros.length}</span>
+      </div>
+    );
+  }
+
+  // --- LOADING ---
   if (loading || storeLoading) {
-    return <div className="h-full flex items-center justify-center bg-[#0f1117] text-slate-400"><Loader2 size={18} className="animate-spin" /> <span className="ml-2 text-xs">{storeLoading ? 'Carregando dados...' : ''}</span></div>;
+    return (
+      <div style={{ ...S.root, alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: '#6b7280', fontSize: 12 }}>
+          {storeLoading ? 'Carregando dados...' : 'Carregando...'}
+        </div>
+      </div>
+    );
   }
 
   if (!sessao) {
-    return <div className="h-full flex items-center justify-center bg-[#0f1117] text-slate-400 text-sm p-4">Sessão não encontrada</div>;
+    return (
+      <div style={{ ...S.root, alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: '#6b7280', fontSize: 12 }}>Sessao nao encontrada</div>
+      </div>
+    );
   }
 
   const totalDone = registros.filter(r => r.status !== 'pendente').length;
+  const leadName = (itemAtual as any)?.empresa || (leads.length === 0 && deals.length === 0 ? 'Carregando...' : 'Item nao encontrado');
 
   return (
-    <div className="h-screen flex flex-col bg-[#0f1117] text-white overflow-hidden" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      {/* Header */}
-      <div className="px-3 py-2 border-b border-slate-700 flex items-center justify-between gap-2 bg-[#161922]">
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-bold truncate">{sessao.nome}</div>
-          <div className="text-[10px] text-slate-400">{posicao + 1}/{registros.length} · {totalDone} feitos</div>
+    <div style={S.root}>
+      {/* Header — draggable area */}
+      <div style={S.header}>
+        <div style={S.headerInfo}>
+          <div style={S.leadName}>{leadName}</div>
+          <div style={S.meta}>
+            Resp: {responsavel?.name || '—'} · {posicao + 1}/{registros.length} · {totalDone} feitos
+          </div>
         </div>
-        <div className="flex gap-1">
-          <button onClick={prev} disabled={posicao === 0} className="p-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-30"><ArrowLeft size={12} /></button>
-          <button onClick={next} disabled={posicao >= registros.length - 1} className="p-1 rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-30"><ArrowRight size={12} /></button>
-          <button onClick={handleClose} className="p-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"><X size={12} /></button>
+        <div style={S.controls}>
+          <button style={S.ctrlBtn} onClick={prev} disabled={posicao === 0} title="Anterior">&#8592;</button>
+          <button style={S.ctrlBtn} onClick={next} disabled={posicao >= registros.length - 1} title="Proximo">&#8594;</button>
+          <button style={S.ctrlBtn} onClick={toggleMinimize} title="Minimizar">&#8211;</button>
+          <button style={{ ...S.ctrlBtn, color: '#ef4444' }} onClick={handleClose} title="Fechar">&#10005;</button>
         </div>
       </div>
 
-      {/* Content */}
+      {/* Body */}
       {!registroAtual ? (
-        <div className="flex-1 flex items-center justify-center text-slate-400 text-sm p-4">Sessão vazia</div>
+        <div style={{ ...S.body, alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
+          Sessao vazia
+        </div>
       ) : (
-        <div className="flex-1 overflow-auto p-3 space-y-3">
-          {/* Item info */}
-          <div className="bg-[#161922] p-2.5 rounded border border-slate-700">
-            <div className="text-[10px] text-slate-400 uppercase">{registroAtual.item_tipo}</div>
-            <div className="text-sm font-bold truncate">{(itemAtual as any)?.empresa || (leads.length === 0 && deals.length === 0 ? 'Carregando...' : 'Item não encontrado')}</div>
-            <div className="text-[11px] text-slate-400">Resp: {responsavel?.name || '—'}</div>
-          </div>
-
-          {/* Already audited badge */}
+        <div style={S.body}>
+          {/* Already done badge */}
           {registroAtual.status !== 'pendente' && (
-            <div className={cn('text-[11px] px-2.5 py-1.5 rounded',
-              registroAtual.status === 'auditado' ? 'bg-green-500/20 text-green-300' : 'bg-amber-500/20 text-amber-300'
-            )}>
+            <div style={S.badge(registroAtual.status)}>
               {registroAtual.status === 'auditado' ? '✓ Auditado' : '⤳ Pulado'}
               {registroAtual.observacao && ` — ${registroAtual.observacao}`}
             </div>
@@ -251,94 +349,51 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
 
           {/* Severidade */}
           <div>
-            <div className="text-[10px] text-slate-400 uppercase mb-1">Severidade</div>
-            <div className="flex gap-1">
-              {([
-                { key: 'baixa' as const, label: 'Baixa', color: 'bg-green-600', active: 'bg-green-600 ring-2 ring-green-400' },
-                { key: 'media' as const, label: 'Média', color: 'bg-yellow-600', active: 'bg-yellow-600 ring-2 ring-yellow-400' },
-                { key: 'alta' as const, label: 'Alta', color: 'bg-red-600', active: 'bg-red-600 ring-2 ring-red-400' },
-              ]).map(s => (
-                <button
-                  key={s.key}
-                  onClick={() => setSeveridade(severidade === s.key ? '' : s.key)}
-                  className={cn('flex-1 py-1.5 rounded text-[11px] text-white font-medium transition-all',
-                    severidade === s.key ? s.active : s.color + ' opacity-50'
-                  )}
-                >
-                  {s.label}
-                </button>
-              ))}
+            <div style={S.label}>Severidade</div>
+            <div style={{ ...S.sevRow, marginTop: 4 }}>
+              <button style={S.sevBtn('#16a34a', severidade === 'baixa')} onClick={() => setSeveridade(severidade === 'baixa' ? '' : 'baixa')}>Baixa</button>
+              <button style={S.sevBtn('#ca8a04', severidade === 'media')} onClick={() => setSeveridade(severidade === 'media' ? '' : 'media')}>Media</button>
+              <button style={S.sevBtn('#dc2626', severidade === 'alta')} onClick={() => setSeveridade(severidade === 'alta' ? '' : 'alta')}>Alta</button>
             </div>
           </div>
 
           {/* Observação */}
           <div>
-            <div className="text-[10px] text-slate-400 uppercase mb-1">Observação</div>
+            <div style={S.label}>Observacao</div>
             <textarea
+              style={{ ...S.textarea, marginTop: 4 }}
               value={observacao}
               onChange={e => setObservacao(e.target.value)}
               placeholder="O que precisa ser corrigido?"
-              className="w-full px-2.5 py-2 bg-[#161922] border border-slate-700 rounded text-white text-xs h-24 resize-none focus:outline-none focus:border-slate-500"
             />
           </div>
 
-          {/* Salvar */}
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => handleSave(true)}
-              disabled={saving}
-              className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white text-xs rounded font-medium flex items-center justify-center gap-1 disabled:opacity-50"
-            >
-              {saving ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-              Salvar e próximo
+          {/* Save */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button style={S.btnSave} onClick={() => handleSave(true)} disabled={saving}>
+              {saving ? '...' : '✓ Salvar e proximo'}
             </button>
-            <button
-              onClick={() => handleSave(false)}
-              disabled={saving}
-              className="px-2.5 py-2 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded disabled:opacity-50"
-            >
-              Salvar
-            </button>
+            <button style={S.btnOnly} onClick={() => handleSave(false)} disabled={saving}>Salvar</button>
           </div>
 
-          {/* Pular */}
-          <div className="flex gap-1.5">
-            <input
-              value={motivoSkip}
-              onChange={e => setMotivoSkip(e.target.value)}
-              placeholder="motivo skip"
-              className="flex-1 px-2 py-1.5 bg-[#161922] border border-slate-700 rounded text-white text-[11px] focus:outline-none focus:border-slate-500"
-            />
-            <button onClick={handleSkip} disabled={saving} className="px-2.5 py-1.5 bg-amber-700/40 hover:bg-amber-700/60 text-amber-100 text-[11px] rounded flex items-center gap-1 disabled:opacity-50">
-              <SkipForward size={11} /> Pular
-            </button>
+          {/* Skip */}
+          <div style={S.skipRow}>
+            <input style={S.skipInput} value={motivoSkip} onChange={e => setMotivoSkip(e.target.value)} placeholder="motivo skip" />
+            <button style={S.btnSkip} onClick={handleSkip} disabled={saving}>Pular</button>
           </div>
 
           {/* Progress */}
-          <div className="pt-1">
-            <div className="flex gap-0.5">
-              {registros.map((r, i) => (
-                <button
-                  key={r.id}
-                  onClick={() => goTo(i)}
-                  className={cn(
-                    'h-1.5 flex-1 rounded-sm transition-colors',
-                    i === posicao ? 'bg-white' :
-                      r.status === 'auditado' ? 'bg-green-500' :
-                        r.status === 'skipado' ? 'bg-amber-500' : 'bg-slate-600'
-                  )}
-                />
-              ))}
-            </div>
+          <div style={S.progress}>
+            {registros.map((r, i) => (
+              <div key={r.id} style={S.seg(r.status, i === posicao)} onClick={() => goTo(i)} />
+            ))}
           </div>
         </div>
       )}
 
       {/* Footer */}
-      <div className="px-3 py-2 border-t border-slate-700 bg-[#161922]">
-        <button onClick={handleConcluir} className="w-full py-2 bg-green-600 hover:bg-green-700 text-white text-xs rounded font-medium flex items-center justify-center gap-1.5">
-          <Check size={12} /> Concluir sessão
-        </button>
+      <div style={S.footer}>
+        <button style={S.btnConcluir} onClick={handleConcluir}>✓ Concluir sessao</button>
       </div>
     </div>
   );

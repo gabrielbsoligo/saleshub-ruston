@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.2.4
+// @version      0.3.0
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.2.4';
+  var VERSION = '0.3.0';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -220,7 +220,8 @@
   var sidebarEl = null;
   var sidebarIframe = null;
   var currentSidebarSessionId = null;
-  var SIDEBAR_WIDTH = 380;
+  var FLOAT_WIDTH = 340;
+  var FLOAT_HEIGHT = 420;
 
   function persistAuditSession(sessionId, accessToken, refreshToken) {
     try {
@@ -263,24 +264,48 @@
     // Persistir sessão para sobreviver a navegações/reloads
     persistAuditSession(sessionId, accessToken, refreshToken);
 
-    // Container
+    // Container — floating card no canto inferior direito
     sidebarEl = document.createElement('div');
-    sidebarEl.id = 'saleshub-audit-sidebar';
-    sidebarEl.style.cssText = 'position:fixed;top:0;right:0;width:' + SIDEBAR_WIDTH + 'px;height:100vh;z-index:99998;box-shadow:-4px 0 20px rgba(0,0,0,0.4);transition:transform 0.3s;transform:translateX(0);';
+    sidebarEl.id = 'saleshub-audit-float';
+    sidebarEl.style.cssText = 'position:fixed;bottom:20px;right:20px;width:' + FLOAT_WIDTH + 'px;height:' + FLOAT_HEIGHT + 'px;z-index:99998;border-radius:16px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.5);border:1px solid #2a3040;transition:all 0.3s;';
 
     // Iframe — pass tokens via hash (not query, to avoid server logs)
     sidebarIframe = document.createElement('iframe');
     var hashParts = 'at=' + encodeURIComponent(accessToken || '') + '&rt=' + encodeURIComponent(refreshToken || '');
     var url = SALESHUB_ORIGIN + '/?audit_panel=1&session=' + sessionId + '#' + hashParts;
     sidebarIframe.src = url;
-    sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;';
+    sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:16px;';
     sidebarIframe.setAttribute('allow', 'clipboard-write');
     sidebarEl.appendChild(sidebarIframe);
 
+    // Drag support
+    var isDragging = false;
+    var dragOffsetX = 0;
+    var dragOffsetY = 0;
+    sidebarEl.addEventListener('mousedown', function (e) {
+      // Só drag no header (primeiros 44px)
+      var rect = sidebarEl.getBoundingClientRect();
+      if (e.clientY - rect.top > 44) return;
+      isDragging = true;
+      dragOffsetX = e.clientX - rect.left;
+      dragOffsetY = e.clientY - rect.top;
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', function (e) {
+      if (!isDragging) return;
+      var x = e.clientX - dragOffsetX;
+      var y = e.clientY - dragOffsetY;
+      sidebarEl.style.left = x + 'px';
+      sidebarEl.style.top = y + 'px';
+      sidebarEl.style.right = 'auto';
+      sidebarEl.style.bottom = 'auto';
+    });
+    document.addEventListener('mouseup', function () { isDragging = false; });
+
     document.body.appendChild(sidebarEl);
 
-    // Empurrar badge pra esquerda do sidebar
-    if (badgeEl) badgeEl.style.right = (SIDEBAR_WIDTH + 12) + 'px';
+    // Badge não precisa mover — float não tampa
+    if (badgeEl) badgeEl.style.right = '12px';
 
     currentSidebarSessionId = sessionId;
     win.console.log('[SalesHub Bridge] audit sidebar opened, session=' + sessionId + ', hasToken=' + !!accessToken);
@@ -395,6 +420,18 @@
       }
       if (ev.data.action === 'close') {
         closeAuditSidebar(true);
+      }
+      if (ev.data.action === 'minimize') {
+        if (sidebarEl) {
+          sidebarEl.style.width = '180px';
+          sidebarEl.style.height = '40px';
+        }
+      }
+      if (ev.data.action === 'maximize') {
+        if (sidebarEl) {
+          sidebarEl.style.width = FLOAT_WIDTH + 'px';
+          sidebarEl.style.height = FLOAT_HEIGHT + 'px';
+        }
       }
       if (ev.data.action === 'extract') {
         var id2 = getCurrentLeadId();
