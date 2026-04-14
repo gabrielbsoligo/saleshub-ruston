@@ -238,16 +238,23 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
 
   if (!reuniao) return { status: 'not_found', error: 'Reunião não encontrada' }
 
-  // Tentar token na ordem: closer_confirmado > closer > sdr (organizador real do Meet costuma ser o closer)
-  const candidateIds = [reuniao.closer_confirmado_id, reuniao.closer_id, reuniao.sdr_id].filter(Boolean)
-  let token: string | null = null
-  for (const id of candidateIds) {
-    token = await getValidToken(supabase, id)
-    if (token) break
-  }
-  if (!token) return { status: 'needs_reauth', error: 'Organizador precisa reconectar Google na tela de Equipe' }
+  // Candidatos: SDR primeiro (geralmente é o organizador do Meet e dono da transcrição),
+  // depois closer_confirmado, depois closer
+  const candidateIds = [...new Set(
+    [reuniao.sdr_id, reuniao.closer_confirmado_id, reuniao.closer_id].filter(Boolean)
+  )]
 
-  // Se temos calendar_event_id, puxar evento canônico; senão fallback heurístico
+  // Coletar todos os tokens válidos (pra buscar no Drive de cada um)
+  const tokenEntries: { memberId: string; token: string }[] = []
+  for (const id of candidateIds) {
+    const t = await getValidToken(supabase, id)
+    if (t) tokenEntries.push({ memberId: id, token: t })
+  }
+  if (tokenEntries.length === 0) {
+    return { status: 'needs_reauth', error: 'Organizador precisa reconectar Google na tela de Equipe' }
+  }
+
+  // Montar fingerprint usando o primeiro token disponível pra acessar Calendar
   let fingerprint = {
     summary: '',
     startIso: reuniao.data_reuniao || reuniao.data_agendamento || '',
@@ -255,27 +262,35 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
     fallbackEmpresa: reuniao.empresa || '',
   }
   if (reuniao.calendar_event_id) {
-    const ev = await getCalendarEvent(token, reuniao.calendar_event_id)
-    if (ev) {
-      fingerprint.summary = ev.summary
-      fingerprint.startIso = ev.startIso || fingerprint.startIso
-      fingerprint.meetCode = ev.meetCode
+    for (const entry of tokenEntries) {
+      const ev = await getCalendarEvent(entry.token, reuniao.calendar_event_id)
+      if (ev) {
+        fingerprint.summary = ev.summary
+        fingerprint.startIso = ev.startIso || fingerprint.startIso
+        fingerprint.meetCode = ev.meetCode
+        break
+      }
     }
   }
 
-  const found = await findTranscriptInDrive(token, fingerprint)
-  if (found.transcript_text) {
-    return {
-      status: 'found',
-      transcript_text: found.transcript_text,
-      transcript_url: found.transcript_url || undefined,
-      recording_url: found.recording_url || undefined,
+  // Buscar transcrição no Drive de CADA candidato até encontrar
+  let lastRecordingUrl: string | undefined
+  for (const entry of tokenEntries) {
+    const found = await findTranscriptInDrive(entry.token, fingerprint)
+    if (found.recording_url) lastRecordingUrl = found.recording_url
+    if (found.transcript_text) {
+      return {
+        status: 'found',
+        transcript_text: found.transcript_text,
+        transcript_url: found.transcript_url || undefined,
+        recording_url: found.recording_url || lastRecordingUrl,
+      }
     }
   }
   return {
     status: 'not_found',
-    recording_url: found.recording_url || undefined,
-    error: 'Transcrição ainda não disponível',
+    recording_url: lastRecordingUrl,
+    error: 'Transcrição ainda não disponível no Drive de nenhum participante',
   }
 }
 
