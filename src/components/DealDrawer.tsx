@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
-import { X, Save, Trash2 } from "lucide-react";
+import { X, Save, Trash2, Loader2 } from "lucide-react";
 import { PRODUTOS_OT, PRODUTOS_MRR, DEAL_STATUS_LABELS, CANAL_LABELS, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
@@ -16,6 +16,8 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const [tab, setTab] = useState<'geral' | 'produtos' | 'ganho'>('geral');
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [contractParsing, setContractParsing] = useState(false);
+  const [contractFilledFields, setContractFilledFields] = useState<Set<string>>(new Set());
 
   const [form, setForm] = useState({
     empresa: '', kommo_id: '', kommo_link: '', closer_id: '', sdr_id: '',
@@ -92,6 +94,27 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const labelClass = "block text-xs font-medium text-[var(--color-v4-text-muted)] mb-1";
   const tabClass = (t: string) => `px-4 py-2 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)] hover:bg-[var(--color-v4-card-hover)]'}`;
   const isGanho = form.status === 'contrato_assinado';
+  const contractHighlight = (field: string) => contractFilledFields.has(field) ? 'ring-1 ring-green-500/50' : '';
+
+  const handleContractParsed = useCallback((result: any) => {
+    const filled = new Set<string>();
+
+    if (result.produtos_ot?.length) { set('produtos_ot', result.produtos_ot); filled.add('produtos_ot'); }
+    if (result.produtos_mrr?.length) { set('produtos_mrr', result.produtos_mrr); filled.add('produtos_mrr'); }
+    if (result.valor_escopo > 0) { set('valor_escopo', result.valor_escopo); filled.add('valor_escopo'); }
+    if (result.valor_recorrente > 0) { set('valor_recorrente', result.valor_recorrente); filled.add('valor_recorrente'); }
+    if (result.data_inicio_escopo) { set('data_inicio_escopo', result.data_inicio_escopo); filled.add('data_inicio_escopo'); }
+    if (result.data_pgto_escopo) { set('data_pgto_escopo', result.data_pgto_escopo); filled.add('data_pgto_escopo'); }
+    if (result.data_inicio_recorrente) { set('data_inicio_recorrente', result.data_inicio_recorrente); filled.add('data_inicio_recorrente'); }
+    if (result.data_pgto_recorrente) { set('data_pgto_recorrente', result.data_pgto_recorrente); filled.add('data_pgto_recorrente'); }
+    if (result.tier) { set('tier', result.tier); filled.add('tier'); }
+
+    setContractFilledFields(filled);
+    // Auto-switch to Produtos tab to show filled fields
+    if (filled.has('produtos_ot') || filled.has('produtos_mrr')) {
+      setTab('produtos');
+    }
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -162,24 +185,28 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
           </>)}
 
           {tab === 'produtos' && (<>
-            <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
-              <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-3">Escopo Fechado (OT)</h4>
+            <div className={`bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 ${contractHighlight('produtos_ot')}`}>
+              <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-3">
+                Escopo Fechado (OT) {contractFilledFields.has('produtos_ot') && <span className="ml-1 text-green-400">📄 Contrato</span>}
+              </h4>
               <MultiSelect options={[...PRODUTOS_OT]} selected={form.produtos_ot} onChange={v => set('produtos_ot', v)} placeholder="Selecionar produtos OT..." />
               {form.produtos_ot.length > 0 && (<>
                 <div className="mt-3"><label className={labelClass}>Valor Escopo (R$) {isGanho && '*'}</label>
-                  <input type="number" className={inputClass} value={form.valor_escopo} onChange={e => set('valor_escopo', Number(e.target.value))} /></div>
+                  <input type="number" className={`${inputClass} ${contractHighlight('valor_escopo')}`} value={form.valor_escopo} onChange={e => set('valor_escopo', Number(e.target.value))} /></div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <DateInput label={`Início Escopo ${isGanho ? '*' : ''}`} value={form.data_inicio_escopo} onChange={v => set('data_inicio_escopo', v)} />
                   <DateInput label={`1º Pgto Escopo ${isGanho ? '*' : ''}`} value={form.data_pgto_escopo} onChange={v => set('data_pgto_escopo', v)} />
                 </div>
               </>)}
             </div>
-            <div className="bg-green-500/5 border border-green-500/20 rounded-xl p-4">
-              <h4 className="text-xs font-bold text-green-400 uppercase tracking-wider mb-3">Recorrente (MRR)</h4>
+            <div className={`bg-green-500/5 border border-green-500/20 rounded-xl p-4 ${contractHighlight('produtos_mrr')}`}>
+              <h4 className="text-xs font-bold text-green-400 uppercase tracking-wider mb-3">
+                Recorrente (MRR) {contractFilledFields.has('produtos_mrr') && <span className="ml-1 text-green-400">📄 Contrato</span>}
+              </h4>
               <MultiSelect options={[...PRODUTOS_MRR]} selected={form.produtos_mrr} onChange={v => set('produtos_mrr', v)} placeholder="Selecionar produtos MRR..." />
               {form.produtos_mrr.length > 0 && (<>
                 <div className="mt-3"><label className={labelClass}>Valor Recorrente (R$/mês) {isGanho && '*'}</label>
-                  <input type="number" className={inputClass} value={form.valor_recorrente} onChange={e => set('valor_recorrente', Number(e.target.value))} /></div>
+                  <input type="number" className={`${inputClass} ${contractHighlight('valor_recorrente')}`} value={form.valor_recorrente} onChange={e => set('valor_recorrente', Number(e.target.value))} /></div>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <DateInput label={`Início Recorrente ${isGanho ? '*' : ''}`} value={form.data_inicio_recorrente} onChange={v => set('data_inicio_recorrente', v)} />
                   <DateInput label={`1º Pgto Recorrente ${isGanho ? '*' : ''}`} value={form.data_pgto_recorrente} onChange={v => set('data_pgto_recorrente', v)} />
@@ -205,10 +232,18 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                 contractFilename={form.contrato_filename}
                 onUploaded={(url, name) => { set('contrato_url', url); set('contrato_filename', name); }}
                 onRemoved={() => { set('contrato_url', ''); set('contrato_filename', ''); }}
+                onParsing={setContractParsing}
+                onParsed={handleContractParsed}
               />
             ) : (
               <div><label className={labelClass}>Contrato (salve o deal primeiro para anexar)</label>
                 <div className="p-3 rounded-lg bg-[var(--color-v4-surface)] text-xs text-[var(--color-v4-text-muted)]">Salve a negociação e depois anexe o contrato</div></div>
+            )}
+            {contractParsing && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                <Loader2 size={14} className="text-green-400 animate-spin" />
+                <span className="text-xs text-green-400">📄 Extraindo produtos, preços e datas do contrato...</span>
+              </div>
             )}
             <div><label className={labelClass}>Observações</label>
               <textarea className={inputClass + " h-20 resize-none"} value={form.observacoes} onChange={e => set('observacoes', e.target.value)} /></div>
