@@ -2,25 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
 import {
-  type AuditoriaKommoSnapshot,
   type AuditoriaRegistro,
   type AuditoriaSessao,
   type AuditoriaSeveridade,
   type BridgeToken,
-  type Deal,
-  type Lead,
 } from '../types';
-import {
-  getKommoLeadIdFromItem,
-  getResponsavelId,
-  snapshotDeal,
-  snapshotLead,
-} from '../lib/auditoriaSnapshot';
 import { gerarMensagemConsolidada } from '../lib/auditoriaWhatsApp';
 import toast from 'react-hot-toast';
 import {
-  ArrowLeft, ArrowRight, Check, ClipboardCopy, ExternalLink,
-  KeyRound, Loader2, Plus, SkipForward, Trash2, X,
+  ArrowLeft, Check, ClipboardCopy, ExternalLink,
+  KeyRound, Loader2, Plus, Trash2,
 } from 'lucide-react';
 import { cn } from './Layout';
 
@@ -247,154 +238,84 @@ const BridgeSetup: React.FC<{ onBack: () => void }> = ({ onBack }) => {
 };
 
 // ---------------------------------------------
-// SessionRunner — layout side-by-side
-// Esquerda: iframe Kommo | Direita: form auditoria compacto
+// SessionRunner — abre Kommo e injeta sidebar de auditoria
+// A auditoria acontece DENTRO da aba do Kommo (via AuditPanel no iframe)
+// Esta tela no SalesHub só faz o launch e mostra status.
 // ---------------------------------------------
 const SessionRunner: React.FC<{
   sessionId: string;
   onClose: () => void;
   onConcluir: (sessionId: string) => void;
 }> = ({ sessionId, onClose, onConcluir }) => {
-  const { leads, deals, members, reunioes } = useAppStore();
+  const { leads, deals } = useAppStore();
   const [sessao, setSessao] = useState<AuditoriaSessao | null>(null);
   const [registros, setRegistros] = useState<AuditoriaRegistro[]>([]);
-  const [posicao, setPosicao] = useState(0);
   const [loading, setLoading] = useState(true);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const popupRef = useRef<Window | null>(null);
+  const [launched, setLaunched] = useState(false);
+  const kommoRef = useRef<Window | null>(null);
 
-  // Form state
-  const [observacao, setObservacao] = useState('');
-  const [severidade, setSeveridade] = useState<AuditoriaSeveridade | ''>('');
-  const [motivoSkip, setMotivoSkip] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // Fetch
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [{ data: s, error: e1 }, { data: r, error: e2 }] = await Promise.all([
+    const [{ data: s }, { data: r }] = await Promise.all([
       supabase.from('auditoria_sessoes').select('*').eq('id', sessionId).single(),
       supabase.from('auditoria_registros').select('*').eq('sessao_id', sessionId).order('posicao', { ascending: true }),
     ]);
-    if (e1) toast.error(e1.message);
-    if (e2) toast.error(e2.message);
     setSessao(s as AuditoriaSessao | null);
     setRegistros((r as AuditoriaRegistro[]) || []);
-    const idx = ((r as AuditoriaRegistro[]) || []).findIndex(reg => reg.status === 'pendente');
-    setPosicao(idx >= 0 ? idx : 0);
     setLoading(false);
   }, [sessionId]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  const registroAtual = registros[posicao];
-
-  const itemAtual = useMemo(() => {
-    if (!registroAtual) return null;
-    if (registroAtual.item_tipo === 'lead') return leads.find(l => l.id === registroAtual.item_id) || null;
-    return deals.find(d => d.id === registroAtual.item_id) || null;
-  }, [registroAtual, leads, deals]);
-
-  const snapshotSaleshub = useMemo(() => {
-    if (!itemAtual || !registroAtual) return null;
-    return registroAtual.item_tipo === 'lead'
-      ? snapshotLead(itemAtual as Lead, members, reunioes, deals)
-      : snapshotDeal(itemAtual as Deal, members, reunioes, leads);
-  }, [itemAtual, registroAtual, members, reunioes, deals, leads]);
-
-  const responsavelId = snapshotSaleshub ? getResponsavelId(snapshotSaleshub) : undefined;
-  const responsavel = responsavelId ? members.find(m => m.id === responsavelId) : null;
-
-  // Reset form ao trocar item
+  // Poll para atualizar contadores
   useEffect(() => {
-    setObservacao(registroAtual?.observacao || '');
-    setSeveridade((registroAtual?.severidade as any) || '');
-    setMotivoSkip(registroAtual?.motivo_skip || '');
-  }, [registroAtual?.id]);
+    const interval = setInterval(fetchAll, 8000);
+    return () => clearInterval(interval);
+  }, [fetchAll]);
 
-  // Navegar Kommo automaticamente ao trocar item
-  const navigateKommo = useCallback((item: Lead | Deal | null) => {
-    const link = (item as any)?.kommo_link;
-    if (!link) return;
-    // Tenta postMessage pro popup/tab com bridge
-    if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.postMessage({ source: 'saleshub', action: 'goto', kommoUrl: link }, '*');
-      popupRef.current.focus();
-    } else {
-      // Abre popup nova
-      popupRef.current = window.open(link, 'kommo-audit', 'width=1100,height=900');
+  // Achar primeiro link Kommo da sessão
+  const firstKommoLink = useMemo(() => {
+    const first = registros.find(r => r.status === 'pendente') || registros[0];
+    if (!first) return null;
+    const item = first.item_tipo === 'lead'
+      ? leads.find(l => l.id === first.item_id)
+      : deals.find(d => d.id === first.item_id);
+    return (item as any)?.kommo_link || null;
+  }, [registros, leads, deals]);
+
+  const handleLaunch = () => {
+    if (!firstKommoLink) {
+      toast.error('Nenhum item com link Kommo.');
+      return;
     }
-  }, []);
+    // Abre aba do Kommo
+    kommoRef.current = window.open(firstKommoLink, 'kommo-audit');
+    setLaunched(true);
 
-  // Ao mudar posição, navega Kommo
-  useEffect(() => {
-    if (itemAtual) navigateKommo(itemAtual);
-  }, [itemAtual?.id]);
+    // Espera o bridge carregar e manda start-audit
+    setTimeout(function sendStart() {
+      if (kommoRef.current && !kommoRef.current.closed) {
+        kommoRef.current.postMessage({
+          source: 'saleshub',
+          action: 'start-audit',
+          sessionId: sessionId,
+        }, '*');
+      }
+    }, 3000);
 
-  // Navegação
-  const goTo = useCallback((idx: number) => {
-    if (idx < 0 || idx >= registros.length) return;
-    setPosicao(idx);
-  }, [registros.length]);
-
-  const next = () => goTo(posicao + 1);
-  const prev = () => goTo(posicao - 1);
-
-  // Atalhos teclado
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'TEXTAREA' || tag === 'INPUT') return;
-      if (e.key === 'ArrowRight') next();
-      if (e.key === 'ArrowLeft') prev();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  });
-
-  // Persistir
-  const persistRegistro = async (patch: Partial<AuditoriaRegistro>) => {
-    if (!registroAtual) return false;
-    setSaving(true);
-    const { error } = await supabase.from('auditoria_registros').update(patch).eq('id', registroAtual.id);
-    setSaving(false);
-    if (error) { toast.error(error.message); return false; }
-    setRegistros(rs => rs.map(r => r.id === registroAtual.id ? { ...r, ...patch } as AuditoriaRegistro : r));
-    return true;
+    // Retry após 6s caso o bridge não tenha carregado
+    setTimeout(function retrySend() {
+      if (kommoRef.current && !kommoRef.current.closed) {
+        kommoRef.current.postMessage({
+          source: 'saleshub',
+          action: 'start-audit',
+          sessionId: sessionId,
+        }, '*');
+      }
+    }, 6000);
   };
 
-  const handleSave = async (avancar = true) => {
-    if (!registroAtual || !snapshotSaleshub) return;
-    if (!observacao.trim()) { toast.error('Adicione uma observação.'); return; }
-    const ok = await persistRegistro({
-      status: 'auditado',
-      observacao,
-      severidade: (severidade || null) as any,
-      responsavel_id: responsavelId || null as any,
-      snapshot_saleshub: snapshotSaleshub as any,
-      auditado_em: new Date().toISOString(),
-    });
-    if (ok) {
-      toast.success('Salvo');
-      if (avancar) next();
-    }
-  };
-
-  const handleSkip = async () => {
-    if (!registroAtual) return;
-    const ok = await persistRegistro({
-      status: 'skipado',
-      motivo_skip: motivoSkip || null as any,
-    });
-    if (ok) { toast.success('Pulado'); next(); }
-  };
-
-  const handleConcluir = async () => {
-    await supabase.from('auditoria_sessoes').update({
-      status: 'concluida',
-      completed_at: new Date().toISOString(),
-    }).eq('id', sessionId);
-    toast.success('Sessão concluída');
+  const handleViewResumo = () => {
     onConcluir(sessionId);
   };
 
@@ -402,143 +323,83 @@ const SessionRunner: React.FC<{
   if (!sessao) return <div className="p-8 text-slate-400">Sessão não encontrada. <button onClick={onClose} className="underline">voltar</button></div>;
 
   const totalDone = registros.filter(r => r.status !== 'pendente').length;
-  const kommoLink = (itemAtual as any)?.kommo_link || '';
+  const totalAuditado = registros.filter(r => r.status === 'auditado').length;
+  const totalSkipado = registros.filter(r => r.status === 'skipado').length;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header compacto */}
-      <div className="px-4 py-2 border-b border-[var(--color-v4-border)] flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-[var(--color-v4-card-hover)] text-white"><ArrowLeft size={16} /></button>
-          <span className="text-sm font-bold text-white truncate">{sessao.nome}</span>
-          <span className="text-xs text-slate-400">{posicao + 1}/{registros.length} · {totalDone} feitos</span>
+      <div className="px-6 py-4 border-b border-[var(--color-v4-border)] flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={onClose} className="p-2 rounded hover:bg-[var(--color-v4-card-hover)] text-white"><ArrowLeft size={16} /></button>
+          <div>
+            <h1 className="text-lg font-display font-bold text-white">{sessao.nome}</h1>
+            <div className="text-xs text-slate-400">{registros.length} itens · {totalDone} processados</div>
+          </div>
         </div>
-        <div className="flex gap-1.5">
-          <button onClick={prev} disabled={posicao === 0} className="p-1.5 rounded bg-[var(--color-v4-card)] hover:bg-[var(--color-v4-card-hover)] text-white disabled:opacity-30"><ArrowLeft size={14} /></button>
-          <button onClick={next} disabled={posicao >= registros.length - 1} className="p-1.5 rounded bg-[var(--color-v4-card)] hover:bg-[var(--color-v4-card-hover)] text-white disabled:opacity-30"><ArrowRight size={14} /></button>
-          <button onClick={handleConcluir} className="px-3 py-1.5 rounded text-xs bg-green-600 hover:bg-green-700 text-white flex items-center gap-1.5"><Check size={12} /> Concluir sessão</button>
-        </div>
+        {sessao.status === 'concluida' && (
+          <button onClick={handleViewResumo} className="px-3 py-2 rounded text-sm bg-green-600 hover:bg-green-700 text-white flex items-center gap-2">
+            <Check size={14} /> Ver resumo / WhatsApp
+          </button>
+        )}
       </div>
 
-      {/* Body — side by side */}
-      {!registroAtual ? (
-        <div className="p-8 text-slate-400">Sessão vazia.</div>
-      ) : (
-        <div className="flex-1 flex overflow-hidden">
-          {/* ESQUERDA — Kommo popup link + dados SalesHub */}
-          <div className="flex-1 overflow-auto p-4 space-y-3 border-r border-[var(--color-v4-border)]">
-            {/* Card do item */}
-            <div className="bg-[var(--color-v4-card)] p-3 rounded-lg border border-[var(--color-v4-border)] flex items-center justify-between">
-              <div className="min-w-0">
-                <div className="text-[10px] text-slate-400 uppercase">{registroAtual.item_tipo}</div>
-                <div className="text-base font-bold text-white truncate">{(itemAtual as any)?.empresa || 'Item não encontrado'}</div>
-                <div className="text-xs text-slate-400">Responsável: {responsavel?.name || '—'}</div>
-              </div>
-              {kommoLink && (
-                <a href={kommoLink} target="kommo-audit" className="px-2 py-1.5 bg-[var(--color-v4-red)] text-white text-xs rounded flex items-center gap-1.5 shrink-0" onClick={() => { if (!popupRef.current || popupRef.current.closed) popupRef.current = window.open(kommoLink, 'kommo-audit', 'width=1100,height=900'); }}>
-                  <ExternalLink size={12} /> Kommo
-                </a>
-              )}
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-lg mx-auto space-y-6">
+          {/* Status */}
+          <div className="bg-[var(--color-v4-card)] p-6 rounded-lg border border-[var(--color-v4-border)] text-center space-y-4">
+            <div className="text-4xl font-bold text-white">{totalAuditado}<span className="text-slate-400 text-lg">/{registros.length}</span></div>
+            <div className="text-sm text-slate-400">
+              {totalAuditado} auditados · {totalSkipado} pulados · {registros.length - totalDone} pendentes
             </div>
 
-            {/* Dados SalesHub */}
-            {snapshotSaleshub && <SaleshubPanel snapshot={snapshotSaleshub} />}
-
-            {/* Status badge por item */}
-            {registroAtual.status !== 'pendente' && (
-              <div className={cn('text-xs px-3 py-2 rounded', registroAtual.status === 'auditado' ? 'bg-green-500/20 text-green-300' : 'bg-amber-500/20 text-amber-300')}>
-                {registroAtual.status === 'auditado' ? '✓ Auditado' : '⤳ Pulado'}{registroAtual.observacao && ` — ${registroAtual.observacao}`}
-              </div>
-            )}
-          </div>
-
-          {/* DIREITA — form auditoria compacto */}
-          <div className="w-[340px] shrink-0 overflow-auto p-4 space-y-3 bg-[var(--color-v4-bg)]">
-            {/* Severidade — 3 botões inline */}
-            <div>
-              <div className="text-[10px] text-slate-400 uppercase mb-1.5">Severidade</div>
-              <div className="flex gap-1.5">
-                {([
-                  { key: 'baixa' as const, label: 'Baixa', color: 'bg-green-600 hover:bg-green-700', active: 'bg-green-600 ring-2 ring-green-400' },
-                  { key: 'media' as const, label: 'Média', color: 'bg-yellow-600 hover:bg-yellow-700', active: 'bg-yellow-600 ring-2 ring-yellow-400' },
-                  { key: 'alta' as const, label: 'Alta', color: 'bg-red-600 hover:bg-red-700', active: 'bg-red-600 ring-2 ring-red-400' },
-                ]).map(s => (
-                  <button
-                    key={s.key}
-                    onClick={() => setSeveridade(severidade === s.key ? '' : s.key)}
-                    className={cn('flex-1 py-1.5 rounded text-xs text-white font-medium transition-all', severidade === s.key ? s.active : `${s.color} opacity-60`)}
-                  >
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Observação */}
-            <div>
-              <div className="text-[10px] text-slate-400 uppercase mb-1.5">Observação</div>
-              <textarea
-                value={observacao}
-                onChange={e => setObservacao(e.target.value)}
-                placeholder="O que precisa ser corrigido / atualizado?"
-                className="w-full px-3 py-2 bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded text-white text-sm h-28 resize-none"
-              />
-            </div>
-
-            {/* Botões salvar */}
-            <div className="flex gap-1.5">
-              <button
-                onClick={() => handleSave(true)}
-                disabled={saving}
-                className="flex-1 py-2 bg-[var(--color-v4-red)] text-white text-sm rounded font-medium flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-                Salvar e próximo
-              </button>
-              <button
-                onClick={() => handleSave(false)}
-                disabled={saving}
-                className="px-3 py-2 bg-[var(--color-v4-card)] text-white text-sm rounded border border-[var(--color-v4-border)] disabled:opacity-50"
-              >
-                Salvar
-              </button>
-            </div>
-
-            {/* Pular */}
-            <div className="flex gap-1.5">
-              <input
-                value={motivoSkip}
-                onChange={e => setMotivoSkip(e.target.value)}
-                placeholder="motivo skip (opcional)"
-                className="flex-1 px-2 py-1.5 bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded text-white text-xs"
-              />
-              <button onClick={handleSkip} disabled={saving} className="px-3 py-1.5 bg-amber-700/40 hover:bg-amber-700/60 text-amber-100 text-xs rounded flex items-center gap-1.5 disabled:opacity-50">
-                <SkipForward size={12} /> Pular
-              </button>
-            </div>
-
-            {/* Progress mini */}
-            <div className="pt-2 border-t border-[var(--color-v4-border)]">
-              <div className="text-[10px] text-slate-400 mb-1">Progresso</div>
-              <div className="flex gap-0.5">
-                {registros.map((r, i) => (
-                  <button
-                    key={r.id}
-                    onClick={() => goTo(i)}
-                    className={cn(
-                      'h-2 flex-1 rounded-sm transition-colors',
-                      i === posicao ? 'bg-white' :
-                        r.status === 'auditado' ? 'bg-green-500' :
-                          r.status === 'skipado' ? 'bg-amber-500' : 'bg-slate-600'
-                    )}
-                    title={`#${i + 1} — ${r.status}`}
-                  />
-                ))}
-              </div>
+            {/* Progress bar */}
+            <div className="flex gap-0.5 h-3">
+              {registros.map((r) => (
+                <div
+                  key={r.id}
+                  className={cn(
+                    'flex-1 rounded-sm',
+                    r.status === 'auditado' ? 'bg-green-500' :
+                      r.status === 'skipado' ? 'bg-amber-500' : 'bg-slate-600'
+                  )}
+                />
+              ))}
             </div>
           </div>
+
+          {/* Launch button */}
+          {!launched ? (
+            <button
+              onClick={handleLaunch}
+              disabled={!firstKommoLink}
+              className="w-full py-4 bg-[var(--color-v4-red)] hover:opacity-90 text-white text-lg rounded-lg font-medium flex items-center justify-center gap-3 disabled:opacity-50"
+            >
+              <ExternalLink size={20} /> Iniciar auditoria no Kommo
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div className="bg-blue-500/10 text-blue-300 px-4 py-3 rounded-lg text-sm text-center">
+                Auditoria em andamento na aba do Kommo. O painel lateral aparecerá automaticamente.
+              </div>
+              <button
+                onClick={handleLaunch}
+                className="w-full py-3 bg-[var(--color-v4-card)] hover:bg-[var(--color-v4-card-hover)] text-white text-sm rounded-lg border border-[var(--color-v4-border)] flex items-center justify-center gap-2"
+              >
+                <ExternalLink size={14} /> Reabrir Kommo / reinjetar painel
+              </button>
+            </div>
+          )}
+
+          {totalDone > 0 && (
+            <button
+              onClick={handleViewResumo}
+              className="w-full py-3 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg font-medium flex items-center justify-center gap-2"
+            >
+              <Check size={14} /> Concluir e ver resumo / WhatsApp
+            </button>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

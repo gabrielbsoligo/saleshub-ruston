@@ -12,6 +12,7 @@ import { EquipeView } from "./components/EquipeView";
 import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
 import { AuditoriaView } from "./components/AuditoriaView";
+import { AuditPanel } from "./components/AuditPanel";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
 
@@ -139,6 +140,18 @@ const MainApp: React.FC = () => {
 };
 
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const auditPanelSession = params.get('audit_panel') === '1' ? params.get('session') : null;
+
+  if (auditPanelSession) {
+    return (
+      <AppProvider>
+        <Toaster position="top-right" />
+        <AuditPanel sessionId={auditPanelSession} />
+      </AppProvider>
+    );
+  }
+
   return (
     <AppProvider>
       <Toaster position="top-right" />

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.1.4
-// @description  Extrai dados do Kommo (custom fields, notas, eventos) e envia pro SalesHub para auditoria de leads.
+// @version      0.2.0
+// @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
 // @grant        GM_setValue
@@ -10,6 +10,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @connect      iaompeiokjxbffwehhrx.supabase.co
+// @connect      gestao-comercial-rosy.vercel.app
 // @run-at       document-idle
 // @updateURL    https://gestao-comercial-rosy.vercel.app/kommo-bridge.user.js
 // @downloadURL  https://gestao-comercial-rosy.vercel.app/kommo-bridge.user.js
@@ -20,8 +21,9 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.1.4';
+  var VERSION = '0.2.0';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+  var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
   var TOKEN_KEY = 'saleshub_bridge_token';
   var ENDPOINT_KEY = 'saleshub_bridge_endpoint';
@@ -144,10 +146,7 @@
     if (source === 'auto' && now - last < MIN_INTERVAL_MS) return;
 
     var token = getToken();
-    if (!token) {
-      setBadge('error', 'sem token');
-      return;
-    }
+    if (!token) { setBadge('error', 'sem token'); return; }
 
     inflight = true;
     setBadge('working', 'enviando ' + leadId + '...');
@@ -173,20 +172,14 @@
 
     try {
       GM_xmlhttpRequest({
-        method: 'POST',
-        url: getEndpoint(),
+        method: 'POST', url: getEndpoint(),
         headers: { 'Content-Type': 'application/json', 'x-bridge-token': token },
         data: body,
         onload: function (r) { onDone(r.status, r.responseText); },
         onerror: function (e) { onDone(0, String(e)); },
       });
     } catch (_e) {
-      // Fallback fetch
-      fetch(getEndpoint(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-bridge-token': token },
-        body: body,
-      })
+      fetch(getEndpoint(), { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bridge-token': token }, body: body })
         .then(function (r) { return r.text().then(function (t) { onDone(r.status, t); }); })
         .catch(function (e) { onDone(0, String(e)); });
     }
@@ -198,8 +191,8 @@
     if (badgeEl) return;
     badgeEl = document.createElement('div');
     badgeEl.id = 'saleshub-bridge-badge';
-    badgeEl.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:99999;padding:6px 10px;border-radius:6px;font-family:system-ui,sans-serif;font-size:12px;color:#fff;background:#666;box-shadow:0 2px 8px rgba(0,0,0,0.3);cursor:pointer;max-width:320px;';
-    badgeEl.title = 'SalesHub Bridge — clique para forcar reenvio';
+    badgeEl.style.cssText = 'position:fixed;bottom:12px;z-index:99999;padding:6px 10px;border-radius:6px;font-family:system-ui,sans-serif;font-size:12px;color:#fff;background:#666;box-shadow:0 2px 8px rgba(0,0,0,0.3);cursor:pointer;max-width:320px;transition:right 0.3s;right:12px;';
+    badgeEl.title = 'SalesHub Bridge';
     badgeEl.addEventListener('click', function () {
       var id = getCurrentLeadId();
       if (id) sendSnapshot(id, 'manual_command');
@@ -212,13 +205,65 @@
     });
     document.body.appendChild(badgeEl);
     setBadge('idle', 'v' + VERSION);
-    win.console.log('[SalesHub Bridge] badge criado');
   }
   function setBadge(state, text) {
     if (!badgeEl) return;
     var colors = { idle: '#666', working: '#1d4ed8', ok: '#16a34a', error: '#dc2626' };
     badgeEl.style.background = colors[state] || '#666';
     badgeEl.textContent = 'SalesHub ' + state + ' — ' + text;
+  }
+
+  // =============================================
+  // AUDIT SIDEBAR — iframe do SalesHub
+  // =============================================
+  var sidebarEl = null;
+  var sidebarIframe = null;
+  var SIDEBAR_WIDTH = 380;
+
+  function openAuditSidebar(sessionId) {
+    if (sidebarEl) { closeAuditSidebar(); }
+
+    // Container
+    sidebarEl = document.createElement('div');
+    sidebarEl.id = 'saleshub-audit-sidebar';
+    sidebarEl.style.cssText = 'position:fixed;top:0;right:0;width:' + SIDEBAR_WIDTH + 'px;height:100vh;z-index:99998;box-shadow:-4px 0 20px rgba(0,0,0,0.4);transition:transform 0.3s;transform:translateX(0);';
+
+    // Iframe
+    sidebarIframe = document.createElement('iframe');
+    var url = SALESHUB_ORIGIN + '/?audit_panel=1&session=' + sessionId;
+    sidebarIframe.src = url;
+    sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;';
+    sidebarIframe.setAttribute('allow', 'clipboard-write');
+    sidebarEl.appendChild(sidebarIframe);
+
+    document.body.appendChild(sidebarEl);
+
+    // Empurrar badge pra esquerda do sidebar
+    if (badgeEl) badgeEl.style.right = (SIDEBAR_WIDTH + 12) + 'px';
+
+    win.console.log('[SalesHub Bridge] audit sidebar opened, session=' + sessionId);
+  }
+
+  function closeAuditSidebar() {
+    if (sidebarEl) {
+      sidebarEl.remove();
+      sidebarEl = null;
+      sidebarIframe = null;
+    }
+    if (badgeEl) badgeEl.style.right = '12px';
+    win.console.log('[SalesHub Bridge] audit sidebar closed');
+  }
+
+  // Notifica o iframe quando navegar pra um novo lead
+  function notifyIframeLeadChanged(leadId) {
+    if (sidebarIframe && sidebarIframe.contentWindow) {
+      sidebarIframe.contentWindow.postMessage({
+        source: 'kommo-bridge',
+        type: 'lead-changed',
+        kommoLeadId: leadId,
+        url: win.location.href,
+      }, SALESHUB_ORIGIN);
+    }
   }
 
   // === SPA route observer ===
@@ -231,7 +276,10 @@
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(function () {
       var id = getCurrentLeadId();
-      if (id) sendSnapshot(id, 'auto');
+      if (id) {
+        sendSnapshot(id, 'auto');
+        notifyIframeLeadChanged(id);
+      }
     }, DEBOUNCE_MS);
   }
 
@@ -247,18 +295,48 @@
   // === postMessage listener ===
   win.addEventListener('message', function (ev) {
     if (!ev.data || typeof ev.data !== 'object') return;
-    if (ev.data.source !== 'saleshub') return;
-    if (ev.data.action === 'goto' && ev.data.kommoUrl) {
-      try {
-        var u = new URL(ev.data.kommoUrl);
-        if (u.hostname.endsWith('.kommo.com')) {
-          win.location.href = u.href;
-        }
-      } catch (_e) { /* ignore */ }
+
+    // Mensagens do SalesHub (da pagina principal ou do iframe)
+    if (ev.data.source === 'saleshub') {
+      if (ev.data.action === 'goto' && ev.data.kommoUrl) {
+        try {
+          var u = new URL(ev.data.kommoUrl);
+          if (u.hostname.endsWith('.kommo.com')) {
+            win.location.href = u.href;
+          }
+        } catch (_e) { /* ignore */ }
+      }
+      if (ev.data.action === 'extract') {
+        var id = getCurrentLeadId();
+        if (id) sendSnapshot(id, 'manual_command');
+      }
+      // Abrir sidebar de auditoria
+      if (ev.data.action === 'start-audit' && ev.data.sessionId) {
+        openAuditSidebar(ev.data.sessionId);
+      }
+      // Fechar sidebar
+      if (ev.data.action === 'stop-audit') {
+        closeAuditSidebar();
+      }
     }
-    if (ev.data.action === 'extract') {
-      var id = getCurrentLeadId();
-      if (id) sendSnapshot(id, 'manual_command');
+
+    // Mensagens do iframe audit-panel
+    if (ev.data.source === 'saleshub-audit-panel') {
+      if (ev.data.action === 'navigate' && ev.data.kommoUrl) {
+        try {
+          var u2 = new URL(ev.data.kommoUrl);
+          if (u2.hostname.endsWith('.kommo.com')) {
+            win.location.href = u2.href;
+          }
+        } catch (_e) { /* ignore */ }
+      }
+      if (ev.data.action === 'close') {
+        closeAuditSidebar();
+      }
+      if (ev.data.action === 'extract') {
+        var id2 = getCurrentLeadId();
+        if (id2) sendSnapshot(id2, 'manual_command');
+      }
     }
   });
 
@@ -268,6 +346,7 @@
     win.console.log('[SalesHub Bridge] boot v' + VERSION + ' on ' + win.location.href);
     var id = getCurrentLeadId();
     if (id) sendSnapshot(id, 'auto');
+    // Notify opener
     try {
       if (win.opener) {
         win.opener.postMessage({ source: 'kommo-bridge', type: 'ready', version: VERSION }, '*');
