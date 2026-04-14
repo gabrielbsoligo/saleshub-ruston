@@ -25,9 +25,17 @@ Retorne APENAS um JSON valido com os campos especificados.
 ## Regras de Classificacao
 
 ### Temperatura
-- "quente": Proposta foi formalizada, cliente demonstrou alta intencao de fechar, pediu contrato ou proximos passos concretos
-- "morno": Cliente demonstrou interesse mas tem objecoes, marcou segunda call, pediu para pensar
-- "frio": Cliente deu negativa, nao demonstrou interesse, nao quer prosseguir
+- "quente": Cliente vai analisar contrato, pediu proposta formal, ou ja tomou decisao de fechar na call
+- "morno": Cliente precisa levar para o decisor, ou tem interesse mas depende de outra pessoa
+- "frio": Nao tem data definida para fechar, cliente indefinido, sem compromisso concreto
+
+### Proximo Passo
+Baseado na analise da call, determine o proximo passo do deal:
+- "contrato_na_rua": Cliente pediu contrato ou esta analisando proposta formal (temperatura quente)
+- "contrato_assinado": Cliente confirmou fechamento na propria call
+- "negociacao": Ainda em negociacao ativa, com proxima reuniao marcada
+- "follow_longo": Sem data definida para proximo contato, acompanhamento de longo prazo
+- "perdido": Cliente deu negativa clara, nao quer prosseguir
 
 ### BANT Score (1-4)
 - 1: Apenas Budget (orcamento) foi discutido
@@ -69,6 +77,7 @@ Extraia a data e horario da proxima reuniao combinada. Preste MUITA ATENCAO a es
 ## Formato do JSON de resposta
 {
   "temperatura": "quente" | "morno" | "frio",
+  "proximo_passo": "negociacao" | "contrato_na_rua" | "contrato_assinado" | "follow_longo" | "perdido",
   "valor_escopo": number,
   "valor_recorrente": number,
   "produtos_ot": ["nome exato do produto"],

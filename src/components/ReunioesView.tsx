@@ -6,7 +6,7 @@ import { createCalendarEvent } from "../lib/googleCalendar";
 import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
-import { PostMeetingReviewModal } from "./PostMeetingReviewModal";
+import { FeedbackDrawer } from "./FeedbackDrawer";
 import { supabase } from "../lib/supabase";
 import type { Reuniao } from "../types";
 
@@ -107,11 +107,11 @@ function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: 
 }
 
 export const ReunioesView: React.FC = () => {
-  const { reunioes, leads, addReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
+  const { reunioes, leads, deals, addReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
-  const [postMeetingReuniao, setPostMeetingReuniao] = useState<Reuniao | null>(null);
+  const [feedbackDealId, setFeedbackDealId] = useState<string | null>(null);
   const [leadSearch, setLeadSearch] = useState('');
   const [showReplace, setShowReplace] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -286,12 +286,16 @@ export const ReunioesView: React.FC = () => {
       );
     }
 
-    // Botao para abrir modal
+    // Botao para abrir FeedbackDrawer do deal associado
+    const associatedDeal = deals.find(d => d.lead_id === reuniao.lead_id);
+    if (!associatedDeal) return (
+      <span className="text-[10px] text-[var(--color-v4-text-muted)]">Sem deal associado</span>
+    );
     return (
-      <button onClick={(e) => { e.stopPropagation(); setPostMeetingReuniao(reuniao); }}
+      <button onClick={(e) => { e.stopPropagation(); setFeedbackDealId(associatedDeal.id); }}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 transition-colors">
         <Sparkles size={12} />
-        Pos-Reuniao IA
+        Feedback
       </button>
     );
   };
@@ -516,7 +520,10 @@ export const ReunioesView: React.FC = () => {
 
       {selectedLead && !showReplace && <AgendarReuniaoModal lead={selectedLead} onConfirm={handleAgendarConfirm} onClose={() => setSelectedLead(null)} />}
       {confirmar && <ConfirmarReuniaoModal reuniao={confirmar} onConfirm={handleConfirm} onClose={() => setConfirmar(null)} />}
-      {postMeetingReuniao && <PostMeetingReviewModal reuniao={postMeetingReuniao} onClose={() => setPostMeetingReuniao(null)} />}
+      {feedbackDealId && (() => {
+        const d = deals.find(dd => dd.id === feedbackDealId);
+        return d ? <FeedbackDrawer deal={d} onClose={() => setFeedbackDealId(null)} /> : null;
+      })()}
 
       {showReplace && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center">

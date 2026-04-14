@@ -378,9 +378,16 @@ Retorne APENAS um JSON valido com os campos especificados.
 
 ## Regras de Classificacao
 ### Temperatura
-- "quente": Proposta foi formalizada, cliente demonstrou alta intencao de fechar
-- "morno": Cliente demonstrou interesse mas tem objecoes, marcou segunda call
-- "frio": Cliente deu negativa, nao demonstrou interesse
+- "quente": Cliente vai analisar contrato, pediu proposta formal, ou ja tomou decisao de fechar na call
+- "morno": Cliente precisa levar para o decisor, ou tem interesse mas depende de outra pessoa
+- "frio": Nao tem data definida para fechar, cliente indefinido, sem compromisso concreto
+
+### Proximo Passo
+- "contrato_na_rua": Cliente pediu contrato ou esta analisando proposta formal (temperatura quente)
+- "contrato_assinado": Cliente confirmou fechamento na propria call
+- "negociacao": Ainda em negociacao ativa, com proxima reuniao marcada
+- "follow_longo": Sem data definida para proximo contato, acompanhamento de longo prazo
+- "perdido": Cliente deu negativa clara, nao quer prosseguir
 
 ### BANT Score (1-4)
 - 1: Apenas Budget; 2: + Authority; 3: + Need; 4: + Timeline
@@ -409,6 +416,7 @@ SEMPRE inclua hora HH:MM. Se nao foi mencionada, retorne null.
 ## Formato JSON
 {
   "temperatura": "quente"|"morno"|"frio",
+  "proximo_passo": "negociacao"|"contrato_na_rua"|"contrato_assinado"|"follow_longo"|"perdido",
   "valor_escopo": number, "valor_recorrente": number,
   "produtos_ot": [string], "produtos_mrr": [string],
   "bant": number, "tier": "tiny"|"small"|"medium"|"large"|"enterprise",

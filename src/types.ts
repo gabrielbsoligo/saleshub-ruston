@@ -403,6 +403,7 @@ export type AutomationStatus = 'pending' | 'fetching_transcript' | 'analyzing' |
 
 export interface CallAnalysisResult {
   temperatura: Temperatura;
+  proximo_passo: 'negociacao' | 'contrato_na_rua' | 'contrato_assinado' | 'follow_longo' | 'perdido';
   valor_escopo: number;
   valor_recorrente: number;
   produtos_ot: string[];
