@@ -26,28 +26,40 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Chamar Claude API
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        system: 'Voce e um analista especializado em calls de vendas da V4 Company. Analise transcricoes e retorne APENAS um JSON valido, sem texto adicional. Responda em portugues brasileiro.',
-        messages: [
-          { role: 'user', content: prompt || transcript },
-        ],
-        temperature: 0.2,
-      }),
-    })
+    // Chamar Claude API com retry para erros transientes (429, 529)
+    const maxRetries = 3
+    let response: Response | null = null
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2000,
+          system: 'Voce e um analista especializado em calls de vendas da V4 Company. Analise transcricoes e retorne APENAS um JSON valido, sem texto adicional. Responda em portugues brasileiro.',
+          messages: [
+            { role: 'user', content: prompt || transcript },
+          ],
+          temperature: 0.2,
+        }),
+      })
 
-    if (!response.ok) {
-      const err = await response.text()
-      return new Response(JSON.stringify({ error: `Claude API ${response.status}: ${err}` }), {
+      if (response.ok || (response.status !== 429 && response.status !== 529)) break
+
+      // Retry com backoff exponencial: 2s, 4s, 8s
+      if (attempt < maxRetries) {
+        console.log(`Claude API ${response.status}, retry ${attempt}/${maxRetries}...`)
+        await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)))
+      }
+    }
+
+    if (!response || !response.ok) {
+      const err = await response?.text() || 'No response'
+      return new Response(JSON.stringify({ error: `Claude API ${response?.status}: ${err}` }), {
         status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }

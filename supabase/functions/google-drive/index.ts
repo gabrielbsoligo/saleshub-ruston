@@ -120,10 +120,10 @@ async function findTranscriptInDrive(
     }
   }
   if (searchTerms.length === 0) return out
-  console.log(`  searchTerms: ${JSON.stringify(searchTerms)}, meetFolderOnly: ${!!meetFolderId}`)
 
   // Localizar pasta "Meet Recordings" (limita ruído) — opcional, fallback global
   const meetFolderId = await findMeetRecordingsFolderId(token)
+  console.log(`  searchTerms: ${JSON.stringify(searchTerms)}, meetFolder: ${meetFolderId ? 'found' : 'none'}`)
 
   let transcriptDocId: string | null = null
 
