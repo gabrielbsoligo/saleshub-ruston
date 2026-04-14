@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.3.1
+// @version      0.3.2
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.3.1';
+  var VERSION = '0.3.2';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -222,6 +222,9 @@
   var currentSidebarSessionId = null;
   var FLOAT_WIDTH = 340;
   var FLOAT_HEIGHT = 420;
+  var isDragging = false;
+  var dragOffsetX = 0;
+  var dragOffsetY = 0;
 
   function persistAuditSession(sessionId, accessToken, refreshToken) {
     try {
@@ -278,10 +281,7 @@
     sidebarIframe.setAttribute('allow', 'clipboard-write');
     sidebarEl.appendChild(sidebarIframe);
 
-    // Drag support — via postMessage do iframe (iframe controla o mousedown no header)
-    var isDragging = false;
-    var dragOffsetX = 0;
-    var dragOffsetY = 0;
+
 
     document.body.appendChild(sidebarEl);
 
