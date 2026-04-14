@@ -9,6 +9,7 @@ import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-p
 import { validateGanho, validateContratoNaRua } from "../lib/ganhoValidation";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
+import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
 
 // Nova ordem do kanban
 const PIPELINE_STAGES: DealStatus[] = ['dar_feedback', 'follow_longo', 'negociacao', 'contrato_na_rua', 'contrato_assinado', 'perdido'];
@@ -224,6 +225,11 @@ export const PipelineView: React.FC = () => {
             <button onClick={() => setView('kanban')} className={`p-2 rounded ${view === 'kanban' ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)]'}`}><LayoutGrid size={16} /></button>
             <button onClick={() => setView('table')} className={`p-2 rounded ${view === 'table' ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)]'}`}><List size={16} /></button>
           </div>
+          <SendToAuditoriaButton
+            items={filteredDeals.map(d => ({ tipo: 'deal' as const, id: d.id }))}
+            origem="pipeline_view"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm disabled:opacity-50"
+          />
           <button onClick={() => setShowNew(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm transition-colors">
             <Plus size={16} /> Nova Negociação

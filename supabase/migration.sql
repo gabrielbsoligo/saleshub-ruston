@@ -482,3 +482,159 @@ EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE 'pg_cron schedule skipped: %', SQLERRM;
 END
 $cron$;
+
+-- =============================================
+-- AUDITORIA — Fila de auditoria de leads/deals com bridge Kommo
+-- =============================================
+
+-- Tokens do Kommo Bridge (userscript Tampermonkey / bookmarklet)
+CREATE TABLE IF NOT EXISTS bridge_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  team_member_id UUID NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  label TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_bridge_tokens_member ON bridge_tokens(team_member_id) WHERE revoked_at IS NULL;
+
+-- Snapshots brutos vindos do Kommo Bridge — dataset permanente
+CREATE TABLE IF NOT EXISTS auditoria_kommo_snapshots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kommo_lead_id BIGINT NOT NULL,
+  kommo_account_subdomain TEXT,
+  capturado_por UUID REFERENCES team_members(id) ON DELETE SET NULL,
+  capturado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+  payload JSONB NOT NULL,
+  bridge_version TEXT,
+  source TEXT NOT NULL DEFAULT 'auto' CHECK (source IN ('auto','manual_command'))
+);
+CREATE INDEX IF NOT EXISTS idx_aud_kommo_lead ON auditoria_kommo_snapshots(kommo_lead_id, capturado_em DESC);
+CREATE INDEX IF NOT EXISTS idx_aud_kommo_capturado_por ON auditoria_kommo_snapshots(capturado_por, capturado_em DESC);
+
+-- Sessoes de auditoria (uma execucao do gestor)
+CREATE TABLE IF NOT EXISTS auditoria_sessoes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  criado_por UUID NOT NULL REFERENCES team_members(id) ON DELETE RESTRICT,
+  nome TEXT NOT NULL,
+  origem TEXT NOT NULL CHECK (origem IN ('leads_view','pipeline_view','manual')),
+  filtros_aplicados JSONB,
+  status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','concluida','arquivada')),
+  total_itens INT NOT NULL DEFAULT 0,
+  total_auditados INT NOT NULL DEFAULT 0,
+  total_skipados INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_aud_sess_criado_por ON auditoria_sessoes(criado_por, status, created_at DESC);
+
+-- Registros (cada item da fila)
+CREATE TABLE IF NOT EXISTS auditoria_registros (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sessao_id UUID NOT NULL REFERENCES auditoria_sessoes(id) ON DELETE CASCADE,
+  item_tipo TEXT NOT NULL CHECK (item_tipo IN ('lead','deal')),
+  item_id UUID NOT NULL,
+  posicao INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','auditado','skipado')),
+  categoria TEXT CHECK (categoria IN (
+    'campos_vazios','falta_followup','temperatura_desatualizada','sem_proximos_passos',
+    'pronto_pra_avancar','dados_inconsistentes','lead_perdido_nao_marcado','valor_desatualizado',
+    'bant_incompleto','whatsapp_sem_resposta','qualidade_conversa','outro'
+  )),
+  severidade TEXT CHECK (severidade IN ('alta','media','baixa')),
+  observacao TEXT,
+  motivo_skip TEXT,
+  responsavel_id UUID REFERENCES team_members(id) ON DELETE SET NULL,
+  snapshot_saleshub JSONB,
+  kommo_snapshot_id UUID REFERENCES auditoria_kommo_snapshots(id) ON DELETE SET NULL,
+  mensagem_gerada TEXT,
+  resolvido_em TIMESTAMPTZ,
+  criado_em TIMESTAMPTZ DEFAULT now(),
+  auditado_em TIMESTAMPTZ,
+  UNIQUE (sessao_id, item_tipo, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_aud_reg_sessao ON auditoria_registros(sessao_id, posicao);
+CREATE INDEX IF NOT EXISTS idx_aud_reg_item ON auditoria_registros(item_tipo, item_id);
+CREATE INDEX IF NOT EXISTS idx_aud_reg_resolvido ON auditoria_registros(resolvido_em) WHERE resolvido_em IS NULL AND status = 'auditado';
+
+-- RLS
+ALTER TABLE bridge_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auditoria_kommo_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auditoria_sessoes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE auditoria_registros ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS bridge_tokens_select ON bridge_tokens;
+CREATE POLICY bridge_tokens_select ON bridge_tokens FOR SELECT USING (
+  team_member_id = get_member_id() OR get_user_role() = 'gestor'
+);
+DROP POLICY IF EXISTS bridge_tokens_insert ON bridge_tokens;
+CREATE POLICY bridge_tokens_insert ON bridge_tokens FOR INSERT WITH CHECK (
+  team_member_id = get_member_id() OR get_user_role() = 'gestor'
+);
+DROP POLICY IF EXISTS bridge_tokens_update ON bridge_tokens;
+CREATE POLICY bridge_tokens_update ON bridge_tokens FOR UPDATE USING (
+  team_member_id = get_member_id() OR get_user_role() = 'gestor'
+);
+
+DROP POLICY IF EXISTS aud_kommo_select ON auditoria_kommo_snapshots;
+CREATE POLICY aud_kommo_select ON auditoria_kommo_snapshots FOR SELECT USING (
+  get_user_role() = 'gestor'
+);
+-- INSERT vem via Edge Function com service role (bypassa RLS), nao precisa policy.
+
+DROP POLICY IF EXISTS aud_sess_select ON auditoria_sessoes;
+CREATE POLICY aud_sess_select ON auditoria_sessoes FOR SELECT USING (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_sess_insert ON auditoria_sessoes;
+CREATE POLICY aud_sess_insert ON auditoria_sessoes FOR INSERT WITH CHECK (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_sess_update ON auditoria_sessoes;
+CREATE POLICY aud_sess_update ON auditoria_sessoes FOR UPDATE USING (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_sess_delete ON auditoria_sessoes;
+CREATE POLICY aud_sess_delete ON auditoria_sessoes FOR DELETE USING (get_user_role() = 'gestor');
+
+DROP POLICY IF EXISTS aud_reg_select ON auditoria_registros;
+CREATE POLICY aud_reg_select ON auditoria_registros FOR SELECT USING (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_reg_insert ON auditoria_registros;
+CREATE POLICY aud_reg_insert ON auditoria_registros FOR INSERT WITH CHECK (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_reg_update ON auditoria_registros;
+CREATE POLICY aud_reg_update ON auditoria_registros FOR UPDATE USING (get_user_role() = 'gestor');
+DROP POLICY IF EXISTS aud_reg_delete ON auditoria_registros;
+CREATE POLICY aud_reg_delete ON auditoria_registros FOR DELETE USING (get_user_role() = 'gestor');
+
+-- Realtime: publicar tabelas pra UI receber updates de snapshot
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'auditoria_kommo_snapshots'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE auditoria_kommo_snapshots;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'auditoria_registros'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE auditoria_registros;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'realtime publication skipped: %', SQLERRM;
+END $$;
+
+-- Trigger: manter contadores na sessao em sync
+CREATE OR REPLACE FUNCTION sync_sessao_contadores() RETURNS TRIGGER AS $$
+DECLARE sid UUID;
+BEGIN
+  sid := COALESCE(NEW.sessao_id, OLD.sessao_id);
+  UPDATE auditoria_sessoes SET
+    total_itens = (SELECT COUNT(*) FROM auditoria_registros WHERE sessao_id = sid),
+    total_auditados = (SELECT COUNT(*) FROM auditoria_registros WHERE sessao_id = sid AND status = 'auditado'),
+    total_skipados = (SELECT COUNT(*) FROM auditoria_registros WHERE sessao_id = sid AND status = 'skipado')
+  WHERE id = sid;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_sessao_contadores ON auditoria_registros;
+CREATE TRIGGER trg_sync_sessao_contadores
+AFTER INSERT OR UPDATE OF status OR DELETE ON auditoria_registros
+FOR EACH ROW EXECUTE FUNCTION sync_sessao_contadores();

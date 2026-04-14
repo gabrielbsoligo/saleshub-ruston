@@ -257,6 +257,100 @@ export interface CustoComercial {
   created_at: string;
 }
 
+// =============================================
+// AUDITORIA
+// =============================================
+
+export type AuditoriaCategoria =
+  | 'campos_vazios'
+  | 'falta_followup'
+  | 'temperatura_desatualizada'
+  | 'sem_proximos_passos'
+  | 'pronto_pra_avancar'
+  | 'dados_inconsistentes'
+  | 'lead_perdido_nao_marcado'
+  | 'valor_desatualizado'
+  | 'bant_incompleto'
+  | 'whatsapp_sem_resposta'
+  | 'qualidade_conversa'
+  | 'outro';
+
+export const CATEGORIA_LABELS: Record<AuditoriaCategoria, string> = {
+  campos_vazios: 'Campos vazios',
+  falta_followup: 'Falta de follow-up',
+  temperatura_desatualizada: 'Temperatura desatualizada',
+  sem_proximos_passos: 'Sem próximos passos',
+  pronto_pra_avancar: 'Pronto pra avançar',
+  dados_inconsistentes: 'Dados inconsistentes',
+  lead_perdido_nao_marcado: 'Lead perdido não marcado',
+  valor_desatualizado: 'Valor desatualizado',
+  bant_incompleto: 'BANT incompleto',
+  whatsapp_sem_resposta: 'WhatsApp sem resposta',
+  qualidade_conversa: 'Qualidade da conversa',
+  outro: 'Outro',
+};
+
+export type AuditoriaSeveridade = 'alta' | 'media' | 'baixa';
+export type AuditoriaItemTipo = 'lead' | 'deal';
+export type AuditoriaSessaoOrigem = 'leads_view' | 'pipeline_view' | 'manual';
+export type AuditoriaSessaoStatus = 'aberta' | 'concluida' | 'arquivada';
+export type AuditoriaRegistroStatus = 'pendente' | 'auditado' | 'skipado';
+
+export interface AuditoriaSessao {
+  id: string;
+  criado_por: string;
+  nome: string;
+  origem: AuditoriaSessaoOrigem;
+  filtros_aplicados?: any;
+  status: AuditoriaSessaoStatus;
+  total_itens: number;
+  total_auditados: number;
+  total_skipados: number;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface AuditoriaRegistro {
+  id: string;
+  sessao_id: string;
+  item_tipo: AuditoriaItemTipo;
+  item_id: string;
+  posicao: number;
+  status: AuditoriaRegistroStatus;
+  categoria?: AuditoriaCategoria;
+  severidade?: AuditoriaSeveridade;
+  observacao?: string;
+  motivo_skip?: string;
+  responsavel_id?: string;
+  snapshot_saleshub?: any;
+  kommo_snapshot_id?: string;
+  mensagem_gerada?: string;
+  resolvido_em?: string;
+  criado_em: string;
+  auditado_em?: string;
+}
+
+export interface AuditoriaKommoSnapshot {
+  id: string;
+  kommo_lead_id: number;
+  kommo_account_subdomain?: string;
+  capturado_por?: string;
+  capturado_em: string;
+  payload: any;
+  bridge_version?: string;
+  source: 'auto' | 'manual_command';
+}
+
+export interface BridgeToken {
+  id: string;
+  team_member_id: string;
+  token: string;
+  label?: string;
+  created_at: string;
+  last_used_at?: string;
+  revoked_at?: string;
+}
+
 // Labels para exibição na UI
 export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
   sem_contato: 'Sem Contato',

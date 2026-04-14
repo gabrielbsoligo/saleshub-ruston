@@ -11,6 +11,7 @@ import { MetasView } from "./components/MetasView";
 import { EquipeView } from "./components/EquipeView";
 import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
+import { AuditoriaView } from "./components/AuditoriaView";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
 
@@ -20,6 +21,13 @@ const MainApp: React.FC = () => {
     currentUser?.role === 'financeiro' ? 'comissoes' : 'dashboard'
   );
   const [importProcessed, setImportProcessed] = useState(false);
+
+  // Listener: SendToAuditoriaButton dispara este evento ao criar sessao.
+  useEffect(() => {
+    const handler = (_e: Event) => setCurrentView('auditoria');
+    window.addEventListener('saleshub:open-auditoria', handler);
+    return () => window.removeEventListener('saleshub:open-auditoria', handler);
+  }, []);
 
   // Auto-import from mktlab via URL parameter
   useEffect(() => {
@@ -117,6 +125,7 @@ const MainApp: React.FC = () => {
       case "metas": return <MetasView />;
       case "comissoes": return <ComissoesView />;
       case "blackbox": return <BlackBoxView />;
+      case "auditoria": return <AuditoriaView />;
       case "equipe": return <EquipeView />;
       default: return <DashboardView />;
     }

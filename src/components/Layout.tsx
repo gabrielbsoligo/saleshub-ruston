@@ -12,6 +12,7 @@ import {
   X,
   Briefcase,
   Box,
+  ClipboardCheck,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -21,7 +22,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "equipe" | "dashboard" | "blackbox";
+export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "equipe" | "dashboard" | "blackbox" | "auditoria";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -42,12 +43,13 @@ export const Layout: React.FC<{
     { id: "metas" as const, label: "Metas", icon: Target },
     { id: "comissoes" as const, label: "Comissões", icon: DollarSign },
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
+    { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, gestorOnly: true },
     { id: "equipe" as const, label: "Equipe", icon: Users },
-  ];
+  ] as Array<{ id: View; label: string; icon: any; gestorOnly?: boolean }>;
 
   const navItems = currentUser.role === 'financeiro'
     ? allNavItems.filter(item => item.id === 'comissoes')
-    : allNavItems;
+    : allNavItems.filter(item => !item.gestorOnly || currentUser.role === 'gestor');
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-v4-bg)]">
