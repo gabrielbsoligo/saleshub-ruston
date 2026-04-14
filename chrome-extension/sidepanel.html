@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SalesHub Importer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 13px;
+      min-width: 320px;
+    }
+
+    /* Header */
+    .header {
+      background: #1e293b;
+      padding: 12px 16px;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .header h1 { font-size: 15px; font-weight: 600; color: #f8fafc; }
+    .header .badge {
+      background: #ef4444;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    /* Sections */
+    .section { padding: 12px 16px; border-bottom: 1px solid #1e293b; }
+    .section-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #64748b;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    /* Login */
+    #login-view, #main-view { display: none; }
+    #login-view.active, #main-view.active { display: block; }
+    .login-form { padding: 24px 16px; }
+    .login-form h2 { font-size: 18px; margin-bottom: 4px; }
+    .login-form p { color: #94a3b8; font-size: 12px; margin-bottom: 20px; }
+
+    /* Form elements */
+    label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; font-weight: 500; }
+    input, select {
+      width: 100%;
+      padding: 8px 10px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      color: #f1f5f9;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input:focus, select:focus { border-color: #ef4444; }
+    input::placeholder { color: #475569; }
+    .form-group { margin-bottom: 12px; }
+    .form-row { display: flex; gap: 8px; }
+    .form-row .form-group { flex: 1; }
+
+    /* Buttons */
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .btn-primary { background: #ef4444; color: white; }
+    .btn-primary:hover { background: #dc2626; }
+    .btn-primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+    .btn-secondary { background: #334155; color: #e2e8f0; }
+    .btn-secondary:hover { background: #475569; }
+    .btn-sm { padding: 6px 12px; width: auto; font-size: 12px; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid #475569;
+      color: #94a3b8;
+    }
+    .btn-outline:hover { border-color: #ef4444; color: #ef4444; }
+
+    /* Status badge */
+    .status { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.green { background: #22c55e; }
+    .status-dot.yellow { background: #eab308; }
+    .status-dot.red { background: #ef4444; }
+
+    /* Lead list */
+    .lead-list { max-height: 400px; overflow-y: auto; }
+    .lead-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+      margin-bottom: 4px;
+      transition: background 0.15s;
+    }
+    .lead-item:hover { background: #1e293b; }
+    .lead-item.duplicate { opacity: 0.5; }
+    .lead-item input[type="checkbox"] {
+      width: 16px; height: 16px; margin-top: 2px;
+      accent-color: #ef4444; flex-shrink: 0;
+    }
+    .lead-info { flex: 1; min-width: 0; }
+    .lead-empresa {
+      font-weight: 600; font-size: 13px; color: #f1f5f9;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lead-meta {
+      font-size: 11px; color: #64748b;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .lead-tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .tag-dup { background: #7f1d1d; color: #fca5a5; }
+    .tag-new { background: #14532d; color: #86efac; }
+
+    /* Progress */
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #1e293b;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #ef4444;
+      border-radius: 3px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+    .progress-text { font-size: 11px; color: #94a3b8; }
+
+    /* Summary cards */
+    .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .summary-card {
+      background: #1e293b;
+      padding: 10px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    .summary-card .number { font-size: 20px; font-weight: 700; }
+    .summary-card .label { font-size: 10px; color: #64748b; text-transform: uppercase; }
+    .summary-card.green .number { color: #22c55e; }
+    .summary-card.yellow .number { color: #eab308; }
+    .summary-card.red .number { color: #ef4444; }
+    .summary-card.blue .number { color: #3b82f6; }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      right: 16px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 100;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.success { background: #14532d; color: #86efac; border: 1px solid #166534; }
+    .toast.error { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
+    .toast.info { background: #1e3a5f; color: #93c5fd; border: 1px solid #1d4ed8; }
+
+    /* User bar */
+    .user-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+    }
+    .user-bar .user-name { font-size: 12px; color: #94a3b8; }
+    .user-bar .user-name strong { color: #f1f5f9; }
+
+    /* Select all bar */
+    .select-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 8px;
+      background: #1e293b;
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .select-bar label { margin: 0; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #e2e8f0; }
+    .select-bar input[type="checkbox"] { accent-color: #ef4444; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+    /* Hidden */
+    .hidden { display: none !important; }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid #475569;
+      border-top-color: #ef4444;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN VIEW -->
+  <div id="login-view" class="active">
+    <div class="header">
+      <h1>SalesHub</h1>
+      <span class="badge">MKTLAB Importer</span>
+    </div>
+    <div class="login-form">
+      <h2>Login</h2>
+      <p>Use suas credenciais do SalesHub</p>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="seu@email.com">
+      </div>
+      <div class="form-group">
+        <label>Senha</label>
+        <input type="password" id="login-password" placeholder="Sua senha">
+      </div>
+      <button class="btn btn-primary" id="btn-login">Entrar</button>
+      <div id="login-error" style="color:#fca5a5; font-size:12px; margin-top:8px; display:none;"></div>
+    </div>
+  </div>
+
+  <!-- MAIN VIEW -->
+  <div id="main-view">
+    <div class="header">
+      <h1>SalesHub</h1>
+      <span class="badge">MKTLAB Importer</span>
+    </div>
+
+    <div class="user-bar">
+      <span class="user-name">Logado como <strong id="user-name">-</strong></span>
+      <button class="btn btn-outline btn-sm" id="btn-logout">Sair</button>
+    </div>
+
+    <!-- Step 1: Config -->
+    <div id="step-config">
+      <div class="section">
+        <div class="section-title">1. Conexao MKTLAB</div>
+        <div class="status">
+          <span class="status-dot" id="mktlab-status-dot"></span>
+          <span id="mktlab-status-text">Verificando...</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btn-rescan" style="margin-top:6px;">
+          Reconectar
+        </button>
+        <div id="columns-info" class="hidden">
+          <div class="form-group">
+            <label>Coluna do funil</label>
+            <select id="select-column">
+              <option value="">Selecione uma coluna...</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">2. Filtros</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Data inicio</label>
+            <input type="date" id="filter-date-start">
+          </div>
+          <div class="form-group">
+            <label>Data fim</label>
+            <input type="date" id="filter-date-end">
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">3. Atribuicao SDR</div>
+        <div class="form-group">
+          <label>Atribuir leads para</label>
+          <select id="select-sdr">
+            <option value="">Carregando SDRs...</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="section">
+        <button class="btn btn-primary" id="btn-fetch-leads" disabled>
+          Buscar Leads
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 2: Preview -->
+    <div id="step-preview" class="hidden">
+      <div class="section">
+        <div class="section-title">Preview dos Leads</div>
+        <div class="summary" id="preview-summary"></div>
+
+        <div id="filter-canal-bar" class="form-group">
+          <label>Filtrar por canal</label>
+          <select id="filter-canal">
+            <option value="">Todos os canais</option>
+            <option value="blackbox">BlackBox</option>
+            <option value="leadbroker">LeadBroker</option>
+            <option value="outbound">Outbound</option>
+            <option value="recomendacao">Recomendacao</option>
+            <option value="indicacao">Indicacao</option>
+          </select>
+        </div>
+
+        <div class="select-bar">
+          <label>
+            <input type="checkbox" id="select-all" checked>
+            <span id="select-count">0 selecionados</span>
+          </label>
+          <button class="btn btn-outline btn-sm" id="btn-back-config">Voltar</button>
+        </div>
+
+        <div class="lead-list" id="lead-list"></div>
+      </div>
+
+      <div class="section">
+        <button class="btn btn-primary" id="btn-import">
+          Importar Selecionados
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 3: Importing -->
+    <div id="step-importing" class="hidden">
+      <div class="section">
+        <div class="section-title">Importando Leads</div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="import-progress"></div>
+        </div>
+        <div class="progress-text" id="import-status">Preparando...</div>
+      </div>
+    </div>
+
+    <!-- Step 4: Done -->
+    <div id="step-done" class="hidden">
+      <div class="section">
+        <div class="section-title">Importacao Concluida!</div>
+        <div class="summary" id="done-summary"></div>
+        <button class="btn btn-primary" id="btn-new-import" style="margin-top:12px;">
+          Nova Importacao
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

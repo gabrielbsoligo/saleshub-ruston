@@ -105,3 +105,37 @@ export function gerarMensagemWhatsApp(input: WhatsAppMessageInput): string {
     `Por favor, atualize/responda. 🙏`,
   ].join('\n');
 }
+
+// =============================================
+// Mensagem consolidada (pós-sessão)
+// =============================================
+
+const SEV_EMOJI: Record<string, string> = { alta: '🔴', media: '🟡', baixa: '🟢' };
+
+export interface ConsolidadoItem {
+  empresa: string;
+  tipo: 'lead' | 'deal';
+  observacao: string;
+  severidade?: AuditoriaSeveridade;
+  responsavel: string;
+  kommoLink: string;
+}
+
+export function gerarMensagemConsolidada(sessaoNome: string, items: ConsolidadoItem[]): string {
+  if (items.length === 0) return '(nenhum item auditado)';
+
+  const header = `🔍 *Auditoria SalesHub — ${sessaoNome}*\n${items.length} item(s) auditado(s)\n`;
+
+  const lines = items.map((it, i) => {
+    const sev = it.severidade ? ` ${SEV_EMOJI[it.severidade] || ''}` : '';
+    const link = it.kommoLink ? `\n   Kommo: ${it.kommoLink}` : '';
+    return `*${i + 1}. ${it.empresa}*${sev}\n   Resp: ${it.responsavel}\n   ${it.observacao}${link}`;
+  });
+
+  return [
+    header,
+    lines.join('\n\n'),
+    '',
+    'Por favor, atualizem/respondam. 🙏',
+  ].join('\n');
+}
