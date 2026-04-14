@@ -71,7 +71,17 @@ export const EquipeView: React.FC = () => {
             )}
             <div className="flex items-center gap-3">
               {member.google_calendar_connected ? (
-                <span className="flex items-center gap-1 text-xs text-green-400"><Calendar size={12} /> Calendar conectado</span>
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1 text-xs text-green-400"><Calendar size={12} /> Google conectado</span>
+                  <button onClick={async () => {
+                    try {
+                      const url = await getGoogleAuthUrl(member.id);
+                      window.open(url, '_blank', 'width=500,height=600');
+                    } catch { /* ignore */ }
+                  }} className="text-[10px] text-[var(--color-v4-text-muted)] hover:text-yellow-400 transition-colors underline">
+                    reconectar
+                  </button>
+                </div>
               ) : (
                 <button onClick={async () => {
                   try {
@@ -79,7 +89,7 @@ export const EquipeView: React.FC = () => {
                     window.open(url, '_blank', 'width=500,height=600');
                   } catch { /* ignore */ }
                 }} className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors">
-                  <Calendar size={12} /> Conectar Calendar
+                  <Calendar size={12} /> Conectar Google
                 </button>
               )}
               <button

@@ -89,6 +89,10 @@ interface FoundFiles {
   recording_url: string | null
 }
 
+class InsufficientScopeError extends Error {
+  constructor() { super('ACCESS_TOKEN_SCOPE_INSUFFICIENT'); this.name = 'InsufficientScopeError' }
+}
+
 async function findTranscriptInDrive(
   token: string,
   fingerprint: { summary: string; startIso: string; meetCode: string | null; fallbackEmpresa?: string },
@@ -131,6 +135,10 @@ async function findTranscriptInDrive(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     )
+    if (searchResp.status === 403) {
+      const errBody = await searchResp.json().catch(() => ({}))
+      if (JSON.stringify(errBody).includes('SCOPE_INSUFFICIENT')) throw new InsufficientScopeError()
+    }
     if (!searchResp.ok) continue
 
     const files = (await searchResp.json()).files || []
@@ -160,6 +168,10 @@ async function findTranscriptInDrive(
       `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)&orderBy=modifiedTime desc&pageSize=3`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     )
+    if (videoResp.status === 403) {
+      const errBody = await videoResp.json().catch(() => ({}))
+      if (JSON.stringify(errBody).includes('SCOPE_INSUFFICIENT')) throw new InsufficientScopeError()
+    }
     if (videoResp.ok) {
       const v = (await videoResp.json()).files || []
       if (v.length > 0) out.recording_url = v[0].webViewLink
@@ -275,18 +287,45 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
 
   // Buscar transcrição no Drive de CADA candidato até encontrar
   let lastRecordingUrl: string | undefined
+  const needsReauthMembers: string[] = []
+
   for (const entry of tokenEntries) {
-    const found = await findTranscriptInDrive(entry.token, fingerprint)
-    if (found.recording_url) lastRecordingUrl = found.recording_url
-    if (found.transcript_text) {
-      return {
-        status: 'found',
-        transcript_text: found.transcript_text,
-        transcript_url: found.transcript_url || undefined,
-        recording_url: found.recording_url || lastRecordingUrl,
+    try {
+      const found = await findTranscriptInDrive(entry.token, fingerprint)
+      if (found.recording_url) lastRecordingUrl = found.recording_url
+      if (found.transcript_text) {
+        return {
+          status: 'found',
+          transcript_text: found.transcript_text,
+          transcript_url: found.transcript_url || undefined,
+          recording_url: found.recording_url || lastRecordingUrl,
+        }
       }
+    } catch (e: any) {
+      if (e instanceof InsufficientScopeError) {
+        // Marcar membro como desconectado para forçar reconexão com scopes corretos
+        await supabase.from('team_members').update({
+          google_calendar_connected: false,
+        }).eq('id', entry.memberId)
+        // Buscar nome do membro para mensagem amigável
+        const { data: member } = await supabase.from('team_members')
+          .select('name').eq('id', entry.memberId).single()
+        needsReauthMembers.push(member?.name || 'Membro desconhecido')
+        console.warn(`InsufficientScope para membro ${entry.memberId} (${member?.name}), marcado para reconexão`)
+        continue // Tentar próximo candidato
+      }
+      throw e // Re-throw outros erros
     }
   }
+
+  if (needsReauthMembers.length > 0) {
+    return {
+      status: 'needs_reauth',
+      recording_url: lastRecordingUrl,
+      error: `${needsReauthMembers.join(', ')} precisa(m) reconectar o Google na tela de Equipe (permissões insuficientes para acessar Drive)`,
+    }
+  }
+
   return {
     status: 'not_found',
     recording_url: lastRecordingUrl,

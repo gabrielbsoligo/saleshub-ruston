@@ -9,7 +9,7 @@ import type { Reuniao, CallAnalysisResult, Deal } from '../types';
 import { TEMPERATURA_LABELS, TIER_LABELS } from '../types';
 import toast from 'react-hot-toast';
 
-type Step = 'fetching' | 'not_found' | 'analyzing' | 'review' | 'applying' | 'done' | 'error';
+type Step = 'fetching' | 'not_found' | 'needs_reauth' | 'analyzing' | 'review' | 'applying' | 'done' | 'error';
 
 interface Props {
   reuniao: Reuniao;
@@ -42,6 +42,7 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
   const [isApplying, setIsApplying] = useState(false);
   const [manualTranscript, setManualTranscript] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [reauthMessage, setReauthMessage] = useState('');
 
   // Buscar deal associado
   const deal = deals.find(d => d.lead_id === reuniao.lead_id) || null;
@@ -55,7 +56,11 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
         const result = await fetchMeetingTranscript(reuniao.id);
         if (cancelled) return;
 
-        if (result.status === 'found' && result.transcript_text) {
+        if (result.needs_reauth) {
+          setReauthMessage(result.message || 'Membro precisa reconectar o Google na tela de Equipe');
+          setRecordingUrl(result.recording_url || '');
+          setStep('needs_reauth');
+        } else if (result.status === 'found' && result.transcript_text) {
           setTranscriptUrl(result.transcript_url || '');
           setRecordingUrl(result.recording_url || '');
           // Analisar automaticamente
@@ -66,8 +71,12 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
         }
       } catch (e: any) {
         if (!cancelled) {
-          // Edge Function nao disponivel - mostrar opcao manual
-          setStep('not_found');
+          if (e.message?.includes('reconectar') || e.message?.includes('permiss')) {
+            setReauthMessage(e.message);
+            setStep('needs_reauth');
+          } else {
+            setStep('not_found');
+          }
         }
       }
     }
@@ -294,6 +303,36 @@ export const PostMeetingReviewModal: React.FC<Props> = ({ reuniao, onClose }) =>
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-400 disabled:opacity-30 text-white font-bold text-sm">
                   {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                   {isAnalyzing ? 'Analisando...' : 'Analisar com IA'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* NEEDS REAUTH - membro precisa reconectar Google */}
+          {step === 'needs_reauth' && (
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-red-500/10 border border-red-500/20">
+                <AlertTriangle size={20} className="text-red-400 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-red-400 mb-1">Reconexao Google necessaria</p>
+                  <p className="text-xs text-red-300/80">{reauthMessage}</p>
+                </div>
+              </div>
+              <div className="bg-[var(--color-v4-surface)] rounded-xl p-4">
+                <p className="text-xs text-[var(--color-v4-text-muted)] mb-3">
+                  O token do Google nao tem permissao para acessar o Drive. Peca para o membro ir em <strong className="text-white">Equipe</strong> e clicar em <strong className="text-yellow-400">reconectar</strong> ao lado do nome.
+                </p>
+                <p className="text-xs text-[var(--color-v4-text-muted)]">
+                  Depois de reconectar, tente novamente clicando no botao de transcricao.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] text-sm">
+                  Fechar
+                </button>
+                <button onClick={() => { setStep('not_found'); }}
+                  className="flex-1 py-2.5 rounded-xl bg-[var(--color-v4-surface)] hover:bg-[var(--color-v4-border)] text-white text-sm">
+                  Colar transcricao manualmente
                 </button>
               </div>
             </div>
