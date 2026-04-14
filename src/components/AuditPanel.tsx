@@ -191,6 +191,17 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
 
   const handleClose = () => postToParent({ action: 'close' });
 
+  const handleDragStart = (e: React.MouseEvent) => {
+    // Ignora se clicou num botão
+    if ((e.target as HTMLElement).closest('button')) return;
+    // Envia posição relativa ao iframe (o bridge calcula o offset real)
+    postToParent({
+      action: 'drag-start',
+      offsetX: e.clientX,
+      offsetY: e.clientY,
+    });
+  };
+
   const toggleMinimize = () => {
     const next = !minimized;
     setMinimized(next);
@@ -317,7 +328,7 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   return (
     <div style={S.root}>
       {/* Header — draggable area */}
-      <div style={S.header}>
+      <div style={S.header} onMouseDown={handleDragStart}>
         <div style={S.headerInfo}>
           <div style={S.leadName}>{leadName}</div>
           <div style={S.meta}>

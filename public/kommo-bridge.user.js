@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.3.0
+// @version      0.3.1
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.3.0';
+  var VERSION = '0.3.1';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -274,33 +274,14 @@
     var hashParts = 'at=' + encodeURIComponent(accessToken || '') + '&rt=' + encodeURIComponent(refreshToken || '');
     var url = SALESHUB_ORIGIN + '/?audit_panel=1&session=' + sessionId + '#' + hashParts;
     sidebarIframe.src = url;
-    sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:16px;';
+    sidebarIframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:16px;position:absolute;top:0;left:0;';
     sidebarIframe.setAttribute('allow', 'clipboard-write');
     sidebarEl.appendChild(sidebarIframe);
 
-    // Drag support
+    // Drag support — via postMessage do iframe (iframe controla o mousedown no header)
     var isDragging = false;
     var dragOffsetX = 0;
     var dragOffsetY = 0;
-    sidebarEl.addEventListener('mousedown', function (e) {
-      // Só drag no header (primeiros 44px)
-      var rect = sidebarEl.getBoundingClientRect();
-      if (e.clientY - rect.top > 44) return;
-      isDragging = true;
-      dragOffsetX = e.clientX - rect.left;
-      dragOffsetY = e.clientY - rect.top;
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', function (e) {
-      if (!isDragging) return;
-      var x = e.clientX - dragOffsetX;
-      var y = e.clientY - dragOffsetY;
-      sidebarEl.style.left = x + 'px';
-      sidebarEl.style.top = y + 'px';
-      sidebarEl.style.right = 'auto';
-      sidebarEl.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', function () { isDragging = false; });
 
     document.body.appendChild(sidebarEl);
 
@@ -420,6 +401,38 @@
       }
       if (ev.data.action === 'close') {
         closeAuditSidebar(true);
+      }
+      if (ev.data.action === 'drag-start' && sidebarEl) {
+        isDragging = true;
+        var rect = sidebarEl.getBoundingClientRect();
+        // offsetX/Y do iframe = posicao do mouse dentro do iframe
+        // Queremos: ao mover, container.left = mouse.clientX - offsetFromContainerLeft
+        // offsetFromContainerLeft = ev.data.offsetX (mouse pos no iframe = pos relativa ao container)
+        dragOffsetX = (ev.data.offsetX || 0);
+        dragOffsetY = (ev.data.offsetY || 0);
+        sidebarEl.style.transition = 'none';
+        // Overlay transparente full-page para capturar mouse fora do iframe
+        var dragOverlay = document.createElement('div');
+        dragOverlay.id = 'saleshub-drag-overlay';
+        dragOverlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;cursor:grabbing;';
+        document.body.appendChild(dragOverlay);
+        dragOverlay.addEventListener('mousemove', function (me) {
+          if (!isDragging || !sidebarEl) return;
+          sidebarEl.style.left = (me.clientX - dragOffsetX) + 'px';
+          sidebarEl.style.top = (me.clientY - dragOffsetY) + 'px';
+          sidebarEl.style.right = 'auto';
+          sidebarEl.style.bottom = 'auto';
+        });
+        dragOverlay.addEventListener('mouseup', function () {
+          isDragging = false;
+          if (sidebarEl) sidebarEl.style.transition = 'all 0.3s';
+          dragOverlay.remove();
+        });
+        dragOverlay.addEventListener('mouseleave', function () {
+          isDragging = false;
+          if (sidebarEl) sidebarEl.style.transition = 'all 0.3s';
+          dragOverlay.remove();
+        });
       }
       if (ev.data.action === 'minimize') {
         if (sidebarEl) {
