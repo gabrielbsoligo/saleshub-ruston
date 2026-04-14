@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.2.2
+// @version      0.2.3
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,12 +21,13 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.2.2';
+  var VERSION = '0.2.3';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
   var TOKEN_KEY = 'saleshub_bridge_token';
   var ENDPOINT_KEY = 'saleshub_bridge_endpoint';
+  var AUDIT_SESSION_KEY = 'saleshub_audit_session';
   var DEBOUNCE_MS = 1500;
   var MIN_INTERVAL_MS = 5000;
 
@@ -221,6 +222,35 @@
   var currentSidebarSessionId = null;
   var SIDEBAR_WIDTH = 380;
 
+  function persistAuditSession(sessionId, accessToken, refreshToken) {
+    try {
+      GM_setValue(AUDIT_SESSION_KEY, JSON.stringify({
+        sessionId: sessionId,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        ts: Date.now(),
+      }));
+    } catch (_e) { /* noop */ }
+  }
+
+  function clearPersistedAuditSession() {
+    try { GM_setValue(AUDIT_SESSION_KEY, ''); } catch (_e) { /* noop */ }
+  }
+
+  function getPersistedAuditSession() {
+    try {
+      var raw = GM_getValue(AUDIT_SESSION_KEY, '');
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      // Expira depois de 4h
+      if (Date.now() - (obj.ts || 0) > 4 * 60 * 60 * 1000) {
+        clearPersistedAuditSession();
+        return null;
+      }
+      return obj;
+    } catch (_e) { return null; }
+  }
+
   function openAuditSidebar(sessionId, accessToken, refreshToken) {
     // Se já existe sidebar para esta sessão, não recria — apenas envia ack
     if (sidebarEl && currentSidebarSessionId === sessionId) {
@@ -229,6 +259,9 @@
       return;
     }
     if (sidebarEl) { closeAuditSidebar(); }
+
+    // Persistir sessão para sobreviver a navegações/reloads
+    persistAuditSession(sessionId, accessToken, refreshToken);
 
     // Container
     sidebarEl = document.createElement('div');
@@ -262,15 +295,18 @@
     } catch (_e) { /* ignore */ }
   }
 
-  function closeAuditSidebar() {
+  function closeAuditSidebar(clearPersistence) {
     if (sidebarEl) {
       sidebarEl.remove();
       sidebarEl = null;
       sidebarIframe = null;
       currentSidebarSessionId = null;
     }
+    if (clearPersistence) {
+      clearPersistedAuditSession();
+    }
     if (badgeEl) badgeEl.style.right = '12px';
-    win.console.log('[SalesHub Bridge] audit sidebar closed');
+    win.console.log('[SalesHub Bridge] audit sidebar closed' + (clearPersistence ? ' (session ended)' : ''));
   }
 
   // Notifica o iframe quando navegar pra um novo lead
@@ -333,9 +369,9 @@
       if (ev.data.action === 'start-audit' && ev.data.sessionId) {
         openAuditSidebar(ev.data.sessionId, ev.data.accessToken, ev.data.refreshToken);
       }
-      // Fechar sidebar
+      // Fechar sidebar (usuario encerrou)
       if (ev.data.action === 'stop-audit') {
-        closeAuditSidebar();
+        closeAuditSidebar(true);
       }
     }
 
@@ -350,7 +386,7 @@
         } catch (_e) { /* ignore */ }
       }
       if (ev.data.action === 'close') {
-        closeAuditSidebar();
+        closeAuditSidebar(true);
       }
       if (ev.data.action === 'extract') {
         var id2 = getCurrentLeadId();
@@ -371,6 +407,13 @@
         win.opener.postMessage({ source: 'kommo-bridge', type: 'ready', version: VERSION }, '*');
       }
     } catch (_e) { /* ignore */ }
+
+    // Restaurar sidebar se havia sessão de auditoria ativa (sobrevive a navegação/reload)
+    var persisted = getPersistedAuditSession();
+    if (persisted && persisted.sessionId) {
+      win.console.log('[SalesHub Bridge] restoring audit sidebar for session=' + persisted.sessionId);
+      openAuditSidebar(persisted.sessionId, persisted.accessToken, persisted.refreshToken);
+    }
   }
 
   if (document.readyState === 'loading') {
