@@ -17,12 +17,12 @@ const corsHeaders = {
 // Prompt
 // ============================================================
 
-const PARSE_PROMPT = `Analise este contrato V4 Company (SOW - Statement of Work) e extraia os dados estruturados.
+const PARSE_PROMPT = `Analise TODAS as paginas deste contrato V4 Company (SOW - Statement of Work) e extraia os dados estruturados.
 Retorne APENAS um JSON valido, sem texto adicional.
 
-## O que extrair
+IMPORTANTE: Leia o documento INTEIRO, pagina por pagina. Os produtos estao espalhados em MULTIPLAS paginas.
 
-### Secao "CONDICOES DA CONTRATACAO" (pagina 1)
+## PASSO 1: Valores e datas (secao "CONDICOES DA CONTRATACAO", geralmente pagina 1)
 
 **Recorrente (MRR):**
 - "Valor mensal do projeto: R$ X.XXX,XX" → valor_recorrente
@@ -34,35 +34,53 @@ Retorne APENAS um JSON valido, sem texto adicional.
 - "Data de inicio do escopo fechado: DD de MMMM de AAAA" → data_inicio_escopo
 - "Data do primeiro pagamento: DD de MMMM de AAAA" → data_pgto_escopo
 
-### Secao "DESCRITIVO DO SERVICO/PRODUTO"
+## PASSO 2: Identificar produtos (DUAS fontes — use AMBAS)
 
-Identifique TODOS os produtos/servicos contratados:
+**Fonte A — Servicos inclusos na pagina 1 (logo apos condicoes):**
+Procure a frase "estao inclusos no presente contrato os seguintes servicos" e leia os itens (i, ii, iii...).
+Exemplo: "Landing Pages" → Landing Page Recorrente, "IA SDR" → IA, "e-mail marketing" → Email Mkt
+
+**Fonte B — Secao "DESCRITIVO DO SERVICO/PRODUTO" (paginas 2, 3, 4...):**
+Cada produto tem um bloco "Entregaveis:" seguido de descricao e "Diretrizes Especificas:".
+Percorra TODAS as paginas e identifique CADA bloco "Entregaveis:".
+Exemplos reais de como aparecem:
+- "O Profissional de Midia Paga atua no planejamento..." → Gestor de Trafego
+- "O Profissional de Design Grafico e responsavel..." → Designer
+- "O Profissional de Social Media planeja..." → Social Media
+- "O Profissional de CRM..." → CRM
+
+## Tabela de mapeamento (use EXATAMENTE estes nomes)
 
 **Produtos MRR (recorrentes):**
-- "Profissional de Midia Paga" → "Gestor de Trafego"
-- "Profissional de Design Grafico" → "Designer"
-- "Profissional de Social Media" → "Social Media"
-- "IA SDR" ou "inteligencia artificial" → "IA"
-- "Landing Page" como servico recorrente → "Landing Page Recorrente"
-- "CRM" como servico recorrente → "CRM"
-- "e-mail marketing" ou "disparos mensais" → "Email Mkt"
+| Texto no contrato | Nome no sistema |
+|---|---|
+| "Profissional de Midia Paga" ou "Midia Paga" | Gestor de Trafego |
+| "Profissional de Design Grafico" ou "Design Grafico" | Designer |
+| "Profissional de Social Media" ou "Social Media" | Social Media |
+| "IA SDR" ou "inteligencia artificial" ou "ferramenta de IA" | IA |
+| "Landing Page" (servico recorrente/manutencao) | Landing Page Recorrente |
+| "CRM" (servico recorrente) | CRM |
+| "e-mail marketing" ou "disparos mensais" | Email Mkt |
 
-**Produtos OT (one-time):**
-- "Diagnostico e Planejamento" → "Estruturacao Estrategica"
-- "Landing Page (Wireframe)" → "LP One Time"
-- "manual de identidade Visual (MIV)" → "MIV"
-- "Site" como entrega pontual → "Site"
-- "Implementacao CRM" → "Implementacao CRM"
-- "Implementacao IA" → "Implementacao IA"
+**Produtos OT (one-time / escopo fechado):**
+| Texto no contrato | Nome no sistema |
+|---|---|
+| "Diagnostico e Planejamento" ou "Estruturacao" | Estruturacao Estrategica |
+| "Landing Page (Wireframe)" (entrega pontual) | LP One Time |
+| "Manual de Identidade Visual" ou "MIV" | MIV |
+| "Site" (entrega pontual) | Site |
+| "Implementacao CRM" | Implementacao CRM |
+| "Implementacao IA" | Implementacao IA |
 
-IMPORTANTE: Use EXATAMENTE os nomes listados acima. Datas no formato YYYY-MM-DD.
+## PASSO 3: Gerar JSON
 
-## JSON
+Datas no formato YYYY-MM-DD.
+
 {
   "empresa": "nome da contratante",
   "cnpj": "apenas numeros",
-  "produtos_mrr": ["nomes exatos"],
-  "produtos_ot": ["nomes exatos"],
+  "produtos_mrr": ["nomes EXATOS da tabela acima"],
+  "produtos_ot": ["nomes EXATOS da tabela acima"],
   "valor_recorrente": number,
   "valor_escopo": number,
   "data_inicio_recorrente": "YYYY-MM-DD" | null,
@@ -91,7 +109,7 @@ async function analyzeContractPdf(pdfBase64: string): Promise<any> {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
+        max_tokens: 4000,
         messages: [
           {
             role: 'user',
@@ -179,12 +197,19 @@ Deno.serve(async (req) => {
 
     const result = await analyzeContractPdf(base64Data)
 
-    // Validate products
+    // Validate products (normalize accents for matching)
     const VALID_MRR = ['Gestor de Tráfego','Designer','Social Media','IA','Landing Page Recorrente','CRM','Email Mkt']
     const VALID_OT = ['Estruturação Estratégica','Site','MIV','DRX','LP One Time','Implementação CRM','Implementação IA']
 
-    result.produtos_mrr = (result.produtos_mrr || []).filter((p: string) => VALID_MRR.includes(p))
-    result.produtos_ot = (result.produtos_ot || []).filter((p: string) => VALID_OT.includes(p))
+    const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+    const findMatch = (p: string, validList: string[]) => validList.find(v => normalize(v) === normalize(p))
+
+    result.produtos_mrr = (result.produtos_mrr || [])
+      .map((p: string) => findMatch(p, VALID_MRR))
+      .filter(Boolean)
+    result.produtos_ot = (result.produtos_ot || [])
+      .map((p: string) => findMatch(p, VALID_OT))
+      .filter(Boolean)
     result.valor_escopo = Math.max(0, result.valor_escopo || 0)
     result.valor_recorrente = Math.max(0, result.valor_recorrente || 0)
 
