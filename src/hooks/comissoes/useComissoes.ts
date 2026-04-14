@@ -8,9 +8,9 @@ import { getStandardColumns, ColumnDef, DateField } from './columns';
 export type ViewMode = 'cliente' | 'time' | 'sdr';
 
 export interface ComissoesFilters {
-  status?: StatusComissao | '';
+  status?: string[];
   empresa?: string;
-  vendedor?: string;
+  vendedor?: string[];
 }
 
 export interface ComissoesConfig {
@@ -72,8 +72,8 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
         .lte(dateField, end)
         .order('empresa');
 
-      if (filters?.status) query = query.eq('status_comissao', filters.status);
-      if (filters?.vendedor) query = query.eq('member_name', filters.vendedor);
+      if (filters?.status && filters.status.length > 0) query = query.in('status_comissao', filters.status);
+      if (filters?.vendedor && filters.vendedor.length > 0) query = query.in('member_name', filters.vendedor);
 
       const { data, error: dbError } = await query;
       if (dbError) {
@@ -85,7 +85,7 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
     } finally {
       setIsLoading(false);
     }
-  }, [yearMonth, dateField, filters?.status, filters?.vendedor]);
+  }, [yearMonth, dateField, JSON.stringify(filters?.status), JSON.stringify(filters?.vendedor)]);
 
   useEffect(() => { fetchRegistros(); }, [fetchRegistros]);
 

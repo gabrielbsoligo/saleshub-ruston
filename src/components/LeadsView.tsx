@@ -9,6 +9,7 @@ import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
+import { MultiSelectFilter } from "./ui/MultiSelect";
 import type { Reuniao } from "../types";
 import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
 
@@ -59,9 +60,9 @@ export const LeadsView: React.FC = () => {
   const [agendarLead, setAgendarLead] = useState<Lead | null>(null);
   const [confirmarLead, setConfirmarLead] = useState<{ lead: Lead; reuniao: Reuniao } | null>(null);
   const [view, setView] = useState<'table' | 'kanban'>('kanban');
-  const [filterCanal, setFilterCanal] = useState<LeadCanal | ''>('');
-  const [filterStatus, setFilterStatus] = useState<LeadStatus | ''>('');
-  const [filterSdr, setFilterSdr] = useState('');
+  const [filterCanal, setFilterCanal] = useState<string[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [filterSdr, setFilterSdr] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -71,13 +72,13 @@ export const LeadsView: React.FC = () => {
 
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
-  const activeFilterCount = [filterCanal, filterStatus, filterSdr, search, datePreset !== 'all' ? 'x' : ''].filter(Boolean).length;
+  const activeFilterCount = [filterCanal.length, filterStatus.length, filterSdr.length, search ? 1 : 0, datePreset !== 'all' ? 1 : 0].filter(Boolean).length;
 
   const filtered = useMemo(() => {
     let result = leads.filter(l => {
-      if (filterCanal && l.canal !== filterCanal) return false;
-      if (filterStatus && l.status !== filterStatus) return false;
-      if (filterSdr && l.sdr_id !== filterSdr) return false;
+      if (filterCanal.length && !filterCanal.includes(l.canal || '')) return false;
+      if (filterStatus.length && !filterStatus.includes(l.status)) return false;
+      if (filterSdr.length && !filterSdr.includes(l.sdr_id || '')) return false;
       if (search && !l.empresa.toLowerCase().includes(search.toLowerCase()) && !(l.nome_contato || '').toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
@@ -224,26 +225,29 @@ export const LeadsView: React.FC = () => {
           <input type="text" placeholder="Buscar empresa ou contato..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]" />
         </div>
-        <select value={filterCanal} onChange={e => setFilterCanal(e.target.value as any)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterCanal ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-          <option value="">Todos os Canais</option>
-          {Object.entries(CANAL_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
+        <MultiSelectFilter
+          options={Object.entries(CANAL_LABELS).map(([k, v]) => ({ value: k, label: v }))}
+          selected={filterCanal}
+          onChange={setFilterCanal}
+          placeholder="Canal"
+        />
         {view === 'table' && (
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)}
-            className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterStatus ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-            <option value="">Todos os Status</option>
-            {Object.entries(LEAD_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={Object.entries(LEAD_STATUS_LABELS).map(([k, v]) => ({ value: k, label: v }))}
+            selected={filterStatus}
+            onChange={setFilterStatus}
+            placeholder="Status"
+          />
         )}
-        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterSdr ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-          <option value="">Todos os SDRs</option>
-          {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <MultiSelectFilter
+          options={sdrs.map(s => ({ value: s.id, label: s.name }))}
+          selected={filterSdr}
+          onChange={setFilterSdr}
+          placeholder="SDRs"
+        />
         <DateFilter value={datePreset} customFrom={dateFrom} customTo={dateTo} onChange={handleDateChange} />
         {activeFilterCount > 0 && (
-          <button onClick={() => { setFilterCanal(''); setFilterStatus(''); setFilterSdr(''); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); }}
+          <button onClick={() => { setFilterCanal([]); setFilterStatus([]); setFilterSdr([]); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); }}
             className="px-2.5 py-2 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)] transition-colors">
             Limpar filtros ({activeFilterCount})
           </button>

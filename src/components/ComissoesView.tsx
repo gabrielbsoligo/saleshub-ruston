@@ -18,6 +18,7 @@ import {
   STATUS_LABELS,
   STATUS_COLORS,
 } from "../hooks/comissoes/types";
+import { MultiSelectFilter } from "./ui/MultiSelect";
 
 function fmt(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(v);
@@ -54,8 +55,8 @@ export const ComissoesView: React.FC = () => {
   const [yearMonth, setYearMonth] = useState(currentYearMonth);
 
   const [searchEmpresa, setSearchEmpresa] = useState("");
-  const [filterStatus, setFilterStatus] = useState<StatusComissao | "">("");
-  const [filterVendedor, setFilterVendedor] = useState("");
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
+  const [filterVendedor, setFilterVendedor] = useState<string[]>([]);
 
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -448,37 +449,25 @@ export const ComissoesView: React.FC = () => {
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]"
           />
         </div>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value as any)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-            filterStatus
-              ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]"
-              : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white"
-          }`}
-        >
-          <option value="">Todos os Status</option>
-          <option value="aguardando_pgto">⏳ Aguardando Pgto</option>
-          <option value="liberada">🔓 Liberada</option>
-          <option value="paga">✅ Paga</option>
-        </select>
-        <select
-          value={filterVendedor}
-          onChange={(e) => setFilterVendedor(e.target.value)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${
-            filterVendedor
-              ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]"
-              : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white"
-          }`}
-        >
-          <option value="">Todos Vendedores</option>
-          {vendedoresUnicos.map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        {(searchEmpresa || filterStatus || filterVendedor) && (
+        <MultiSelectFilter
+          options={[
+            { value: "aguardando_pgto", label: "Aguardando Pgto" },
+            { value: "liberada", label: "Liberada" },
+            { value: "paga", label: "Paga" },
+          ]}
+          selected={filterStatus}
+          onChange={setFilterStatus}
+          placeholder="Status"
+        />
+        <MultiSelectFilter
+          options={vendedoresUnicos.map((v) => ({ value: v, label: v }))}
+          selected={filterVendedor}
+          onChange={setFilterVendedor}
+          placeholder="Vendedor"
+        />
+        {(searchEmpresa || filterStatus.length > 0 || filterVendedor.length > 0) && (
           <button
-            onClick={() => { setSearchEmpresa(""); setFilterStatus(""); setFilterVendedor(""); }}
+            onClick={() => { setSearchEmpresa(""); setFilterStatus([]); setFilterVendedor([]); }}
             className="px-2.5 py-2 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)]"
           >
             Limpar filtros

@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { FeedbackDrawer } from "./FeedbackDrawer";
+import { MultiSelectFilter } from "./ui/MultiSelect";
 import { supabase } from "../lib/supabase";
 import type { Reuniao } from "../types";
 
@@ -121,13 +122,13 @@ export const ReunioesView: React.FC = () => {
   const [showNoshowsAntigos, setShowNoshowsAntigos] = useState(false);
   const isCloser = useAppStore().currentUser?.role === 'closer';
   const myId = useAppStore().currentUser?.id || '';
-  const [filterCloser, setFilterCloser] = useState('');
-  const [filterSdr, setFilterSdr] = useState('');
-  const [filterTipo, setFilterTipo] = useState<'' | 'primeira_call' | 'retorno'>('');
+  const [filterCloser, setFilterCloser] = useState<string[]>([]);
+  const [filterSdr, setFilterSdr] = useState<string[]>([]);
+  const [filterTipo, setFilterTipo] = useState<string[]>([]);
 
   // Closer vê só as próprias reuniões por padrão
   React.useEffect(() => {
-    if (isCloser && myId && !filterCloser) setFilterCloser(myId);
+    if (isCloser && myId && filterCloser.length === 0) setFilterCloser([myId]);
   }, [isCloser, myId]);
 
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
@@ -141,25 +142,25 @@ export const ReunioesView: React.FC = () => {
   // Separate reunions
   const proximas = useMemo(() => {
     let items = reunioes.filter(r => !r.realizada);
-    if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
-    if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
-    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
+    if (filterCloser.length) items = items.filter(r => filterCloser.includes(r.closer_id || ''));
+    if (filterSdr.length) items = items.filter(r => filterSdr.includes(r.sdr_id || ''));
+    if (filterTipo.length) items = items.filter(r => filterTipo.includes(r.tipo || 'primeira_call'));
     return items;
   }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
   const noshows = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === false);
-    if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
-    if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
-    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
+    if (filterCloser.length) items = items.filter(r => filterCloser.includes(r.closer_id || ''));
+    if (filterSdr.length) items = items.filter(r => filterSdr.includes(r.sdr_id || ''));
+    if (filterTipo.length) items = items.filter(r => filterTipo.includes(r.tipo || 'primeira_call'));
     return items;
   }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
   const realizadas = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === true);
-    if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
-    if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
-    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
+    if (filterCloser.length) items = items.filter(r => filterCloser.includes(r.closer_id || ''));
+    if (filterSdr.length) items = items.filter(r => filterSdr.includes(r.sdr_id || ''));
+    if (filterTipo.length) items = items.filter(r => filterTipo.includes(r.tipo || 'primeira_call'));
     return items;
   }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
@@ -379,22 +380,24 @@ export const ReunioesView: React.FC = () => {
 
       {/* Filtros */}
       <div className="flex gap-3 mb-6">
-        <select value={filterCloser} onChange={e => setFilterCloser(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
-          <option value="">Todos os Closers</option>
-          {closers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
-          <option value="">Todos os SDRs</option>
-          {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select value={filterTipo} onChange={e => setFilterTipo(e.target.value as any)}
-          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
-          <option value="">Todas as Reuniões</option>
-          <option value="primeira_call">🟢 1ª Call</option>
-          <option value="retorno">🔄 Retorno</option>
-        </select>
+        <MultiSelectFilter
+          options={closers.map(c => ({ value: c.id, label: c.name }))}
+          selected={filterCloser}
+          onChange={setFilterCloser}
+          placeholder="Closers"
+        />
+        <MultiSelectFilter
+          options={sdrs.map(s => ({ value: s.id, label: s.name }))}
+          selected={filterSdr}
+          onChange={setFilterSdr}
+          placeholder="SDRs"
+        />
+        <MultiSelectFilter
+          options={[{value:'primeira_call',label:'🟢 1ª Call'},{value:'retorno',label:'🔄 Retorno'}]}
+          selected={filterTipo}
+          onChange={setFilterTipo}
+          placeholder="Tipo"
+        />
       </div>
 
       {/* PRÓXIMAS - agrupadas por dia */}

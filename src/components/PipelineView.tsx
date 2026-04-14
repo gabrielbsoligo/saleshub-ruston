@@ -9,6 +9,7 @@ import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-p
 import { validateGanho, validateContratoNaRua } from "../lib/ganhoValidation";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
+import { MultiSelectFilter } from "./ui/MultiSelect";
 import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
 
 // Nova ordem do kanban
@@ -97,10 +98,10 @@ export const PipelineView: React.FC = () => {
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
-  const [filterCloser, setFilterCloser] = useState('');
-  const [filterSdr, setFilterSdr] = useState('');
-  const [filterTemp, setFilterTemp] = useState<Temperatura | ''>('');
-  const [filterStatus, setFilterStatus] = useState<DealStatus | ''>('');
+  const [filterCloser, setFilterCloser] = useState<string[]>([]);
+  const [filterSdr, setFilterSdr] = useState<string[]>([]);
+  const [filterTemp, setFilterTemp] = useState<string[]>([]);
+  const [filterStatus, setFilterStatus] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -114,14 +115,14 @@ export const PipelineView: React.FC = () => {
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
-  const activeFilterCount = [filterCloser, filterSdr, filterTemp, filterStatus, search, datePreset !== 'all' ? 'x' : ''].filter(Boolean).length;
+  const activeFilterCount = [filterCloser.length, filterSdr.length, filterTemp.length, filterStatus.length, search ? 1 : 0, datePreset !== 'all' ? 1 : 0].filter(Boolean).length;
 
   const filteredDeals = useMemo(() => {
     let result = deals.filter(d => {
-      if (filterCloser && d.closer_id !== filterCloser) return false;
-      if (filterSdr && d.sdr_id !== filterSdr) return false;
-      if (filterTemp && d.temperatura !== filterTemp) return false;
-      if (filterStatus && d.status !== filterStatus) return false;
+      if (filterCloser.length && !filterCloser.includes(d.closer_id || '')) return false;
+      if (filterSdr.length && !filterSdr.includes(d.sdr_id || '')) return false;
+      if (filterTemp.length && !filterTemp.includes(d.temperatura || '')) return false;
+      if (filterStatus.length && !filterStatus.includes(d.status)) return false;
       if (search && !d.empresa.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
@@ -243,29 +244,31 @@ export const PipelineView: React.FC = () => {
           <input type="text" placeholder="Buscar empresa..." value={search} onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]" />
         </div>
-        <select value={filterCloser} onChange={e => setFilterCloser(e.target.value)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterCloser ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-          <option value="">Todos os Closers</option>
-          {closers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={filterSdr} onChange={e => setFilterSdr(e.target.value)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterSdr ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-          <option value="">Todos os SDRs</option>
-          {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-        <select value={filterTemp} onChange={e => setFilterTemp(e.target.value as any)}
-          className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterTemp ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-          <option value="">Temperatura</option>
-          <option value="quente">🔥 Quente</option>
-          <option value="morno">🌤 Morno</option>
-          <option value="frio">❄️ Frio</option>
-        </select>
+        <MultiSelectFilter
+          options={closers.map(c => ({ value: c.id, label: c.name }))}
+          selected={filterCloser}
+          onChange={setFilterCloser}
+          placeholder="Closers"
+        />
+        <MultiSelectFilter
+          options={sdrs.map(s => ({ value: s.id, label: s.name }))}
+          selected={filterSdr}
+          onChange={setFilterSdr}
+          placeholder="SDRs"
+        />
+        <MultiSelectFilter
+          options={[{value:'quente',label:'🔥 Quente'},{value:'morno',label:'🌡️ Morno'},{value:'frio',label:'❄️ Frio'}]}
+          selected={filterTemp}
+          onChange={setFilterTemp}
+          placeholder="Temperatura"
+        />
         {view === 'table' && (
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as any)}
-            className={`px-3 py-2 rounded-lg border text-sm transition-colors ${filterStatus ? 'bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-[var(--color-v4-red)]' : 'bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-white'}`}>
-            <option value="">Todos os Status</option>
-            {PIPELINE_STAGES.map(s => <option key={s} value={s}>{DEAL_STATUS_LABELS[s]}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={PIPELINE_STAGES.map(s => ({ value: s, label: DEAL_STATUS_LABELS[s] }))}
+            selected={filterStatus}
+            onChange={setFilterStatus}
+            placeholder="Status"
+          />
         )}
         <DateFilter value={datePreset} customFrom={dateFrom} customTo={dateTo} onChange={handleDateChange} />
         {view === 'kanban' && (
@@ -278,7 +281,7 @@ export const PipelineView: React.FC = () => {
           </div>
         )}
         {activeFilterCount > 0 && (
-          <button onClick={() => { setFilterCloser(''); setFilterSdr(''); setFilterTemp(''); setFilterStatus(''); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); setSortBy('default'); }}
+          <button onClick={() => { setFilterCloser([]); setFilterSdr([]); setFilterTemp([]); setFilterStatus([]); setSearch(''); setDatePreset('all'); setDateFrom(''); setDateTo(''); setSortBy('default'); }}
             className="px-2.5 py-2 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)] transition-colors">
             Limpar filtros ({activeFilterCount})
           </button>
