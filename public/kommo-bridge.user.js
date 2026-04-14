@@ -1,50 +1,58 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
-// @namespace    https://saleshub-ruston.vercel.app/
-// @version      0.1.0
+// @namespace    https://gestao-comercial-rosy.vercel.app/
+// @version      0.1.1
 // @description  Extrai dados do Kommo (custom fields, notas, eventos) e envia pro SalesHub para auditoria de leads.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
-// @grant        none
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @connect      iaompeiokjxbffwehhrx.supabase.co
 // @run-at       document-idle
-// @updateURL    https://saleshub-ruston.vercel.app/kommo-bridge.user.js
-// @downloadURL  https://saleshub-ruston.vercel.app/kommo-bridge.user.js
+// @updateURL    https://gestao-comercial-rosy.vercel.app/kommo-bridge.user.js
+// @downloadURL  https://gestao-comercial-rosy.vercel.app/kommo-bridge.user.js
 // ==/UserScript==
+
+/* global GM_setValue, GM_getValue, GM_xmlhttpRequest, unsafeWindow */
 
 (function () {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.1.1';
+  const win = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
   const TOKEN_KEY = 'saleshub_bridge_token';
   const ENDPOINT_KEY = 'saleshub_bridge_endpoint';
   const DEBOUNCE_MS = 1500;
   const MIN_INTERVAL_MS = 5000; // mesmo lead, no minimo 5s entre envios
 
-  // === Token / endpoint setup ===
+  // === Token / endpoint setup (GM storage = persiste mesmo se Kommo limpar localStorage) ===
   function getToken() {
-    let t = localStorage.getItem(TOKEN_KEY);
+    let t = (typeof GM_getValue === 'function' ? GM_getValue(TOKEN_KEY, '') : '') || '';
     if (!t) {
-      t = prompt('SalesHub Bridge: cole o token gerado no SalesHub (uma vez):');
+      t = win.prompt('SalesHub Bridge: cole o token gerado no SalesHub (uma vez):');
       if (t && t.trim()) {
-        localStorage.setItem(TOKEN_KEY, t.trim());
-        return t.trim();
+        t = t.trim();
+        if (typeof GM_setValue === 'function') GM_setValue(TOKEN_KEY, t);
+        return t;
       }
       return null;
     }
     return t;
   }
   function getEndpoint() {
-    return localStorage.getItem(ENDPOINT_KEY) || DEFAULT_ENDPOINT;
+    return (typeof GM_getValue === 'function' ? GM_getValue(ENDPOINT_KEY, '') : '') || DEFAULT_ENDPOINT;
   }
 
   // === Lead detection (Kommo SPA) ===
   function getCurrentLeadId() {
-    const m = location.pathname.match(/\/leads\/detail\/(\d+)/);
+    const m = win.location.pathname.match(/\/leads\/detail\/(\d+)/);
     return m ? Number(m[1]) : null;
   }
   function getSubdomain() {
-    return location.hostname.split('.')[0];
+    return win.location.hostname.split('.')[0];
   }
 
   // === DOM extractors (best-effort, defensivo) ===
@@ -144,23 +152,35 @@
     setBadge('working', `enviando ${leadId}…`);
     try {
       const payload = buildPayload(leadId);
-      const res = await fetch(getEndpoint(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-bridge-token': token,
-        },
-        body: JSON.stringify({
-          kommo_lead_id: leadId,
-          kommo_account_subdomain: getSubdomain(),
-          payload,
-          bridge_version: VERSION,
-          source,
-        }),
+      const body = JSON.stringify({
+        kommo_lead_id: leadId,
+        kommo_account_subdomain: getSubdomain(),
+        payload,
+        bridge_version: VERSION,
+        source,
       });
-      if (!res.ok) {
-        const err = await res.text();
-        setBadge('error', `${res.status}: ${err.slice(0, 60)}`);
+
+      // Usa GM_xmlhttpRequest pra contornar CORS/CSP
+      const result = await new Promise((resolve) => {
+        if (typeof GM_xmlhttpRequest === 'function') {
+          GM_xmlhttpRequest({
+            method: 'POST',
+            url: getEndpoint(),
+            headers: { 'Content-Type': 'application/json', 'x-bridge-token': token },
+            data: body,
+            onload: (r) => resolve({ status: r.status, text: r.responseText }),
+            onerror: (e) => resolve({ status: 0, text: String(e) }),
+          });
+        } else {
+          // Fallback fetch
+          fetch(getEndpoint(), { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bridge-token': token }, body })
+            .then(async r => resolve({ status: r.status, text: await r.text() }))
+            .catch(e => resolve({ status: 0, text: String(e) }));
+        }
+      });
+
+      if (result.status < 200 || result.status >= 300) {
+        setBadge('error', `${result.status}: ${(result.text || '').slice(0, 60)}`);
         return;
       }
       lastSent.set(leadId, now);
@@ -192,9 +212,9 @@
       if (id) sendSnapshot(id, 'manual_command');
     });
     badgeEl.addEventListener('dblclick', () => {
-      if (confirm('Resetar token do SalesHub Bridge?')) {
-        localStorage.removeItem(TOKEN_KEY);
-        location.reload();
+      if (win.confirm('Resetar token do SalesHub Bridge?')) {
+        if (typeof GM_setValue === 'function') GM_setValue(TOKEN_KEY, '');
+        win.location.reload();
       }
     });
     document.body.appendChild(badgeEl);
@@ -209,11 +229,11 @@
 
   // === SPA route observer ===
   let debounceTimer = null;
-  let lastUrl = location.href;
+  let lastUrl = win.location.href;
 
   function onRouteMaybeChanged() {
-    if (location.href === lastUrl) return;
-    lastUrl = location.href;
+    if (win.location.href === lastUrl) return;
+    lastUrl = win.location.href;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       const id = getCurrentLeadId();
@@ -221,25 +241,27 @@
     }, DEBOUNCE_MS);
   }
 
-  // Hook history API
-  const _push = history.pushState;
-  history.pushState = function () { _push.apply(this, arguments); onRouteMaybeChanged(); };
-  const _replace = history.replaceState;
-  history.replaceState = function () { _replace.apply(this, arguments); onRouteMaybeChanged(); };
-  window.addEventListener('popstate', onRouteMaybeChanged);
+  // Hook history API (na window REAL da pagina)
+  try {
+    const _push = win.history.pushState;
+    win.history.pushState = function () { _push.apply(this, arguments); onRouteMaybeChanged(); };
+    const _replace = win.history.replaceState;
+    win.history.replaceState = function () { _replace.apply(this, arguments); onRouteMaybeChanged(); };
+  } catch (e) { /* CSP pode bloquear, polling assume */ }
+  win.addEventListener('popstate', onRouteMaybeChanged);
 
-  // Polling fallback (Kommo as vezes nao chama pushState)
+  // Polling fallback (Kommo as vezes nao chama pushState, ou hook foi bloqueado)
   setInterval(onRouteMaybeChanged, 1000);
 
   // === postMessage listener (SalesHub controla popup) ===
-  window.addEventListener('message', (ev) => {
+  win.addEventListener('message', (ev) => {
     if (!ev.data || typeof ev.data !== 'object') return;
     if (ev.data.source !== 'saleshub') return;
     if (ev.data.action === 'goto' && ev.data.kommoUrl) {
       try {
         const u = new URL(ev.data.kommoUrl);
         if (u.hostname.endsWith('.kommo.com')) {
-          location.href = u.href;
+          win.location.href = u.href;
         }
       } catch { /* ignore */ }
     }
@@ -252,12 +274,13 @@
   // === Boot ===
   function boot() {
     setupBadge();
+    console.log('[SalesHub Bridge] boot v' + VERSION + ' on ' + win.location.href);
     const id = getCurrentLeadId();
     if (id) sendSnapshot(id, 'auto');
     // Notify opener (SalesHub) that bridge is alive
     try {
-      if (window.opener) {
-        window.opener.postMessage({ source: 'kommo-bridge', type: 'ready', version: VERSION }, '*');
+      if (win.opener) {
+        win.opener.postMessage({ source: 'kommo-bridge', type: 'ready', version: VERSION }, '*');
       }
     } catch { /* ignore */ }
   }
@@ -268,7 +291,6 @@
     boot();
   }
 
-  // Bookmarklet entrypoint: window.installKommoBridge() faz nada extra
-  // (script ja inicializou ao ser executado). Funcao existe so pra simetria.
-  window.installKommoBridge = function () { boot(); };
+  // Bookmarklet entrypoint
+  win.installKommoBridge = function () { boot(); };
 })();
