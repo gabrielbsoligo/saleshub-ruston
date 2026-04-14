@@ -10,6 +10,7 @@ import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
 import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
 import type { Reuniao } from "../types";
+import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
 
 const STATUS_COLORS: Record<string, string> = {
   sem_contato: 'bg-gray-500/20 text-gray-400',
@@ -207,6 +208,12 @@ export const LeadsView: React.FC = () => {
             <button onClick={() => setView('table')} className={`p-2 rounded ${view === 'table' ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)]'}`}><List size={16} /></button>
           </div>
           <a href="/extensao.html" target="_blank" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm no-underline">⚡ MKTLAB</a>
+          <SendToAuditoriaButton
+            items={filtered.map(l => ({ tipo: 'lead' as const, id: l.id }))}
+            origem="leads_view"
+            filtros={{ canal: filterCanal, status: filterStatus, sdr: filterSdr, search, datePreset, dateFrom, dateTo }}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm disabled:opacity-50"
+          />
           <button onClick={() => setShowNew(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm"><Plus size={16} /> Novo Lead</button>
         </div>
       </div>
