@@ -106,48 +106,66 @@ async function findTranscriptInDrive(
   const before = new Date(start.getTime() + 24 * 60 * 60 * 1000).toISOString()
 
   // Termos de busca: priorizar título do evento, fallback no nome da empresa
+  // Também gerar variações parciais (ex: "Vilmar rodas" → "Vilmar")
   const searchTerms: string[] = []
   if (fingerprint.summary) searchTerms.push(fingerprint.summary)
-  if (fingerprint.fallbackEmpresa && !searchTerms.includes(fingerprint.fallbackEmpresa)) {
-    searchTerms.push(fingerprint.fallbackEmpresa)
+  if (fingerprint.fallbackEmpresa) {
+    if (!searchTerms.includes(fingerprint.fallbackEmpresa)) {
+      searchTerms.push(fingerprint.fallbackEmpresa)
+    }
+    // Adicionar primeiro nome como fallback (ex: "Vilmar rodas" → "Vilmar")
+    const firstName = fingerprint.fallbackEmpresa.split(/\s+/)[0]
+    if (firstName && firstName.length >= 3 && !searchTerms.includes(firstName)) {
+      searchTerms.push(firstName)
+    }
   }
   if (searchTerms.length === 0) return out
+  console.log(`  searchTerms: ${JSON.stringify(searchTerms)}, meetFolderOnly: ${!!meetFolderId}`)
 
   // Localizar pasta "Meet Recordings" (limita ruído) — opcional, fallback global
   const meetFolderId = await findMeetRecordingsFolderId(token)
 
   let transcriptDocId: string | null = null
 
-  for (const term of searchTerms) {
+  // Estratégia: buscar COM pasta Meet Recordings, se não achar buscar SEM pasta (global)
+  const folderPasses = meetFolderId ? [meetFolderId, null] : [null]
+
+  for (const folderId of folderPasses) {
     if (transcriptDocId) break
-    const safe = term.replace(/'/g, "\\'")
-    const parts = [
-      `name contains '${safe}'`,
-      `mimeType='application/vnd.google-apps.document'`,
-      `modifiedTime >= '${after}'`,
-      `modifiedTime <= '${before}'`,
-      `trashed=false`,
-    ]
-    if (meetFolderId) parts.push(`'${meetFolderId}' in parents`)
-    const query = parts.join(' and ')
+    for (const term of searchTerms) {
+      if (transcriptDocId) break
+      const safe = term.replace(/'/g, "\\'")
+      const parts = [
+        `name contains '${safe}'`,
+        `mimeType='application/vnd.google-apps.document'`,
+        `modifiedTime >= '${after}'`,
+        `modifiedTime <= '${before}'`,
+        `trashed=false`,
+      ]
+      if (folderId) parts.push(`'${folderId}' in parents`)
+      const query = parts.join(' and ')
 
-    const searchResp = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    )
-    if (searchResp.status === 403) {
-      const errBody = await searchResp.json().catch(() => ({}))
-      if (JSON.stringify(errBody).includes('SCOPE_INSUFFICIENT')) throw new InsufficientScopeError()
-    }
-    if (!searchResp.ok) continue
+      console.log(`  Drive query (folder=${folderId ? 'Meet Recordings' : 'global'}): name contains '${safe}'`)
+      const searchResp = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      )
+      if (searchResp.status === 403) {
+        const errBody = await searchResp.json().catch(() => ({}))
+        if (JSON.stringify(errBody).includes('SCOPE_INSUFFICIENT')) throw new InsufficientScopeError()
+      }
+      if (!searchResp.ok) { console.log(`  Drive search failed: ${searchResp.status}`); continue }
 
-    const files = (await searchResp.json()).files || []
-    // Preferência: arquivo cujo nome contenha "Transcript|Transcrição|Transcricao"
-    const isTranscript = (n: string) => /transcript|transcri[çc][ãa]o/i.test(n)
-    const transcript = files.find((f: any) => isTranscript(f.name)) || files[0]
-    if (transcript) {
-      transcriptDocId = transcript.id
-      out.transcript_url = transcript.webViewLink
+      const files = (await searchResp.json()).files || []
+      console.log(`  Drive results: ${files.length} files found`, files.map((f: any) => f.name))
+      // Preferência: arquivo cujo nome contenha "Transcript|Transcrição|Transcricao"
+      const isTranscript = (n: string) => /transcript|transcri[çc][ãa]o/i.test(n)
+      const transcript = files.find((f: any) => isTranscript(f.name)) || files[0]
+      if (transcript) {
+        transcriptDocId = transcript.id
+        out.transcript_url = transcript.webViewLink
+        console.log(`  Found transcript: ${transcript.name} (${transcript.id})`)
+      }
     }
   }
 
@@ -288,10 +306,15 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
   // Buscar transcrição no Drive de CADA candidato até encontrar
   let lastRecordingUrl: string | undefined
   const needsReauthMembers: string[] = []
+  let successfulSearches = 0
 
   for (const entry of tokenEntries) {
     try {
+      console.log(`Buscando transcrição no Drive do membro ${entry.memberId}...`)
+      console.log(`  fingerprint: summary="${fingerprint.summary}", empresa="${fingerprint.fallbackEmpresa}", startIso="${fingerprint.startIso}"`)
       const found = await findTranscriptInDrive(entry.token, fingerprint)
+      successfulSearches++
+      console.log(`  resultado: transcript=${!!found.transcript_text}, recording=${!!found.recording_url}`)
       if (found.recording_url) lastRecordingUrl = found.recording_url
       if (found.transcript_text) {
         return {
@@ -307,18 +330,18 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
         await supabase.from('team_members').update({
           google_calendar_connected: false,
         }).eq('id', entry.memberId)
-        // Buscar nome do membro para mensagem amigável
         const { data: member } = await supabase.from('team_members')
           .select('name').eq('id', entry.memberId).single()
         needsReauthMembers.push(member?.name || 'Membro desconhecido')
         console.warn(`InsufficientScope para membro ${entry.memberId} (${member?.name}), marcado para reconexão`)
-        continue // Tentar próximo candidato
+        continue
       }
-      throw e // Re-throw outros erros
+      throw e
     }
   }
 
-  if (needsReauthMembers.length > 0) {
+  // Só retorna needs_reauth se NENHUM membro conseguiu buscar (todos deram scope error)
+  if (needsReauthMembers.length > 0 && successfulSearches === 0) {
     return {
       status: 'needs_reauth',
       recording_url: lastRecordingUrl,
@@ -326,10 +349,14 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
     }
   }
 
+  // Se houve buscas bem-sucedidas mas não achou, retorna not_found (com nota de reauth se aplicável)
+  const reauthNote = needsReauthMembers.length > 0
+    ? ` (${needsReauthMembers.join(', ')} precisa reconectar Google)`
+    : ''
   return {
     status: 'not_found',
     recording_url: lastRecordingUrl,
-    error: 'Transcrição ainda não disponível no Drive de nenhum participante',
+    error: `Transcrição ainda não disponível no Drive de nenhum participante${reauthNote}`,
   }
 }
 
