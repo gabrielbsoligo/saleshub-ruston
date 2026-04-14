@@ -103,12 +103,17 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     setMotivoSkip(registroAtual?.motivo_skip || '');
   }, [registroAtual?.id]);
 
-  // Navegar Kommo ao trocar item
+  // Navegar Kommo ao trocar item — só se URL mudou (evita loop de reload)
+  const lastNavigatedId = React.useRef<string | null>(null);
   useEffect(() => {
     if (!itemAtual) return;
     const link = (itemAtual as any)?.kommo_link;
-    if (link) {
-      postToParent({ action: 'navigate', kommoUrl: link });
+    const itemId = (itemAtual as any)?.id;
+    // Só navega se for item diferente do último navegado
+    if (link && itemId && itemId !== lastNavigatedId.current) {
+      lastNavigatedId.current = itemId;
+      // Pergunta ao bridge a URL atual antes de navegar
+      postToParent({ action: 'check-url-then-navigate', kommoUrl: link });
     }
     // Também pede extração
     postToParent({ action: 'extract' });

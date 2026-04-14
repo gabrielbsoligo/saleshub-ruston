@@ -202,12 +202,12 @@ const BridgeSetup: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         <section className="bg-[var(--color-v4-card)] p-4 rounded-lg border border-[var(--color-v4-border)]">
           <h2 className="font-medium text-white mb-3">1. Instalar Tampermonkey</h2>
           <p className="text-sm text-slate-400 mb-3">Instale <a className="text-[var(--color-v4-red)] underline" target="_blank" rel="noreferrer" href="https://www.tampermonkey.net/">Tampermonkey</a> no navegador.</p>
-          <h2 className="font-medium text-white mb-2">2. Instalar userscript <span className="text-xs text-slate-400 font-normal">v0.2.3</span></h2>
+          <h2 className="font-medium text-white mb-2">2. Instalar userscript <span className="text-xs text-slate-400 font-normal">v0.2.4</span></h2>
           <div className="flex items-center gap-2 mb-2">
             <a href={userscriptUrl} target="_blank" rel="noreferrer" className="text-sm text-[var(--color-v4-red)] underline break-all">{userscriptUrl}</a>
             <button onClick={() => { navigator.clipboard.writeText(userscriptUrl); toast.success('Copiado'); }} className="text-xs px-2 py-1 bg-[var(--color-v4-card-hover)] rounded text-white"><ClipboardCopy size={12} /></button>
           </div>
-          <p className="text-xs text-slate-500">Clique no link acima para instalar/atualizar. Versão atual: <span className="text-slate-300 font-mono">0.2.3</span></p>
+          <p className="text-xs text-slate-500">Clique no link acima para instalar/atualizar. Versão atual: <span className="text-slate-300 font-mono">0.2.4</span></p>
         </section>
         <section className="bg-[var(--color-v4-card)] p-4 rounded-lg border border-[var(--color-v4-border)]">
           <h2 className="font-medium text-white mb-3">3. Tokens</h2>

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.2.3
+// @version      0.2.4
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.2.3';
+  var VERSION = '0.2.4';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -377,11 +377,19 @@
 
     // Mensagens do iframe audit-panel
     if (ev.data.source === 'saleshub-audit-panel') {
-      if (ev.data.action === 'navigate' && ev.data.kommoUrl) {
+      if ((ev.data.action === 'navigate' || ev.data.action === 'check-url-then-navigate') && ev.data.kommoUrl) {
         try {
           var u2 = new URL(ev.data.kommoUrl);
           if (u2.hostname.endsWith('.kommo.com')) {
-            win.location.href = u2.href;
+            // Só navega se a URL atual for diferente (evita loop de reload)
+            var currentPath = win.location.pathname;
+            var targetPath = u2.pathname;
+            if (currentPath !== targetPath) {
+              win.console.log('[SalesHub Bridge] navigating from ' + currentPath + ' to ' + targetPath);
+              win.location.href = u2.href;
+            } else {
+              win.console.log('[SalesHub Bridge] already on ' + targetPath + ', skipping navigation');
+            }
           }
         } catch (_e) { /* ignore */ }
       }
