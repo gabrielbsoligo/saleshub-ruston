@@ -31,7 +31,7 @@ function postToParent(data: any) {
 }
 
 export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
-  const { leads, deals, members, reunioes } = useAppStore();
+  const { leads, deals, members, reunioes, currentUser, isLoadingAuth } = useAppStore();
   const [sessao, setSessao] = useState<AuditoriaSessao | null>(null);
   const [registros, setRegistros] = useState<AuditoriaRegistro[]>([]);
   const [posicao, setPosicao] = useState(0);
@@ -195,8 +195,10 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     postToParent({ action: 'close' });
   };
 
-  if (loading) {
-    return <div className="h-full flex items-center justify-center bg-[#0f1117] text-slate-400"><Loader2 size={18} className="animate-spin" /></div>;
+  const storeLoading = isLoadingAuth || (!currentUser && authReady);
+
+  if (loading || storeLoading) {
+    return <div className="h-full flex items-center justify-center bg-[#0f1117] text-slate-400"><Loader2 size={18} className="animate-spin" /> <span className="ml-2 text-xs">{storeLoading ? 'Carregando dados...' : ''}</span></div>;
   }
 
   if (!sessao) {
@@ -228,7 +230,7 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
           {/* Item info */}
           <div className="bg-[#161922] p-2.5 rounded border border-slate-700">
             <div className="text-[10px] text-slate-400 uppercase">{registroAtual.item_tipo}</div>
-            <div className="text-sm font-bold truncate">{(itemAtual as any)?.empresa || '?'}</div>
+            <div className="text-sm font-bold truncate">{(itemAtual as any)?.empresa || (leads.length === 0 && deals.length === 0 ? 'Carregando...' : 'Item não encontrado')}</div>
             <div className="text-[11px] text-slate-400">Resp: {responsavel?.name || '—'}</div>
           </div>
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.2.1
+// @version      0.2.2
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.2.1';
+  var VERSION = '0.2.2';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -218,9 +218,16 @@
   // =============================================
   var sidebarEl = null;
   var sidebarIframe = null;
+  var currentSidebarSessionId = null;
   var SIDEBAR_WIDTH = 380;
 
   function openAuditSidebar(sessionId, accessToken, refreshToken) {
+    // Se já existe sidebar para esta sessão, não recria — apenas envia ack
+    if (sidebarEl && currentSidebarSessionId === sessionId) {
+      win.console.log('[SalesHub Bridge] sidebar already open for session=' + sessionId + ', skipping');
+      sendAck();
+      return;
+    }
     if (sidebarEl) { closeAuditSidebar(); }
 
     // Container
@@ -242,7 +249,17 @@
     // Empurrar badge pra esquerda do sidebar
     if (badgeEl) badgeEl.style.right = (SIDEBAR_WIDTH + 12) + 'px';
 
+    currentSidebarSessionId = sessionId;
     win.console.log('[SalesHub Bridge] audit sidebar opened, session=' + sessionId + ', hasToken=' + !!accessToken);
+    sendAck();
+  }
+
+  function sendAck() {
+    try {
+      if (win.opener) {
+        win.opener.postMessage({ source: 'kommo-bridge', type: 'sidebar-ack' }, '*');
+      }
+    } catch (_e) { /* ignore */ }
   }
 
   function closeAuditSidebar() {
@@ -250,6 +267,7 @@
       sidebarEl.remove();
       sidebarEl = null;
       sidebarIframe = null;
+      currentSidebarSessionId = null;
     }
     if (badgeEl) badgeEl.style.right = '12px';
     win.console.log('[SalesHub Bridge] audit sidebar closed');
