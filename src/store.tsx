@@ -386,17 +386,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addReuniao = async (r: Partial<Reuniao>, replaceExisting?: boolean) => {
-    // Regra: 1 reunião ativa por lead
-    if (r.lead_id) {
+    const tipo = r.tipo || 'primeira_call';
+
+    // Regra: 1 reunião ativa por lead — SÓ para primeira_call
+    if (tipo === 'primeira_call' && r.lead_id) {
       const existingActive = reunioes.find(
-        re => re.lead_id === r.lead_id && !re.realizada
+        re => re.lead_id === r.lead_id && !re.realizada && re.tipo !== 'retorno'
       );
       if (existingActive && !replaceExisting) {
-        // Retorna a reuniao existente pra o componente decidir
         throw new Error('REUNIAO_ATIVA_EXISTENTE');
       }
       if (existingActive && replaceExisting) {
-        // Delete Google Calendar event if exists
         const calEventId = (existingActive as any).calendar_event_id;
         if (calEventId) {
           const organizer = existingActive.sdr_id || existingActive.closer_id;
@@ -404,18 +404,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             deleteCalendarEvent(organizer, calEventId).catch(e => console.error('Failed to delete calendar event:', e));
           }
         }
-        // Marca a anterior como realizada (cancelada) antes de criar nova
         await supabase.from('reunioes').update({ realizada: true, show: false, notas: 'Substituída por nova reunião' }).eq('id', existingActive.id);
         setReunioes(prev => prev.map(re => re.id === existingActive.id ? { ...re, realizada: true, show: false, notas: 'Substituída por nova reunião' } : re));
       }
     }
 
-    const { data, error } = await supabase.from('reunioes').insert(r).select('*, sdr:team_members!sdr_id(*), closer:team_members!closer_id(*)').single();
+    const { data, error } = await supabase.from('reunioes').insert({ ...r, tipo }).select('*, sdr:team_members!sdr_id(*), closer:team_members!closer_id(*)').single();
     if (error) { toast.error(error.message); return; }
     if (data) setReunioes(prev => [data, ...prev]);
 
-    // AUTOMACAO: agendar reuniao → lead muda pra reuniao_marcada
-    if (r.lead_id) {
+    // AUTOMACAO: agendar reuniao → lead muda pra reuniao_marcada (SÓ primeira_call)
+    if (tipo === 'primeira_call' && r.lead_id) {
       await supabase.from('leads').update({ status: 'reuniao_marcada' }).eq('id', r.lead_id);
       setLeads(prev => prev.map(l => l.id === r.lead_id ? { ...l, status: 'reuniao_marcada' } : l));
     }

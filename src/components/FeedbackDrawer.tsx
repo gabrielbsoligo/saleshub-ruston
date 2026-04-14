@@ -265,6 +265,8 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             : `${form.data_retorno}T10:00:00-03:00`;
           const lead = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
           await addReuniao({
+            tipo: 'retorno',
+            deal_id: deal.id,
             lead_id: deal.lead_id || undefined,
             closer_id: form.closer_id || deal.closer_id || undefined,
             sdr_id: deal.sdr_id || undefined,
@@ -274,7 +276,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             data_agendamento: new Date().toISOString().split('T')[0],
             data_reuniao: dataRetornoISO,
             lead_email: lead?.email || undefined,
-          } as any, true);
+          } as any);
           toast.success('Reunião de retorno agendada!', { icon: '📅' });
         } catch (e: any) {
           toast.error('Erro ao agendar reunião: ' + e.message);

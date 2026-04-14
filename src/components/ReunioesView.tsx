@@ -123,6 +123,7 @@ export const ReunioesView: React.FC = () => {
   const myId = useAppStore().currentUser?.id || '';
   const [filterCloser, setFilterCloser] = useState('');
   const [filterSdr, setFilterSdr] = useState('');
+  const [filterTipo, setFilterTipo] = useState<'' | 'primeira_call' | 'retorno'>('');
 
   // Closer vê só as próprias reuniões por padrão
   React.useEffect(() => {
@@ -142,22 +143,25 @@ export const ReunioesView: React.FC = () => {
     let items = reunioes.filter(r => !r.realizada);
     if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
     if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
+    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
     return items;
-  }, [reunioes, filterCloser, filterSdr]);
+  }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
   const noshows = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === false);
     if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
     if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
+    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
     return items;
-  }, [reunioes, filterCloser, filterSdr]);
+  }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
   const realizadas = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === true);
     if (filterCloser) items = items.filter(r => r.closer_id === filterCloser);
     if (filterSdr) items = items.filter(r => r.sdr_id === filterSdr);
+    if (filterTipo) items = items.filter(r => (r.tipo || 'primeira_call') === filterTipo);
     return items;
-  }, [reunioes, filterCloser, filterSdr]);
+  }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
   const proximasAgrupadas = useMemo(() => groupByDay(proximas), [proximas]);
 
@@ -316,6 +320,7 @@ export const ReunioesView: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="text-sm text-white font-medium truncate">{r.empresa}</span>
               {nome_contato && <span className="text-xs text-[var(--color-v4-text-muted)]">({nome_contato})</span>}
+              {(r.tipo || 'primeira_call') === 'retorno' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400">🔄 Retorno</span>}
               {rescheduled && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-400">Reagendado</span>}
             </div>
             {faturamento && <span className="text-[10px] text-[var(--color-v4-text-muted)]">{faturamento}</span>}
@@ -383,6 +388,12 @@ export const ReunioesView: React.FC = () => {
           className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
           <option value="">Todos os SDRs</option>
           {sdrs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <select value={filterTipo} onChange={e => setFilterTipo(e.target.value as any)}
+          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm">
+          <option value="">Todas as Reuniões</option>
+          <option value="primeira_call">🟢 1ª Call</option>
+          <option value="retorno">🔄 Retorno</option>
         </select>
       </div>
 

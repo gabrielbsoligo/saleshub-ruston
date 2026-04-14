@@ -178,6 +178,8 @@ export interface Deal {
   updated_at: string;
 }
 
+export type TipoReuniao = 'primeira_call' | 'retorno';
+
 export interface Reuniao {
   id: string;
   lead_id?: string;
@@ -191,6 +193,7 @@ export interface Reuniao {
   nome_contato?: string;
   canal?: string;
   kommo_id?: string;
+  tipo: TipoReuniao;
   data_agendamento?: string;
   data_reuniao?: string;
   realizada: boolean;
