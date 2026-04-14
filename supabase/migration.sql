@@ -12,6 +12,11 @@ CREATE TABLE team_members (
   active BOOLEAN DEFAULT true,
   avatar_url TEXT,
   auth_user_id UUID REFERENCES auth.users(id),
+  google_access_token TEXT,
+  google_refresh_token TEXT,
+  google_token_expiry TIMESTAMPTZ,
+  kommo_user_id INTEGER,
+  ramal_4com TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -69,10 +74,16 @@ CREATE TABLE reunioes (
   lead_id UUID REFERENCES leads(id),
   deal_id UUID REFERENCES deals(id),
   sdr_id UUID REFERENCES team_members(id),
+  closer_id UUID REFERENCES team_members(id),
+  closer_confirmado_id UUID REFERENCES team_members(id),
   empresa TEXT,
   nome_contato TEXT,
   canal TEXT,
   kommo_id TEXT,
+  calendar_event_id TEXT,
+  meet_link TEXT,
+  lead_email TEXT,
+  participantes_extras JSONB DEFAULT '[]'::jsonb,
   data_agendamento DATE,
   data_reuniao TIMESTAMPTZ,
   realizada BOOLEAN DEFAULT false,
