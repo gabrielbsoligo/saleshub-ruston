@@ -100,7 +100,7 @@ export function gerarMensagemWhatsApp(input: WhatsAppMessageInput): string {
     dadosBlock,
     ``,
     `*Observação:*`,
-    observacao || '(sem observação)',
+    `\`${observacao || '(sem observação)'}\``,
     ``,
     `Por favor, atualize/responda. 🙏`,
   ].join('\n');
@@ -129,7 +129,8 @@ export function gerarMensagemConsolidada(sessaoNome: string, items: ConsolidadoI
   const lines = items.map((it, i) => {
     const sev = it.severidade ? ` ${SEV_EMOJI[it.severidade] || ''}` : '';
     const link = it.kommoLink ? `\n   Kommo: ${it.kommoLink}` : '';
-    return `*${i + 1}. ${it.empresa}*${sev}\n   Resp: ${it.responsavel}\n   ${it.observacao}${link}`;
+    const obs = it.observacao ? `\`${it.observacao}\`` : '`(sem observação)`';
+    return `*${i + 1}. ${it.empresa}*${sev}\n   Resp: ${it.responsavel}\n   ${obs}${link}`;
   });
 
   return [
