@@ -16,7 +16,7 @@ import toast from "react-hot-toast";
 type AIStatus = 'idle' | 'fetching' | 'paste' | 'analyzing' | 'done' | 'error';
 
 export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ deal, onClose }) => {
-  const { updateDeal, updateReuniao, members, reunioes, addReuniao, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
+  const { updateDeal, members, reunioes, addReuniao, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
 
   // Buscar reuniao associada a este deal.
@@ -42,12 +42,9 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const [contractParsing, setContractParsing] = useState(false);
 
   const [form, setForm] = useState({
-    // Fonte-da-verdade pro closer: reunião confirmada → reunião agendada → deal (fallback).
-    // Isso evita manter closer antigo quando mudaram no "realizar reunião".
-    closer_id: reuniaoAssociada?.closer_confirmado_id
-      || reuniaoAssociada?.closer_id
-      || deal.closer_id
-      || '',
+    // Closer do deal = ownership atual. Deal foi criado com o closer_confirmado
+    // da reunião no momento da criação (snapshot), depois fica independente.
+    closer_id: deal.closer_id || '',
     temperatura: '' as Temperatura | '',
     bant: 0,
     proximo_passo: '' as DealStatus | '',
@@ -237,13 +234,6 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         observacoes: form.resumo_call || form.observacoes || undefined,
         data_fechamento: isGanho ? new Date().toISOString().split('T')[0] : undefined,
       };
-
-      // Primeiro sincroniza a reunião (fonte-da-verdade do closer real).
-      // O trigger SQL propaga closer_confirmado pro deal, mas também passamos
-      // no updateDeal pra refletir imediato na UI sem esperar refetch.
-      if (reuniaoAssociada && form.closer_id && form.closer_id !== reuniaoAssociada.closer_confirmado_id) {
-        await updateReuniao(reuniaoAssociada.id, { closer_confirmado_id: form.closer_id });
-      }
 
       await updateDeal(deal.id, updates);
 

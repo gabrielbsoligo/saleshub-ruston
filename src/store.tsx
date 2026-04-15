@@ -489,23 +489,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const reuniao = reunioes.find(r => r.id === id);
       setReunioes(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
 
-      // Sync local: se closer/sdr confirmado mudou, replica nos deals que apontam
-      // pra essa reunião. O trigger SQL já faz no banco, aqui só atualiza UI.
-      const closerChanged = updates.closer_confirmado_id !== undefined
-        && updates.closer_confirmado_id !== reuniao?.closer_confirmado_id;
-      const sdrChanged = (updates as any).sdr_confirmado_id !== undefined
-        && (updates as any).sdr_confirmado_id !== (reuniao as any)?.sdr_confirmado_id;
-      if (closerChanged || sdrChanged) {
-        setDeals(prev => prev.map(d => {
-          if (d.reuniao_id !== id) return d;
-          return {
-            ...d,
-            closer_id: updates.closer_confirmado_id ?? d.closer_id,
-            sdr_id: (updates as any).sdr_confirmado_id ?? d.sdr_id,
-          };
-        }));
-      }
-
       // AUTOMACAO: reuniao realizada (show=true) → cria deal automaticamente
       if (updates.realizada && updates.show && reuniao) {
         if (reuniao.lead_id) {

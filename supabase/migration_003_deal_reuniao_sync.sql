@@ -1,16 +1,16 @@
 -- =============================================================
--- Migration 003 — Sincronização Deal ↔ Reunião
+-- Migration 003 — Snapshot Deal ↔ Reunião + rastreio histórico
 -- =============================================================
 -- Objetivo: resolver bug onde deal.closer_id ficava com o closer
 -- original (agendado) em vez do closer_confirmado (quem realmente
--- fez a call). Estabelece a Reunião como fonte-da-verdade.
+-- fez a call). O deal herda o closer_confirmado APENAS no momento
+-- da criação (snapshot). Depois, deal.closer_id e reunião são
+-- independentes — permite reatribuição do deal sem mexer no histórico.
 --
 -- Mudanças:
--- 1. deals.reuniao_id (FK pra reunioes) — rastreia origem
+-- 1. deals.reuniao_id (FK pra reunioes) — rastreia origem (histórico)
 -- 2. reunioes.sdr_confirmado_id — simétrico ao closer_confirmado_id
--- 3. Trigger: quando reuniao.closer_confirmado_id OU sdr_confirmado_id
---    mudam, propaga pro deal associado via reuniao_id
--- 4. Backfill: deals existentes recebem reuniao_id a partir de
+-- 3. Backfill: deals existentes recebem reuniao_id a partir de
 --    reunioes.deal_id (relação inversa que já existia)
 -- =============================================================
 
@@ -32,34 +32,12 @@ FROM reunioes r
 WHERE r.deal_id = d.id
   AND d.reuniao_id IS NULL;
 
--- 4. Trigger: propagar closer/sdr confirmados pro deal associado
-CREATE OR REPLACE FUNCTION propagate_reuniao_confirmados_to_deal()
-RETURNS TRIGGER AS $$
-BEGIN
-  -- Só propaga se algum campo "confirmado" mudou de fato
-  IF (NEW.closer_confirmado_id IS DISTINCT FROM OLD.closer_confirmado_id)
-     OR (NEW.sdr_confirmado_id IS DISTINCT FROM OLD.sdr_confirmado_id) THEN
+-- NOTA: Não há trigger de propagação perpétua. O snapshot é feito
+-- apenas no momento da criação do deal (via store.updateReuniao no
+-- front), permitindo que deal.closer_id seja reatribuído livremente
+-- depois sem ser sobrescrito por edições futuras na reunião.
 
-    -- Atualiza deals que apontam pra esta reunião
-    UPDATE deals
-    SET
-      closer_id = COALESCE(NEW.closer_confirmado_id, NEW.closer_id, closer_id),
-      sdr_id = COALESCE(NEW.sdr_confirmado_id, NEW.sdr_id, sdr_id),
-      updated_at = now()
-    WHERE reuniao_id = NEW.id;
-
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_propagate_reuniao_confirmados ON reunioes;
-CREATE TRIGGER trg_propagate_reuniao_confirmados
-  AFTER UPDATE ON reunioes
-  FOR EACH ROW
-  EXECUTE FUNCTION propagate_reuniao_confirmados_to_deal();
-
--- 5. RLS: atualizar policy de reunioes pra incluir sdr_confirmado_id
+-- 4. RLS: atualizar policy de reunioes pra incluir sdr_confirmado_id
 -- (o gestor e SDR agendado continuam vendo; agora sdr_confirmado também)
 DROP POLICY IF EXISTS "reunioes_select" ON reunioes;
 CREATE POLICY "reunioes_select" ON reunioes FOR SELECT USING (
@@ -79,7 +57,7 @@ CREATE POLICY "reunioes_all" ON reunioes FOR ALL USING (
   OR closer_confirmado_id = get_member_id()
 );
 
--- 6. RLS de post_meeting_automations — incluir sdr_confirmado_id
+-- 5. RLS de post_meeting_automations — incluir sdr_confirmado_id
 DROP POLICY IF EXISTS "post_meeting_automations_select" ON post_meeting_automations;
 CREATE POLICY "post_meeting_automations_select" ON post_meeting_automations FOR SELECT USING (
   get_user_role() = 'gestor' OR EXISTS (
