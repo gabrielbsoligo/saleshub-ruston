@@ -135,6 +135,7 @@ export interface Deal {
   id: string;
   lead_id?: string;
   lead?: Lead;
+  reuniao_id?: string; // FK pra reuniao que originou este deal (fonte-da-verdade p/ closer/sdr)
   empresa: string;
   kommo_id?: string;
   kommo_link?: string;
@@ -189,6 +190,7 @@ export interface Reuniao {
   closer_id?: string;
   closer?: TeamMember;
   closer_confirmado_id?: string;
+  sdr_confirmado_id?: string;
   empresa?: string;
   nome_contato?: string;
   canal?: string;

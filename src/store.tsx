@@ -489,6 +489,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const reuniao = reunioes.find(r => r.id === id);
       setReunioes(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
 
+      // Sync local: se closer/sdr confirmado mudou, replica nos deals que apontam
+      // pra essa reunião. O trigger SQL já faz no banco, aqui só atualiza UI.
+      const closerChanged = updates.closer_confirmado_id !== undefined
+        && updates.closer_confirmado_id !== reuniao?.closer_confirmado_id;
+      const sdrChanged = (updates as any).sdr_confirmado_id !== undefined
+        && (updates as any).sdr_confirmado_id !== (reuniao as any)?.sdr_confirmado_id;
+      if (closerChanged || sdrChanged) {
+        setDeals(prev => prev.map(d => {
+          if (d.reuniao_id !== id) return d;
+          return {
+            ...d,
+            closer_id: updates.closer_confirmado_id ?? d.closer_id,
+            sdr_id: (updates as any).sdr_confirmado_id ?? d.sdr_id,
+          };
+        }));
+      }
+
       // AUTOMACAO: reuniao realizada (show=true) → cria deal automaticamente
       if (updates.realizada && updates.show && reuniao) {
         if (reuniao.lead_id) {
@@ -497,11 +514,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
 
         const lead = leads.find(l => l.id === reuniao.lead_id);
-        const closerForDeal = updates.closer_confirmado_id || reuniao.closer_id;
+        // Fonte-da-verdade: reunião confirma quem REALMENTE fez a call.
+        // Prioridade: updates atuais → campos confirmados da reunião → agendados (fallback).
+        const closerForDeal = updates.closer_confirmado_id || reuniao.closer_confirmado_id || reuniao.closer_id;
+        const sdrForDeal = (updates as any).sdr_confirmado_id || reuniao.sdr_confirmado_id || reuniao.sdr_id || lead?.sdr_id;
         const dealPayload = {
           empresa: reuniao.empresa || lead?.empresa || 'Sem nome',
           lead_id: reuniao.lead_id || undefined,
-          sdr_id: reuniao.sdr_id || lead?.sdr_id || undefined,
+          reuniao_id: id, // FK pro trigger SQL propagar closer/sdr no futuro
+          sdr_id: sdrForDeal || undefined,
           closer_id: closerForDeal || undefined,
           kommo_id: reuniao.kommo_id || lead?.kommo_id || undefined,
           kommo_link: lead?.kommo_link || undefined,

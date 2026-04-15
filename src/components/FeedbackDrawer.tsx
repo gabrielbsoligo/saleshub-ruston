@@ -16,13 +16,17 @@ import toast from "react-hot-toast";
 type AIStatus = 'idle' | 'fetching' | 'paste' | 'analyzing' | 'done' | 'error';
 
 export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ deal, onClose }) => {
-  const { updateDeal, members, reunioes, addReuniao, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
+  const { updateDeal, updateReuniao, members, reunioes, addReuniao, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
 
-  // Buscar reuniao associada a este deal (show=true, mais recente)
-  const reuniaoAssociada = reunioes
-    .filter(r => r.lead_id === deal.lead_id && r.realizada && r.show)
-    .sort((a, b) => new Date(b.data_reuniao || 0).getTime() - new Date(a.data_reuniao || 0).getTime())[0] || null;
+  // Buscar reuniao associada a este deal.
+  // Prioridade: FK direta (deal.reuniao_id) > lookup por lead_id + realizada.
+  const reuniaoAssociada = (deal.reuniao_id
+    ? reunioes.find(r => r.id === deal.reuniao_id) || null
+    : reunioes
+        .filter(r => r.lead_id === deal.lead_id && r.realizada && r.show)
+        .sort((a, b) => new Date(b.data_reuniao || 0).getTime() - new Date(a.data_reuniao || 0).getTime())[0]
+    ) || null;
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
@@ -38,7 +42,12 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const [contractParsing, setContractParsing] = useState(false);
 
   const [form, setForm] = useState({
-    closer_id: deal.closer_id || '',
+    // Fonte-da-verdade pro closer: reunião confirmada → reunião agendada → deal (fallback).
+    // Isso evita manter closer antigo quando mudaram no "realizar reunião".
+    closer_id: reuniaoAssociada?.closer_confirmado_id
+      || reuniaoAssociada?.closer_id
+      || deal.closer_id
+      || '',
     temperatura: '' as Temperatura | '',
     bant: 0,
     proximo_passo: '' as DealStatus | '',
@@ -228,6 +237,13 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         observacoes: form.resumo_call || form.observacoes || undefined,
         data_fechamento: isGanho ? new Date().toISOString().split('T')[0] : undefined,
       };
+
+      // Primeiro sincroniza a reunião (fonte-da-verdade do closer real).
+      // O trigger SQL propaga closer_confirmado pro deal, mas também passamos
+      // no updateDeal pra refletir imediato na UI sem esperar refetch.
+      if (reuniaoAssociada && form.closer_id && form.closer_id !== reuniaoAssociada.closer_confirmado_id) {
+        await updateReuniao(reuniaoAssociada.id, { closer_confirmado_id: form.closer_id });
+      }
 
       await updateDeal(deal.id, updates);
 
