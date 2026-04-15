@@ -33,23 +33,8 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [registros, setRegistros] = useState<AuditoriaRegistro[]>([]);
   const [posicao, setPosicao] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [authReady, setAuthReady] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
-
-  // Restore auth session from URL hash
-  useEffect(() => {
-    (async () => {
-      const hash = window.location.hash.slice(1);
-      const params = new URLSearchParams(hash);
-      const at = params.get('at');
-      const rt = params.get('rt');
-      if (at && rt) {
-        await supabase.auth.setSession({ access_token: at, refresh_token: rt });
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      }
-      setAuthReady(true);
-    })();
-  }, []);
 
   // Form state
   const [observacao, setObservacao] = useState('');
@@ -57,23 +42,41 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
   const [motivoSkip, setMotivoSkip] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Fetch
+  // Fetch — auth já foi restaurada pelo AuditPanelBootstrap (App.tsx).
+  // Usa maybeSingle pra tratar 0 rows sem lançar PGRST116.
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
     const [{ data: s, error: e1 }, { data: r, error: e2 }] = await Promise.all([
-      supabase.from('auditoria_sessoes').select('*').eq('id', sessionId).single(),
+      supabase.from('auditoria_sessoes').select('*').eq('id', sessionId).maybeSingle(),
       supabase.from('auditoria_registros').select('*').eq('sessao_id', sessionId).order('posicao', { ascending: true }),
     ]);
-    if (e1) toast.error(e1.message);
-    if (e2) toast.error(e2.message);
-    setSessao(s as AuditoriaSessao | null);
+    if (e1) {
+      setFetchError(`Erro ao carregar sessão: ${e1.message}`);
+      toast.error(e1.message);
+      setLoading(false);
+      return;
+    }
+    if (e2) {
+      setFetchError(`Erro ao carregar registros: ${e2.message}`);
+      toast.error(e2.message);
+      setLoading(false);
+      return;
+    }
+    if (!s) {
+      // Sessão não encontrada (RLS ou deletada)
+      setFetchError('Sessão não encontrada ou sem permissão. Clique em "Reabrir Kommo / reinjetar painel" no SalesHub.');
+      setLoading(false);
+      return;
+    }
+    setSessao(s as AuditoriaSessao);
     setRegistros((r as AuditoriaRegistro[]) || []);
     const idx = ((r as AuditoriaRegistro[]) || []).findIndex(reg => reg.status === 'pendente');
     setPosicao(idx >= 0 ? idx : 0);
     setLoading(false);
   }, [sessionId]);
 
-  useEffect(() => { if (authReady) fetchAll(); }, [fetchAll, authReady]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const registroAtual = registros[posicao];
 
@@ -208,7 +211,7 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     postToParent({ action: next ? 'minimize' : 'maximize' });
   };
 
-  const storeLoading = isLoadingAuth || (!currentUser && authReady);
+  const storeLoading = isLoadingAuth || !currentUser;
 
   // --- STYLES ---
   const S = {
@@ -314,10 +317,32 @@ export const AuditPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
     );
   }
 
-  if (!sessao) {
+  // --- ERROR (sessão não carregou ou RLS bloqueou) ---
+  if (fetchError || !sessao) {
     return (
-      <div style={{ ...S.root, alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ color: '#6b7280', fontSize: 12 }}>Sessao nao encontrada</div>
+      <div style={{ ...S.root, alignItems: 'center', justifyContent: 'center', padding: 16, textAlign: 'center', gap: 10 }}>
+        <div style={{ color: '#fbbf24', fontSize: 24 }}>⚠️</div>
+        <div style={{ color: '#e5e7eb', fontSize: 12, lineHeight: 1.5 }}>
+          {fetchError || 'Sessão não encontrada.'}
+        </div>
+        <button
+          onClick={() => postToParent({ action: 'need-new-tokens' })}
+          style={{
+            padding: '8px 14px', background: '#dc2626', color: '#fff',
+            border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', marginTop: 4,
+          }}
+        >
+          Pedir tokens novos
+        </button>
+        <button
+          onClick={() => fetchAll()}
+          style={{
+            padding: '6px 12px', background: '#2a3040', color: '#9ca3af',
+            border: 'none', borderRadius: 6, fontSize: 11, cursor: 'pointer',
+          }}
+        >
+          Tentar novamente
+        </button>
       </div>
     );
   }

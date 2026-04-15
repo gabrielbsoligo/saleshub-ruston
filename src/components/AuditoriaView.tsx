@@ -202,7 +202,7 @@ const BridgeSetup: React.FC<{ onBack: () => void }> = ({ onBack }) => {
         <section className="bg-[var(--color-v4-card)] p-4 rounded-lg border border-[var(--color-v4-border)]">
           <h2 className="font-medium text-white mb-3">1. Instalar Tampermonkey</h2>
           <p className="text-sm text-slate-400 mb-3">Instale <a className="text-[var(--color-v4-red)] underline" target="_blank" rel="noreferrer" href="https://www.tampermonkey.net/">Tampermonkey</a> no navegador.</p>
-          <h2 className="font-medium text-white mb-2">2. Instalar userscript <span className="text-xs text-slate-400 font-normal">v0.3.1</span></h2>
+          <h2 className="font-medium text-white mb-2">2. Instalar userscript <span className="text-xs text-slate-400 font-normal">v0.3.3</span></h2>
           <div className="flex items-center gap-2 mb-2">
             <a href={userscriptUrl} target="_blank" rel="noreferrer" className="text-sm text-[var(--color-v4-red)] underline break-all">{userscriptUrl}</a>
             <button onClick={() => { navigator.clipboard.writeText(userscriptUrl); toast.success('Copiado'); }} className="text-xs px-2 py-1 bg-[var(--color-v4-card-hover)] rounded text-white"><ClipboardCopy size={12} /></button>
@@ -332,6 +332,35 @@ const SessionRunner: React.FC<{
   const handleViewResumo = () => {
     onConcluir(sessionId);
   };
+
+  // Bridge pediu tokens novos (iframe do audit panel detectou auth expirada)
+  // Refaz refreshSession e manda start-audit novamente pro Kommo já aberto.
+  useEffect(() => {
+    async function onBridgeMessage(ev: MessageEvent) {
+      if (ev.data?.source !== 'kommo-bridge') return;
+      if (ev.data?.type !== 'need-new-tokens') return;
+      if (!kommoRef.current || kommoRef.current.closed) {
+        toast.error('Aba do Kommo fechou. Clique em "Reabrir Kommo / reinjetar painel".');
+        return;
+      }
+      const { data: refreshed, error } = await supabase.auth.refreshSession();
+      if (error || !refreshed.session) {
+        toast.error('Não foi possível renovar a sessão. Faça login de novo.');
+        return;
+      }
+      kommoRef.current.postMessage({
+        source: 'saleshub',
+        action: 'start-audit',
+        sessionId,
+        accessToken: refreshed.session.access_token,
+        refreshToken: refreshed.session.refresh_token,
+        reload: true, // força recriar iframe c/ tokens novos no hash
+      }, '*');
+      toast.success('Tokens renovados.');
+    }
+    window.addEventListener('message', onBridgeMessage);
+    return () => window.removeEventListener('message', onBridgeMessage);
+  }, [sessionId]);
 
   if (loading) return <div className="p-8 text-slate-400 flex items-center gap-2"><Loader2 size={18} className="animate-spin" /> Carregando…</div>;
   if (!sessao) return <div className="p-8 text-slate-400">Sessão não encontrada. <button onClick={onClose} className="underline">voltar</button></div>;

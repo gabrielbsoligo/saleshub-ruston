@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SalesHub Kommo Bridge
 // @namespace    https://gestao-comercial-rosy.vercel.app/
-// @version      0.3.2
+// @version      0.3.3
 // @description  Extrai dados do Kommo e injeta painel de auditoria SalesHub.
 // @author       SalesHub Ruston
 // @match        https://*.kommo.com/*
@@ -21,7 +21,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.3.2';
+  var VERSION = '0.3.3';
   var win = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
   var SALESHUB_ORIGIN = 'https://gestao-comercial-rosy.vercel.app';
   var DEFAULT_ENDPOINT = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/audit-snapshot';
@@ -255,9 +255,9 @@
     } catch (_e) { return null; }
   }
 
-  function openAuditSidebar(sessionId, accessToken, refreshToken) {
-    // Se já existe sidebar para esta sessão, não recria — apenas envia ack
-    if (sidebarEl && currentSidebarSessionId === sessionId) {
+  function openAuditSidebar(sessionId, accessToken, refreshToken, forceReload) {
+    // Se já existe sidebar para esta sessão E não foi pedido reload, apenas ack
+    if (sidebarEl && currentSidebarSessionId === sessionId && !forceReload) {
       win.console.log('[SalesHub Bridge] sidebar already open for session=' + sessionId + ', skipping');
       sendAck();
       return;
@@ -371,9 +371,9 @@
         var id = getCurrentLeadId();
         if (id) sendSnapshot(id, 'manual_command');
       }
-      // Abrir sidebar de auditoria (com tokens de auth)
+      // Abrir sidebar de auditoria (com tokens de auth). reload=true força recriar iframe c/ tokens novos.
       if (ev.data.action === 'start-audit' && ev.data.sessionId) {
-        openAuditSidebar(ev.data.sessionId, ev.data.accessToken, ev.data.refreshToken);
+        openAuditSidebar(ev.data.sessionId, ev.data.accessToken, ev.data.refreshToken, !!ev.data.reload);
       }
       // Fechar sidebar (usuario encerrou)
       if (ev.data.action === 'stop-audit') {
@@ -401,6 +401,15 @@
       }
       if (ev.data.action === 'close') {
         closeAuditSidebar(true);
+      }
+      // Iframe pede tokens novos (sessão expirou). Encaminha ao SalesHub opener.
+      if (ev.data.action === 'need-new-tokens') {
+        win.console.log('[SalesHub Bridge] iframe requested new tokens, forwarding to opener');
+        try {
+          if (win.opener && !win.opener.closed) {
+            win.opener.postMessage({ source: 'kommo-bridge', type: 'need-new-tokens' }, '*');
+          }
+        } catch (_e) { /* ignore */ }
       }
       if (ev.data.action === 'drag-start' && sidebarEl) {
         isDragging = true;

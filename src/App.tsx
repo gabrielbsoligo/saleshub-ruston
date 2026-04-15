@@ -13,8 +13,101 @@ import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
 import { AuditoriaView } from "./components/AuditoriaView";
 import { AuditPanel } from "./components/AuditPanel";
+import { supabase } from "./lib/supabase";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
+import { Loader2, AlertTriangle } from "lucide-react";
+
+// ============================================================
+// AuditPanelBootstrap — restaura auth ANTES do AppProvider
+// evita race condition com checkSession do store.
+// ============================================================
+const AuditPanelBootstrap: React.FC<{ sessionId: string }> = ({ sessionId }) => {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const hash = window.location.hash.slice(1);
+        const hashParams = new URLSearchParams(hash);
+        const at = hashParams.get('at');
+        const rt = hashParams.get('rt');
+
+        if (at && rt) {
+          // Caminho feliz — tokens vieram fresh do parent
+          const { error } = await supabase.auth.setSession({ access_token: at, refresh_token: rt });
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          if (error) {
+            // Tokens foram rejeitados (expirados?), tenta refresh
+            const { error: refreshErr } = await supabase.auth.refreshSession();
+            if (refreshErr) {
+              setErrorMsg('Os tokens enviados expiraram. Volte ao SalesHub e clique em "Reabrir Kommo / reinjetar painel".');
+              setStatus('error');
+              return;
+            }
+          }
+        } else {
+          // Sem tokens no hash — iframe remontou. Tenta sessão persistida.
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session) {
+            setErrorMsg('Sessão não encontrada. Volte ao SalesHub e clique em "Reabrir Kommo / reinjetar painel".');
+            setStatus('error');
+            return;
+          }
+          // Faz refresh pra garantir token vivo
+          const { error: refreshErr } = await supabase.auth.refreshSession();
+          if (refreshErr) {
+            setErrorMsg('Sua sessão expirou. Clique em "Reabrir Kommo / reinjetar painel" no SalesHub.');
+            setStatus('error');
+            return;
+          }
+        }
+        setStatus('ready');
+      } catch (err: any) {
+        setErrorMsg(err?.message || 'Erro ao restaurar sessão.');
+        setStatus('error');
+      }
+    })();
+  }, []);
+
+  const requestReinject = () => {
+    // Avisa o parent (Kommo bridge) que precisa de tokens novos
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ source: 'saleshub-audit-panel', action: 'need-new-tokens' }, '*');
+    }
+  };
+
+  if (status === 'loading') {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#0a0e1a] text-slate-400 gap-2 text-sm">
+        <Loader2 size={18} className="animate-spin" /> Autenticando…
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#0a0e1a] text-white gap-4 p-6 text-center">
+        <AlertTriangle size={36} className="text-yellow-400" />
+        <div className="text-sm text-slate-300 max-w-xs">{errorMsg}</div>
+        <button
+          onClick={requestReinject}
+          className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-sm"
+        >
+          Pedir tokens novos
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <AppProvider>
+      <Toaster position="top-right" />
+      <AuditPanel sessionId={sessionId} />
+    </AppProvider>
+  );
+};
 
 const MainApp: React.FC = () => {
   const { currentUser, isLoadingAuth, addLead } = useAppStore();
@@ -144,12 +237,7 @@ export default function App() {
   const auditPanelSession = params.get('audit_panel') === '1' ? params.get('session') : null;
 
   if (auditPanelSession) {
-    return (
-      <AppProvider>
-        <Toaster position="top-right" />
-        <AuditPanel sessionId={auditPanelSession} />
-      </AppProvider>
-    );
+    return <AuditPanelBootstrap sessionId={auditPanelSession} />;
   }
 
   return (
