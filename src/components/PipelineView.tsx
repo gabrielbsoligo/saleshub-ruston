@@ -188,6 +188,7 @@ export const PipelineView: React.FC = () => {
         closer_id: deal.closer_id || '',
         temperatura: deal.temperatura || '',
         bant: deal.bant || 0,
+        kommo_id: deal.kommo_id || '',
       });
       if (!validation.valid) {
         setMissingFields(validation.missing);

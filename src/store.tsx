@@ -4,6 +4,7 @@ import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, Performance
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
 import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
+import { emitDealGanhoWebhook } from './lib/n8nWebhook';
 import toast from 'react-hot-toast';
 
 interface AppState {
@@ -359,15 +360,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (comissaoRecords.length > 0) {
         await supabase.from('comissoes_registros').insert(comissaoRecords);
       }
+
+      // Dispara webhook n8n no formato Kommo
+      await emitDealGanhoWebhook(merged, deal?.status);
     }
 
     toast.success('Negociação atualizada!');
   };
 
   const moveDeal = async (id: string, newStatus: DealStatus) => {
+    const prevDeal = deals.find(d => d.id === id);
+    const wasNotGanho = prevDeal && prevDeal.status !== 'contrato_assinado';
+    const isNowGanho = newStatus === 'contrato_assinado';
+
     const { error } = await supabase.from('deals').update({ status: newStatus }).eq('id', id);
     if (error) { toast.error(error.message); return; }
     setDeals(prev => prev.map(d => d.id === id ? { ...d, status: newStatus } : d));
+
+    // Dispara webhook n8n quando deal vai pra ganho via drag&drop do pipeline
+    if (wasNotGanho && isNowGanho && prevDeal) {
+      await emitDealGanhoWebhook({ ...prevDeal, status: newStatus }, prevDeal.status);
+    }
   };
 
   const deleteDeal = async (id: string) => {

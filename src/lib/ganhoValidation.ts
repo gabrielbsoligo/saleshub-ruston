@@ -43,6 +43,7 @@ export function validateGanho(form: {
   closer_id?: string;
   temperatura?: string;
   bant?: number;
+  kommo_id?: string;
 }): GanhoValidationResult {
   const missing: string[] = [];
 
@@ -75,6 +76,11 @@ export function validateGanho(form: {
   if (!form.closer_id) missing.push('Closer responsável');
   if (!form.temperatura) missing.push('Temperatura');
   if (!form.bant || form.bant < 1) missing.push('BANT');
+
+  // Kommo ID obrigatório — necessário pro webhook de integração n8n
+  if (!form.kommo_id || !String(form.kommo_id).trim()) {
+    missing.push('Kommo ID (link ou ID do Kommo)');
+  }
 
   return { valid: missing.length === 0, missing };
 }

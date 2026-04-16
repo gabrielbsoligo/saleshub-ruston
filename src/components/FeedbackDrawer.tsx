@@ -202,7 +202,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     setIsProcessing(true);
     try {
       if (isGanho) {
-        const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant });
+        const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant, kommo_id: deal.kommo_id });
         if (!result.valid) {
           setMissingFields(result.missing);
           return;

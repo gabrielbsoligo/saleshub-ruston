@@ -64,7 +64,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
     try {
       // Validate ganho
       if (form.status === 'contrato_assinado') {
-        const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant });
+        const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant, kommo_id: form.kommo_id });
         if (!result.valid) {
           setMissingFields(result.missing);
           return;
