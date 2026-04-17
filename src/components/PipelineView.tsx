@@ -11,6 +11,12 @@ import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
+import {
+  usePipelineColumns,
+  ColumnsSettingsModal,
+  ColumnsSettingsButton,
+  type TableSortField as ColTableSortField,
+} from "./PipelineTableColumns";
 
 // Nova ordem do kanban
 const PIPELINE_STAGES: DealStatus[] = ['dar_feedback', 'follow_longo', 'negociacao', 'contrato_na_rua', 'contrato_assinado', 'perdido'];
@@ -98,6 +104,8 @@ export const PipelineView: React.FC = () => {
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [view, setView] = useState<'kanban' | 'table'>('kanban');
+  const [showColumnsModal, setShowColumnsModal] = useState(false);
+  const { config: columnsConfig, visibleColumns, setConfig: setColumnsConfig, resetDefaults: resetColumns } = usePipelineColumns();
   const [filterCloser, setFilterCloser] = useState<string[]>([]);
   const [filterSdr, setFilterSdr] = useState<string[]>([]);
   const [filterTemp, setFilterTemp] = useState<string[]>([]);
@@ -366,81 +374,67 @@ export const PipelineView: React.FC = () => {
 
       {/* TABLE VIEW */}
       {view === 'table' && (
-        <div className="flex-1 overflow-auto rounded-xl border border-[var(--color-v4-border)]">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--color-v4-card)] sticky top-0">
-              <tr className="text-left text-[var(--color-v4-text-muted)]">
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleTableSort('empresa')}>
-                  <span className="flex items-center gap-1">Empresa <TableSortIcon field="empresa" /></span>
-                </th>
-                <th className="px-4 py-3 font-medium">Produtos</th>
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleTableSort('status')}>
-                  <span className="flex items-center gap-1">Etapa <TableSortIcon field="status" /></span>
-                </th>
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleTableSort('temperatura')}>
-                  <span className="flex items-center gap-1">Temp. <TableSortIcon field="temperatura" /></span>
-                </th>
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none text-right" onClick={() => handleTableSort('valor_mrr')}>
-                  <span className="flex items-center gap-1 justify-end">MRR <TableSortIcon field="valor_mrr" /></span>
-                </th>
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none text-right" onClick={() => handleTableSort('valor_ot')}>
-                  <span className="flex items-center gap-1 justify-end">OT <TableSortIcon field="valor_ot" /></span>
-                </th>
-                <th className="px-4 py-3 font-medium">Closer</th>
-                <th className="px-4 py-3 font-medium">SDR</th>
-                <th className="px-4 py-3 font-medium cursor-pointer hover:text-white select-none" onClick={() => handleTableSort('created_at')}>
-                  <span className="flex items-center gap-1">Criado <TableSortIcon field="created_at" /></span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedForTable.slice(0, 150).map(deal => {
-                const mrr = deal.valor_recorrente || deal.valor_mrr || 0;
-                const ot = deal.valor_escopo || deal.valor_ot || 0;
-                return (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex justify-end mb-2">
+            <ColumnsSettingsButton onClick={() => setShowColumnsModal(true)} />
+          </div>
+          <div className="flex-1 overflow-auto rounded-xl border border-[var(--color-v4-border)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--color-v4-card)] sticky top-0">
+                <tr className="text-left text-[var(--color-v4-text-muted)]">
+                  {visibleColumns.map(col => {
+                    const isSortable = !!col.sortField;
+                    const sortField = col.sortField as ColTableSortField | undefined;
+                    return (
+                      <th key={col.id}
+                          onClick={isSortable && sortField ? () => handleTableSort(sortField as TableSortField) : undefined}
+                          className={cn(
+                            'px-4 py-3 font-medium',
+                            col.align === 'right' && 'text-right',
+                            isSortable && 'cursor-pointer hover:text-white select-none',
+                          )}>
+                        <span className={cn('flex items-center gap-1', col.align === 'right' && 'justify-end')}>
+                          {col.label}
+                          {isSortable && sortField && <TableSortIcon field={sortField as TableSortField} />}
+                        </span>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedForTable.slice(0, 150).map(deal => (
                   <tr key={deal.id} onClick={() => setSelectedDeal(deal)}
-                    className="border-t border-[var(--color-v4-border)] hover:bg-[var(--color-v4-card-hover)] cursor-pointer transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white font-medium">{deal.empresa}</span>
-                        {deal.kommo_link && <a href={deal.kommo_link} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} className="text-[var(--color-v4-text-muted)] hover:text-white"><ExternalLink size={11} /></a>}
-                        {deal.bant === 4 && <span className="text-[9px] px-1 py-0.5 rounded bg-purple-500/15 text-purple-400 font-semibold">BANT 4</span>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1 max-w-[200px]">
-                        {(deal.produtos_mrr || []).map(p => <span key={p} className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">{p}</span>)}
-                        {(deal.produtos_ot || []).map(p => <span key={p} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">{p}</span>)}
-                        {deal.produto && !(deal.produtos_mrr?.length || deal.produtos_ot?.length) && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)]">{deal.produto}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cn("text-xs px-2 py-1 rounded", STAGE_BG[deal.status])}>{DEAL_STATUS_LABELS[deal.status]}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      {deal.temperatura ? (
-                        <span className={cn("text-xs px-2 py-0.5 rounded", TEMP_COLORS[deal.temperatura])}>{TEMPERATURA_LABELS[deal.temperatura]}</span>
-                      ) : <span className="text-[var(--color-v4-text-muted)]">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {mrr > 0 ? <span className="text-white font-medium">{formatCurrency(mrr)}<span className="text-[var(--color-v4-text-muted)] text-xs">/mês</span></span> : <span className="text-[var(--color-v4-text-muted)]">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {ot > 0 ? <span className="text-white font-medium">{formatCurrency(ot)}</span> : <span className="text-[var(--color-v4-text-muted)]">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{deal.closer?.name?.split(' ')[0] || '—'}</td>
-                    <td className="px-4 py-3 text-[var(--color-v4-text-muted)]">{deal.sdr?.name?.split(' ')[0] || '—'}</td>
-                    <td className="px-4 py-3 text-xs text-[var(--color-v4-text-muted)]">
-                      {new Date(deal.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                      className="border-t border-[var(--color-v4-border)] hover:bg-[var(--color-v4-card-hover)] cursor-pointer transition-colors">
+                    {visibleColumns.map(col => (
+                      <td key={col.id} className={cn('px-4 py-3', col.align === 'right' && 'text-right')}>
+                        {col.render(deal, {
+                          formatCurrency,
+                          formatDate: (d) => d ? new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—',
+                          stageBg: STAGE_BG,
+                          tempColors: TEMP_COLORS,
+                        })}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                {filteredDeals.length === 0 && (
+                  <tr>
+                    <td colSpan={visibleColumns.length} className="px-4 py-12 text-center text-[var(--color-v4-text-muted)]">
+                      Nenhuma negociação encontrada
                     </td>
                   </tr>
-                );
-              })}
-              {filteredDeals.length === 0 && <tr><td colSpan={9} className="px-4 py-12 text-center text-[var(--color-v4-text-muted)]">Nenhuma negociação encontrada</td></tr>}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <ColumnsSettingsModal
+            open={showColumnsModal}
+            onClose={() => setShowColumnsModal(false)}
+            config={columnsConfig}
+            onChange={setColumnsConfig}
+            onReset={resetColumns}
+          />
         </div>
       )}
 
