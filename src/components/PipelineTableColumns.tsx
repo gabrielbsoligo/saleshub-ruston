@@ -15,17 +15,30 @@ import { cn } from './Layout';
 const STORAGE_KEY = 'pipeline_table_columns_v1';
 
 // ---------- tipos ----------
-export type TableSortField =
-  | 'empresa' | 'status' | 'temperatura' | 'valor_mrr' | 'valor_ot' | 'created_at';
+// Sort field agora eh string (id da coluna) - sort engine generico
+export type TableSortField = string;
+
+// Valor a ser usado pra ordenar. Retorna numero, string ou null (empurra pro final).
+export type SortValue = number | string | null | undefined;
 
 export interface ColumnDef {
   id: string;
   label: string;
-  sortField?: TableSortField;
+  /** Se fornecido, coluna fica ordenavel. Retorna valor comparavel. */
+  sortValue?: (deal: Deal) => SortValue;
   align?: 'left' | 'right';
   defaultVisible: boolean;
   render: (deal: Deal, helpers: ColumnHelpers) => React.ReactNode;
 }
+
+// ---------- orders ----------
+const STATUS_ORDER: Record<string, number> = {
+  dar_feedback: 0, follow_longo: 1, negociacao: 2, contrato_na_rua: 3, contrato_assinado: 4, perdido: 5,
+};
+const TEMP_ORDER: Record<string, number> = { quente: 0, morno: 1, frio: 2 };
+const TIER_ORDER: Record<string, number> = { tiny: 0, small: 1, medium: 2, large: 3, enterprise: 4 };
+
+const dateMs = (d?: string | null) => d ? new Date(d).getTime() : NaN;
 
 export interface ColumnHelpers {
   formatCurrency: (n: number) => string;
@@ -40,7 +53,8 @@ const muted = <span className="text-[var(--color-v4-text-muted)]">—</span>;
 // ---------- catálogo de colunas ----------
 export const ALL_COLUMNS: ColumnDef[] = [
   {
-    id: 'empresa', label: 'Empresa', sortField: 'empresa', defaultVisible: true,
+    id: 'empresa', label: 'Empresa', defaultVisible: true,
+    sortValue: (d) => d.empresa.toLowerCase(),
     render: (deal) => (
       <div className="flex items-center gap-2">
         <span className="text-white font-medium">{deal.empresa}</span>
@@ -74,7 +88,8 @@ export const ALL_COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'status', label: 'Etapa', sortField: 'status', defaultVisible: true,
+    id: 'status', label: 'Etapa', defaultVisible: true,
+    sortValue: (d) => STATUS_ORDER[d.status] ?? 99,
     render: (deal, h) => (
       <span className={cn('text-xs px-2 py-1 rounded', h.stageBg[deal.status])}>
         {DEAL_STATUS_LABELS[deal.status]}
@@ -82,13 +97,15 @@ export const ALL_COLUMNS: ColumnDef[] = [
     ),
   },
   {
-    id: 'temperatura', label: 'Temp.', sortField: 'temperatura', defaultVisible: true,
+    id: 'temperatura', label: 'Temp.', defaultVisible: true,
+    sortValue: (d) => TEMP_ORDER[d.temperatura || ''] ?? 99,
     render: (deal, h) => deal.temperatura
       ? <span className={cn('text-xs px-2 py-0.5 rounded', h.tempColors[deal.temperatura])}>{TEMPERATURA_LABELS[deal.temperatura]}</span>
       : muted,
   },
   {
-    id: 'valor_mrr', label: 'MRR', sortField: 'valor_mrr', align: 'right', defaultVisible: true,
+    id: 'valor_mrr', label: 'MRR', align: 'right', defaultVisible: true,
+    sortValue: (d) => d.valor_recorrente || d.valor_mrr || 0,
     render: (deal, h) => {
       const mrr = deal.valor_recorrente || deal.valor_mrr || 0;
       return mrr > 0
@@ -97,7 +114,8 @@ export const ALL_COLUMNS: ColumnDef[] = [
     },
   },
   {
-    id: 'valor_ot', label: 'OT', sortField: 'valor_ot', align: 'right', defaultVisible: true,
+    id: 'valor_ot', label: 'OT', align: 'right', defaultVisible: true,
+    sortValue: (d) => d.valor_escopo || d.valor_ot || 0,
     render: (deal, h) => {
       const ot = deal.valor_escopo || deal.valor_ot || 0;
       return ot > 0
@@ -107,54 +125,63 @@ export const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'closer', label: 'Closer', defaultVisible: true,
+    sortValue: (d) => (d.closer?.name || '').toLowerCase(),
     render: (deal) => (
       <span className="text-[var(--color-v4-text-muted)]">{deal.closer?.name?.split(' ')[0] || '—'}</span>
     ),
   },
   {
     id: 'sdr', label: 'SDR', defaultVisible: true,
+    sortValue: (d) => (d.sdr?.name || '').toLowerCase(),
     render: (deal) => (
       <span className="text-[var(--color-v4-text-muted)]">{deal.sdr?.name?.split(' ')[0] || '—'}</span>
     ),
   },
   {
-    id: 'created_at', label: 'Criado', sortField: 'created_at', defaultVisible: true,
+    id: 'created_at', label: 'Criado', defaultVisible: true,
+    sortValue: (d) => dateMs(d.created_at),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.created_at)}</span>,
   },
 
   // ---------- colunas OPCIONAIS (default: oculto) ----------
   {
     id: 'bant', label: 'BANT', align: 'right', defaultVisible: false,
+    sortValue: (d) => d.bant ?? null,
     render: (deal) => deal.bant
       ? <span className="text-white">{deal.bant}</span>
       : muted,
   },
   {
     id: 'tier', label: 'Tier', defaultVisible: false,
+    sortValue: (d) => d.tier ? TIER_ORDER[d.tier] ?? 99 : null,
     render: (deal) => deal.tier
       ? <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400">{deal.tier}</span>
       : muted,
   },
   {
     id: 'origem', label: 'Origem', defaultVisible: false,
+    sortValue: (d) => (d.origem || '').toLowerCase() || null,
     render: (deal) => deal.origem
       ? <span className="text-[var(--color-v4-text-muted)] text-xs">{deal.origem}</span>
       : muted,
   },
   {
     id: 'kommo_id', label: 'Kommo ID', defaultVisible: false,
+    sortValue: (d) => d.kommo_id ? Number(d.kommo_id) || d.kommo_id : null,
     render: (deal) => deal.kommo_id
       ? <span className="text-[var(--color-v4-text-muted)] text-xs font-mono">{deal.kommo_id}</span>
       : muted,
   },
   {
     id: 'curva_dias', label: 'Curva (dias)', align: 'right', defaultVisible: false,
+    sortValue: (d) => typeof d.curva_dias === 'number' ? d.curva_dias : null,
     render: (deal) => typeof deal.curva_dias === 'number'
       ? <span className="text-white">{deal.curva_dias}</span>
       : muted,
   },
   {
     id: 'motivo_perda', label: 'Motivo perda', defaultVisible: false,
+    sortValue: (d) => (d.motivo_perda || '').toLowerCase() || null,
     render: (deal) => deal.motivo_perda
       ? <span className="text-xs text-red-400">{deal.motivo_perda}</span>
       : muted,
@@ -163,34 +190,42 @@ export const ALL_COLUMNS: ColumnDef[] = [
   // datas
   {
     id: 'data_call', label: 'Data Call', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_call),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_call)}</span>,
   },
   {
     id: 'data_fechamento', label: 'Fechamento', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_fechamento),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_fechamento)}</span>,
   },
   {
     id: 'data_primeiro_pagamento', label: '1º Pgto', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_primeiro_pagamento),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_primeiro_pagamento)}</span>,
   },
   {
     id: 'data_retorno', label: 'Retorno', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_retorno),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_retorno)}</span>,
   },
   {
     id: 'data_inicio_escopo', label: 'Início Escopo', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_inicio_escopo),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_inicio_escopo)}</span>,
   },
   {
     id: 'data_pgto_escopo', label: 'Pgto Escopo', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_pgto_escopo),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_pgto_escopo)}</span>,
   },
   {
     id: 'data_inicio_recorrente', label: 'Início Recor.', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_inicio_recorrente),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_inicio_recorrente)}</span>,
   },
   {
     id: 'data_pgto_recorrente', label: 'Pgto Recor.', defaultVisible: false,
+    sortValue: (d) => dateMs(d.data_pgto_recorrente),
     render: (deal, h) => <span className="text-xs text-[var(--color-v4-text-muted)]">{h.formatDate(deal.data_pgto_recorrente)}</span>,
   },
 
@@ -216,6 +251,38 @@ export const ALL_COLUMNS: ColumnDef[] = [
       : muted,
   },
 ];
+
+// ---------- sort engine generico ----------
+/**
+ * Ordena deals por um sortValue generico (numero ou string).
+ * Valores null/undefined/NaN vao pro fim (independente da direcao).
+ */
+export function sortDealsByColumn(
+  deals: Deal[],
+  sortValueFn: (d: Deal) => SortValue,
+  dir: 'asc' | 'desc',
+): Deal[] {
+  const isNullish = (v: SortValue): boolean =>
+    v === null || v === undefined || (typeof v === 'number' && isNaN(v));
+
+  return [...deals].sort((a, b) => {
+    const va = sortValueFn(a);
+    const vb = sortValueFn(b);
+    const nullA = isNullish(va);
+    const nullB = isNullish(vb);
+    if (nullA && nullB) return 0;
+    if (nullA) return 1;   // null sempre no fim
+    if (nullB) return -1;
+
+    let cmp = 0;
+    if (typeof va === 'number' && typeof vb === 'number') {
+      cmp = va - vb;
+    } else {
+      cmp = String(va).localeCompare(String(vb));
+    }
+    return dir === 'desc' ? -cmp : cmp;
+  });
+}
 
 // ---------- estado persistido ----------
 interface ColumnConfig {

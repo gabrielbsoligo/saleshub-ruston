@@ -15,7 +15,8 @@ import {
   usePipelineColumns,
   ColumnsSettingsModal,
   ColumnsSettingsButton,
-  type TableSortField as ColTableSortField,
+  sortDealsByColumn,
+  ALL_COLUMNS,
 } from "./PipelineTableColumns";
 
 // Nova ordem do kanban
@@ -58,13 +59,9 @@ const SORT_LABELS: Record<SortOption, string> = {
 
 const TEMP_ORDER: Record<string, number> = { quente: 0, morno: 1, frio: 2 };
 
-// Table sort
-type TableSortField = 'empresa' | 'status' | 'temperatura' | 'valor_mrr' | 'valor_ot' | 'created_at';
+// Table sort — field eh um col.id qualquer; a engine eh generica (sortDealsByColumn)
+type TableSortField = string;
 type SortDir = 'asc' | 'desc';
-
-const STATUS_ORDER: Record<string, number> = {
-  dar_feedback: 0, follow_longo: 1, negociacao: 2, contrato_na_rua: 3, contrato_assinado: 4, perdido: 5,
-};
 
 function sortDeals(deals: Deal[], sort: SortOption): Deal[] {
   if (sort === 'default') return deals;
@@ -77,21 +74,6 @@ function sortDeals(deals: Deal[], sort: SortOption): Deal[] {
       case 'temperatura': return (TEMP_ORDER[a.temperatura || ''] ?? 3) - (TEMP_ORDER[b.temperatura || ''] ?? 3);
       default: return 0;
     }
-  });
-}
-
-function sortDealsTable(deals: Deal[], field: TableSortField, dir: SortDir): Deal[] {
-  return [...deals].sort((a, b) => {
-    let cmp = 0;
-    switch (field) {
-      case 'empresa': cmp = a.empresa.localeCompare(b.empresa); break;
-      case 'status': cmp = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99); break;
-      case 'temperatura': cmp = (TEMP_ORDER[a.temperatura || ''] ?? 3) - (TEMP_ORDER[b.temperatura || ''] ?? 3); break;
-      case 'valor_mrr': cmp = (a.valor_recorrente || a.valor_mrr || 0) - (b.valor_recorrente || b.valor_mrr || 0); break;
-      case 'valor_ot': cmp = (a.valor_escopo || a.valor_ot || 0) - (b.valor_escopo || b.valor_ot || 0); break;
-      case 'created_at': cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime(); break;
-    }
-    return dir === 'desc' ? -cmp : cmp;
   });
 }
 
@@ -138,14 +120,19 @@ export const PipelineView: React.FC = () => {
     return sortDeals(result, sortBy);
   }, [deals, filterCloser, filterSdr, filterTemp, filterStatus, search, datePreset, dateFrom, dateTo, sortBy]);
 
-  const sortedForTable = useMemo(() => sortDealsTable(filteredDeals, tableSortField, tableSortDir), [filteredDeals, tableSortField, tableSortDir]);
+  const sortedForTable = useMemo(() => {
+    const col = ALL_COLUMNS.find(c => c.id === tableSortField);
+    if (!col?.sortValue) return filteredDeals;
+    return sortDealsByColumn(filteredDeals, col.sortValue, tableSortDir);
+  }, [filteredDeals, tableSortField, tableSortDir]);
 
   const handleTableSort = (field: TableSortField) => {
     if (tableSortField === field) {
       setTableSortDir(d => d === 'asc' ? 'desc' : 'asc');
     } else {
       setTableSortField(field);
-      setTableSortDir(field === 'empresa' ? 'asc' : 'desc');
+      // Strings ascendem por padrao; numeros/datas descendem
+      setTableSortDir(field === 'empresa' || field === 'closer' || field === 'sdr' || field === 'origem' || field === 'motivo_perda' ? 'asc' : 'desc');
     }
   };
 
@@ -383,11 +370,10 @@ export const PipelineView: React.FC = () => {
               <thead className="bg-[var(--color-v4-card)] sticky top-0">
                 <tr className="text-left text-[var(--color-v4-text-muted)]">
                   {visibleColumns.map(col => {
-                    const isSortable = !!col.sortField;
-                    const sortField = col.sortField as ColTableSortField | undefined;
+                    const isSortable = !!col.sortValue;
                     return (
                       <th key={col.id}
-                          onClick={isSortable && sortField ? () => handleTableSort(sortField as TableSortField) : undefined}
+                          onClick={isSortable ? () => handleTableSort(col.id) : undefined}
                           className={cn(
                             'px-4 py-3 font-medium',
                             col.align === 'right' && 'text-right',
@@ -395,7 +381,7 @@ export const PipelineView: React.FC = () => {
                           )}>
                         <span className={cn('flex items-center gap-1', col.align === 'right' && 'justify-end')}>
                           {col.label}
-                          {isSortable && sortField && <TableSortIcon field={sortField as TableSortField} />}
+                          {isSortable && <TableSortIcon field={col.id} />}
                         </span>
                       </th>
                     );
