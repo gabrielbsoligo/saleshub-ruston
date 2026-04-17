@@ -384,9 +384,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteDeal = async (id: string) => {
+    const deal = deals.find(d => d.id === id);
+    if (!deal) return;
+
+    // Gatekeeping: deal ganho OU com comissoes geradas exige gestor + dupla confirmacao
+    const isGanho = deal.status === 'contrato_assinado';
+    const { count: comissoesCount } = await supabase
+      .from('comissoes_registros')
+      .select('id', { count: 'exact', head: true })
+      .eq('deal_id', id);
+    const hasComissoes = (comissoesCount || 0) > 0;
+    const isSensitive = isGanho || hasComissoes;
+
+    if (isSensitive) {
+      // 1. So gestor
+      if (currentUser?.role !== 'gestor') {
+        toast.error('Apenas gestor pode apagar deals ganhos ou com comissões.', { duration: 5000, icon: '🔒' });
+        return;
+      }
+      // 2. Primeira confirmacao
+      const msg1 = isGanho
+        ? `⚠️ "${deal.empresa}" é um deal GANHO (contrato assinado) com ${comissoesCount} comissão(ões) gerada(s).\n\nApagar vai REMOVER também todas as comissões e histórico de automações.\n\nContinuar?`
+        : `⚠️ "${deal.empresa}" tem ${comissoesCount} comissão(ões) gerada(s).\n\nApagar vai REMOVER também as comissões.\n\nContinuar?`;
+      if (!window.confirm(msg1)) return;
+      // 3. Segunda confirmacao — exige digitar o nome
+      const typed = window.prompt(`Confirmação final: digite o nome da empresa "${deal.empresa}" pra confirmar a exclusão.`);
+      if ((typed || '').trim().toLowerCase() !== deal.empresa.trim().toLowerCase()) {
+        toast.error('Nome não confere. Exclusão cancelada.', { icon: '🔒' });
+        return;
+      }
+    }
+
     const { error } = await supabase.from('deals').delete().eq('id', id);
     if (error) { toast.error(error.message); return; }
     setDeals(prev => prev.filter(d => d.id !== id));
+    toast.success(isSensitive ? 'Deal + comissões apagados.' : 'Deal apagado.');
   };
 
   // ===================== REUNIOES =====================
