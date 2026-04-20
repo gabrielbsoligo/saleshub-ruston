@@ -117,6 +117,10 @@ export interface Lead {
   data_cadastro?: string;
   mes_referencia?: string;
   valor_lead?: number;
+  // Contexto de recomendacao (preenchido quando canal='recomendacao',
+  // repassado pro Kommo pelos campos "Quem Recomendou" + "Closer que coletou")
+  recomendado_por?: string;
+  coletado_por_closer_nome?: string;
   created_at: string;
   updated_at: string;
 }

@@ -240,6 +240,15 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
       // Save recomendacoes as leads
       const validRecs = recomendacoes.filter(r => r.empresa.trim());
       if (validRecs.length > 0) {
+        // Contexto da recomendacao: quem recomendou (deal origem) + closer que coletou
+        const leadOrigem = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
+        const contatoOrigem = leadOrigem?.nome_contato?.trim();
+        const recomendadoPor = contatoOrigem
+          ? `${contatoOrigem} - ${deal.empresa}`
+          : deal.empresa;
+        const coletorId = form.closer_id || deal.closer_id;
+        const coletorNome = coletorId ? members.find(m => m.id === coletorId)?.name || null : null;
+
         for (const rec of validRecs) {
           const { data: newLead } = await supabase.from('leads').insert({
             empresa: rec.empresa.trim(),
@@ -248,6 +257,8 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             canal: 'recomendacao',
             status: 'sem_contato',
             sdr_id: deal.sdr_id || null,
+            recomendado_por: recomendadoPor,
+            coletado_por_closer_nome: coletorNome,
           }).select('id').single();
 
           await supabase.from('recomendacoes').insert({
