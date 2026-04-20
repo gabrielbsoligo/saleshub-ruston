@@ -8,6 +8,7 @@ import { ContractUpload } from "./ui/ContractUpload";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { validateGanho } from "../lib/ganhoValidation";
 import { supabase } from "../lib/supabase";
+import { useRecomendacoesDraft } from "../hooks/useRecomendacoesDraft";
 import toast from "react-hot-toast";
 
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
@@ -20,7 +21,15 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const [isProcessing, setIsProcessing] = useState(false);
   const [contractParsing, setContractParsing] = useState(false);
   const [contractFilledFields, setContractFilledFields] = useState<Set<string>>(new Set());
-  const [recomendacoes, setRecomendacoes] = useState<{ empresa: string; nome_contato: string; telefone: string }[]>([]);
+  // Recomendacoes — hook unificado (mesma logica pro FeedbackDrawer)
+  const {
+    existing: recomendacoesExistentes,
+    drafts: recomendacoes,
+    addDraft: addRecomendacao,
+    updateDraft: updateRecomendacao,
+    removeDraft: removeRecomendacao,
+    saveDrafts: saveRecomendacoes,
+  } = useRecomendacoesDraft(deal?.id);
 
   const [form, setForm] = useState({
     empresa: '', kommo_id: '', kommo_link: '', closer_id: '', sdr_id: '',
@@ -83,31 +92,21 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
       if (deal) { await updateDeal(deal.id, payload); }
       else { await addDeal(payload); }
 
-      // Save recomendacoes as leads
+      // Save recomendacoes as leads (via hook unificado)
       if (deal) {
-        const validRecs = recomendacoes.filter(r => r.empresa.trim());
-        if (validRecs.length > 0) {
-          for (const rec of validRecs) {
-            const { data: newLead } = await supabase.from('leads').insert({
-              empresa: rec.empresa.trim(),
-              nome_contato: rec.nome_contato.trim() || null,
-              telefone: rec.telefone.trim() || null,
-              canal: 'recomendacao',
-              status: 'sem_contato',
-              sdr_id: deal.sdr_id || null,
-            }).select('id').single();
-
-            await supabase.from('recomendacoes').insert({
-              deal_id: deal.id,
-              closer_id: form.closer_id || deal.closer_id,
-              sdr_id: deal.sdr_id || null,
-              empresa: rec.empresa.trim(),
-              nome_contato: rec.nome_contato.trim() || null,
-              telefone: rec.telefone.trim() || null,
-              lead_criado_id: newLead?.id || null,
-            });
-          }
-          toast.success(`${validRecs.length} recomendacao(oes) salva(s) como lead!`, { icon: '\uD83C\uDFAF' });
+        const coletorId = form.closer_id || deal.closer_id || null;
+        const coletorName = coletorId ? members.find(m => m.id === coletorId)?.name || null : null;
+        const leadOrigem = deal.lead_id ? leads.find(l => l.id === deal.lead_id) || null : null;
+        const saved = await saveRecomendacoes({
+          dealId: deal.id,
+          dealEmpresa: deal.empresa,
+          dealSdrId: deal.sdr_id || null,
+          closerId: coletorId,
+          closerName: coletorName,
+          leadOrigem,
+        });
+        if (saved > 0) {
+          toast.success(`${saved} recomendação(ões) salva(s) como lead!`, { icon: '🎯' });
           fetchLeads();
         }
       }
@@ -189,7 +188,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             <button onClick={() => setTab('geral')} className={tabClass('geral')}>Geral</button>
             <button onClick={() => setTab('produtos')} className={tabClass('produtos')}>Produtos</button>
             <button onClick={() => setTab('recomendacoes')} className={tabClass('recomendacoes')}>
-              Recomendacoes {recomendacoes.length > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[10px]">{recomendacoes.length}</span>}
+              Recomendações {(recomendacoes.length + recomendacoesExistentes.length) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[10px]">{recomendacoes.length + recomendacoesExistentes.length}</span>}
             </button>
             <button onClick={() => setTab('ganho')} className={tabClass('ganho')}>Fechamento</button>
           </div>
@@ -328,13 +327,35 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
 
           {/* ======== TAB: RECOMENDACOES ======== */}
           {tab === 'recomendacoes' && (<>
+            {/* Recomendacoes JA salvas (read-only) */}
+            {recomendacoesExistentes.length > 0 && (
+              <div className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-xl p-4 mb-3">
+                <h4 className="text-xs font-bold text-[var(--color-v4-text-muted)] uppercase tracking-wider mb-3">
+                  Já salvas ({recomendacoesExistentes.length})
+                </h4>
+                <div className="space-y-2">
+                  {recomendacoesExistentes.map(rec => (
+                    <div key={rec.id} className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-[var(--color-v4-card)]">
+                      <span className="text-white font-medium flex-1">{rec.empresa}</span>
+                      {rec.nome_contato && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.nome_contato}</span>}
+                      {rec.telefone && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.telefone}</span>}
+                      <span className="text-[10px] text-[var(--color-v4-text-muted)]">
+                        {new Date(rec.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Drafts (editáveis — serão criadas ao salvar) */}
             <div className="bg-purple-500/5 border border-purple-500/20 rounded-xl p-4">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider">Recomendacoes Coletadas</h4>
-                  <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Indicacoes coletadas nas calls. Serao criadas como leads ao salvar.</p>
+                  <h4 className="text-xs font-bold text-purple-400 uppercase tracking-wider">Novas Recomendações</h4>
+                  <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Serão criadas como leads ao salvar a negociação.</p>
                 </div>
-                <button type="button" onClick={() => setRecomendacoes(prev => [...prev, { empresa: '', nome_contato: '', telefone: '' }])}
+                <button type="button" onClick={addRecomendacao}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">
                   <Plus size={12} /> Adicionar
                 </button>
@@ -342,8 +363,8 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
 
               {recomendacoes.length === 0 && (
                 <div className="text-center py-8">
-                  <p className="text-sm text-[var(--color-v4-text-muted)]">Nenhuma recomendacao adicionada</p>
-                  <button type="button" onClick={() => setRecomendacoes([{ empresa: '', nome_contato: '', telefone: '' }])}
+                  <p className="text-sm text-[var(--color-v4-text-muted)]">Nenhuma recomendação a adicionar</p>
+                  <button type="button" onClick={addRecomendacao}
                     className="mt-3 flex items-center gap-1 mx-auto px-4 py-2 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30">
                     <Plus size={12} /> Adicionar primeira
                   </button>
@@ -354,15 +375,15 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                 <div key={i} className="flex gap-2 mb-3">
                   <div className="flex-1 space-y-2">
                     <input className={inputClass} placeholder="Empresa *" value={rec.empresa}
-                      onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, empresa: e.target.value } : r))} />
+                      onChange={e => updateRecomendacao(i, { empresa: e.target.value })} />
                     <div className="flex gap-2">
                       <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
-                        onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, nome_contato: e.target.value } : r))} />
+                        onChange={e => updateRecomendacao(i, { nome_contato: e.target.value })} />
                       <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
-                        onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, telefone: e.target.value } : r))} />
+                        onChange={e => updateRecomendacao(i, { telefone: e.target.value })} />
                     </div>
                   </div>
-                  <button type="button" onClick={() => setRecomendacoes(prev => prev.filter((_, j) => j !== i))}
+                  <button type="button" onClick={() => removeRecomendacao(i)}
                     className="p-2 text-red-400 hover:text-red-300 self-start mt-1"><Trash2Icon size={14} /></button>
                 </div>
               ))}
@@ -370,7 +391,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
 
             {!deal && (
               <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                <p className="text-xs text-yellow-400">Salve a negociacao primeiro para poder adicionar recomendacoes.</p>
+                <p className="text-xs text-yellow-400">Salve a negociação primeiro para poder adicionar recomendações.</p>
               </div>
             )}
           </>)}

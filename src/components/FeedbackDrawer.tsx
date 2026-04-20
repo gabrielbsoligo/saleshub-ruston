@@ -11,6 +11,7 @@ import { Plus, Trash2 as Trash2Icon } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { fetchMeetingTranscript } from "../lib/googleDrive";
 import { analyzeTranscript } from "../lib/callAnalyzer";
+import { useRecomendacoesDraft } from "../hooks/useRecomendacoesDraft";
 import toast from "react-hot-toast";
 
 type AIStatus = 'idle' | 'fetching' | 'paste' | 'analyzing' | 'done' | 'error';
@@ -31,7 +32,16 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [recomendacoes, setRecomendacoes] = useState<{ empresa: string; nome_contato: string; telefone: string }[]>([]);
+  // Recomendacoes — hook unificado (mesma logica pro DealDrawer)
+  const {
+    existing: recomendacoesExistentes,
+    drafts: recomendacoes,
+    addDraft: addRecomendacao,
+    updateDraft: updateRecomendacao,
+    removeDraft: removeRecomendacao,
+    setDrafts: setRecomendacoes,  // usado pelo AI auto-fill
+    saveDrafts: saveRecomendacoes,
+  } = useRecomendacoesDraft(deal.id);
 
   // AI state
   const [aiStatus, setAiStatus] = useState<AIStatus>('idle');
@@ -237,41 +247,20 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
 
       await updateDeal(deal.id, updates);
 
-      // Save recomendacoes as leads
-      const validRecs = recomendacoes.filter(r => r.empresa.trim());
-      if (validRecs.length > 0) {
-        // Contexto da recomendacao: quem recomendou (deal origem) + closer que coletou
-        const leadOrigem = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
-        const contatoOrigem = leadOrigem?.nome_contato?.trim();
-        const recomendadoPor = contatoOrigem
-          ? `${contatoOrigem} - ${deal.empresa}`
-          : deal.empresa;
-        const coletorId = form.closer_id || deal.closer_id;
-        const coletorNome = coletorId ? members.find(m => m.id === coletorId)?.name || null : null;
-
-        for (const rec of validRecs) {
-          const { data: newLead } = await supabase.from('leads').insert({
-            empresa: rec.empresa.trim(),
-            nome_contato: rec.nome_contato.trim() || null,
-            telefone: rec.telefone.trim() || null,
-            canal: 'recomendacao',
-            status: 'sem_contato',
-            sdr_id: deal.sdr_id || null,
-            recomendado_por: recomendadoPor,
-            coletado_por_closer_nome: coletorNome,
-          }).select('id').single();
-
-          await supabase.from('recomendacoes').insert({
-            deal_id: deal.id,
-            closer_id: form.closer_id || deal.closer_id,
-            sdr_id: deal.sdr_id || null,
-            empresa: rec.empresa.trim(),
-            nome_contato: rec.nome_contato.trim() || null,
-            telefone: rec.telefone.trim() || null,
-            lead_criado_id: newLead?.id || null,
-          });
-        }
-        toast.success(`${validRecs.length} recomendação(ões) salva(s) como lead!`, { icon: '🎯' });
+      // Save recomendacoes as leads (via hook unificado)
+      const coletorId = form.closer_id || deal.closer_id || null;
+      const coletorName = coletorId ? members.find(m => m.id === coletorId)?.name || null : null;
+      const leadOrigem = deal.lead_id ? leads.find(l => l.id === deal.lead_id) || null : null;
+      const savedRecs = await saveRecomendacoes({
+        dealId: deal.id,
+        dealEmpresa: deal.empresa,
+        dealSdrId: deal.sdr_id || null,
+        closerId: coletorId,
+        closerName: coletorName,
+        leadOrigem,
+      });
+      if (savedRecs > 0) {
+        toast.success(`${savedRecs} recomendação(ões) salva(s) como lead!`, { icon: '🎯' });
       }
 
       // Agendar reunião de retorno se marcado
@@ -308,7 +297,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
           status: 'completed',
           actions_taken: {
             deal_updated: true,
-            leads_created: validRecs.length,
+            leads_created: savedRecs,
             meeting_scheduled: form.agendar_reuniao,
             ai_filled_fields: [...aiFilledFields],
           },
@@ -520,27 +509,45 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
 
           {/* ======== STEP 2: Produtos & Recomendações ======== */}
           {step === 2 && (<>
-            {/* Recomendações */}
+            {/* Recomendações — existentes (read-only) */}
+            {recomendacoesExistentes.length > 0 && (
+              <div className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-xl p-4 mb-3">
+                <h4 className="text-xs font-bold text-[var(--color-v4-text-muted)] uppercase tracking-wider mb-3">
+                  Já salvas ({recomendacoesExistentes.length})
+                </h4>
+                <div className="space-y-2">
+                  {recomendacoesExistentes.map(rec => (
+                    <div key={rec.id} className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-[var(--color-v4-card)]">
+                      <span className="text-white font-medium flex-1">{rec.empresa}</span>
+                      {rec.nome_contato && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.nome_contato}</span>}
+                      {rec.telefone && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.telefone}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recomendações — drafts (editáveis) */}
             <div className={`bg-purple-500/5 border border-purple-500/20 rounded-xl p-4 mb-4 ${aiHighlight('recomendacoes')}`}>
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-bold text-purple-400 uppercase">
-                  Recomendações Coletadas {aiFilledFields.has('recomendacoes') && <span className="ml-1">✨</span>}
+                  Novas Recomendações {aiFilledFields.has('recomendacoes') && <span className="ml-1">✨</span>}
                 </h4>
-                <button type="button" onClick={() => setRecomendacoes(prev => [...prev, { empresa: '', nome_contato: '', telefone: '' }])}
+                <button type="button" onClick={addRecomendacao}
                   className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300">
                   <Plus size={12} /> Adicionar
                 </button>
               </div>
-              {recomendacoes.length === 0 && <p className="text-xs text-[var(--color-v4-text-muted)]">Nenhuma recomendação coletada nesta reunião</p>}
+              {recomendacoes.length === 0 && <p className="text-xs text-[var(--color-v4-text-muted)]">Nenhuma recomendação nova nesta reunião</p>}
               {recomendacoes.map((rec, i) => (
                 <div key={i} className="flex gap-2 mb-2">
                   <input className={inputClass + " flex-1"} placeholder="Empresa *" value={rec.empresa}
-                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, empresa: e.target.value } : r))} />
+                    onChange={e => updateRecomendacao(i, { empresa: e.target.value })} />
                   <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
-                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, nome_contato: e.target.value } : r))} />
+                    onChange={e => updateRecomendacao(i, { nome_contato: e.target.value })} />
                   <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
-                    onChange={e => setRecomendacoes(prev => prev.map((r, j) => j === i ? { ...r, telefone: e.target.value } : r))} />
-                  <button type="button" onClick={() => setRecomendacoes(prev => prev.filter((_, j) => j !== i))}
+                    onChange={e => updateRecomendacao(i, { telefone: e.target.value })} />
+                  <button type="button" onClick={() => removeRecomendacao(i)}
                     className="p-2 text-red-400 hover:text-red-300"><Trash2Icon size={14} /></button>
                 </div>
               ))}
