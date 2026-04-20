@@ -327,7 +327,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
 
           {/* ======== TAB: RECOMENDACOES ======== */}
           {tab === 'recomendacoes' && (<>
-            {/* Recomendacoes JA salvas (read-only) */}
+            {/* Recomendacoes JA salvas (le do lead via JOIN — source of truth) */}
             {recomendacoesExistentes.length > 0 && (
               <div className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-xl p-4 mb-3">
                 <h4 className="text-xs font-bold text-[var(--color-v4-text-muted)] uppercase tracking-wider mb-3">
@@ -336,9 +336,13 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                 <div className="space-y-2">
                   {recomendacoesExistentes.map(rec => (
                     <div key={rec.id} className="flex items-center gap-3 text-sm px-3 py-2 rounded-lg bg-[var(--color-v4-card)]">
-                      <span className="text-white font-medium flex-1">{rec.empresa}</span>
-                      {rec.nome_contato && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.nome_contato}</span>}
-                      {rec.telefone && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.telefone}</span>}
+                      <span className="text-white font-medium flex-1">{rec.lead.empresa}</span>
+                      {rec.lead.nome_contato && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.lead.nome_contato}</span>}
+                      {rec.lead.telefone && <span className="text-[var(--color-v4-text-muted)] text-xs">{rec.lead.telefone}</span>}
+                      {rec.lead.kommo_link && (
+                        <a href={rec.lead.kommo_link} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}
+                           className="text-[10px] text-blue-400 hover:underline">Kommo</a>
+                      )}
                       <span className="text-[10px] text-[var(--color-v4-text-muted)]">
                         {new Date(rec.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
                       </span>

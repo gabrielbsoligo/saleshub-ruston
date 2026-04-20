@@ -23,13 +23,21 @@ export interface Draft {
   telefone: string;
 }
 
+// Recomendacao existente ja vem com o lead criado em JOIN.
+// Se o lead foi apagado (lead_criado_id IS NULL), a recomendacao nao
+// aparece — aponta pra "recomendacoes orfas" que nao servem mais.
 export interface ExistingRecomendacao {
   id: string;
-  empresa: string;
-  nome_contato: string | null;
-  telefone: string | null;
-  lead_criado_id: string | null;
   created_at: string;
+  lead_criado_id: string;
+  lead: {
+    id: string;
+    empresa: string;
+    nome_contato: string | null;
+    telefone: string | null;
+    status: string;
+    kommo_link: string | null;
+  };
 }
 
 export interface SaveContext {
@@ -63,12 +71,19 @@ export function useRecomendacoesDraft(dealId: string | null | undefined): UseRec
       setExisting([]);
       return;
     }
+    // JOIN com leads via FK lead_criado_id. Inner join (not null) garante
+    // que so retorna recomendacoes cujo lead ainda existe — se alguem
+    // apagou o lead, a recomendacao some daqui.
     const { data } = await supabase
       .from('recomendacoes')
-      .select('id, empresa, nome_contato, telefone, lead_criado_id, created_at')
+      .select('id, created_at, lead_criado_id, lead:leads!lead_criado_id(id, empresa, nome_contato, telefone, status, kommo_link)')
       .eq('deal_id', dealId)
+      .not('lead_criado_id', 'is', null)
       .order('created_at', { ascending: false });
-    setExisting((data as ExistingRecomendacao[]) || []);
+
+    // Descarta linhas em que o JOIN devolveu null (lead deletado mesmo com FK set null)
+    const valid = (data || []).filter((r: any) => r.lead);
+    setExisting(valid as unknown as ExistingRecomendacao[]);
   }, [dealId]);
 
   useEffect(() => {
