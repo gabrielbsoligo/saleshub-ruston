@@ -133,13 +133,11 @@ export function useRecomendacoesDraft(dealId: string | null | undefined): UseRec
         .select('id')
         .single();
 
+      // recomendacoes soh referencia o lead (dados ficam no lead, not duplicated)
       await supabase.from('recomendacoes').insert({
         deal_id: ctx.dealId,
         closer_id: ctx.closerId || null,
         sdr_id: ctx.dealSdrId || null,
-        empresa,
-        nome_contato: nomeContato,
-        telefone,
         lead_criado_id: newLead?.id || null,
       });
     }
