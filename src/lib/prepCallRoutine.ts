@@ -14,38 +14,48 @@ interface FireResult {
   session_url: string;
 }
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
 /**
- * Dispara a Routine via Edge Function. Injeta briefing_id pra a Routine
- * ecoar no callback. Token + routine_id ficam server-side.
+ * Dispara a Routine via Edge Function. Chamada direta via fetch
+ * pra conseguir ler o body de erro quando a function retorna non-2xx
+ * (supabase.functions.invoke esconde a mensagem especifica).
  */
 export async function firePrepCallRoutine(
   briefingId: string,
   empresa: string,
   inputs: PrepBriefingInputs
 ): Promise<FireResult> {
-  const { data, error } = await supabase.functions.invoke('prep-call-fire', {
-    body: {
+  // Pega o JWT do usuario logado pra enviar no Authorization
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData?.session?.access_token || SUPABASE_ANON_KEY;
+
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/prep-call-fire`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'apikey': SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
       briefing_id: briefingId,
       empresa,
       inputs,
-    },
+    }),
   });
 
-  if (error) {
-    // supabase-js traz a mensagem da edge function se ela mandou status != 2xx
-    throw new Error(error.message || 'Falha ao chamar prep-call-fire');
-  }
+  const text = await resp.text();
+  let body: any = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
 
-  if (!data || typeof data !== 'object') {
-    throw new Error('Resposta invalida da edge function');
-  }
-
-  if ((data as any).error) {
-    throw new Error((data as any).error);
+  if (!resp.ok) {
+    const msg = (body && (body.error || body.message || body.raw)) || `HTTP ${resp.status}`;
+    throw new Error(msg);
   }
 
   return {
-    session_id: (data as any).session_id || '',
-    session_url: (data as any).session_url || '',
+    session_id: body?.session_id || '',
+    session_url: body?.session_url || '',
   };
 }
