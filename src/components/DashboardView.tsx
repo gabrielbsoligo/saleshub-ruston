@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
-import { DEAL_STATUS_LABELS, CANAL_LABELS, ROLE_LABELS } from "../types";
+import { supabase } from "../lib/supabase";
+import { DEAL_STATUS_LABELS, CANAL_LABELS, ROLE_LABELS, type Deal, type Reuniao, type Meta } from "../types";
 import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
@@ -79,7 +80,7 @@ function PaceLineChart({ title, data, isCurrency = true, color = '#22c55e' }: {
 }
 
 export const DashboardView: React.FC = () => {
-  const { deals, leads, reunioes, members, metas, ligacoes, fetchLeads, fetchDeals, fetchReunioes, fetchMetas, fetchLigacoes } = useAppStore();
+  const { members, ligacoes, fetchLigacoes } = useAppStore();
   const [viewMode, setViewMode] = useState<'geral' | 'individual'>('geral');
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -87,13 +88,34 @@ export const DashboardView: React.FC = () => {
   });
   const [showPendentes, setShowPendentes] = useState(true);
 
+  // Dashboard data vem via RPC SECURITY DEFINER (bypassa RLS) — mesmos numeros
+  // pra gestor e closer. Privacidade: so campos agregaveis, sem nome/empresa.
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [reunioes, setReunioes] = useState<Reuniao[]>([]);
+  const [metas, setMetas] = useState<Meta[]>([]);
+  const [leadsCountMes, setLeadsCountMes] = useState(0);
+
+  const fetchDashboardData = useCallback(async () => {
+    const { data, error } = await supabase.rpc('get_dashboard_data', { p_month: selectedMonth });
+    if (error) { console.error('Dashboard fetch error:', error); return; }
+    if (data) {
+      setDeals((data.deals || []) as Deal[]);
+      setReunioes((data.reunioes || []) as Reuniao[]);
+      setMetas((data.metas || []) as Meta[]);
+      setLeadsCountMes(data.leads_count_mes || 0);
+    }
+  }, [selectedMonth]);
+
+  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
+
   // Auto-refresh every 30s
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchLeads(); fetchDeals(); fetchReunioes(); fetchMetas(); fetchLigacoes();
+      fetchDashboardData();
+      fetchLigacoes();
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetchLeads, fetchDeals, fetchReunioes, fetchMetas, fetchLigacoes]);
+  }, [fetchDashboardData, fetchLigacoes]);
 
   const [year, month] = selectedMonth.split('-').map(Number);
   const mesStart = new Date(year, month - 1, 1);
@@ -341,7 +363,7 @@ export const DashboardView: React.FC = () => {
             </div>
             <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
               <span className="text-xs text-[var(--color-v4-text-muted)]">Leads no Mês</span>
-              <p className="text-xl font-bold text-white mt-1">{leads.filter(l => { const d = l.data_cadastro ? new Date(l.data_cadastro) : null; return d && d >= mesStart && d <= mesEnd; }).length}</p>
+              <p className="text-xl font-bold text-white mt-1">{leadsCountMes}</p>
             </div>
             <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
               <span className="text-xs text-[var(--color-v4-text-muted)]">Deals no Mês</span>
