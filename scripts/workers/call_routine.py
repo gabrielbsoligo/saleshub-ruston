@@ -66,25 +66,27 @@ def main():
     session_id = data.get("claude_code_session_id") or data.get("session_id") or ""
     session_url = data.get("claude_code_session_url") or data.get("session_url") or ""
 
-    if session_id or session_url:
-        supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-        supa_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-        if supa_url and supa_key:
-            patch = requests.patch(
-                f"{supa_url}/rest/v1/prep_briefings?id=eq.{briefing_id}",
-                headers={
-                    "apikey": supa_key,
-                    "Authorization": f"Bearer {supa_key}",
-                    "Content-Type": "application/json",
-                    "Prefer": "return=minimal",
-                },
-                json={
-                    "routine_session_id": session_id,
-                    "routine_session_url": session_url,
-                },
-                timeout=15,
-            )
-            print(f"[call_routine] session info gravada: {patch.status_code}")
+    # Sempre marca progress_stage=analyzing quando Routine respondeu OK
+    supa_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    supa_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if supa_url and supa_key:
+        update = {"progress_stage": "analyzing"}
+        if session_id:
+            update["routine_session_id"] = session_id
+        if session_url:
+            update["routine_session_url"] = session_url
+        patch = requests.patch(
+            f"{supa_url}/rest/v1/prep_briefings?id=eq.{briefing_id}",
+            headers={
+                "apikey": supa_key,
+                "Authorization": f"Bearer {supa_key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal",
+            },
+            json=update,
+            timeout=15,
+        )
+        print(f"[call_routine] stage=analyzing gravado: {patch.status_code}")
 
 
 if __name__ == "__main__":

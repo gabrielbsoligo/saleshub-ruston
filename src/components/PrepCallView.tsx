@@ -11,7 +11,8 @@ import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
 import { firePrepCallRoutine } from '../lib/prepCallRoutine';
 import { MarkdownView } from './ui/MarkdownView';
-import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, Lead } from '../types';
+import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, PrepBriefingProgressStage, Lead } from '../types';
+import { cn } from './Layout';
 import {
   Sparkles, Plus, X, Loader2, Check, AlertCircle, Clock,
   Search, ExternalLink, Copy, RefreshCw, Trash2, RotateCw
@@ -90,34 +91,64 @@ export const PrepCallView: React.FC = () => {
   };
 
   const retryBriefing = async (b: PrepBriefing) => {
-    // Limpa estado de erro e tenta disparar Routine de novo, mantendo o mesmo ID
-    const toastId = toast.loading('Reenviando...');
-    await supabase.from('prep_briefings').update({
-      status: 'pending',
-      error_message: null,
-      briefing_markdown: null,
-      completed_at: null,
-    }).eq('id', b.id);
+    // Smart retry: se tem scraped_data util, chama prep-call-rerun direto
+    // (pula GitHub Action). Senao, full flow via prep-call-fire.
+    const hasScraped = b.scraped_data && typeof b.scraped_data === 'object' && (
+      b.scraped_data.site?.fetched ||
+      b.scraped_data.instagram?.fetched ||
+      b.scraped_data.meta_ads?.fetched ||
+      b.scraped_data.google_ads?.fetched
+    );
+
+    const toastId = toast.loading(hasScraped ? 'Rerunning Routine (dados ja coletados)...' : 'Reenviando...');
 
     try {
-      const { session_id, session_url } = await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
-      await supabase.from('prep_briefings').update({
-        status: 'processing',
-        routine_session_id: session_id,
-        routine_session_url: session_url,
-      }).eq('id', b.id);
-      toast.success('Reenviado. Demora 1-3 min.', { id: toastId, icon: '✨' });
-      // Atualiza o drawer aberto (pra sair da tela de erro)
-      setOpenBriefing(prev => prev && prev.id === b.id
-        ? { ...prev, status: 'processing', error_message: undefined, routine_session_id: session_id, routine_session_url: session_url }
-        : prev);
+      if (hasScraped) {
+        // Rerun: chama nova edge function que usa scraped_data existente
+        const { data, error } = await supabase.functions.invoke('prep-call-rerun', {
+          body: { briefing_id: b.id },
+        });
+        if (error || (data && data.should_fallback)) {
+          // Fallback pra full flow se rerun nao puder
+          throw new Error('fallback');
+        }
+        toast.success('Rerun OK. Analisando... 1-3 min.', { id: toastId, icon: '✨' });
+      } else {
+        // Full flow via prep-call-fire
+        await supabase.from('prep_briefings').update({
+          status: 'pending',
+          progress_stage: 'queued',
+          error_message: null,
+          briefing_markdown: null,
+          failed_stage: null,
+          completed_at: null,
+        }).eq('id', b.id);
+        await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
+        toast.success('Reenviado. Demora 3-5 min.', { id: toastId, icon: '✨' });
+      }
       fetchBriefings();
     } catch (err: any) {
+      if (err.message === 'fallback') {
+        // Rerun disse pra fazer fallback — dispara full flow
+        try {
+          await supabase.from('prep_briefings').update({
+            status: 'pending', progress_stage: 'queued',
+            error_message: null, briefing_markdown: null, failed_stage: null, completed_at: null,
+          }).eq('id', b.id);
+          await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
+          toast.success('Full retry disparado.', { id: toastId });
+          fetchBriefings();
+          return;
+        } catch (e: any) {
+          err = e;
+        }
+      }
       await supabase.from('prep_briefings').update({
         status: 'error',
+        failed_stage: 'retry',
         error_message: err.message || String(err),
       }).eq('id', b.id);
-      toast.error(`Falhou de novo: ${err.message || 'erro'}`, { id: toastId });
+      toast.error(`Falhou: ${err.message || 'erro'}`, { id: toastId });
       fetchBriefings();
     }
   };
@@ -241,7 +272,9 @@ const BriefingCard: React.FC<{
         {b.requested_by?.name && ` · por ${b.requested_by.name.split(' ')[0]}`}
       </p>
       {isProcessing && (
-        <div className="mt-2 text-[10px] text-blue-400">Routine executando... 1-3 min</div>
+        <div className="mt-3">
+          <ProgressTracker briefing={b} />
+        </div>
       )}
       {b.status === 'error' && (
         <div className="mt-3 flex items-start gap-2">
@@ -489,6 +522,91 @@ const PrepCallForm: React.FC<{
   );
 };
 
+// ---------- ProgressTracker (mostra etapa atual + ETA) ----------
+const STAGE_META: Record<string, { label: string; order: number; etaMin: number; etaMax: number }> = {
+  queued:          { label: 'Na fila',              order: 0, etaMin: 0,   etaMax: 5 },
+  dispatched:      { label: 'Disparando pro worker',order: 1, etaMin: 2,   etaMax: 10 },
+  scraping:        { label: 'Coletando dados',      order: 2, etaMin: 15,  etaMax: 90 },
+  calling_routine: { label: 'Enviando pra IA',      order: 3, etaMin: 1,   etaMax: 5 },
+  analyzing:       { label: 'IA analisando',        order: 4, etaMin: 60,  etaMax: 240 },
+  completed:       { label: 'Pronto',               order: 5, etaMin: 0,   etaMax: 0 },
+  error:           { label: 'Erro',                 order: 5, etaMin: 0,   etaMax: 0 },
+};
+
+const STAGES_ORDER: PrepBriefingProgressStage[] = ['queued', 'dispatched', 'scraping', 'calling_routine', 'analyzing'];
+
+const ProgressTracker: React.FC<{ briefing: PrepBriefing }> = ({ briefing: b }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const i = setInterval(() => setNow(Date.now()), 2000);
+    return () => clearInterval(i);
+  }, []);
+
+  const stage = b.progress_stage || 'queued';
+  const currentOrder = STAGE_META[stage]?.order ?? 0;
+  const elapsedSec = Math.floor((now - new Date(b.created_at).getTime()) / 1000);
+  const isStuck = elapsedSec > 480 && b.status === 'processing'; // > 8 min
+  const stageLabel = STAGE_META[stage]?.label || stage;
+
+  return (
+    <div className="w-full">
+      {/* Barra de etapas */}
+      <div className="flex items-center gap-1 mb-3">
+        {STAGES_ORDER.map((s, idx) => {
+          const meta = STAGE_META[s];
+          const passed = currentOrder > meta.order;
+          const current = currentOrder === meta.order && b.status === 'processing';
+          return (
+            <div key={s} className="flex-1 flex items-center gap-1">
+              <div className={cn(
+                'h-1.5 rounded-full flex-1 transition-colors',
+                passed && 'bg-[var(--color-v4-red)]',
+                current && 'bg-blue-500 animate-pulse',
+                !passed && !current && 'bg-[var(--color-v4-surface)]',
+              )} />
+              {idx < STAGES_ORDER.length - 1 && <span className="text-[var(--color-v4-text-muted)] text-[8px]">•</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Label da etapa atual */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          {b.status === 'processing' && <Loader2 size={14} className="animate-spin text-blue-400" />}
+          <span className="text-sm font-medium text-white">{stageLabel}</span>
+        </div>
+        <span className="text-xs text-[var(--color-v4-text-muted)] tabular-nums">
+          {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, '0')}
+        </span>
+      </div>
+
+      {/* ETA ou aviso de trava */}
+      {b.status === 'processing' && (
+        <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">
+          {isStuck
+            ? '⚠️ Demorando mais que o normal — pode estar travado'
+            : `Estimado: ${STAGE_META[stage]?.etaMin || 0}-${STAGE_META[stage]?.etaMax || 0}s nessa etapa`}
+        </p>
+      )}
+
+      {/* Aviso amarelo se stuck */}
+      {isStuck && b.github_run_url && (
+        <div className="mt-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
+          <p className="text-yellow-400 font-medium mb-1">⚠️ Pode estar travando</p>
+          <p className="text-[var(--color-v4-text-muted)] mb-2">
+            Briefing está em "{stageLabel}" há {Math.floor(elapsedSec / 60)} min. Aos 10 min, marcaremos como erro automaticamente.
+          </p>
+          <a href={b.github_run_url} target="_blank" rel="noopener"
+             className="inline-flex items-center gap-1 text-yellow-400 hover:underline">
+            <ExternalLink size={11} /> Ver logs do GitHub Actions
+          </a>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ---------- Painel de links manuais (fallback se scraping falhar) ----------
 const ManualLinksPanel: React.FC<{ inputs: PrepBriefingInputs; empresa: string }> = ({ inputs, empresa }) => {
   const links: { label: string; url: string }[] = [];
@@ -593,10 +711,11 @@ const BriefingDrawer: React.FC<{
 
         <div className="flex-1 overflow-y-auto p-5">
           {b.status === 'pending' || b.status === 'processing' ? (
-            <div className="flex flex-col items-center justify-center py-20 text-[var(--color-v4-text-muted)]">
-              <Loader2 size={32} className="animate-spin mb-3" />
-              <p className="text-sm font-medium">Routine executando</p>
-              <p className="text-xs mt-1">Demora 1-3 min. A tela atualiza sozinha.</p>
+            <div className="py-8 px-2">
+              <ProgressTracker briefing={b} />
+              <p className="text-xs text-[var(--color-v4-text-muted)] text-center mt-6">
+                A tela atualiza sozinha quando terminar.
+              </p>
             </div>
           ) : b.status === 'error' ? (
             <div className="flex flex-col items-start bg-red-500/5 border border-red-500/20 rounded-lg p-4">

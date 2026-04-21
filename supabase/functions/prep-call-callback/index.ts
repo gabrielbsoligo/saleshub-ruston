@@ -111,9 +111,11 @@ Deno.serve(async (req) => {
 
         if (errorMsg) {
             update.status = 'error'
+            update.progress_stage = 'error'
             update.error_message = errorMsg
         } else if (briefingMarkdown) {
             update.status = 'completed'
+            update.progress_stage = 'completed'
             update.briefing_markdown = briefingMarkdown
             update.error_message = null
         } else {

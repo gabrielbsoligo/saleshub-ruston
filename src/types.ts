@@ -430,6 +430,15 @@ export interface CallAnalysisResult {
 
 export type PrepBriefingStatus = 'pending' | 'processing' | 'completed' | 'error';
 
+export type PrepBriefingProgressStage =
+  | 'queued'
+  | 'dispatched'
+  | 'scraping'
+  | 'calling_routine'
+  | 'analyzing'
+  | 'completed'
+  | 'error';
+
 export interface PrepBriefingInputs {
   site?: string;
   instagram?: string;
@@ -452,6 +461,10 @@ export interface PrepBriefing {
   empresa: string;
   inputs: PrepBriefingInputs;
   status: PrepBriefingStatus;
+  progress_stage?: PrepBriefingProgressStage;
+  failed_stage?: string;
+  github_run_url?: string;
+  scraped_data?: Record<string, any>;
   routine_session_id?: string;
   routine_session_url?: string;
   briefing_markdown?: string;

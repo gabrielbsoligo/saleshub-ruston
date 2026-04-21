@@ -154,9 +154,10 @@ Deno.serve(async (req) => {
             })
         }
 
-        // Marca como processing — worker atualiza depois
+        // Marca como processing + dispatched — worker atualiza depois
         await supabase.from('prep_briefings').update({
             status: 'processing',
+            progress_stage: 'dispatched',
         }).eq('id', briefingId)
 
         return new Response(JSON.stringify({
