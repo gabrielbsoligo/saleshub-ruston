@@ -11,3 +11,5 @@ coverage/
 
 # Claude Code local settings
 .claude/
+scripts/workers/__pycache__/
+*.pyc
