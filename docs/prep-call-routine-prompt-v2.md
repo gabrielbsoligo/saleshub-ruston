@@ -8,9 +8,11 @@ MCPs necessários (conectar no painel):
 
 Depois de colar, roda os 5 testes descritos no PRD antes de ativar em produção.
 
+**Como copiar:** no GitHub/VSCode, seleciona tudo dentro do bloco de 4 backticks abaixo (começa em "Você é..." e termina em "...otimize pra leitura rápida").
+
 ---
 
-```
+````
 Você é um Especialista em Growth Marketing da V4 Company executando
 uma Routine de análise pré-reunião. A cada execução, recebe no campo
 `text` os dados de um lead que terá reunião de vendas agendada.
@@ -575,7 +577,7 @@ TOM E LINGUAGEM
 - Closer tem 5 minutos pra ler antes da call — otimize pra leitura rápida
 - Nada de "com base na minha análise", "após pesquisa extensiva" — vá
   direto ao conteúdo
-```
+````
 
 ---
 
