@@ -14,7 +14,7 @@ import { MarkdownView } from './ui/MarkdownView';
 import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, Lead } from '../types';
 import {
   Sparkles, Plus, X, Loader2, Check, AlertCircle, Clock,
-  Search, ExternalLink, Copy, RefreshCw, Trash2
+  Search, ExternalLink, Copy, RefreshCw, Trash2, RotateCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -89,6 +89,39 @@ export const PrepCallView: React.FC = () => {
     toast.success('Briefing disparado. Demora 1-3 min.', { icon: '✨' });
   };
 
+  const retryBriefing = async (b: PrepBriefing) => {
+    // Limpa estado de erro e tenta disparar Routine de novo, mantendo o mesmo ID
+    const toastId = toast.loading('Reenviando...');
+    await supabase.from('prep_briefings').update({
+      status: 'pending',
+      error_message: null,
+      briefing_markdown: null,
+      completed_at: null,
+    }).eq('id', b.id);
+
+    try {
+      const { session_id, session_url } = await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
+      await supabase.from('prep_briefings').update({
+        status: 'processing',
+        routine_session_id: session_id,
+        routine_session_url: session_url,
+      }).eq('id', b.id);
+      toast.success('Reenviado. Demora 1-3 min.', { id: toastId, icon: '✨' });
+      // Atualiza o drawer aberto (pra sair da tela de erro)
+      setOpenBriefing(prev => prev && prev.id === b.id
+        ? { ...prev, status: 'processing', error_message: undefined, routine_session_id: session_id, routine_session_url: session_url }
+        : prev);
+      fetchBriefings();
+    } catch (err: any) {
+      await supabase.from('prep_briefings').update({
+        status: 'error',
+        error_message: err.message || String(err),
+      }).eq('id', b.id);
+      toast.error(`Falhou de novo: ${err.message || 'erro'}`, { id: toastId });
+      fetchBriefings();
+    }
+  };
+
   if (!currentUser) return null;
 
   return (
@@ -146,7 +179,9 @@ export const PrepCallView: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {filtered.map(b => (
-              <BriefingCard key={b.id} briefing={b} onClick={() => setOpenBriefing(b)} />
+              <BriefingCard key={b.id} briefing={b}
+                            onClick={() => setOpenBriefing(b)}
+                            onRetry={() => retryBriefing(b)} />
             ))}
           </div>
         )}
@@ -165,6 +200,7 @@ export const PrepCallView: React.FC = () => {
         <BriefingDrawer
           briefing={openBriefing}
           onClose={() => setOpenBriefing(null)}
+          onRetry={() => retryBriefing(openBriefing)}
           onDelete={async () => {
             if (!window.confirm(`Apagar briefing de "${openBriefing.empresa}"?`)) return;
             const { error } = await supabase.from('prep_briefings').delete().eq('id', openBriefing.id);
@@ -180,12 +216,16 @@ export const PrepCallView: React.FC = () => {
 };
 
 // ---------- Card ----------
-const BriefingCard: React.FC<{ briefing: PrepBriefing; onClick: () => void }> = ({ briefing: b, onClick }) => {
+const BriefingCard: React.FC<{
+  briefing: PrepBriefing;
+  onClick: () => void;
+  onRetry: () => void;
+}> = ({ briefing: b, onClick, onRetry }) => {
   const StatusIcon = STATUS_ICONS[b.status];
   const isProcessing = b.status === 'processing' || b.status === 'pending';
   return (
-    <button onClick={onClick}
-            className="text-left bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4 hover:border-[var(--color-v4-red)]/50 transition-colors">
+    <div onClick={onClick}
+         className="cursor-pointer text-left bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4 hover:border-[var(--color-v4-red)]/50 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="text-sm font-semibold text-white flex-1 truncate">{b.empresa}</h3>
         <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${STATUS_COLORS[b.status]}`}>
@@ -203,10 +243,19 @@ const BriefingCard: React.FC<{ briefing: PrepBriefing; onClick: () => void }> = 
       {isProcessing && (
         <div className="mt-2 text-[10px] text-blue-400">Routine executando... 1-3 min</div>
       )}
-      {b.status === 'error' && b.error_message && (
-        <div className="mt-2 text-[10px] text-red-400 truncate" title={b.error_message}>{b.error_message}</div>
+      {b.status === 'error' && (
+        <div className="mt-3 flex items-start gap-2">
+          <div className="flex-1 text-[10px] text-red-400 truncate" title={b.error_message || ''}>
+            {b.error_message || 'Erro'}
+          </div>
+          <button onClick={e => { e.stopPropagation(); onRetry(); }}
+                  title="Reenviar"
+                  className="flex-shrink-0 p-1 rounded bg-red-500/15 hover:bg-red-500/25 text-red-400">
+            <RotateCw size={11} />
+          </button>
+        </div>
       )}
-    </button>
+    </div>
   );
 };
 
@@ -411,7 +460,8 @@ const BriefingDrawer: React.FC<{
   briefing: PrepBriefing;
   onClose: () => void;
   onDelete: () => void;
-}> = ({ briefing: b, onClose, onDelete }) => {
+  onRetry: () => void;
+}> = ({ briefing: b, onClose, onDelete, onRetry }) => {
   const copyMarkdown = async () => {
     if (!b.briefing_markdown) return;
     try {
@@ -440,6 +490,12 @@ const BriefingDrawer: React.FC<{
               <button onClick={copyMarkdown} title="Copiar markdown"
                       className="p-2 rounded hover:bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)] hover:text-white">
                 <Copy size={14} />
+              </button>
+            )}
+            {(b.status === 'error' || b.status === 'completed') && (
+              <button onClick={onRetry} title="Reenviar com os mesmos dados"
+                      className="p-2 rounded hover:bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)] hover:text-white">
+                <RotateCw size={14} />
               </button>
             )}
             {b.routine_session_url && (
@@ -471,8 +527,15 @@ const BriefingDrawer: React.FC<{
                 <AlertCircle size={16} />
                 <span className="font-semibold text-sm">Erro ao gerar briefing</span>
               </div>
-              <p className="text-sm text-[var(--color-v4-text)] whitespace-pre-wrap">
+              <p className="text-sm text-[var(--color-v4-text)] whitespace-pre-wrap mb-4">
                 {b.error_message || 'Erro desconhecido'}
+              </p>
+              <button onClick={onRetry}
+                      className="flex items-center gap-2 px-4 py-2 rounded bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-sm font-medium">
+                <RotateCw size={14} /> Reenviar
+              </button>
+              <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-2">
+                Vai usar os mesmos dados do formulário original.
               </p>
             </div>
           ) : b.briefing_markdown ? (
