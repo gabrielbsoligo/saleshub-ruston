@@ -302,6 +302,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (data) setDeals(data);
   }, []);
 
+  // Helper: gera comissoes + dispara webhook n8n quando um deal vira ganho.
+  // Idempotente: checa se ja existe comissao pro (deal, member, role, tipo) antes
+  // de inserir — evita duplicata se chamado duas vezes pro mesmo evento.
+  // Chamado de addDeal, updateDeal e moveDeal pra cobrir TODOS os caminhos.
+  const handleDealGanho = async (merged: Partial<Deal> & { id: string }, prevStatus?: string) => {
+    // 1. Comissoes
+    const categoria = ['blackbox', 'leadbroker'].includes(merged.origem || '') ? 'inbound' : 'outbound';
+
+    // Busca comissoes ja existentes pra esse deal (idempotencia)
+    const { data: existentes } = await supabase
+      .from('comissoes_registros')
+      .select('member_id, role_comissao, tipo')
+      .eq('deal_id', merged.id);
+    const chaveExistente = (mid: string, role: string, tipo: string) =>
+      (existentes || []).some(e => e.member_id === mid && e.role_comissao === role && e.tipo === tipo);
+
+    const comissaoRecords: any[] = [];
+    const buildRecord = (memberId: string | undefined, memberName: string, role: string, tipo: 'mrr' | 'ot', valor: number, dataPgto: string | null) => {
+      if (!memberId || !valor || valor <= 0) return;
+      if (chaveExistente(memberId, role, tipo)) return; // ja existe, skip
+      const rule = comissoes.find(c => c.role === role && c.tipo_origem === categoria && c.tipo_valor === tipo);
+      const pct = rule?.percentual || 0;
+      const dataLib = dataPgto ? new Date(new Date(dataPgto).getTime() + 30 * 86400000).toISOString().split('T')[0] : null;
+      comissaoRecords.push({
+        deal_id: merged.id, member_id: memberId, member_name: memberName,
+        role_comissao: role, tipo, categoria, valor_base: valor,
+        percentual: pct, valor_comissao: valor * pct,
+        data_pgto: dataPgto, data_liberacao: dataLib,
+        empresa: merged.empresa, origem: merged.origem,
+      });
+    };
+
+    if (merged.closer_id) {
+      const closer = members.find(m => m.id === merged.closer_id);
+      buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+      buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+    }
+    if (merged.sdr_id) {
+      const sdr = members.find(m => m.id === merged.sdr_id);
+      buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+      buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+    }
+
+    if (comissaoRecords.length > 0) {
+      await supabase.from('comissoes_registros').insert(comissaoRecords);
+    }
+
+    // 2. Webhook n8n (formato Kommo)
+    await emitDealGanhoWebhook(merged, prevStatus);
+  };
+
   const addDeal = async (d: Partial<Deal>) => {
     const { data, error } = await supabase
       .from('deals')
@@ -309,7 +360,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .select('*, closer:team_members!closer_id(*), sdr:team_members!sdr_id(*)')
       .single();
     if (error) { toast.error(error.message); return null; }
-    if (data) setDeals(prev => [data, ...prev]);
+    if (data) {
+      setDeals(prev => [data, ...prev]);
+      // Se ja foi criado como ganho, dispara geracao de comissao + webhook
+      if (data.status === 'contrato_assinado') {
+        await handleDealGanho(data, undefined);
+      }
+    }
     toast.success('Negociação criada!');
     return data;
   };
@@ -324,45 +381,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setDeals(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
 
-    // Auto-generate comissao records when deal becomes ganho
-    if (wasNotGanho && isNowGanho) {
-      const merged = { ...deal, ...updates };
-      const categoria = ['blackbox', 'leadbroker'].includes(merged.origem || '') ? 'inbound' : 'outbound';
-      const comissaoRecords: any[] = [];
-
-      const buildRecord = (memberId: string | undefined, memberName: string, role: string, tipo: 'mrr' | 'ot', valor: number, dataPgto: string | null) => {
-        if (!valor || valor <= 0) return;
-        const rule = comissoes.find(c => c.role === role && c.tipo_origem === categoria && c.tipo_valor === tipo);
-        const pct = rule?.percentual || 0;
-        const dataLib = dataPgto ? new Date(new Date(dataPgto).getTime() + 30 * 86400000).toISOString().split('T')[0] : null;
-        comissaoRecords.push({
-          deal_id: id, member_id: memberId || null, member_name: memberName,
-          role_comissao: role, tipo, categoria, valor_base: valor,
-          percentual: pct, valor_comissao: valor * pct,
-          data_pgto: dataPgto, data_liberacao: dataLib,
-          empresa: merged.empresa, origem: merged.origem,
-        });
-      };
-
-      // Closer
-      if (merged.closer_id) {
-        const closer = members.find(m => m.id === merged.closer_id);
-        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
-        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
-      }
-      // SDR
-      if (merged.sdr_id) {
-        const sdr = members.find(m => m.id === merged.sdr_id);
-        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
-        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
-      }
-
-      if (comissaoRecords.length > 0) {
-        await supabase.from('comissoes_registros').insert(comissaoRecords);
-      }
-
-      // Dispara webhook n8n no formato Kommo (fire-and-forget)
-      await emitDealGanhoWebhook(merged, deal?.status);
+    if (wasNotGanho && isNowGanho && deal) {
+      await handleDealGanho({ ...deal, ...updates, id }, deal.status);
     }
 
     toast.success('Negociação atualizada!');
@@ -377,9 +397,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (error) { toast.error(error.message); return; }
     setDeals(prev => prev.map(d => d.id === id ? { ...d, status: newStatus } : d));
 
-    // Dispara webhook n8n quando deal vai pra ganho via drag&drop do pipeline
     if (wasNotGanho && isNowGanho && prevDeal) {
-      await emitDealGanhoWebhook({ ...prevDeal, status: newStatus }, prevDeal.status);
+      await handleDealGanho({ ...prevDeal, status: newStatus, id }, prevDeal.status);
     }
   };
 
