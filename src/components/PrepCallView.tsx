@@ -45,7 +45,13 @@ export const PrepCallView: React.FC = () => {
   const [briefings, setBriefings] = useState<PrepBriefing[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [openBriefing, setOpenBriefing] = useState<PrepBriefing | null>(null);
+  const [openBriefingId, setOpenBriefingId] = useState<string | null>(null);
+  // openBriefing eh DERIVADO do array briefings — sempre reflete o estado
+  // mais recente do banco. Evita drift entre drawer e realtime/fetch.
+  const openBriefing = useMemo(
+    () => (openBriefingId ? briefings.find(b => b.id === openBriefingId) || null : null),
+    [openBriefingId, briefings]
+  );
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState<PrepBriefingStatus | 'all'>('all');
 
@@ -211,7 +217,7 @@ export const PrepCallView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {filtered.map(b => (
               <BriefingCard key={b.id} briefing={b}
-                            onClick={() => setOpenBriefing(b)}
+                            onClick={() => setOpenBriefingId(b.id)}
                             onRetry={() => retryBriefing(b)} />
             ))}
           </div>
@@ -230,14 +236,14 @@ export const PrepCallView: React.FC = () => {
       {openBriefing && (
         <BriefingDrawer
           briefing={openBriefing}
-          onClose={() => setOpenBriefing(null)}
+          onClose={() => setOpenBriefingId(null)}
           onRetry={() => retryBriefing(openBriefing)}
           onDelete={async () => {
             if (!window.confirm(`Apagar briefing de "${openBriefing.empresa}"?`)) return;
             const { error } = await supabase.from('prep_briefings').delete().eq('id', openBriefing.id);
             if (error) { toast.error(error.message); return; }
             toast.success('Briefing apagado');
-            setOpenBriefing(null);
+            setOpenBriefingId(null);
             fetchBriefings();
           }}
         />
