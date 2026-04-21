@@ -7,7 +7,7 @@ Ordem de tentativa:
 
 Se ambos falharem, grava fetched=false + erros descritivos.
 """
-import os, json, sys, re
+import os, json, sys, re, time, random
 import requests
 
 try:
@@ -61,23 +61,60 @@ def parse_number(s: str) -> int:
 
 
 def try_public_profile(handle: str) -> dict:
-    """Fallback: GET no HTML da pagina com UA Googlebot (IG faz SSR pra bots)."""
+    """Fallback: GET no HTML da pagina com UA Googlebot (IG faz SSR pra bots).
+
+    Retry em 429/403 com backoff aleatorio — reduz chance de cair no rate limit
+    global do pool IP do GitHub runner.
+    """
     url = f"https://www.instagram.com/{handle}/"
-    try:
-        resp = requests.get(
-            url,
-            headers={
-                "User-Agent": GOOGLEBOT_UA,
-                "Accept-Language": "en-US",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            },
-            timeout=15,
-            allow_redirects=True,
-        )
-        if resp.status_code != 200:
+    max_attempts = 3
+    html = None
+    last_status = None
+
+    # Delay inicial aleatorio (0-4s) — se varios briefings disparam em paralelo,
+    # evita que todos batam IG no mesmo instante
+    time.sleep(random.uniform(0, 4))
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = requests.get(
+                url,
+                headers={
+                    "User-Agent": GOOGLEBOT_UA,
+                    "Accept-Language": "en-US",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+                timeout=15,
+                allow_redirects=True,
+            )
+            last_status = resp.status_code
+
+            if resp.status_code == 200:
+                html = resp.text
+                break
+
+            # 429/403 — espera e tenta de novo
+            if resp.status_code in (429, 403) and attempt < max_attempts:
+                wait = random.uniform(8, 25) * attempt  # backoff crescente
+                print(f"[scrape_instagram] tentativa {attempt}: HTTP {resp.status_code} — aguardando {wait:.1f}s")
+                time.sleep(wait)
+                continue
+
+            # Outros codigos — desiste
             return {"ok": False, "reason": f"HTTP {resp.status_code}"}
 
-        html = resp.text
+        except requests.exceptions.RequestException as e:
+            if attempt < max_attempts:
+                wait = random.uniform(5, 15)
+                print(f"[scrape_instagram] tentativa {attempt}: {type(e).__name__} — aguardando {wait:.1f}s")
+                time.sleep(wait)
+                continue
+            return {"ok": False, "reason": f"Request: {type(e).__name__}: {str(e)[:150]}"}
+
+    if html is None:
+        return {"ok": False, "reason": f"HTTP {last_status} apos {max_attempts} tentativas (provavelmente rate limit persistente)"}
+
+    try:
 
         # Primeira linha de defesa: Instagram serve meta og:description com
         # contagens em perfis publicos. Formato tipico:
