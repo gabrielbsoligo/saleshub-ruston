@@ -489,6 +489,49 @@ const PrepCallForm: React.FC<{
   );
 };
 
+// ---------- Painel de links manuais (fallback se scraping falhar) ----------
+const ManualLinksPanel: React.FC<{ inputs: PrepBriefingInputs; empresa: string }> = ({ inputs, empresa }) => {
+  const links: { label: string; url: string }[] = [];
+  if (inputs.site) {
+    const site = inputs.site.startsWith('http') ? inputs.site : `https://${inputs.site}`;
+    links.push({ label: 'Site do lead', url: site });
+  }
+  if (inputs.instagram) {
+    const handle = inputs.instagram.replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//, '').replace(/\/$/, '');
+    if (handle) links.push({ label: 'Instagram', url: `https://www.instagram.com/${handle}/` });
+  }
+  if (inputs.meta_ads_library_url) {
+    links.push({ label: 'Meta Ads Library', url: inputs.meta_ads_library_url });
+  } else if (empresa) {
+    const q = encodeURIComponent(empresa);
+    links.push({ label: 'Buscar na Meta Ads Library', url: `https://www.facebook.com/ads/library/?q=${q}&country=BR&active_status=all` });
+  }
+  if (inputs.google_ads_transparency_url) {
+    links.push({ label: 'Google Ads Transparency', url: inputs.google_ads_transparency_url });
+  }
+
+  if (links.length === 0) return null;
+
+  return (
+    <div className="mt-6 pt-4 border-t border-[var(--color-v4-border)]/40">
+      <h4 className="text-xs font-bold text-[var(--color-v4-text-muted)] uppercase tracking-wider mb-2">
+        🔗 Abrir manualmente
+      </h4>
+      <p className="text-[10px] text-[var(--color-v4-text-muted)] mb-3">
+        Fallback caso algum scraping tenha falhado. Clique pra validar visualmente antes da call.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {links.map((l, i) => (
+          <a key={i} href={l.url} target="_blank" rel="noopener"
+             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:text-white hover:border-[var(--color-v4-red)]/50 text-xs">
+            <ExternalLink size={11} /> {l.label}
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ---------- Drawer ----------
 const BriefingDrawer: React.FC<{
   briefing: PrepBriefing;
@@ -573,7 +616,10 @@ const BriefingDrawer: React.FC<{
               </p>
             </div>
           ) : b.briefing_markdown ? (
-            <MarkdownView source={b.briefing_markdown} />
+            <>
+              <MarkdownView source={b.briefing_markdown} />
+              <ManualLinksPanel inputs={b.inputs} empresa={b.empresa} />
+            </>
           ) : (
             <p className="text-sm text-[var(--color-v4-text-muted)]">Sem conteúdo.</p>
           )}

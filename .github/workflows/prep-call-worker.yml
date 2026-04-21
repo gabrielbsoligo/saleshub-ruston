@@ -1,0 +1,144 @@
+name: Prep Call Worker
+
+on:
+  repository_dispatch:
+    types: [prep-call-briefing]
+
+jobs:
+  scrape-and-analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      BRIEFING_ID: ${{ github.event.client_payload.briefing_id }}
+      EMPRESA: ${{ github.event.client_payload.empresa }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_TRIGGER_URL }}
+      ROUTINE_API_KEY: ${{ secrets.CLAUDE_ROUTINE_API_KEY }}
+      CALLBACK_URL: ${{ secrets.SUPABASE_URL }}/functions/v1/prep-call-callback
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml instaloader
+
+      - name: Mark briefing as processing
+        run: |
+          curl -sS -X PATCH \
+            "${SUPABASE_URL}/rest/v1/prep_briefings?id=eq.${BRIEFING_ID}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{"status": "processing", "failed_stage": null}'
+
+      - name: Scrape site
+        id: scrape_site
+        continue-on-error: true
+        run: python scripts/workers/scrape_site.py
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+
+      - name: Scrape Instagram
+        id: scrape_instagram
+        continue-on-error: true
+        run: python scripts/workers/scrape_instagram.py
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+
+      - name: Scrape Meta Ads Library
+        id: scrape_meta_ads
+        continue-on-error: true
+        run: python scripts/workers/scrape_meta_ads.py
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          META_ADS_DOC_ID: ${{ secrets.META_ADS_DOC_ID }}
+
+      - name: Setup Node for Playwright (Google Ads)
+        if: env.HAS_GOOGLE_URL == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check if Google Ads URL provided
+        id: check_google
+        run: |
+          PAYLOAD='${{ toJson(github.event.client_payload) }}'
+          HAS=$(echo "$PAYLOAD" | python -c "import json,sys; p=json.load(sys.stdin); print('true' if (p.get('inputs') or {}).get('google_ads_transparency_url') else 'false')")
+          echo "HAS_GOOGLE_URL=$HAS" >> $GITHUB_ENV
+          echo "has_url=$HAS" >> $GITHUB_OUTPUT
+
+      - name: Install Playwright
+        if: steps.check_google.outputs.has_url == 'true'
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      - name: Scrape Google Ads Transparency
+        id: scrape_google_ads
+        if: steps.check_google.outputs.has_url == 'true'
+        continue-on-error: true
+        run: node scripts/workers/scrape_google_ads.mjs
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+
+      - name: Consolidate scraped data
+        id: consolidate
+        run: python scripts/workers/consolidate.py
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          STEP_SITE: ${{ steps.scrape_site.outcome }}
+          STEP_INSTAGRAM: ${{ steps.scrape_instagram.outcome }}
+          STEP_META_ADS: ${{ steps.scrape_meta_ads.outcome }}
+          STEP_GOOGLE_ADS: ${{ steps.scrape_google_ads.outcome }}
+
+      - name: Persist scraped_data on briefing
+        run: |
+          if [ -f scraped_data.json ]; then
+            SCRAPED=$(cat scraped_data.json)
+            curl -sS -X PATCH \
+              "${SUPABASE_URL}/rest/v1/prep_briefings?id=eq.${BRIEFING_ID}" \
+              -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=minimal" \
+              -d "{\"scraped_data\": $SCRAPED}"
+          fi
+
+      - name: Call Claude Code Routine
+        id: call_routine
+        run: python scripts/workers/call_routine.py
+        env:
+          PAYLOAD: ${{ toJson(github.event.client_payload) }}
+
+      - name: Write summary
+        if: always()
+        run: python scripts/workers/summary.py >> $GITHUB_STEP_SUMMARY
+        env:
+          STEP_SITE: ${{ steps.scrape_site.outcome }}
+          STEP_INSTAGRAM: ${{ steps.scrape_instagram.outcome }}
+          STEP_META_ADS: ${{ steps.scrape_meta_ads.outcome }}
+          STEP_GOOGLE_ADS: ${{ steps.scrape_google_ads.outcome }}
+          STEP_ROUTINE: ${{ steps.call_routine.outcome }}
+
+      - name: Mark briefing as error if Routine call failed
+        if: steps.call_routine.outcome == 'failure'
+        run: |
+          curl -sS -X PATCH \
+            "${SUPABASE_URL}/rest/v1/prep_briefings?id=eq.${BRIEFING_ID}" \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            -d '{"status": "error", "failed_stage": "routine_call", "error_message": "Routine call failed no worker"}'

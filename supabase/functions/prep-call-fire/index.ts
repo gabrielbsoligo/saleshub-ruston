@@ -1,27 +1,23 @@
 // =============================================================
 // Edge Function: prep-call-fire
 // =============================================================
-// Proxy server-side pra chamar a Claude Code Routine /fire.
-// O browser NAO pode chamar api.anthropic.com diretamente (CORS +
-// exposicao do token). Essa function recebe o briefing_id + inputs,
-// busca token/routine_id de integracao_config e dispara a Routine.
+// Dispara um GitHub Action que vai coletar dados (scraping) e
+// depois chamar a Claude Code Routine com o payload enriquecido.
 //
-// Input (POST JSON):
-//   {
-//     "briefing_id": "<uuid>",
-//     "empresa": "<string>",
-//     "inputs": { site, instagram, segmento, ... }
-//   }
+// Antes (v1-v3): chamava a Routine direto.
+// Agora (v4+): dispara repository_dispatch e deixa o worker (GitHub
+// Actions) coletar dados + chamar a Routine com scraped_data incluso.
 //
-// Output:
-//   { session_id, session_url }
+// Env vars necessarias:
+//   GITHUB_REPO_DISPATCH_TOKEN — PAT com Actions: write pro repo
+//   GITHUB_REPO_OWNER — ex: gabrielbsoligo
+//   GITHUB_REPO_NAME — ex: saleshub-ruston
+//
+// Config no banco (integracao_config):
+//   (nenhum — Routine eh chamada agora pelo worker com secrets do GitHub)
 // =============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const ANTHROPIC_API = 'https://api.anthropic.com/v1/claude_code/routines'
-const ANTHROPIC_BETA = 'experimental-cc-routine-2026-04-01'
-const ANTHROPIC_VERSION = '2023-06-01'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -61,11 +57,10 @@ Deno.serve(async (req) => {
             })
         }
 
-        // Auth indireta: o briefing tem que existir (criado por user autenticado via RLS).
-        // Sem verify_jwt no gateway, essa checagem bloqueia abuso anonimo.
+        // Auth indireta: briefing precisa existir (criado por user autenticado via RLS).
         const { data: brief, error: briefErr } = await supabase
             .from('prep_briefings')
-            .select('id, status')
+            .select('id, status, lead_id, empresa, created_at')
             .eq('id', briefingId)
             .maybeSingle()
 
@@ -82,75 +77,91 @@ Deno.serve(async (req) => {
             })
         }
 
-        // Carrega config do banco
-        const { data: cfg, error: cfgErr } = await supabase
-            .from('integracao_config')
-            .select('key, value')
-            .in('key', ['claude_code_routine_token', 'claude_code_routine_id'])
-
-        if (cfgErr) {
-            return new Response(JSON.stringify({ error: `config error: ${cfgErr.message}` }), {
-                status: 500,
+        // Idempotencia: se ja ha briefing processing pro mesmo lead/empresa nos ultimos 5min,
+        // nao dispara outro — evita duplo click ou retry paralelo.
+        const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+        const { data: recent } = await supabase
+            .from('prep_briefings')
+            .select('id')
+            .eq('empresa', brief.empresa)
+            .eq('status', 'processing')
+            .gt('created_at', fiveMinAgo)
+            .neq('id', briefingId)
+            .limit(1)
+            .maybeSingle()
+        if (recent) {
+            return new Response(JSON.stringify({
+                error: 'Ja existe briefing em processamento pra essa empresa nos ultimos 5 min',
+                existing_id: recent.id,
+            }), {
+                status: 409,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             })
         }
 
-        const configMap: Record<string, string> = {}
-        for (const row of cfg || []) configMap[row.key] = row.value
+        // GitHub dispatch
+        const ghToken = Deno.env.get('GITHUB_REPO_DISPATCH_TOKEN')
+        const ghOwner = Deno.env.get('GITHUB_REPO_OWNER')
+        const ghRepo = Deno.env.get('GITHUB_REPO_NAME')
 
-        const token = configMap.claude_code_routine_token
-        const routineId = configMap.claude_code_routine_id
-
-        if (!token || !routineId) {
+        if (!ghToken || !ghOwner || !ghRepo) {
+            const missing = { GITHUB_REPO_DISPATCH_TOKEN: !!ghToken, GITHUB_REPO_OWNER: !!ghOwner, GITHUB_REPO_NAME: !!ghRepo }
             return new Response(JSON.stringify({
-                error: 'Routine nao configurada no banco (token ou routine_id vazio em integracao_config)',
+                error: 'GitHub config ausente nas env vars da edge function',
+                detail: missing,
             }), {
                 status: 500,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             })
         }
 
-        // Payload pra Routine (todos os campos; briefing_id ecoado no callback)
-        const payload = {
+        const dispatchUrl = `https://api.github.com/repos/${ghOwner}/${ghRepo}/dispatches`
+        const clientPayload = {
             briefing_id: briefingId,
             empresa,
-            segmento: inputs.segmento || '',
-            site: inputs.site || '',
-            instagram: inputs.instagram || '',
-            faturamento_atual: inputs.faturamento_atual || '',
-            meta_faturamento: inputs.meta_faturamento || '',
-            concorrentes_conhecidos: inputs.concorrentes_conhecidos || '',
-            contexto: inputs.contexto || '',
-            // V2: bibliotecas de ads (opcionais — Routine checa se vieram preenchidas)
-            meta_ads_library_url: inputs.meta_ads_library_url || '',
-            google_ads_transparency_url: inputs.google_ads_transparency_url || '',
+            inputs,
         }
 
-        const resp = await fetch(`${ANTHROPIC_API}/${routineId}/fire`, {
+        const resp = await fetch(dispatchUrl, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`,
-                'anthropic-beta': ANTHROPIC_BETA,
-                'anthropic-version': ANTHROPIC_VERSION,
+                'Authorization': `Bearer ${ghToken}`,
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ text: JSON.stringify(payload) }),
+            body: JSON.stringify({
+                event_type: 'prep-call-briefing',
+                client_payload: clientPayload,
+            }),
         })
 
         if (!resp.ok) {
             const errText = await resp.text().catch(() => '')
+
+            // Marca failed_stage no banco pra debug
+            await supabase.from('prep_briefings').update({
+                status: 'error',
+                failed_stage: 'dispatch',
+                error_message: `GitHub dispatch ${resp.status}: ${errText.slice(0, 300)}`,
+            }).eq('id', briefingId)
+
             return new Response(JSON.stringify({
-                error: `Routine /fire ${resp.status}: ${errText.slice(0, 300)}`,
+                error: `GitHub dispatch falhou (${resp.status}): ${errText.slice(0, 300)}`,
             }), {
                 status: resp.status === 401 || resp.status === 403 ? resp.status : 502,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             })
         }
 
-        const data = await resp.json()
+        // Marca como processing — worker atualiza depois
+        await supabase.from('prep_briefings').update({
+            status: 'processing',
+        }).eq('id', briefingId)
+
         return new Response(JSON.stringify({
-            session_id: data.claude_code_session_id || data.session_id || '',
-            session_url: data.claude_code_session_url || data.session_url || '',
+            dispatched: true,
+            message: 'GitHub Action disparado. Worker vai processar e disparar a Routine.',
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
