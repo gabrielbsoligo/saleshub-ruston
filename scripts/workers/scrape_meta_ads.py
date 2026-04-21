@@ -1,15 +1,32 @@
 """
-Scrape da Meta Ads Library via URL publica (HTML + heuristica leve).
-Estrategia atual: busca pelo HTML da URL pre-filtrada que o closer cola,
-extrai dados minimamente estruturados via regex.
+Scrape da Meta Ads Library via URL publica.
 
-Limitacao conhecida: Meta Ads Library eh SPA JS-heavy — HTML vem quase
-vazio. Quando o doc_id GraphQL for configurado, trocar por GraphQL fetch.
+Descoberta importante: Meta bloqueia User-Agent normal (403), mas serve
+SSR completo com dados pra Googlebot. A pagina vem renderizada com os
+anuncios em JSON embutido no HTML.
 
-Doc_id GraphQL: env var META_ADS_DOC_ID (pode ser null)
+Estrategia:
+1. GET na URL com UA=Googlebot
+2. Extrai padroes JSON do HTML: body.text, title, link_url, cta_text,
+   page_name, start_date, plataformas
+3. Deduplica por body+title
+4. Retorna lista estruturada
 """
 import os, json, sys, re
 import requests
+
+
+GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+
+
+def decode_unicode(s: str) -> str:
+    """Decodifica \\uXXXX e escapes do Meta usando json.loads (robusto pra emoji)."""
+    try:
+        # json.loads trata \uXXXX, surrogates e escapes JSON corretamente
+        return json.loads(f'"{s}"')
+    except Exception:
+        # Fallback: retorna como string mesmo que tenha escapes
+        return s
 
 
 def main():
@@ -25,106 +42,155 @@ def main():
         print("[scrape_meta_ads] sem url — skip")
         return
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    }
-
     try:
-        resp = requests.get(url, headers=headers, timeout=25, allow_redirects=True)
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": GOOGLEBOT_UA,
+                "Accept-Language": "en-US",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+            timeout=25,
+            allow_redirects=True,
+        )
         result["status_code"] = resp.status_code
         result["html_size"] = len(resp.text)
         html = resp.text
 
-        # Heuristica 1: detectar se a URL retornou "sem anuncios"
-        # (a Library mostra esse texto no shell HTML quando nao tem resultado)
-        low = html.lower()
-        if "não encontramos" in low or "no ads to show" in low or "nenhum anuncio" in low:
-            result["fetched"] = True
-            result["active_count"] = 0
-            result["hint"] = "HTML indica 'sem anuncios' — confirmar abrindo URL manualmente"
+        if resp.status_code != 200:
+            errors.append({
+                "stage": "scrape_meta_ads",
+                "message": f"HTTP {resp.status_code} ao buscar Ad Library com Googlebot UA",
+            })
             save(result, errors)
             return
 
-        # Heuristica 2: tentar pegar page_id do HTML (aparece em og:url e scripts JSON)
-        m = re.search(r'"page_id"\s*:\s*"(\d+)"', html)
+        # Procura padroes de anuncios no JSON embutido
+        # Meta embute cada ad como objeto com body.text, title, cta_text, etc.
+        ads = extract_ads(html)
+        if ads:
+            result["ads"] = ads
+            result["active_count"] = len(ads)
+            result["fetched"] = True
+
+        # Page name (geral)
+        m = re.search(r'"page_name":"([^"]+)"', html)
+        if m:
+            result["page_name"] = decode_unicode(m.group(1))[:200]
+
+        # Page ID
+        m = re.search(r'"page_id":"(\d+)"', html)
         if m:
             result["page_id"] = m.group(1)
 
-        # Heuristica 3: contagem "X anúncios ativos" se o shell renderizou
-        m = re.search(r'(\d+)\s*an[úu]ncios?\s*ativos?', html, re.I)
-        if m:
-            result["active_count_hint"] = int(m.group(1))
-
-        # Se tem doc_id configurado, tenta GraphQL
-        doc_id = os.environ.get("META_ADS_DOC_ID", "").strip()
-        page_id = result.get("page_id")
-        if doc_id and page_id:
-            try:
-                gql_result = fetch_ads_graphql(page_id, doc_id, headers)
-                if gql_result:
-                    result.update(gql_result)
-                    result["fetched"] = True
-            except Exception as ge:
-                errors.append({"stage": "scrape_meta_ads_graphql", "message": str(ge)[:200]})
-
-        # Se nao conseguiu dados ricos, marca que ao menos tentou
-        result["fetched"] = result.get("fetched") or result["html_size"] > 1000
+        print(f"[scrape_meta_ads] fetched={result['fetched']} active_count={result['active_count']}")
 
     except requests.exceptions.RequestException as e:
-        errors.append({"stage": "scrape_meta_ads", "message": f"Request falhou: {type(e).__name__}: {str(e)[:200]}"})
+        errors.append({
+            "stage": "scrape_meta_ads",
+            "message": f"Request falhou: {type(e).__name__}: {str(e)[:200]}",
+        })
     except Exception as e:
-        errors.append({"stage": "scrape_meta_ads", "message": f"{type(e).__name__}: {str(e)[:200]}"})
+        errors.append({
+            "stage": "scrape_meta_ads",
+            "message": f"{type(e).__name__}: {str(e)[:200]}",
+        })
 
     save(result, errors)
-    print(f"[scrape_meta_ads] fetched={result.get('fetched')} active_count={result.get('active_count')}")
 
 
-def fetch_ads_graphql(page_id: str, doc_id: str, base_headers: dict) -> dict:
-    """Tentativa de buscar ads via GraphQL publico. doc_id muda periodicamente."""
-    url = "https://www.facebook.com/api/graphql/"
-    variables = {
-        "adActiveStatus": "ALL",
-        "country": "BR",
-        "pageId": page_id,
-        "viewAllPageID": page_id,
-        "searchType": "PAGE",
-    }
-    import urllib.parse
-    form = {
-        "doc_id": doc_id,
-        "variables": json.dumps(variables),
-    }
-    resp = requests.post(url, data=form, headers={**base_headers, "Content-Type": "application/x-www-form-urlencoded"}, timeout=20)
-    if resp.status_code != 200:
-        raise Exception(f"GraphQL {resp.status_code}")
-    try:
-        data = resp.json()
-    except Exception:
-        raise Exception("GraphQL resposta nao-JSON")
+def extract_ads(html: str) -> list:
+    """
+    Extrai anuncios do HTML. O SSR do Meta pra Googlebot inclui objetos JSON
+    com cada snapshot. Usamos regex pra pegar os campos principais.
 
-    # O shape muda conforme o doc_id. Tenta caminho comum.
+    Como cada ad pode aparecer em varias plataformas, deduplicamos por body+title.
+    """
+    # Pega todos os pares (body.text, title mais proximo, cta_text mais proximo, etc)
+    # Estrategia: dividir em blocos de ~2000 chars em volta de cada body encontrado
+    bodies = list(re.finditer(r'"body":\s*\{\s*"text":\s*"((?:[^"\\]|\\.)*)"', html))
+
     ads = []
-    try:
-        edges = data["data"]["ad_library_main"]["search_results_connection"]["edges"]
-        for e in edges[:10]:
-            node = e.get("node") or {}
-            snap = node.get("snapshot") or {}
-            ads.append({
-                "creative_body": (snap.get("body", {}) or {}).get("text", "")[:500],
-                "link_title": snap.get("title", "")[:200],
-                "link_description": snap.get("link_description", "")[:300],
-                "cta_text": (snap.get("cta_text") or "")[:100],
-                "page_name": snap.get("page_name", ""),
-                "start_date": node.get("start_date", ""),
-                "platforms": node.get("publisher_platform", []),
-                "format": snap.get("display_format", ""),
-            })
-    except (KeyError, TypeError):
-        return {}
+    seen = set()
 
-    return {"ads": ads, "active_count": len(ads)}
+    for m in bodies:
+        start = max(0, m.start() - 500)
+        end = min(len(html), m.end() + 2000)
+        block = html[start:end]
+
+        body_text = decode_unicode(m.group(1))[:600]
+        if not body_text.strip():
+            continue
+
+        # Titulo (pode estar antes ou depois do body)
+        title = ""
+        t = re.search(r'"title":\s*"((?:[^"\\]|\\.)*)"', block)
+        if t:
+            title = decode_unicode(t.group(1))[:200]
+
+        link_description = ""
+        ld = re.search(r'"link_description":\s*"((?:[^"\\]|\\.)*)"', block)
+        if ld:
+            link_description = decode_unicode(ld.group(1))[:300]
+
+        cta = ""
+        c = re.search(r'"cta_text":\s*"((?:[^"\\]|\\.)*)"', block)
+        if c:
+            cta = decode_unicode(c.group(1))[:100]
+
+        link_url = ""
+        lu = re.search(r'"link_url":\s*"((?:[^"\\]|\\.)*)"', block)
+        if lu:
+            link_url = decode_unicode(lu.group(1))[:300]
+
+        # Data de inicio
+        start_date = ""
+        sd = re.search(r'"start_date":\s*"?(\d+)"?', block)
+        if sd:
+            # Timestamp em segundos
+            try:
+                from datetime import datetime, timezone
+                start_date = datetime.fromtimestamp(int(sd.group(1)), tz=timezone.utc).date().isoformat()
+            except Exception:
+                pass
+
+        # Plataformas
+        plats = re.findall(r'"publisher_platform":\s*\[([^\]]+)\]', block)
+        platforms = []
+        if plats:
+            raw = plats[0]
+            for p in re.findall(r'"([^"]+)"', raw):
+                if p not in platforms:
+                    platforms.append(p)
+
+        # Formato (image, video, carousel)
+        display_format = ""
+        df = re.search(r'"display_format":\s*"([^"]+)"', block)
+        if df:
+            display_format = df.group(1)
+
+        # Dedupe por body+title
+        key = (body_text[:200], title[:100])
+        if key in seen:
+            continue
+        seen.add(key)
+
+        ads.append({
+            "body": body_text,
+            "title": title,
+            "link_description": link_description,
+            "cta_text": cta,
+            "link_url": link_url,
+            "start_date": start_date,
+            "platforms": platforms,
+            "format": display_format,
+        })
+
+        # Limita a 20 ads pra nao estourar payload
+        if len(ads) >= 20:
+            break
+
+    return ads
 
 
 def save(result, errors):
