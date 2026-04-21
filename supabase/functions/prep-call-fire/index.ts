@@ -121,6 +121,9 @@ Deno.serve(async (req) => {
             meta_faturamento: inputs.meta_faturamento || '',
             concorrentes_conhecidos: inputs.concorrentes_conhecidos || '',
             contexto: inputs.contexto || '',
+            // V2: bibliotecas de ads (opcionais — Routine checa se vieram preenchidas)
+            meta_ads_library_url: inputs.meta_ads_library_url || '',
+            google_ads_transparency_url: inputs.google_ads_transparency_url || '',
         }
 
         const resp = await fetch(`${ANTHROPIC_API}/${routineId}/fire`, {
