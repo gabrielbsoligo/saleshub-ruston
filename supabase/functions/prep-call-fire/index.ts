@@ -61,6 +61,27 @@ Deno.serve(async (req) => {
             })
         }
 
+        // Auth indireta: o briefing tem que existir (criado por user autenticado via RLS).
+        // Sem verify_jwt no gateway, essa checagem bloqueia abuso anonimo.
+        const { data: brief, error: briefErr } = await supabase
+            .from('prep_briefings')
+            .select('id, status')
+            .eq('id', briefingId)
+            .maybeSingle()
+
+        if (briefErr || !brief) {
+            return new Response(JSON.stringify({ error: 'briefing nao encontrado' }), {
+                status: 404,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+        }
+        if (brief.status === 'completed' || brief.status === 'processing') {
+            return new Response(JSON.stringify({ error: `briefing ja esta em ${brief.status}` }), {
+                status: 409,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            })
+        }
+
         // Carrega config do banco
         const { data: cfg, error: cfgErr } = await supabase
             .from('integracao_config')

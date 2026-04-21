@@ -27,14 +27,13 @@ export async function firePrepCallRoutine(
   empresa: string,
   inputs: PrepBriefingInputs
 ): Promise<FireResult> {
-  // Pega o JWT do usuario logado pra enviar no Authorization
-  const { data: sessionData } = await supabase.auth.getSession();
-  const accessToken = sessionData?.session?.access_token || SUPABASE_ANON_KEY;
-
+  // Edge function nao exige JWT (incompatibilidade ES256 no gateway).
+  // A seguranca vem da checagem server-side que o briefing_id existe
+  // na tabela — e pra criar o registro, RLS ja exigiu usuario autenticado.
   const resp = await fetch(`${SUPABASE_URL}/functions/v1/prep-call-fire`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       'apikey': SUPABASE_ANON_KEY,
       'Content-Type': 'application/json',
     },
