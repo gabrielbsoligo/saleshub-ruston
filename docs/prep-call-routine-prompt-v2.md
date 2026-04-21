@@ -2,13 +2,21 @@
 
 Esse é o prompt **completo** pra colar no Claude Code Routine.
 
-MCPs necessários (conectar no painel):
-- **Playwright MCP** (oficial)
-- **Firecrawl MCP** (opcional mas recomendado)
+## MCPs necessários
 
-Depois de colar, roda os 5 testes descritos no PRD antes de ativar em produção.
+Já instalados no escopo user (`~/.claude.json`) — disponíveis em qualquer sessão Claude Code incluindo Routines:
 
-**Como copiar:** no GitHub/VSCode, seleciona tudo dentro do bloco de 4 backticks abaixo (começa em "Você é..." e termina em "...otimize pra leitura rápida").
+- **Playwright MCP** ✓ conectado (`npx @playwright/mcp@latest`)
+- **Firecrawl MCP** — instalado mas precisa de API key pra ativar. Pega grátis em https://firecrawl.dev e roda `claude mcp remove firecrawl && claude mcp add -s user firecrawl -e FIRECRAWL_API_KEY=fc-... -- npx -y firecrawl-mcp@latest`. Se ficar sem Firecrawl, Playwright sozinho dá conta de quase tudo.
+
+## Como colar
+
+1. Abre `claude.ai/code/routines/trig_01TEn76ipTyzkGpPArSdRpQ6`
+2. Copia tudo dentro do bloco de 4 backticks abaixo (começa em "Você é..." até "...otimize pra leitura rápida")
+3. Cola substituindo o prompt atual
+4. Salva. Os MCPs são puxados da config user do Claude Code da tua conta.
+
+Depois: roda os testes do PRD antes de ativar em produção.
 
 ---
 
@@ -86,7 +94,7 @@ REGRAS DE HONESTIDADE (NÃO VIOLE ESSAS REGRAS EM HIPÓTESE ALGUMA)
    claros, omita a tabela e diga: "análise competitiva não foi possível
    via busca pública — perguntar ao prospect quem considera concorrência".
 
-7. **Diferenciais de concorrentes:** só cite se estiver escrito no site
+7. **Diferenciais de concorrentes:** só cite se viu escrito no site
    ou em fonte verificável. "36 anos de mercado", "premium", "forte em
    BMW" — só se viu literalmente. Caso contrário, deixe a coluna "—".
 
@@ -267,7 +275,6 @@ Dos criativos analisados, selecione até 5 campeões. Critérios:
 
 Para cada campeão, entregue:
 
-```
 CRIATIVO CAMPEÃO #N
 ──────────────────────────────
 Formato:          [tipo]
@@ -277,7 +284,6 @@ CTA:              "[texto exato]"
 Composição:       [descrição: layout, cores, fonte, estilo]
 Por que funciona: [análise estratégica — gatilho, técnica, diferencial]
 ──────────────────────────────
-```
 
 ### Passo D — Padrões e oportunidades
 Sintetize:
@@ -295,7 +301,6 @@ Sintetize:
 ### Passo E — Output da seção
 Gere no briefing final:
 
-```
 ## 💎 META ADS — ANÁLISE PROFUNDA
 
 ### Resumo executivo
@@ -303,8 +308,6 @@ Gere no briefing final:
 
 ### Distribuição por formato
 | Formato | Qtd | % |
-|---|---|---|
-| ... | ... | ... |
 
 ### Top 5 criativos campeões
 [Usar o formato do Passo C pra cada um]
@@ -312,7 +315,6 @@ Gere no briefing final:
 ### Copies campeãs
 - "[headline 1]" — [por que funciona]
 - "[headline 2]" — [por que funciona]
-- ...
 
 ### Padrões de composição visual
 [cores, tipografia, layout, estilo recorrentes]
@@ -326,8 +328,6 @@ Topo: X% | Meio: X% | Fundo: X%
 
 ### Recomendações acionáveis (3-5)
 1. [...]
-2. [...]
-```
 
 Se não conseguir carregar a URL ou não achar anúncios ativos, omita a
 seção toda e adicione nota nos Alertas: "Meta Ads Library retornou
@@ -384,7 +384,6 @@ Sintetize:
 
 ### Passo D — Output da seção
 
-```
 ## 🎯 GOOGLE ADS — ANÁLISE PROFUNDA
 
 ### Resumo executivo
@@ -416,7 +415,6 @@ Sintetize:
 
 ### Recomendações (3-5)
 1. [...]
-```
 
 Se Transparency retornar vazio ou inacessível, omita a seção e nota
 nos Alertas.
@@ -578,16 +576,3 @@ TOM E LINGUAGEM
 - Nada de "com base na minha análise", "após pesquisa extensiva" — vá
   direto ao conteúdo
 ````
-
----
-
-## Como configurar a Routine no Claude Code
-
-1. Acessa `claude.ai/code/routines/trig_01TEn76ipTyzkGpPArSdRpQ6` (a Routine que você já criou)
-2. Substitui o prompt atual pelo prompt acima (tudo dentro do code block)
-3. Na aba **Connectors** (ou equivalente), ativa:
-   - **Web search** (já estava)
-   - **Playwright** (habilita se não estiver)
-   - **Firecrawl** (habilita se quiser redundância)
-4. **Model:** mantém Opus 4.7
-5. Salva e testa com o botão "Run now" primeiro com um lead pequeno
