@@ -12,6 +12,7 @@ import { EquipeView } from "./components/EquipeView";
 import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
 import { AuditoriaView } from "./components/AuditoriaView";
+import { PrepCallView } from "./components/PrepCallView";
 import { AuditPanel } from "./components/AuditPanel";
 import { supabase } from "./lib/supabase";
 import { Toaster } from "react-hot-toast";
@@ -220,6 +221,7 @@ const MainApp: React.FC = () => {
       case "comissoes": return <ComissoesView />;
       case "blackbox": return <BlackBoxView />;
       case "auditoria": return <AuditoriaView />;
+      case "prepcall": return <PrepCallView />;
       case "equipe": return <EquipeView />;
       default: return <DashboardView />;
     }

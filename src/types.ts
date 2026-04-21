@@ -424,6 +424,39 @@ export interface CallAnalysisResult {
   proxima_reuniao: { data: string; hora: string } | null;
 }
 
+// =============================================
+// Prep Call (analise pre-reuniao via Claude Code Routine)
+// =============================================
+
+export type PrepBriefingStatus = 'pending' | 'processing' | 'completed' | 'error';
+
+export interface PrepBriefingInputs {
+  site?: string;
+  instagram?: string;
+  segmento?: string;
+  faturamento_atual?: string;
+  meta_faturamento?: string;
+  concorrentes_conhecidos?: string;
+  contexto?: string;
+}
+
+export interface PrepBriefing {
+  id: string;
+  requested_by_id: string;
+  requested_by?: TeamMember;
+  lead_id?: string;
+  lead?: Lead;
+  empresa: string;
+  inputs: PrepBriefingInputs;
+  status: PrepBriefingStatus;
+  routine_session_id?: string;
+  routine_session_url?: string;
+  briefing_markdown?: string;
+  error_message?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
 export interface PostMeetingAutomation {
   id: string;
   reuniao_id: string;
