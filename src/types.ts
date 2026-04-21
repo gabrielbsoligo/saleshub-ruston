@@ -438,6 +438,9 @@ export interface PrepBriefingInputs {
   meta_faturamento?: string;
   concorrentes_conhecidos?: string;
   contexto?: string;
+  // V2: links opcionais pra analise profunda de midia paga
+  meta_ads_library_url?: string;
+  google_ads_transparency_url?: string;
 }
 
 export interface PrepBriefing {

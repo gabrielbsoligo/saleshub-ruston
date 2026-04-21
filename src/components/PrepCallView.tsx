@@ -437,6 +437,40 @@ const PrepCallForm: React.FC<{
             <textarea className={`${inputCls} h-24 resize-none`} placeholder="Observações sobre a qualificação, dor, timing..."
                       value={inputs.contexto || ''} onChange={e => setField('contexto', e.target.value)} />
           </div>
+
+          {/* V2: Análise profunda de mídia paga */}
+          <div className="border-t border-[var(--color-v4-border)]/40 pt-4 mt-2">
+            <p className="text-xs font-semibold text-[var(--color-v4-text-muted)] uppercase tracking-wider mb-1">
+              💎 Análise profunda (opcional)
+            </p>
+            <p className="text-[10px] text-[var(--color-v4-text-muted)] mb-3">
+              Se preencher, a IA analisa criativos campeões, copies vencedoras e padrões de mídia paga. Deixe vazio se o lead não anuncia ou você não tem acesso aos links.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Meta Ads Library (URL pré-filtrada)</label>
+                <input type="text" className={inputCls}
+                       placeholder="https://www.facebook.com/ads/library/?q=empresa&country=BR&active_status=all"
+                       value={inputs.meta_ads_library_url || ''}
+                       onChange={e => setField('meta_ads_library_url', e.target.value)} />
+                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">
+                  Acesse facebook.com/ads/library, busque o nome do lead, copie a URL depois de filtrar.
+                </p>
+              </div>
+
+              <div>
+                <label className={labelCls}>Google Ads Transparency (URL do advertiser)</label>
+                <input type="text" className={inputCls}
+                       placeholder="https://adstransparency.google.com/advertiser/AR..."
+                       value={inputs.google_ads_transparency_url || ''}
+                       onChange={e => setField('google_ads_transparency_url', e.target.value)} />
+                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">
+                  Acesse adstransparency.google.com, busque o lead, copie a URL do perfil do advertiser.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[var(--color-v4-border)]">
