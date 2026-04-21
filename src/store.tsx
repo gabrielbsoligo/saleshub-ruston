@@ -324,13 +324,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setDeals(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
 
-    // Comissao eh gerada automaticamente pelo trigger SQL deal_comissao_auto
-    // (migration 009). Qualquer caminho que leve deal a contrato_assinado
-    // dispara o trigger — addDeal, updateDeal, moveDeal, import, SQL direto.
-
+    // Auto-generate comissao records when deal becomes ganho
     if (wasNotGanho && isNowGanho) {
       const merged = { ...deal, ...updates };
-      // Dispara webhook n8n no formato Kommo (lado cliente, nao precisa trigger)
+      const categoria = ['blackbox', 'leadbroker'].includes(merged.origem || '') ? 'inbound' : 'outbound';
+      const comissaoRecords: any[] = [];
+
+      const buildRecord = (memberId: string | undefined, memberName: string, role: string, tipo: 'mrr' | 'ot', valor: number, dataPgto: string | null) => {
+        if (!valor || valor <= 0) return;
+        const rule = comissoes.find(c => c.role === role && c.tipo_origem === categoria && c.tipo_valor === tipo);
+        const pct = rule?.percentual || 0;
+        const dataLib = dataPgto ? new Date(new Date(dataPgto).getTime() + 30 * 86400000).toISOString().split('T')[0] : null;
+        comissaoRecords.push({
+          deal_id: id, member_id: memberId || null, member_name: memberName,
+          role_comissao: role, tipo, categoria, valor_base: valor,
+          percentual: pct, valor_comissao: valor * pct,
+          data_pgto: dataPgto, data_liberacao: dataLib,
+          empresa: merged.empresa, origem: merged.origem,
+        });
+      };
+
+      // Closer
+      if (merged.closer_id) {
+        const closer = members.find(m => m.id === merged.closer_id);
+        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+        buildRecord(merged.closer_id, closer?.name || '?', 'closer', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+      }
+      // SDR
+      if (merged.sdr_id) {
+        const sdr = members.find(m => m.id === merged.sdr_id);
+        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'mrr', merged.valor_recorrente || merged.valor_mrr || 0, merged.data_pgto_recorrente || merged.data_primeiro_pagamento || null);
+        buildRecord(merged.sdr_id, sdr?.name || '?', 'sdr', 'ot', merged.valor_escopo || merged.valor_ot || 0, merged.data_pgto_escopo || merged.data_primeiro_pagamento || null);
+      }
+
+      if (comissaoRecords.length > 0) {
+        await supabase.from('comissoes_registros').insert(comissaoRecords);
+      }
+
+      // Dispara webhook n8n no formato Kommo (fire-and-forget)
       await emitDealGanhoWebhook(merged, deal?.status);
     }
 
