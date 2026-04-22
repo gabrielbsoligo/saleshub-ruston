@@ -13,3 +13,11 @@ coverage/
 .claude/
 scripts/workers/__pycache__/
 *.pyc
+
+# Scraper output (gerado em runtime)
+google_ads.json
+meta_ads.json
+instagram.json
+site.json
+errors.json
+scraped_data.json
