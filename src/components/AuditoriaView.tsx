@@ -289,14 +289,22 @@ const SessionRunner: React.FC<{
       toast.error('Nenhum item com link Kommo.');
       return;
     }
-    // Pega o access_token pra repassar ao iframe (cookies 3p bloqueados)
+
+    // IMPORTANTE: window.open TEM que rodar SINCRONAMENTE dentro do click handler,
+    // senao o navegador perde o "user gesture" e bloqueia o popup silenciosamente.
+    // Por isso abrimos a aba ANTES de qualquer await.
+    kommoRef.current = window.open(firstKommoLink, 'kommo-audit');
+    setLaunched(true);
+
+    if (!kommoRef.current) {
+      toast.error('Popup bloqueado pelo navegador. Permita popups para este site e tente de novo.');
+      return;
+    }
+
+    // Agora sim: pega o access_token pra repassar ao iframe (cookies 3p bloqueados)
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.access_token || '';
     const refreshToken = session?.refresh_token || '';
-
-    // Abre aba do Kommo
-    kommoRef.current = window.open(firstKommoLink, 'kommo-audit');
-    setLaunched(true);
 
     const msg = {
       source: 'saleshub',
