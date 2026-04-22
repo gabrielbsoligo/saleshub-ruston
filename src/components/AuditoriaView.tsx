@@ -274,14 +274,26 @@ const SessionRunner: React.FC<{
     return () => clearInterval(interval);
   }, [fetchAll]);
 
-  // Achar primeiro link Kommo da sessão
+  // Achar primeiro link Kommo da sessão.
+  // Varre TODOS os registros pendentes procurando algum com kommo_link.
+  // Prioridade: 1) item atual no store (mais fresco)
+  //             2) snapshot_saleshub salvo no registro (fallback quando lead/deal
+  //                foi deletado, filtrado ou nunca entrou no store atual)
   const firstKommoLink = useMemo(() => {
-    const first = registros.find(r => r.status === 'pendente') || registros[0];
-    if (!first) return null;
-    const item = first.item_tipo === 'lead'
-      ? leads.find(l => l.id === first.item_id)
-      : deals.find(d => d.id === first.item_id);
-    return (item as any)?.kommo_link || null;
+    const candidates = [
+      ...registros.filter(r => r.status === 'pendente'),
+      ...registros.filter(r => r.status !== 'pendente'),
+    ];
+    for (const reg of candidates) {
+      const live = reg.item_tipo === 'lead'
+        ? leads.find(l => l.id === reg.item_id)
+        : deals.find(d => d.id === reg.item_id);
+      const liveLink = (live as any)?.kommo_link;
+      if (liveLink) return liveLink;
+      const snapLink = (reg as any)?.snapshot_saleshub?.item?.kommo_link;
+      if (snapLink) return snapLink;
+    }
+    return null;
   }, [registros, leads, deals]);
 
   const handleLaunch = async () => {
