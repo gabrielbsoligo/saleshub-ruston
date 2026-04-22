@@ -15,7 +15,8 @@ import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, PrepBriefing
 import { cn } from './Layout';
 import {
   Sparkles, Plus, X, Loader2, Check, AlertCircle, Clock,
-  Search, ExternalLink, Copy, RefreshCw, Trash2, RotateCw
+  Search, ExternalLink, Copy, RefreshCw, Trash2, RotateCw,
+  Presentation, Eye
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -663,6 +664,16 @@ const BriefingDrawer: React.FC<{
   onDelete: () => void;
   onRetry: () => void;
 }> = ({ briefing: b, onClose, onDelete, onRetry }) => {
+  const [views, setViews] = useState<{ total: number; last_at?: string } | null>(null);
+  const [versions, setVersions] = useState<{ version: number; created_at: string }[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [versionContent, setVersionContent] = useState<{ markdown?: string; json?: any } | null>(null);
+
+  const presentableUrl = useMemo(() => {
+    if (!b.briefing_json || b.status !== 'completed') return null;
+    return `${window.location.origin}/?briefing=${b.id}`;
+  }, [b.id, b.briefing_json, b.status]);
+
   const copyMarkdown = async () => {
     if (!b.briefing_markdown) return;
     try {
@@ -672,6 +683,67 @@ const BriefingDrawer: React.FC<{
       toast.error('Não foi possível copiar');
     }
   };
+
+  const copyPresentationLink = async () => {
+    if (!presentableUrl) return;
+    try {
+      await navigator.clipboard.writeText(presentableUrl);
+      toast.success('Link de apresentação copiado!');
+    } catch {
+      toast.error('Não foi possível copiar');
+    }
+  };
+
+  const openPresentation = () => {
+    if (!presentableUrl) return;
+    window.open(presentableUrl, '_blank');
+  };
+
+  // Views + Versões
+  useEffect(() => {
+    if (b.status !== 'completed') return;
+    (async () => {
+      const [{ data: viewCount }, { data: vs }] = await Promise.all([
+        supabase.from('prep_briefing_view_counts').select('total_views, last_view_at').eq('briefing_id', b.id).maybeSingle(),
+        supabase.from('prep_briefings_versions').select('version, created_at').eq('briefing_id', b.id).order('version', { ascending: false }),
+      ]);
+      if (viewCount) setViews({ total: viewCount.total_views, last_at: viewCount.last_view_at });
+      setVersions(vs || []);
+    })();
+
+    // Realtime: toast quando nova view entra
+    const channel = supabase
+      .channel(`bv-${b.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'prep_briefing_views', filter: `briefing_id=eq.${b.id}`,
+      }, (payload: any) => {
+        toast.success(`👁 Cliente abriu o briefing de ${b.empresa}`, { duration: 6000 });
+        setViews(prev => ({
+          total: (prev?.total || 0) + 1,
+          last_at: payload.new?.viewed_at || new Date().toISOString(),
+        }));
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [b.id, b.status, b.empresa]);
+
+  // Load specific version content when selected
+  useEffect(() => {
+    if (selectedVersion == null) { setVersionContent(null); return; }
+    (async () => {
+      const { data } = await supabase
+        .from('prep_briefings_versions')
+        .select('briefing_markdown, briefing_json')
+        .eq('briefing_id', b.id)
+        .eq('version', selectedVersion)
+        .maybeSingle();
+      if (data) setVersionContent({ markdown: data.briefing_markdown, json: data.briefing_json });
+    })();
+  }, [selectedVersion, b.id]);
+
+  const displayedMarkdown = versionContent?.markdown ?? b.briefing_markdown;
+  const displayedJson = versionContent?.json ?? b.briefing_json;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex justify-end" onClick={onClose}>
@@ -684,6 +756,7 @@ const BriefingDrawer: React.FC<{
               {new Date(b.created_at).toLocaleString('pt-BR')}
               {b.requested_by?.name && ` · ${b.requested_by.name}`}
               {b.completed_at && ` · Pronto em ${Math.round((new Date(b.completed_at).getTime() - new Date(b.created_at).getTime()) / 60000)} min`}
+              {(b.version || 1) > 1 && ` · v${b.version}`}
             </p>
           </div>
           <div className="flex gap-1 ml-3">
@@ -715,6 +788,46 @@ const BriefingDrawer: React.FC<{
           </div>
         </div>
 
+        {/* Action bar: presentation + views + version selector */}
+        {b.status === 'completed' && (
+          <div className="flex items-center gap-2 flex-wrap px-5 py-3 border-b border-[var(--color-v4-border)] bg-[var(--color-v4-surface)]/50">
+            {presentableUrl ? (
+              <>
+                <button onClick={openPresentation}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs font-medium">
+                  <Presentation size={13} /> Apresentar pro Cliente
+                </button>
+                <button onClick={copyPresentationLink} title="Copiar link público"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[var(--color-v4-card-hover)] hover:bg-[var(--color-v4-border)] text-white text-xs">
+                  <ExternalLink size={12} /> Copiar link
+                </button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-[var(--color-v4-text-muted)] italic" title="Briefings antigos não têm JSON estruturado">
+                <Presentation size={12} /> Briefing antigo — regere para apresentar
+              </div>
+            )}
+            {views && views.total > 0 && (
+              <div className="ml-auto flex items-center gap-2 text-[11px] text-emerald-400" title={views.last_at ? `Última em ${new Date(views.last_at).toLocaleString('pt-BR')}` : ''}>
+                <Eye size={12} /> {views.total} visualização{views.total > 1 ? 'ões' : ''} do cliente
+              </div>
+            )}
+            {versions.length > 1 && (
+              <select
+                value={selectedVersion ?? 'latest'}
+                onChange={e => setSelectedVersion(e.target.value === 'latest' ? null : parseInt(e.target.value, 10))}
+                className="ml-auto text-xs bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded px-2 py-1 text-white"
+                title="Ver versão histórica"
+              >
+                <option value="latest">v{b.version || 1} (atual)</option>
+                {versions.filter(v => v.version !== (b.version || 1)).map(v => (
+                  <option key={v.version} value={v.version}>v{v.version} · {new Date(v.created_at).toLocaleDateString('pt-BR')}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-5">
           {b.status === 'pending' || b.status === 'processing' ? (
             <div className="py-8 px-2">
@@ -740,15 +853,86 @@ const BriefingDrawer: React.FC<{
                 Vai usar os mesmos dados do formulário original.
               </p>
             </div>
-          ) : b.briefing_markdown ? (
+          ) : displayedMarkdown ? (
             <>
-              <MarkdownView source={b.briefing_markdown} />
+              {displayedJson && <CloserOnlyPanel json={displayedJson} />}
+              <MarkdownView source={displayedMarkdown} />
               <ManualLinksPanel inputs={b.inputs} empresa={b.empresa} />
             </>
           ) : (
             <p className="text-sm text-[var(--color-v4-text-muted)]">Sem conteúdo.</p>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ---------- Closer-only panel (não vai para a página pública) ----------
+const CloserOnlyPanel: React.FC<{ json: any }> = ({ json }) => {
+  if (!json) return null;
+  const { resumo_falado, pergunta_impacto, analise_competitiva, alertas } = json;
+  const hasAny =
+    (Array.isArray(resumo_falado) && resumo_falado.length > 0) ||
+    pergunta_impacto ||
+    analise_competitiva ||
+    (Array.isArray(alertas) && alertas.length > 0);
+  if (!hasAny) return null;
+
+  return (
+    <div className="mb-6 border border-amber-500/30 bg-amber-500/5 rounded-lg overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-amber-500/20 bg-amber-500/10">
+        <span className="text-amber-400 text-xs font-semibold tracking-wider uppercase">🔒 Só você vê isso — não aparece para o cliente</span>
+      </div>
+      <div className="p-4 space-y-5 text-sm">
+        {Array.isArray(resumo_falado) && resumo_falado.length > 0 && (
+          <div>
+            <h4 className="text-white font-semibold mb-2 flex items-center gap-2">🎤 Resumo Falado (60s)</h4>
+            <ul className="space-y-1.5 pl-5 list-disc text-[var(--color-v4-text)]">
+              {resumo_falado.map((b: string, i: number) => <li key={i}>{b}</li>)}
+            </ul>
+          </div>
+        )}
+        {pergunta_impacto && (
+          <div>
+            <h4 className="text-white font-semibold mb-2 flex items-center gap-2">💥 Pergunta de Impacto</h4>
+            <blockquote className="border-l-2 border-amber-400 pl-3 italic text-[var(--color-v4-text)]">
+              {pergunta_impacto}
+            </blockquote>
+          </div>
+        )}
+        {analise_competitiva && (
+          <div>
+            <h4 className="text-white font-semibold mb-2 flex items-center gap-2">⚔️ Análise Competitiva</h4>
+            {Array.isArray(analise_competitiva.concorrentes) && (
+              <ul className="space-y-1 text-[var(--color-v4-text)] pl-5 list-disc">
+                {analise_competitiva.concorrentes.map((c: any, i: number) => (
+                  <li key={i}><strong className="text-white">{c.nome}</strong> — {c.posicionamento} · <em>ameaça {c.ameaca}</em></li>
+                ))}
+              </ul>
+            )}
+            {analise_competitiva.maior_ameaca && (
+              <p className="mt-2 text-[var(--color-v4-text)]">
+                <strong className="text-red-400">Maior ameaça:</strong> {analise_competitiva.maior_ameaca.nome} — {analise_competitiva.maior_ameaca.descricao}
+              </p>
+            )}
+            {analise_competitiva.oportunidade && (
+              <p className="mt-1 text-[var(--color-v4-text)]">
+                <strong className="text-emerald-400">Oportunidade:</strong> {analise_competitiva.oportunidade.descricao}
+              </p>
+            )}
+          </div>
+        )}
+        {Array.isArray(alertas) && alertas.length > 0 && (
+          <div>
+            <h4 className="text-white font-semibold mb-2 flex items-center gap-2">⚠️ Alertas para o Closer</h4>
+            <ul className="space-y-1.5 pl-5 list-disc text-[var(--color-v4-text)]">
+              {alertas.map((a: any, i: number) => (
+                <li key={i}><strong className="text-white">{a.titulo}:</strong> {a.descricao}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </div>
   );

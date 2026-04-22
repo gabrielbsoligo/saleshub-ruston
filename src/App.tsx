@@ -14,6 +14,7 @@ import { ComissoesView } from "./components/ComissoesView";
 import { AuditoriaView } from "./components/AuditoriaView";
 import { PrepCallView } from "./components/PrepCallView";
 import { AuditPanel } from "./components/AuditPanel";
+import { BriefingApresentacao } from "./components/BriefingApresentacao";
 import { supabase } from "./lib/supabase";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
@@ -237,6 +238,12 @@ const MainApp: React.FC = () => {
 export default function App() {
   const params = new URLSearchParams(window.location.search);
   const auditPanelSession = params.get('audit_panel') === '1' ? params.get('session') : null;
+  const briefingId = params.get('briefing');
+
+  // Rota pública /?briefing=<uuid> → página de apresentação (sem login, sem AppProvider)
+  if (briefingId) {
+    return <BriefingApresentacao briefingId={briefingId} />;
+  }
 
   if (auditPanelSession) {
     return <AuditPanelBootstrap sessionId={auditPanelSession} />;

@@ -468,9 +468,33 @@ export interface PrepBriefing {
   routine_session_id?: string;
   routine_session_url?: string;
   briefing_markdown?: string;
+  briefing_json?: Record<string, any> | null;
+  schema_version?: string | null;
+  version?: number;
   error_message?: string;
   created_at: string;
   completed_at?: string;
+}
+
+export interface PrepBriefingVersion {
+  id: string;
+  briefing_id: string;
+  version: number;
+  briefing_markdown?: string;
+  briefing_json?: Record<string, any> | null;
+  schema_version?: string | null;
+  scraped_data?: Record<string, any>;
+  created_at: string;
+}
+
+export interface PrepBriefingView {
+  id: string;
+  briefing_id: string;
+  session_token: string;
+  ip_hash?: string;
+  user_agent?: string;
+  referrer?: string;
+  viewed_at: string;
 }
 
 export interface PostMeetingAutomation {
