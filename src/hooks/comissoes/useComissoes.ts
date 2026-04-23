@@ -61,19 +61,23 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
     setIsLoading(true);
     setError(null);
     try {
-      const { start, end } = monthRange(yearMonth);
-
-      // Server-side filter on the chosen date field. Records with NULL in that
-      // field are excluded by gte/lte — explicit and consistent across views.
+      // yearMonth vazio = sem filtro de periodo (mostra tudo).
+      // Quando preenchido (YYYY-MM), aplica gte/lte no dateField escolhido.
       let query = supabase
         .from('comissoes_registros')
         .select('*')
-        .gte(dateField, start)
-        .lte(dateField, end)
         .order('empresa');
+
+      if (yearMonth) {
+        const { start, end } = monthRange(yearMonth);
+        query = query.gte(dateField, start).lte(dateField, end);
+      }
 
       if (filters?.status && filters.status.length > 0) query = query.in('status_comissao', filters.status);
       if (filters?.vendedor && filters.vendedor.length > 0) query = query.in('member_name', filters.vendedor);
+
+      // Quando sem filtro de mes, limita em 2000 pra nao estourar payload
+      if (!yearMonth) query = query.limit(2000);
 
       const { data, error: dbError } = await query;
       if (dbError) {

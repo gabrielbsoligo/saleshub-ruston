@@ -15,7 +15,6 @@ import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
 import { ChevronUp, ChevronDown, Search, Edit2 } from "lucide-react";
 import toast from "react-hot-toast";
-import { currentYearMonth } from "../lib/datemath";
 import { useComissoes } from "../hooks/comissoes/useComissoes";
 import { ComissaoRegistro, StatusComissao } from "../hooks/comissoes/types";
 import { MultiSelectFilter } from "./ui/MultiSelect";
@@ -53,7 +52,8 @@ export const ComissoesView: React.FC = () => {
   const canConfirm = isGestor || isFinanceiro;
 
   const [dateField, setDateField] = useState<DateField>("data_liberacao");
-  const [yearMonth, setYearMonth] = useState(currentYearMonth);
+  // Default vazio = mostra TODAS as comissoes. Ao selecionar um mes, filtra.
+  const [yearMonth, setYearMonth] = useState<string>("");
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
 
   const [searchEmpresa, setSearchEmpresa] = useState("");
@@ -197,6 +197,7 @@ export const ComissoesView: React.FC = () => {
     filterStatus.length > 0,
     filterVendedor.length > 0,
     !!searchEmpresa,
+    !!yearMonth,
   ].filter(Boolean).length;
 
   const renderRow = useCallback(
@@ -285,16 +286,24 @@ export const ComissoesView: React.FC = () => {
 
         <input type="month" value={yearMonth}
                onChange={(e) => setYearMonth(e.target.value)}
-               className="px-3 py-1.5 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-xs" />
+               placeholder="todos os meses"
+               className={cn(
+                 "px-3 py-1.5 rounded-lg border text-xs",
+                 yearMonth
+                   ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-white"
+                   : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)]"
+               )} />
 
-        <select value={dateField}
-                onChange={(e) => setDateField(e.target.value as DateField)}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-xs"
-                title="Campo de data usado pelo filtro do mês">
-          {(Object.keys(DATE_FIELD_LABELS) as DateField[]).map((f) => (
-            <option key={f} value={f}>por {DATE_FIELD_LABELS[f]}</option>
-          ))}
-        </select>
+        {yearMonth && (
+          <select value={dateField}
+                  onChange={(e) => setDateField(e.target.value as DateField)}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-xs"
+                  title="Campo de data usado pelo filtro do mês">
+            {(Object.keys(DATE_FIELD_LABELS) as DateField[]).map((f) => (
+              <option key={f} value={f}>por {DATE_FIELD_LABELS[f]}</option>
+            ))}
+          </select>
+        )}
 
         <MultiSelectFilter
           options={[
@@ -324,7 +333,7 @@ export const ComissoesView: React.FC = () => {
         </select>
 
         {activeFilterCount > 0 && (
-          <button onClick={() => { setSearchEmpresa(""); setFilterStatus([]); setFilterVendedor([]); }}
+          <button onClick={() => { setSearchEmpresa(""); setFilterStatus([]); setFilterVendedor([]); setYearMonth(""); }}
                   className="px-2.5 py-1.5 rounded-lg text-[10px] text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)]">
             Limpar filtros ({activeFilterCount})
           </button>
@@ -377,7 +386,8 @@ export const ComissoesView: React.FC = () => {
                 </td></tr>
               ) : sortedRows.length === 0 ? (
                 <tr><td colSpan={visibleColumns.length + 1} className="px-4 py-12 text-center text-[var(--color-v4-text-muted)]">
-                  Nenhum registro encontrado para <strong className="text-white">{DATE_FIELD_LABELS[dateField]}</strong> em <strong className="text-white">{yearMonth}</strong>
+                  Nenhum registro encontrado
+                  {yearMonth && <> para <strong className="text-white">{DATE_FIELD_LABELS[dateField]}</strong> em <strong className="text-white">{yearMonth}</strong></>}
                 </td></tr>
               ) : groups ? (
                 groups.map((g) => (
