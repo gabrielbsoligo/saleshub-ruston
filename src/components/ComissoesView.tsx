@@ -20,6 +20,7 @@ import {
 } from "../hooks/comissoes/types";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { NovaComissaoModal } from "./NovaComissaoModal";
+import { NovaParcelaModal } from "./NovaParcelaModal";
 
 function fmt(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(v);
@@ -175,9 +176,12 @@ export const ComissoesView: React.FC = () => {
     refetch();
   };
 
-  // Modal "Nova Comissão" — abre o seletor cascata de categoria/tipo/role
+  // Modal "Nova Comissão" — abre o wizard de novo recebimento + colaboradores
   const [showNovaComissao, setShowNovaComissao] = useState(false);
+  // Modal "Adicionar Parcela" — seleciona recebimento existente e cria parcela nova
+  const [showNovaParcela, setShowNovaParcela] = useState(false);
   const addManual = () => setShowNovaComissao(true);
+  const addParcela = () => setShowNovaParcela(true);
 
   // Build the columns to actually render — uses STANDARD_COLUMN_KEYS, with the
   // "data_dyn" header label replaced by the active dateField label.
@@ -325,10 +329,16 @@ export const ComissoesView: React.FC = () => {
             ))}
           </select>
           {canEdit && (
-            <button onClick={addManual}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs">
-              + Nova Comissão
-            </button>
+            <>
+              <button onClick={addParcela}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-xs">
+                + Parcela
+              </button>
+              <button onClick={addManual}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs">
+                + Nova Comissão
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -567,6 +577,11 @@ export const ComissoesView: React.FC = () => {
       <NovaComissaoModal
         open={showNovaComissao}
         onClose={() => setShowNovaComissao(false)}
+        onCreated={refetch}
+      />
+      <NovaParcelaModal
+        open={showNovaParcela}
+        onClose={() => setShowNovaParcela(false)}
         onCreated={refetch}
       />
     </div>
