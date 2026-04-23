@@ -43,4 +43,7 @@ export interface ComissaoRegistro {
   valor_recebido?: number;
   data_pgto_vendedor?: string;
   confirmado_por?: string;
+  // v2
+  recebimento_id?: string;
+  numero_parcela?: number;
 }

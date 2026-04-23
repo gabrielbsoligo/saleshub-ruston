@@ -1,9 +1,9 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { ChevronDown, ChevronRight, Edit2, Save, X, Search, Users, Building2, UserCog } from "lucide-react";
+import { ChevronDown, ChevronRight, Edit2, Save, X, Search, Users, Building2 } from "lucide-react";
 import toast from "react-hot-toast";
-import { addDays, currentYearMonth } from "../lib/datemath";
+import { currentYearMonth, addDays } from "../lib/datemath";
 import { useComissoes, ViewMode } from "../hooks/comissoes/useComissoes";
 import {
   COMISSAO_COLUMNS,
@@ -19,20 +19,16 @@ import {
   STATUS_COLORS,
 } from "../hooks/comissoes/types";
 import { MultiSelectFilter } from "./ui/MultiSelect";
+import { NovaComissaoModal } from "./NovaComissaoModal";
 
 function fmt(v: number) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2 }).format(v);
 }
 
-function getCategoria(origem?: string): "inbound" | "outbound" {
-  if (!origem) return "inbound";
-  return ["blackbox", "leadbroker"].includes(origem) ? "inbound" : "outbound";
-}
-
+// RFC v2: Tab "Por SDR" removida. "Time" renomeada pra "Colaborador".
 const VIEW_TABS: { id: ViewMode; label: string; icon: React.ReactNode }[] = [
   { id: "cliente", label: "Por Cliente", icon: <Building2 size={14} /> },
-  { id: "time", label: "Por Time", icon: <Users size={14} /> },
-  { id: "sdr", label: "Por SDR", icon: <UserCog size={14} /> },
+  { id: "time", label: "Por Colaborador", icon: <Users size={14} /> },
 ];
 
 const DATE_FIELDS: DateField[] = ["data_pgto", "data_liberacao", "data_pgto_real", "data_pgto_vendedor"];
@@ -91,74 +87,10 @@ export const ComissoesView: React.FC = () => {
   const inputClass =
     "px-2 py-1 rounded bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-xs focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
 
-  // Generate comissoes from deals — uses addDays to centralize +30d math
-  const generateComissoes = async () => {
-    if (isProcessing) return;
-    setIsProcessing(true);
-    try {
-      const dealsGanhos = deals.filter((d) => d.status === "contrato_assinado");
-      const newRegistros: any[] = [];
-
-      const buildRow = (
-        deal: any,
-        memberId: string,
-        memberName: string,
-        roleComissao: "closer" | "sdr",
-        tipo: "mrr" | "ot",
-        valorBase: number,
-        categoria: "inbound" | "outbound",
-        dataPgto: string | null,
-      ) => {
-        const rule = comissoesConfig.find(
-          (c) => c.role === roleComissao && c.tipo_origem === categoria && c.tipo_valor === tipo,
-        );
-        const pct = rule?.percentual || 0;
-        return {
-          deal_id: deal.id,
-          member_id: memberId,
-          member_name: memberName,
-          role_comissao: roleComissao,
-          tipo,
-          categoria,
-          valor_base: valorBase,
-          percentual: pct,
-          valor_comissao: valorBase * pct,
-          data_pgto: dataPgto,
-          data_liberacao: addDays(dataPgto, 30),
-          empresa: deal.empresa,
-          origem: deal.origem,
-          status_comissao: "aguardando_pgto" as StatusComissao,
-        };
-      };
-
-      for (const deal of dealsGanhos) {
-        const categoria = getCategoria(deal.origem);
-        const mrrVal = deal.valor_recorrente || deal.valor_mrr || 0;
-        const otVal = deal.valor_escopo || deal.valor_ot || 0;
-        const dataMrr = deal.data_pgto_recorrente || deal.data_primeiro_pagamento || null;
-        const dataOt = deal.data_pgto_escopo || deal.data_primeiro_pagamento || null;
-
-        for (const role of ["closer", "sdr"] as const) {
-          const memberId = role === "closer" ? deal.closer_id : deal.sdr_id;
-          if (!memberId) continue;
-          const member = members.find((m) => m.id === memberId);
-          if (mrrVal > 0)
-            newRegistros.push(buildRow(deal, memberId, member?.name || "?", role, "mrr", mrrVal, categoria, dataMrr));
-          if (otVal > 0)
-            newRegistros.push(buildRow(deal, memberId, member?.name || "?", role, "ot", otVal, categoria, dataOt));
-        }
-      }
-
-      await supabase.from("comissoes_registros").delete().eq("editado_manualmente", false);
-      if (newRegistros.length > 0) {
-        await supabase.from("comissoes_registros").insert(newRegistros);
-      }
-      toast.success(`${newRegistros.length} registros de comissão gerados!`);
-      refetch();
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+  // RFC v2: geração automática vive em trigger SQL server-side
+  // (trg_deal_contrato_assinado + trg_recebimento_criado).
+  // Botão "Gerar do funil" foi removido por causar perda de dados em 23/04/2026.
+  // Para adicionar comissão manualmente, usar o botão "+ Nova Comissão".
 
   const handleConfirmPgto = async () => {
     if (!confirmingReg) return;
@@ -185,6 +117,7 @@ export const ComissoesView: React.FC = () => {
         valor_comissao: novaComissao,
         data_liberacao: dataLib,
         confirmado_por: currentUser?.id,
+        editado_manualmente: true, // blindagem: impede delete em regeneracao em massa
       }).eq("id", line.id);
     }
 
@@ -202,6 +135,7 @@ export const ComissoesView: React.FC = () => {
       status_comissao: "paga",
       data_pgto_vendedor: payForm.data_pgto_vendedor,
       confirmado_por: currentUser?.id,
+      editado_manualmente: true, // blindagem
     }).eq("id", payingReg.id);
     if (error) return toast.error(error.message);
     toast.success("Pagamento ao vendedor registrado!");
@@ -241,23 +175,9 @@ export const ComissoesView: React.FC = () => {
     refetch();
   };
 
-  const addManual = async () => {
-    const { error } = await supabase.from("comissoes_registros").insert({
-      member_name: "(editar nome)",
-      role_comissao: "sdr",
-      tipo: "ot",
-      categoria: "outbound",
-      valor_base: 0,
-      percentual: 0,
-      valor_comissao: 0,
-      empresa: "(editar)",
-      editado_manualmente: true,
-      data_liberacao: `${yearMonth}-15`,
-      status_comissao: "aguardando_pgto",
-    });
-    if (error) return toast.error(error.message);
-    refetch();
-  };
+  // Modal "Nova Comissão" — abre o seletor cascata de categoria/tipo/role
+  const [showNovaComissao, setShowNovaComissao] = useState(false);
+  const addManual = () => setShowNovaComissao(true);
 
   // Build the columns to actually render — uses STANDARD_COLUMN_KEYS, with the
   // "data_dyn" header label replaced by the active dateField label.
@@ -405,19 +325,10 @@ export const ComissoesView: React.FC = () => {
             ))}
           </select>
           {canEdit && (
-            <>
-              <button
-                onClick={generateComissoes}
-                disabled={isProcessing}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-xs disabled:opacity-50"
-              >
-                {isProcessing ? "Gerando..." : "Gerar do funil"}
-              </button>
-              <button onClick={addManual}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs">
-                + Manual
-              </button>
-            </>
+            <button onClick={addManual}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs">
+              + Nova Comissão
+            </button>
           )}
         </div>
       </div>
@@ -577,7 +488,15 @@ export const ComissoesView: React.FC = () => {
               <div>
                 <label className="text-[10px] text-[var(--color-v4-text-muted)] uppercase mb-1 block">Data real de pagamento</label>
                 <input type="date" value={confirmForm.data_pgto_real}
-                  onChange={(e) => setConfirmForm((p) => ({ ...p, data_pgto_real: e.target.value }))}
+                  min="2020-01-01" max="2050-12-31"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v) {
+                      const y = parseInt(v.slice(0, 4), 10);
+                      if (!Number.isFinite(y) || y < 2020 || y > 2050) return;
+                    }
+                    setConfirmForm((p) => ({ ...p, data_pgto_real: v }));
+                  }}
                   className={inputClass + " w-full !py-2 !text-sm"} />
               </div>
               <div>
@@ -620,7 +539,15 @@ export const ComissoesView: React.FC = () => {
             <div>
               <label className="text-[10px] text-[var(--color-v4-text-muted)] uppercase mb-1 block">Data de pagamento ao vendedor</label>
               <input type="date" value={payForm.data_pgto_vendedor}
-                onChange={(e) => setPayForm({ data_pgto_vendedor: e.target.value })}
+                min="2020-01-01" max="2050-12-31"
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) {
+                    const y = parseInt(v.slice(0, 4), 10);
+                    if (!Number.isFinite(y) || y < 2020 || y > 2050) return;
+                  }
+                  setPayForm({ data_pgto_vendedor: v });
+                }}
                 className={inputClass + " w-full !py-2 !text-sm"} />
             </div>
             <div className="flex gap-3 mt-5">
@@ -636,6 +563,12 @@ export const ComissoesView: React.FC = () => {
           </div>
         </div>
       )}
+
+      <NovaComissaoModal
+        open={showNovaComissao}
+        onClose={() => setShowNovaComissao(false)}
+        onCreated={refetch}
+      />
     </div>
   );
 };

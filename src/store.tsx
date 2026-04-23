@@ -322,7 +322,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const buildRecord = (memberId: string | undefined, memberName: string, role: string, tipo: 'mrr' | 'ot', valor: number, dataPgto: string | null) => {
       if (!memberId || !valor || valor <= 0) return;
       if (chaveExistente(memberId, role, tipo)) return; // ja existe, skip
-      const rule = comissoes.find(c => c.role === role && c.tipo_origem === categoria && c.tipo_valor === tipo);
+      const rule = comissoes.find(c => c.role === role && c.categoria === categoria && c.tipo_valor === tipo);
       const pct = rule?.percentual || 0;
       const dataLib = dataPgto ? new Date(new Date(dataPgto).getTime() + 30 * 86400000).toISOString().split('T')[0] : null;
       comissaoRecords.push({

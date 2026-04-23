@@ -221,13 +221,35 @@ export interface Meta {
   created_at: string;
 }
 
+export type ComissaoRole = 'closer' | 'sdr' | 'account' | 'designer' | 'gt' | 'levantou' | 'fechou' | 'indicador';
+export type ComissaoCategoria = 'inbound' | 'outbound' | 'upsell' | 'ee_assessoria' | 'ee_ot' | 'indicacao' | 'recomendacao';
+export type ComissaoTipoValor = 'mrr' | 'ot' | 'variavel';
+
 export interface ComissaoConfig {
   id: string;
-  role: TeamRole;
-  tipo_origem: 'inbound' | 'outbound';
-  tipo_valor: 'mrr' | 'ot';
+  role: ComissaoRole;
+  categoria: ComissaoCategoria;
+  tipo_valor: ComissaoTipoValor;
   percentual: number;
   active: boolean;
+}
+
+export type RecebimentoStatus = 'aguardando' | 'pago' | 'cancelado';
+
+export interface DealRecebimento {
+  id: string;
+  deal_id: string;
+  tipo: 'mrr' | 'ot' | 'variavel';
+  numero_parcela: number;
+  data_prevista: string;
+  data_pgto_real?: string | null;
+  valor_contrato: number;
+  valor_recebido?: number | null;
+  status: RecebimentoStatus;
+  confirmado_por?: string | null;
+  observacao?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PerformanceSdr {
