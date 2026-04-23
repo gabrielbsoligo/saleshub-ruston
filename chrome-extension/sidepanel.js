@@ -35,7 +35,16 @@ async function supabaseFetch(path, options = {}) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.message || body.error_description || `HTTP ${res.status}`);
+    // Supabase GoTrue 2.x devolve {code, error_code, msg}. Versoes antigas
+    // devolvem {message} ou {error, error_description}. Cobrimos todos.
+    const msg =
+      body.msg ||
+      body.message ||
+      body.error_description ||
+      body.error ||
+      body.error_code ||
+      `HTTP ${res.status}`;
+    throw new Error(msg);
   }
   return res.json();
 }
