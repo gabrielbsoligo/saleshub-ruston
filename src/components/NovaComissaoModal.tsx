@@ -262,8 +262,6 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
     }
   };
 
-  if (!open) return null;
-
   const dealsSorted = useMemo(
     () => deals
       .filter(d => d.status === 'contrato_assinado')
@@ -275,6 +273,8 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
     () => members.filter(m => m.active !== false).sort((a, b) => a.name.localeCompare(b.name)),
     [members]
   );
+
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
