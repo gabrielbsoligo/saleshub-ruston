@@ -148,9 +148,13 @@ export const ReunioesView: React.FC = () => {
     return items;
   }, [reunioes, filterCloser, filterSdr, filterTipo]);
 
+  // Nas reunioes realizadas, o closer 'efetivo' eh closer_confirmado_id se existir,
+  // senao closer_id. Filtro por closer usa esse valor efetivo pra refletir quem REALMENTE realizou.
+  const closerEfetivo = (r: Reuniao) => r.closer_confirmado_id || r.closer_id || '';
+
   const noshows = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === false);
-    if (filterCloser.length) items = items.filter(r => filterCloser.includes(r.closer_id || ''));
+    if (filterCloser.length) items = items.filter(r => filterCloser.includes(closerEfetivo(r)));
     if (filterSdr.length) items = items.filter(r => filterSdr.includes(r.sdr_id || ''));
     if (filterTipo.length) items = items.filter(r => filterTipo.includes(r.tipo || 'primeira_call'));
     return items;
@@ -158,7 +162,7 @@ export const ReunioesView: React.FC = () => {
 
   const realizadas = useMemo(() => {
     let items = reunioes.filter(r => r.realizada && r.show === true);
-    if (filterCloser.length) items = items.filter(r => filterCloser.includes(r.closer_id || ''));
+    if (filterCloser.length) items = items.filter(r => filterCloser.includes(closerEfetivo(r)));
     if (filterSdr.length) items = items.filter(r => filterSdr.includes(r.sdr_id || ''));
     if (filterTipo.length) items = items.filter(r => filterTipo.includes(r.tipo || 'primeira_call'));
     return items;
@@ -308,6 +312,13 @@ export const ReunioesView: React.FC = () => {
   const ReuniaoCard: React.FC<{ r: Reuniao; showActions?: boolean; showReagendar?: boolean }> = ({ r, showActions = false, showReagendar = false }) => {
     const { faturamento, nome_contato } = getLeadInfo(r);
     const rescheduled = showReagendar && isRescheduled(r);
+    // Closer efetivo: quando a reuniao foi realizada e houve troca no modal de confirmacao,
+    // mostra o closer_confirmado_id. Senao, mostra o closer_id original.
+    const closerEfetivoId = r.realizada && r.closer_confirmado_id ? r.closer_confirmado_id : r.closer_id;
+    const closerEfetivoName = closerEfetivoId === r.closer_id
+      ? r.closer?.name
+      : members.find(m => m.id === closerEfetivoId)?.name;
+    const closerTrocado = r.realizada && r.closer_confirmado_id && r.closer_confirmado_id !== r.closer_id;
 
     return (
       <div className={`flex items-center justify-between bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-lg px-4 py-3 hover:border-[var(--color-v4-border-strong)] transition-colors ${rescheduled ? 'opacity-50' : ''}`}>
@@ -329,7 +340,14 @@ export const ReunioesView: React.FC = () => {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <span className="text-xs text-[var(--color-v4-text-muted)]">{r.sdr?.name?.split(' ')[0] || ''}</span>
-          {r.closer && <span className="text-xs text-blue-400 flex items-center gap-1"><User size={10} />{r.closer.name.split(' ')[0]}</span>}
+          {closerEfetivoName && (
+            <span
+              className="text-xs text-blue-400 flex items-center gap-1"
+              title={closerTrocado ? `Realizada por ${closerEfetivoName} (agendada originalmente com ${r.closer?.name || '—'})` : closerEfetivoName}
+            >
+              <User size={10} />{closerEfetivoName.split(' ')[0]}{closerTrocado && <span className="text-[9px] text-[var(--color-v4-text-muted)]">*</span>}
+            </span>
+          )}
           {r.data_reuniao && <span className="text-xs text-white">{new Date(r.data_reuniao).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>}
           {(r as any).meet_link ? (
             <a href={(r as any).meet_link} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}
