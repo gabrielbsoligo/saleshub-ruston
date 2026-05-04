@@ -1,1 +1,9 @@
-{"buildCommand":"npm run build","outputDirectory":"dist","framework":"vite"}
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/setup-no-digital", "destination": "/setup-no-digital/index.html" }
+  ]
+}

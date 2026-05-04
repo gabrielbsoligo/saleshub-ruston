@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>V4 Company · Setup no Digital</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter+Tight:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* warm-tinted neutrals (chroma toward brand red) */
+    --bg:        oklch(0.135 0.012 25);
+    --bg-2:      oklch(0.165 0.014 25);
+    --surface:   oklch(0.185 0.014 25);
+    --line:      oklch(0.255 0.014 25);
+    --line-soft: oklch(0.215 0.012 25);
+    --ink:       oklch(0.97 0.006 25);
+    --ink-2:     oklch(0.78 0.012 25);
+    --ink-3:     oklch(0.58 0.012 25);
+    --ink-4:     oklch(0.40 0.012 25);
+    /* brand */
+    --red:       oklch(0.62 0.235 27);
+    --red-deep:  oklch(0.46 0.20 26);
+    --red-soft:  oklch(0.30 0.10 26);
+  }
+  *{font-family:'Inter Tight',sans-serif;}
+  html,body{background:var(--bg);color:var(--ink);}
+  .display{font-family:'Space Grotesk',sans-serif;letter-spacing:-0.025em;}
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,monospace;letter-spacing:0;}
+  .prose-narrow{max-width:62ch;}
+  .prose-wide{max-width:72ch;}
+  .surface{background:var(--surface);}
+  .surface-2{background:var(--bg-2);}
+  .line{border-color:var(--line);}
+  .line-soft{border-color:var(--line-soft);}
+  .ink-2{color:var(--ink-2);}
+  .ink-3{color:var(--ink-3);}
+  .ink-4{color:var(--ink-4);}
+  .red{color:var(--red);}
+  .bg-red{background:var(--red);}
+  .bg-red-deep{background:var(--red-deep);}
+  .border-red{border-color:var(--red);}
+  /* motion: ease-out-expo */
+  .smooth{transition:transform .35s cubic-bezier(.16,1,.3,1),background .25s,border-color .25s,color .25s;}
+  /* marquee */
+  .marquee{animation:marquee 38s linear infinite;}
+  @keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .logoline{animation:logos 55s linear infinite;}
+  @keyframes logos{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  /* selection */
+  ::selection{background:var(--red);color:white;}
+  /* details arrow */
+  details>summary{list-style:none;cursor:pointer;}
+  details>summary::-webkit-details-marker{display:none;}
+  details[open] .chev{transform:rotate(180deg);}
+  .chev{transition:transform .35s cubic-bezier(.16,1,.3,1);}
+  /* nps stars */
+  .nps-star{color:var(--ink-4);background:transparent;border:none;padding:0;cursor:pointer;transition:transform .35s cubic-bezier(.16,1,.3,1),color .25s;}
+  .nps-star:hover{transform:scale(1.1);color:var(--red);}
+  .nps-star[data-on] svg{fill:var(--red);}
+  .nps-star[data-on]{color:var(--red);filter:drop-shadow(0 0 12px oklch(0.62 0.235 27 / 0.6));}
+  /* scroll */
+  html{scroll-behavior:smooth;}
+  /* hairline rule */
+  .rule{height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent);}
+  /* number counter caption */
+  .num-eyebrow{font-feature-settings:"tnum";letter-spacing:0.18em;}
+  /* hero arrow */
+  .arrow-hover:hover .arrow{transform:translateX(4px);}
+  .arrow{transition:transform .35s cubic-bezier(.16,1,.3,1);}
+  /* big metric type */
+  .metric{font-family:'Space Grotesk',sans-serif;font-weight:500;letter-spacing:-0.04em;line-height:0.92;}
+  /* asymmetric grid utilities */
+  .span-tall{grid-row:span 2;}
+  /* faint frame */
+  .faint{background:linear-gradient(180deg,var(--surface) 0%,var(--bg-2) 100%);}
+  /* image bleed — image dissolves into surrounding dark atmosphere with soft red halo */
+  .img-bleed{box-shadow:0 0 60px -10px oklch(0.62 0.235 27 / 0.30);}
+  .img-bleed img{transition:transform .6s cubic-bezier(.16,1,.3,1);width:100%;height:100%;object-fit:cover;display:block;}
+  .img-bleed:hover img{transform:scale(1.04);}
+  /* hero image — soft halo, no mask (let the image's own black bg blend with the page) */
+  .hero-img-bleed{position:relative;}
+  .hero-img-bleed > img{position:relative;display:block;width:100%;height:auto;}
+  /* subtle dot field */
+  .dots{background-image:radial-gradient(circle at 1px 1px,oklch(0.4 0.012 25 / .2) 1px,transparent 0);background-size:28px 28px;}
+  /* category pill */
+  .pill{background:oklch(0.62 0.235 27 / 0.12);color:var(--red);border:1px solid oklch(0.62 0.235 27 / 0.3);}
+  /* pricing slider */
+  .slider-arrow{position:absolute;top:50%;transform:translateY(-50%);z-index:10;width:48px;height:48px;border-radius:9999px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);align-items:center;justify-content:center;cursor:pointer;transition:all .25s cubic-bezier(.16,1,.3,1);box-shadow:0 0 30px oklch(0.62 0.235 27 / 0.15);}
+  .slider-arrow:hover{background:var(--red);border-color:var(--red);color:#fff;transform:translateY(-50%) scale(1.05);}
+  .slider-prev{left:-24px;}
+  .slider-next{right:-24px;}
+  .slider-track{transition:transform .6s cubic-bezier(.16,1,.3,1);}
+  .slider-dot{width:10px;height:10px;border-radius:9999px;background:var(--line);border:none;padding:0;cursor:pointer;transition:all .25s ease;}
+  .slider-dot:hover{background:var(--ink-3);}
+  .slider-dot.active{background:var(--red);width:28px;}
+</style>
+</head>
+<body class="antialiased selection:bg-red-500/30">
+
+<!-- ============ TOP BAR ============ -->
+<header class="border-b line bg-[color:var(--bg)]/85 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-[1280px] mx-auto px-6 py-4 flex items-center justify-between">
+    <a href="https://lp.v4company.com/sales-deck/2025" class="flex items-center gap-2 text-xs ink-3 hover:text-white smooth arrow-hover">
+      <svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      <span class="num-eyebrow uppercase">Voltar ao portfólio</span>
+    </a>
+    <div class="flex items-center">
+      <img src="./img/v4-logo.png" alt="V4 Company" class="h-7 w-auto" />
+    </div>
+  </div>
+</header>
+
+<!-- ============ HERO ============ -->
+<section class="relative overflow-hidden">
+  <div class="absolute inset-0 dots opacity-50 pointer-events-none"></div>
+  <div class="absolute -top-32 -right-40 w-[800px] h-[800px] rounded-full pointer-events-none"
+       style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.22),transparent 65%);filter:blur(50px);"></div>
+
+  <div class="max-w-[1280px] mx-auto px-6 pt-20 pb-12 lg:pt-28 lg:pb-20 relative">
+    <div class="grid lg:grid-cols-12 gap-12 lg:gap-10 items-center">
+      <div class="lg:col-span-7">
+        <div class="flex items-center gap-3 mb-10">
+          <span class="pill px-3 py-1 rounded-full text-[10px] num-eyebrow uppercase font-semibold">Categoria · TER</span>
+          <span class="ink-4 num-eyebrow text-[10px] uppercase">Produto · Setup no Digital</span>
+        </div>
+
+        <h1 class="display text-[clamp(2.25rem,5.5vw,4.5rem)] font-bold leading-[0.98] max-w-[18ch]">
+          Sem fundação digital, sua mídia <span class="red italic font-medium">queima dinheiro</span> antes do primeiro lead.
+        </h1>
+
+        <p class="mt-8 text-base lg:text-lg ink-2 prose-narrow leading-relaxed">
+          Empresas que ativam tráfego pago sem perfil local validado, sem landing de conversão, sem criativos com hook estratégico e sem contas de anúncio configuradas tecnicamente desperdiçam até 40% do orçamento no primeiro trimestre.
+        </p>
+
+        <div class="mt-10 flex flex-wrap gap-3">
+          <a href="#bundle" class="group inline-flex items-center gap-3 bg-red px-7 py-4 text-white font-semibold rounded-full smooth hover:scale-[1.015]">
+            Quero meu setup completo
+            <svg class="arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+          <a href="#cronograma" class="inline-flex items-center gap-3 px-7 py-4 border line text-white rounded-full smooth hover:border-white">
+            Ver cronograma
+          </a>
+        </div>
+      </div>
+
+      <div class="lg:col-span-5 hero-img-bleed">
+        <div class="absolute -inset-16 rounded-full pointer-events-none"
+             style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.35),transparent 70%);filter:blur(80px);"></div>
+        <img src="./img/hero-stack-mockup.png" alt="Stack de landing pages reais entregues pela V4" loading="eager" />
+      </div>
+    </div>
+
+    <!-- proof line -->
+    <div class="mt-20 lg:mt-28 max-w-3xl">
+      <p class="num-eyebrow text-[10px] uppercase ink-4 mb-3">Quem já estruturou marketing com a V4</p>
+      <p class="display text-2xl lg:text-3xl font-medium leading-snug">
+        Mais de <span class="font-bold">30 mil projetos</span> em 13 anos. Conselho com nomes de XP, Nubank, McDonald's, VTEX e G4.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CLIENT LOGOS ============ -->
+<section class="py-10 border-y line-soft surface-2">
+  <div class="overflow-hidden">
+    <div class="flex gap-16 logoline w-max items-center opacity-50">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Exame.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Smart-Fit.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/XPInc.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Spotify.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/ifood.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Carmen-Steffens.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Lugano.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Anhanguera.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Colchoes-Ortobom.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Oral-Unic.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Exame.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Smart-Fit.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/XPInc.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Spotify.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/ifood.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Carmen-Steffens.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Lugano.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Anhanguera.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Colchoes-Ortobom.svg" class="h-6">
+      <img src="https://vendas.v4company.com/wp-content/uploads/2023/02/Oral-Unic.svg" class="h-6">
+    </div>
+  </div>
+</section>
+
+<!-- ============ ICP / DORES (asymmetric, varied) ============ -->
+<section class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="grid lg:grid-cols-12 gap-10 mb-16">
+      <div class="lg:col-span-5">
+        <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Para quem foi desenhado</p>
+        <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05] max-w-[16ch]">
+          Você está prestes a lançar, ou destravando uma operação que já deveria estar vendendo.
+        </h2>
+      </div>
+      <div class="lg:col-span-6 lg:col-start-7 lg:pt-4">
+        <p class="ink-2 text-lg leading-relaxed prose-narrow">
+          Dois cenários de cliente. Mesma raiz: a operação digital não foi construída como ativo, foi montada como remendo. E remendo a 40 mil reais por mês em mídia paga vira hemorragia.
+        </p>
+      </div>
+    </div>
+
+    <!-- varied card sizes -->
+    <div class="grid grid-cols-1 lg:grid-cols-6 gap-px surface-2 line border">
+      <div class="lg:col-span-3 lg:row-span-2 surface p-10 lg:p-12">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6 font-semibold">Cenário 01</p>
+        <h3 class="display text-3xl lg:text-4xl font-bold mb-5 leading-tight">Empresa em vias de inaugurar</h3>
+        <p class="ink-2 leading-relaxed prose-narrow">
+          Investiu pesado na estrutura física. No GPS e nas buscas, o negócio é invisível. O risco de "abrir as portas e não vir ninguém" tira o sono, e o calendário não negocia.
+        </p>
+        <p class="mt-6 ink-3 text-sm leading-relaxed prose-narrow">
+          Você está em alta pressão financeira para atingir o break-even rapidamente. Sabe usar redes sociais como usuário, mas tráfego pago é um campo que você não domina, e contratar errado nesse momento é fatal.
+        </p>
+      </div>
+
+      <div class="lg:col-span-3 surface p-10">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6 font-semibold">Cenário 02</p>
+        <h3 class="display text-2xl font-bold mb-3">Operação rodando, sem controle</h3>
+        <p class="ink-2 text-sm leading-relaxed prose-narrow">
+          Perfil criado por terceiros, Business Manager bloqueado, pixel desconfigurado, ficha do Google desatualizada. Cada conserto vira dor de cabeça, e a verba de mídia continua sangrando enquanto isso.
+        </p>
+      </div>
+
+      <div class="lg:col-span-3 surface p-10">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6 font-semibold">Sintoma</p>
+        <h3 class="display text-2xl font-bold mb-3">Concorrência aparecendo na sua frente</h3>
+        <p class="ink-2 text-sm leading-relaxed prose-narrow">
+          Players com produto pior dominam o feed e ranqueiam no Maps. A inveja competitiva já virou prejuízo mensurável no seu caixa.
+        </p>
+      </div>
+
+      <div class="lg:col-span-2 surface p-8">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-4 font-semibold">Tentativa anterior</p>
+        <p class="ink-2 leading-relaxed">Canva, freelancer barato, botão "impulsionar". Resultado: ativos soltos, dados inconsistentes, zero escala.</p>
+      </div>
+      <div class="lg:col-span-2 surface p-8">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-4 font-semibold">Ambição</p>
+        <p class="ink-2 leading-relaxed">Quer escalar mídia, mas não vai colocar dinheiro em cima de estrutura furada. Quer setup auditável antes de pisar no acelerador.</p>
+      </div>
+      <div class="lg:col-span-2 surface p-8">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-4 font-semibold">Gatilho</p>
+        <p class="ink-2 leading-relaxed">Black Friday, lançamento, sazonal forte, abertura de unidade. Ou está no ar a tempo, ou a janela passa.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CUSTO DA INEFICIÊNCIA (large numbers, varied) ============ -->
+<section class="py-28 lg:py-36 surface-2 border-y line">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="grid lg:grid-cols-12 gap-10 items-center mb-20">
+      <div class="lg:col-span-7">
+        <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">O custo da ineficiência</p>
+        <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">
+          Cada semana sem fundação é dinheiro queimado <span class="red">que não volta</span>.
+        </h2>
+      </div>
+      <div class="lg:col-span-5 hero-img-bleed">
+        <div class="absolute -inset-12 rounded-full pointer-events-none"
+             style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.30),transparent 70%);filter:blur(60px);"></div>
+        <img src="./img/custo-money-burn.png" alt="Verba de mídia queimando sem estrutura" loading="lazy" />
+      </div>
+    </div>
+
+    <div class="grid lg:grid-cols-12 gap-y-16 lg:gap-y-24 gap-x-12">
+      <div class="lg:col-span-7">
+        <p class="metric text-[clamp(5rem,12vw,9rem)] red">25%</p>
+        <p class="display text-2xl font-bold mt-4">do budget anual de mídia desperdiçado</p>
+        <p class="ink-2 mt-3 prose-narrow">Empresas sem landing pages estruturadas e sem contas de anúncio bem configuradas perdem em média um quarto do investimento publicitário em tráfego que nunca converte.</p>
+        <p class="ink-4 num-eyebrow text-[10px] uppercase mt-4">Fonte · McKinsey, 2023</p>
+      </div>
+
+      <div class="lg:col-span-4 lg:col-start-9 lg:pt-12">
+        <p class="metric text-[clamp(4rem,9vw,7rem)] ink">50%</p>
+        <p class="display text-xl font-bold mt-4">a menos no CAC com leads qualificados</p>
+        <p class="ink-2 text-sm mt-3 prose-narrow">Quando pixel, API de conversão, UTM e CRM estão integrados, o algoritmo otimiza para quem realmente compra.</p>
+        <p class="ink-4 num-eyebrow text-[10px] uppercase mt-4">Fonte · Forrester</p>
+      </div>
+
+      <div class="lg:col-span-4 lg:pt-8">
+        <p class="metric text-[clamp(4rem,9vw,7rem)] ink">65%</p>
+        <p class="display text-xl font-bold mt-4">das PMEs B2B não convertem o tráfego que pagaram</p>
+        <p class="ink-2 text-sm mt-3 prose-narrow">Sem página de captura, sem hook estratégico nos criativos, sem ficha do Google validada: o clique chega, a venda não.</p>
+        <p class="ink-4 num-eyebrow text-[10px] uppercase mt-4">Fonte · HubSpot, 2024</p>
+      </div>
+
+      <div class="lg:col-span-7 lg:col-start-6">
+        <p class="metric text-[clamp(5rem,12vw,9rem)] red">15h</p>
+        <p class="display text-2xl font-bold mt-4">por mês perdidas em discussões circulares</p>
+        <p class="ink-2 mt-3 prose-narrow">Time se reúne para decidir "o que postar", "qual cor de botão", "qual copy do anúncio", e segue sem playbook editorial nem plano de mídia projetado. Energia drenada, decisão adiada.</p>
+        <p class="ink-4 num-eyebrow text-[10px] uppercase mt-4">Estimativa V4 · diagnósticos internos</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TRANSIÇÃO DRAMÁTICA · VAULT ============ -->
+<section class="relative overflow-hidden">
+  <div class="absolute inset-0">
+    <img src="./img/dramatic-vault.png" alt="" class="w-full h-full object-cover" loading="lazy" />
+  </div>
+  <div class="absolute inset-0" style="background:linear-gradient(90deg, var(--bg) 0%, oklch(0.135 0.012 25 / 0.85) 35%, transparent 70%);"></div>
+  <div class="absolute inset-x-0 top-0 h-32" style="background:linear-gradient(180deg, var(--bg) 0%, transparent 100%);"></div>
+  <div class="absolute inset-x-0 bottom-0 h-32" style="background:linear-gradient(0deg, var(--bg) 0%, transparent 100%);"></div>
+
+  <div class="max-w-[1280px] mx-auto px-6 py-32 lg:py-44 relative">
+    <div class="max-w-[28ch]">
+      <p class="num-eyebrow text-[10px] uppercase red mb-6 font-semibold">Existe um caminho</p>
+      <h2 class="display text-4xl lg:text-6xl font-bold leading-[1.0]">
+        Destrave a operação digital <span class="red italic font-medium">de uma vez</span>.
+      </h2>
+      <p class="mt-8 text-lg ink-2 prose-narrow leading-relaxed">
+        Em quatro semanas, sua empresa sai do "tudo solto, nada conectado" para uma fundação digital completa, auditável e pronta para escalar mídia com previsibilidade.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CRONOGRAMA ============ -->
+<section id="cronograma" class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="mb-20 max-w-3xl">
+      <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Cronograma de entregas</p>
+      <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">Aproximadamente 30 dias do briefing à primeira campanha no ar.</h2>
+      <p class="ink-2 text-lg mt-6 prose-narrow leading-relaxed">As frentes técnicas e estratégicas rodam em paralelo. Você recebe entregáveis incrementais a cada semana, não um pacote único no final.</p>
+    </div>
+
+    <!-- Flow diagram -->
+    <div class="relative pt-4 pb-8">
+      <!-- Curved SVG connector (desktop only) -->
+      <svg class="hidden lg:block absolute left-0 right-0 w-full" style="top:54px;height:80px;overflow:visible;" viewBox="0 0 1200 80" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="flow-grad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="oklch(0.62 0.235 27)" stop-opacity="0"/>
+            <stop offset="15%" stop-color="oklch(0.62 0.235 27)" stop-opacity="0.9"/>
+            <stop offset="50%" stop-color="oklch(0.62 0.235 27)" stop-opacity="0.6"/>
+            <stop offset="85%" stop-color="oklch(0.62 0.235 27)" stop-opacity="0.9"/>
+            <stop offset="100%" stop-color="oklch(0.62 0.235 27)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="M 150 40 C 300 -10, 450 90, 600 40 S 900 -10, 1050 40"
+              stroke="url(#flow-grad)" stroke-width="2" fill="none" stroke-dasharray="6 6" />
+      </svg>
+
+      <div class="grid lg:grid-cols-4 gap-10 lg:gap-6 relative">
+        <!-- Node 01 -->
+        <div class="text-center relative">
+          <div class="relative w-28 h-28 mx-auto">
+            <div class="absolute -inset-3 rounded-full" style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.40),transparent 70%);filter:blur(20px);"></div>
+            <div class="relative w-full h-full rounded-full flex items-center justify-center border-2 border-red"
+                 style="background:radial-gradient(circle at 30% 30%, oklch(0.62 0.235 27), oklch(0.46 0.20 26) 80%);box-shadow:inset 0 0 30px oklch(0.30 0.10 26 / 0.6), 0 0 50px oklch(0.62 0.235 27 / 0.5);">
+              <span class="display text-3xl font-bold text-white">01</span>
+            </div>
+          </div>
+          <p class="num-eyebrow text-[10px] uppercase red mt-7 mb-2 font-semibold">Semana 01</p>
+          <h3 class="display text-lg font-bold mb-3">Onboarding e diagnóstico</h3>
+          <p class="ink-2 text-sm leading-relaxed max-w-[28ch] mx-auto">Kickoff, briefing, coleta de acessos, auditoria de ativos existentes, benchmark e definição de metas.</p>
+        </div>
+
+        <!-- Node 02 -->
+        <div class="text-center relative">
+          <div class="relative w-28 h-28 mx-auto">
+            <div class="absolute -inset-3 rounded-full" style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.20),transparent 70%);filter:blur(20px);"></div>
+            <div class="relative w-full h-full rounded-full flex items-center justify-center border line"
+                 style="background:radial-gradient(circle at 30% 30%, var(--bg-2), var(--bg) 80%);">
+              <span class="display text-3xl font-bold ink-2">02</span>
+            </div>
+          </div>
+          <p class="num-eyebrow text-[10px] uppercase ink-3 mt-7 mb-2 font-semibold">Semana 02</p>
+          <h3 class="display text-lg font-bold mb-3">Posicionamento e conteúdo</h3>
+          <p class="ink-2 text-sm leading-relaxed max-w-[28ch] mx-auto">Proposta de valor, tom de voz, arquétipo, pilares editoriais. Início do GMN e wireframe da landing.</p>
+        </div>
+
+        <!-- Node 03 -->
+        <div class="text-center relative">
+          <div class="relative w-28 h-28 mx-auto">
+            <div class="absolute -inset-3 rounded-full" style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.40),transparent 70%);filter:blur(20px);"></div>
+            <div class="relative w-full h-full rounded-full flex items-center justify-center border-2 border-red"
+                 style="background:radial-gradient(circle at 30% 30%, oklch(0.62 0.235 27), oklch(0.46 0.20 26) 80%);box-shadow:inset 0 0 30px oklch(0.30 0.10 26 / 0.6), 0 0 50px oklch(0.62 0.235 27 / 0.5);">
+              <span class="display text-3xl font-bold text-white">03</span>
+            </div>
+          </div>
+          <p class="num-eyebrow text-[10px] uppercase red mt-7 mb-2 font-semibold">Semana 03</p>
+          <h3 class="display text-lg font-bold mb-3">Produção e configuração</h3>
+          <p class="ink-2 text-sm leading-relaxed max-w-[28ch] mx-auto">Design dos 24 criativos, copy e design da landing, instalação do GTM, Pixel, API, UTMs e CRM.</p>
+        </div>
+
+        <!-- Node 04 -->
+        <div class="text-center relative">
+          <div class="relative w-28 h-28 mx-auto">
+            <div class="absolute -inset-3 rounded-full" style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.20),transparent 70%);filter:blur(20px);"></div>
+            <div class="relative w-full h-full rounded-full flex items-center justify-center border line"
+                 style="background:radial-gradient(circle at 30% 30%, var(--bg-2), var(--bg) 80%);">
+              <span class="display text-3xl font-bold ink-2">04</span>
+            </div>
+          </div>
+          <p class="num-eyebrow text-[10px] uppercase ink-3 mt-7 mb-2 font-semibold">Semana 04</p>
+          <h3 class="display text-lg font-bold mb-3">Validação e handover</h3>
+          <p class="ink-2 text-sm leading-relaxed max-w-[28ch] mx-auto">Plano de mídia projetado, calendário editorial 90 dias, deck de entrega, validação e handover.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ BUNDLE / O QUE ESTÁ DENTRO ============ -->
+<section id="bundle" class="py-28 lg:py-36 surface-2 border-y line">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="grid lg:grid-cols-12 gap-10 mb-20">
+      <div class="lg:col-span-7">
+        <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">O que está dentro do bundle</p>
+        <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">
+          Seis entregas. Um squad. <span class="red">Quatro semanas.</span>
+        </h2>
+      </div>
+      <div class="lg:col-span-4 lg:col-start-9 lg:pt-3">
+        <p class="ink-2 leading-relaxed prose-narrow">Cada produto abaixo é executado avulso em projetos isolados da V4. Aqui, eles vêm consolidados, sincronizados, e com economia significativa para quem precisa do pacote completo.</p>
+      </div>
+    </div>
+
+    <ol class="border line">
+      <!-- 01 GMN -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 border-b line surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-01-gmn.png" alt="Implementação Google Meu Negócio" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold red">01</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 1 semana</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Implementação Google Meu Negócio</h3>
+          <p class="ink-2 leading-relaxed">Posicionamento e otimização da presença local no Maps e nas buscas, com verificação por vídeo (exigência 2026), recuperação de perfis duplicados, NAP validado, descrição com palavras-chave, fotos tratadas e atributos completos.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Verificação por vídeo</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">SEO local</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Catálogo de serviços</span>
+        </div>
+      </li>
+
+      <!-- 02 Posicionamento -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 border-b line surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-02-posicionamento.png" alt="Posicionamento Estratégico de Redes Sociais" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold ink-3">02</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 3 semanas</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Posicionamento Estratégico de Redes Sociais</h3>
+          <p class="ink-2 leading-relaxed">Diagnóstico digital, benchmark de concorrentes, proposta de valor, tom de voz, arquétipo da marca, persona, quatro a cinco pilares editoriais, calendário de 90 dias e forecast de crescimento de 12 meses.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Calendário 90 dias</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Tom de voz</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Framework de copy</span>
+        </div>
+      </li>
+
+      <!-- 03 Landing -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 border-b line surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-03-landing.png" alt="Implementação de Landing Page" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold red">03</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 2 semanas</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Implementação de Landing Page</h3>
+          <p class="ink-2 leading-relaxed">Briefing, wireframe, copywriting persuasivo, design responsivo, publicação em domínio próprio, integração com CRM ou WhatsApp, eventos de conversão rastreados, e variação A/B quando aplicável.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Copy + Design</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Integração CRM</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Teste A/B</span>
+        </div>
+      </li>
+
+      <!-- 04 Criativos -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 border-b line surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-04-criativos.png" alt="Pack de 24 Criativos para Ads" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold ink-3">04</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 1 semana</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Pack de 24 Criativos para Ads</h3>
+          <p class="ink-2 leading-relaxed">20 peças estáticas e 4 motions adaptados para 1:1, 9:16 e 4:5, construídos a partir de benchmark de mercado, novos hooks baseados em curiosidade e dor imediata, com roteiros prontos para upload.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">20 estáticos</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">4 motions</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">3 formatos</span>
+        </div>
+      </li>
+
+      <!-- 05 Social Ads -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 border-b line surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-05-social-ads.png" alt="Setup Inicial de Social Ads" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold red">05</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 2 semanas</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Setup Inicial de Social Ads</h3>
+          <p class="ink-2 leading-relaxed">Business Manager validado, Pixel e API de Conversão ativos, GTM publicado, UTMs padronizados, públicos (Lookalike, Interesses) e listas de exclusão configurados, plano de mídia projetado e leads integrados ao CRM.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Pixel + CAPI</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Públicos</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Forecast</span>
+        </div>
+      </li>
+
+      <!-- 06 Google Ads -->
+      <li class="grid lg:grid-cols-12 gap-8 lg:gap-10 px-6 py-8 lg:px-10 lg:py-10 surface smooth hover:bg-[color:var(--bg-2)]">
+        <div class="lg:col-span-3">
+          <div class="aspect-square overflow-hidden rounded-xl relative img-bleed">
+            <img src="./img/bundle-06-google-ads.png" alt="Setup Inicial de Google Ads" class="w-full h-full object-cover" loading="lazy" />
+          </div>
+        </div>
+        <div class="lg:col-span-6 flex flex-col justify-center">
+          <div class="flex items-baseline gap-4 mb-2">
+            <p class="display text-2xl font-bold ink-3">06</p>
+            <p class="num-eyebrow text-[10px] uppercase ink-4">Entrega · 2 semanas</p>
+          </div>
+          <h3 class="display text-2xl font-bold mb-3">Setup Inicial de Google Ads</h3>
+          <p class="ink-2 leading-relaxed">Conta de Google Ads sob seu CNPJ, GTM instalado, ações de conversão ativas, benchmark de concorrência, curadoria de palavras-chave, listas de negativação e deck de planejamento com projeção de CPL e conversões.</p>
+        </div>
+        <div class="lg:col-span-3 flex flex-wrap gap-2 lg:items-center content-start">
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Curadoria de KW</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Listas negativas</span>
+          <span class="text-xs px-3 py-1 border line-soft rounded-full ink-2">Deck de mídia</span>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============ DETALHE DAS ETAPAS ============ -->
+<section class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="mb-16 max-w-3xl">
+      <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Dentro de cada etapa</p>
+      <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">Cada semana com entregáveis claros e DRI definido.</h2>
+    </div>
+
+    <div class="border line">
+      <details class="group border-b line" open>
+        <summary class="flex items-center justify-between px-6 py-6 lg:px-10 lg:py-8 surface smooth hover:bg-[color:var(--bg-2)]">
+          <div class="flex items-baseline gap-6">
+            <span class="metric text-3xl red">01</span>
+            <div>
+              <p class="num-eyebrow text-[10px] uppercase ink-4 font-semibold">Semana 01</p>
+              <h3 class="display text-xl font-bold mt-1">Onboarding e diagnóstico</h3>
+            </div>
+          </div>
+          <svg class="chev ink-3" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="px-6 lg:px-10 pb-8 surface grid md:grid-cols-2 gap-x-12 gap-y-3 pt-2">
+          <p class="ink-2 leading-relaxed">Kickoff oficial e alinhamento de expectativas com o decisor.</p>
+          <p class="ink-2 leading-relaxed">Coleta e validação de acessos administrativos (BM, Google Ads, GMN, site, CRM).</p>
+          <p class="ink-2 leading-relaxed">Auditoria de ativos existentes e diagnóstico de inconsistências.</p>
+          <p class="ink-2 leading-relaxed">Briefing técnico e estratégico (metas, ICP, verba, canais prioritários).</p>
+          <p class="ink-2 leading-relaxed">Coleta de dados legais (NAP) e validação para o Google Meu Negócio.</p>
+          <p class="ink-2 leading-relaxed">Benchmark inicial de dois a três concorrentes diretos.</p>
+        </div>
+      </details>
+
+      <details class="group border-b line">
+        <summary class="flex items-center justify-between px-6 py-6 lg:px-10 lg:py-8 surface smooth hover:bg-[color:var(--bg-2)]">
+          <div class="flex items-baseline gap-6">
+            <span class="metric text-3xl ink-3">02</span>
+            <div>
+              <p class="num-eyebrow text-[10px] uppercase ink-4 font-semibold">Semana 02</p>
+              <h3 class="display text-xl font-bold mt-1">Posicionamento, narrativa e conteúdo</h3>
+            </div>
+          </div>
+          <svg class="chev ink-3" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="px-6 lg:px-10 pb-8 surface grid md:grid-cols-2 gap-x-12 gap-y-3 pt-2">
+          <p class="ink-2 leading-relaxed">Definição de proposta de valor e macro-narrativa.</p>
+          <p class="ink-2 leading-relaxed">Tom de voz, arquétipo de marca e persona de conteúdo.</p>
+          <p class="ink-2 leading-relaxed">Estruturação de quatro a cinco pilares editoriais e macrotemas.</p>
+          <p class="ink-2 leading-relaxed">Cadastro estratégico do GMN (categoria, áreas, descrição).</p>
+          <p class="ink-2 leading-relaxed">Wireframe e estrutura da landing page validados.</p>
+          <p class="ink-2 leading-relaxed">Definição de hooks visuais e textuais para os 24 criativos.</p>
+        </div>
+      </details>
+
+      <details class="group border-b line">
+        <summary class="flex items-center justify-between px-6 py-6 lg:px-10 lg:py-8 surface smooth hover:bg-[color:var(--bg-2)]">
+          <div class="flex items-baseline gap-6">
+            <span class="metric text-3xl red">03</span>
+            <div>
+              <p class="num-eyebrow text-[10px] uppercase ink-4 font-semibold">Semana 03</p>
+              <h3 class="display text-xl font-bold mt-1">Produção, design e configuração técnica</h3>
+            </div>
+          </div>
+          <svg class="chev ink-3" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="px-6 lg:px-10 pb-8 surface grid md:grid-cols-2 gap-x-12 gap-y-3 pt-2">
+          <p class="ink-2 leading-relaxed">Design e animação dos 24 criativos (20 estáticos e 4 motions).</p>
+          <p class="ink-2 leading-relaxed">Copywriting e design da landing page responsiva.</p>
+          <p class="ink-2 leading-relaxed">Verificação por vídeo do GMN e finalização do perfil.</p>
+          <p class="ink-2 leading-relaxed">Implementação do GTM e padronização de UTMs.</p>
+          <p class="ink-2 leading-relaxed">Configuração de Pixel e API de Conversão (Meta), tags de conversão (Google).</p>
+          <p class="ink-2 leading-relaxed">Integração de leads com CRM ou planilhas via Webhook ou API.</p>
+        </div>
+      </details>
+
+      <details class="group">
+        <summary class="flex items-center justify-between px-6 py-6 lg:px-10 lg:py-8 surface smooth hover:bg-[color:var(--bg-2)]">
+          <div class="flex items-baseline gap-6">
+            <span class="metric text-3xl ink-3">04</span>
+            <div>
+              <p class="num-eyebrow text-[10px] uppercase ink-4 font-semibold">Semana 04</p>
+              <h3 class="display text-xl font-bold mt-1">Validação, plano de mídia e handover</h3>
+            </div>
+          </div>
+          <svg class="chev ink-3" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="px-6 lg:px-10 pb-8 surface grid md:grid-cols-2 gap-x-12 gap-y-3 pt-2">
+          <p class="ink-2 leading-relaxed">Curadoria de palavras-chave e listas de negativação (Google Ads).</p>
+          <p class="ink-2 leading-relaxed">Configuração de públicos e listas de exclusão (Meta).</p>
+          <p class="ink-2 leading-relaxed">Forecast de mídia projetado (alcance, cliques, CPL, conversões).</p>
+          <p class="ink-2 leading-relaxed">Calendário editorial de 90 dias entregue (tema, objetivo e formato).</p>
+          <p class="ink-2 leading-relaxed">Variação A/B configurada na landing (quando aplicável).</p>
+          <p class="ink-2 leading-relaxed">Reunião de handover com deck consolidado e próximos passos.</p>
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NPS ============ -->
+<section class="py-20 surface-2 border-y line">
+  <div class="max-w-[700px] mx-auto px-6 text-center">
+    <p class="num-eyebrow text-[10px] uppercase ink-4 mb-4 font-semibold">Antes de seguirmos</p>
+    <h2 class="display text-2xl lg:text-3xl font-bold mb-10">De 1 a 5, o quanto faz sentido para você?</h2>
+    <div class="flex justify-center gap-3 flex-wrap" id="nps-stars">
+      <button class="nps-star smooth" data-value="1" aria-label="1 estrela">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+      <button class="nps-star smooth" data-value="2" aria-label="2 estrelas">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+      <button class="nps-star smooth" data-value="3" aria-label="3 estrelas">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+      <button class="nps-star smooth" data-value="4" aria-label="4 estrelas">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+      <button class="nps-star smooth" data-value="5" aria-label="5 estrelas">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"><path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PRICING & GUARANTEE ============ -->
+<section class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+
+    <!-- Pricing slider -->
+    <div class="relative max-w-[1180px] mx-auto" data-pricing-slider>
+      <!-- Prev arrow -->
+      <button class="slider-arrow slider-prev hidden lg:flex" aria-label="Anterior">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <!-- Next arrow -->
+      <button class="slider-arrow slider-next hidden lg:flex" aria-label="Pr&oacute;ximo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+
+      <div class="slider-viewport overflow-hidden rounded-2xl border line">
+        <div class="slider-track flex" data-track>
+          <!-- Slide 1: anchoring -->
+          <div class="slider-slide w-full flex-shrink-0 grid lg:grid-cols-2 gap-px surface-2">
+            <div class="surface px-8 py-10 lg:px-12 lg:py-14">
+              <h3 class="display text-2xl lg:text-3xl font-bold leading-tight mb-8">Normalmente, <span class="red italic font-medium">quanto isso custaria?</span></h3>
+              <ul class="divide-y line-soft">
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Implementa&ccedil;&atilde;o Google Meu Neg&oacute;cio</span><span class="display font-bold text-sm whitespace-nowrap">R$ 3.392,19</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Posicionamento Estrat&eacute;gico de Redes Sociais</span><span class="display font-bold text-sm whitespace-nowrap">R$ 8.358,63</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Implementa&ccedil;&atilde;o de Landing Page</span><span class="display font-bold text-sm whitespace-nowrap">R$ 3.348,99</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Pack de 24 Criativos para Ads</span><span class="display font-bold text-sm whitespace-nowrap">R$ 10.896,81</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Setup Inicial de Social Ads</span><span class="display font-bold text-sm whitespace-nowrap">R$ 4.461,35</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-2 text-sm">Setup Inicial de Google Ads</span><span class="display font-bold text-sm whitespace-nowrap">R$ 4.752,61</span></li>
+              </ul>
+            </div>
+            <div class="surface-2 px-8 py-10 lg:px-12 lg:py-14 flex flex-col justify-center items-center text-center relative overflow-hidden">
+              <div class="absolute inset-0 pointer-events-none" style="background:radial-gradient(ellipse at 60% 40%, oklch(0.62 0.235 27 / 0.18), transparent 65%);"></div>
+              <p class="num-eyebrow text-[10px] uppercase red font-semibold mb-6 relative">Soma total</p>
+              <p class="metric text-[clamp(3.5rem,8vw,6rem)] leading-[0.9] relative">R$ 35.210<span class="text-3xl ink-3">,58</span></p>
+            </div>
+          </div>
+
+          <!-- Slide 2: offer -->
+          <div class="slider-slide w-full flex-shrink-0 grid lg:grid-cols-2 gap-px surface-2">
+            <div class="surface px-8 py-10 lg:px-12 lg:py-14">
+              <h3 class="display text-2xl lg:text-3xl font-bold leading-tight mb-8">Mas hoje, <span style="color:#22c55e" class="italic font-medium">oferecemos por</span></h3>
+              <ul class="divide-y line-soft">
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Implementa&ccedil;&atilde;o Google Meu Neg&oacute;cio</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 3.392,19</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Posicionamento Estrat&eacute;gico de Redes Sociais</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 8.358,63</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Implementa&ccedil;&atilde;o de Landing Page</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 3.348,99</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Pack de 24 Criativos para Ads</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 10.896,81</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Setup Inicial de Social Ads</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 4.461,35</span></li>
+                <li class="flex justify-between items-center py-3"><span class="ink-3 text-sm line-through">Setup Inicial de Google Ads</span><span class="display font-bold text-sm whitespace-nowrap ink-3 line-through">R$ 4.752,61</span></li>
+              </ul>
+            </div>
+            <div class="surface-2 px-8 py-10 lg:px-12 lg:py-14 flex flex-col justify-center items-center text-center relative overflow-hidden">
+              <div class="absolute inset-0 pointer-events-none" style="background:radial-gradient(ellipse at 60% 40%, oklch(0.65 0.20 145 / 0.18), transparent 65%);"></div>
+              <p class="num-eyebrow text-[10px] uppercase font-semibold mb-6 relative" style="color:#22c55e">Oferta exclusiva</p>
+              <p class="text-sm ink-3 mb-2 relative">De: <span class="line-through">R$ 35.210,58</span> &middot; Por: <span class="text-white font-semibold">12x de</span></p>
+              <p class="metric text-[clamp(3.5rem,8.5vw,6.5rem)] leading-[0.9] relative" style="color:#22c55e">R$ 1.249<span class="text-3xl">,00</span></p>
+              <p class="ink-2 mt-4 text-sm relative">ou <span class="text-white font-semibold">R$ 14.988,00</span> &agrave; vista</p>
+              <p class="num-eyebrow text-[10px] uppercase ink-4 mt-6 relative">*Parcelamento apenas no Cart&atilde;o de Cr&eacute;dito</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dots -->
+      <div class="flex justify-center gap-2 mt-6" data-dots>
+        <button class="slider-dot active" data-index="0" aria-label="Slide 1"></button>
+        <button class="slider-dot" data-index="1" aria-label="Slide 2"></button>
+      </div>
+    </div>
+
+    <!-- Guarantee strip -->
+    <div class="mt-20 pt-12 border-t line grid lg:grid-cols-12 gap-10 items-center">
+      <div class="lg:col-span-3 flex justify-center lg:justify-start">
+        <div class="relative w-40 h-40">
+          <div class="absolute inset-0 rounded-full" style="background:radial-gradient(circle,#D4A028 / 0.30,transparent 70%);filter:blur(24px);opacity:0.4;"></div>
+          <svg viewBox="0 0 200 200" class="relative w-full h-full drop-shadow-[0_8px_24px_rgba(212,160,40,0.35)]">
+            <defs>
+              <radialGradient id="gold-disc" cx="50%" cy="40%" r="65%">
+                <stop offset="0%" stop-color="#FFEB99"/>
+                <stop offset="35%" stop-color="#F5C849"/>
+                <stop offset="70%" stop-color="#B8862A"/>
+                <stop offset="100%" stop-color="#5A3F0F"/>
+              </radialGradient>
+              <radialGradient id="gold-inner" cx="50%" cy="50%" r="60%">
+                <stop offset="0%" stop-color="#1a1410"/>
+                <stop offset="100%" stop-color="#0a0806"/>
+              </radialGradient>
+            </defs>
+            <circle cx="100" cy="100" r="96" fill="url(#gold-disc)"/>
+            <circle cx="100" cy="100" r="96" fill="none" stroke="#5A3F0F" stroke-width="1"/>
+            <g>
+            <polygon points="100.0,7.5 101.1,10.5 104.3,10.6 101.7,12.6 102.6,15.6 100.0,13.8 97.4,15.6 98.3,12.6 95.7,10.6 98.9,10.5" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="162.2,33.3 163.3,36.3 166.5,36.4 163.9,38.3 164.9,41.4 162.2,39.6 159.6,41.4 160.5,38.3 157.9,36.4 161.2,36.3" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="188.0,95.5 189.1,98.5 192.3,98.6 189.7,100.6 190.6,103.6 188.0,101.8 185.4,103.6 186.3,100.6 183.7,98.6 186.9,98.5" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="162.2,157.7 163.3,160.8 166.5,160.8 163.9,162.8 164.9,165.9 162.2,164.0 159.6,165.9 160.5,162.8 157.9,160.8 161.2,160.8" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="100.0,183.5 101.1,186.5 104.3,186.6 101.7,188.6 102.6,191.6 100.0,189.8 97.4,191.6 98.3,188.6 95.7,186.6 98.9,186.5" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="37.8,157.7 38.8,160.8 42.1,160.8 39.5,162.8 40.4,165.9 37.8,164.0 35.1,165.9 36.1,162.8 33.5,160.8 36.7,160.8" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="12.0,95.5 13.1,98.5 16.3,98.6 13.7,100.6 14.6,103.6 12.0,101.8 9.4,103.6 10.3,100.6 7.7,98.6 10.9,98.5" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            <polygon points="37.8,33.3 38.8,36.3 42.1,36.4 39.5,38.3 40.4,41.4 37.8,39.6 35.1,41.4 36.1,38.3 33.5,36.4 36.7,36.3" fill="#FFE066" stroke="#8B6914" stroke-width="0.4"/>
+            </g>
+            <circle cx="100" cy="100" r="74" fill="url(#gold-inner)" stroke="#D4A028" stroke-width="1.5"/>
+            <circle cx="100" cy="100" r="68" fill="none" stroke="#D4A028" stroke-width="0.4" stroke-dasharray="2 3" opacity="0.5"/>
+            <text x="100" y="92" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="44" font-weight="900" fill="#FFEB99">30</text>
+            <text x="100" y="113" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="11" font-weight="700" fill="#FFEB99" letter-spacing="3">DIAS</text>
+            <line x1="65" y1="124" x2="135" y2="124" stroke="#D4A028" stroke-width="0.5" opacity="0.5"/>
+            <text x="100" y="138" text-anchor="middle" font-family="Space Grotesk, sans-serif" font-size="9" font-weight="600" fill="#D4A028" letter-spacing="2.5">DE GARANTIA</text>
+          </svg>
+        </div>
+      </div>
+      <div class="lg:col-span-9">
+        <p class="ink lg:text-2xl text-xl leading-snug mb-4">
+          Se ao fim do projeto voc&ecirc; n&atilde;o sentir que valeu cada centavo investido,
+          <span class="bg-red text-white font-bold px-2 py-0.5 rounded-sm">devolvemos 100% do valor.</span>
+        </p>
+        <p class="ink-3 italic text-sm">*Condi&ccedil;&atilde;o aplicada exclusivamente ao bundle Setup no Digital.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ MARQUEE BÔNUS ============ -->
+<section class="bg-red py-3 overflow-hidden">
+  <div class="flex marquee w-max gap-10 whitespace-nowrap">
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Somente esse m&ecirc;s</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">B&ocirc;nus de ativa&ccedil;&atilde;o</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Condi&ccedil;&atilde;o especial</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Somente esse m&ecirc;s</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">B&ocirc;nus de ativa&ccedil;&atilde;o</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Condi&ccedil;&atilde;o especial</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Somente esse m&ecirc;s</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">B&ocirc;nus de ativa&ccedil;&atilde;o</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Condi&ccedil;&atilde;o especial</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">Somente esse m&ecirc;s</span>
+    <span class="text-white/50">&middot;</span>
+    <span class="text-white font-medium text-xs num-eyebrow uppercase">B&ocirc;nus de ativa&ccedil;&atilde;o</span>
+    <span class="text-white/50">&middot;</span>
+  </div>
+</section>
+
+<!-- ============ STEP / VOCÊ ESTÁ AQUI ============ -->
+<section class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="mb-16 max-w-3xl">
+      <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Metodologia STEP</p>
+      <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">Onde o Setup no Digital se encaixa na sua jornada.</h2>
+      <p class="ink-2 text-lg mt-6 prose-narrow leading-relaxed">A V4 categoriza projetos em quatro est&aacute;gios de maturidade. Esse produto &eacute; da categoria <strong class="text-white">TER</strong>: voc&ecirc; sabe o que precisa, mas ainda n&atilde;o tem implementado.</p>
+    </div>
+
+    <div class="grid md:grid-cols-4 gap-px surface-2 line border">
+      <div class="surface p-8 lg:p-10">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6">Etapa 01</p>
+        <h3 class="display text-3xl font-bold mb-3">Saber</h3>
+        <p class="ink-2 text-sm mb-6 leading-relaxed">Diagn&oacute;stico estrat&eacute;gico antes de definir crescimento.</p>
+        <p class="text-xs ink-3 italic">"N&atilde;o sei o que eu preciso saber."</p>
+      </div>
+
+      <div class="relative bg-red text-white p-8 lg:p-10">
+        <span class="absolute -top-3 left-8 px-3 py-1 bg-white text-[var(--red-deep)] rounded-full text-[10px] font-bold uppercase num-eyebrow" style="color:var(--red-deep);">Voc&ecirc; est&aacute; aqui</span>
+        <p class="num-eyebrow text-[10px] uppercase opacity-80 mb-6">Etapa 02</p>
+        <h3 class="display text-3xl font-bold mb-3">Ter</h3>
+        <p class="text-sm mb-6 leading-relaxed opacity-90">Implementa&ccedil;&atilde;o dos recursos para a estrat&eacute;gia rodar.</p>
+        <p class="text-xs italic opacity-80">"Sei o que preciso, mas n&atilde;o tenho."</p>
+      </div>
+
+      <div class="surface p-8 lg:p-10">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6">Etapa 03</p>
+        <h3 class="display text-3xl font-bold mb-3">Executar</h3>
+        <p class="ink-2 text-sm mb-6 leading-relaxed">Opera&ccedil;&atilde;o cont&iacute;nua com especialistas alocados.</p>
+        <p class="text-xs ink-3 italic">"Tenho tudo, mas preciso fazer funcionar."</p>
+      </div>
+
+      <div class="surface p-8 lg:p-10">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-6">Etapa 04</p>
+        <h3 class="display text-3xl font-bold mb-3">Potencializar</h3>
+        <p class="ink-2 text-sm mb-6 leading-relaxed">Expans&atilde;o de canais e novos vetores de crescimento.</p>
+        <p class="text-xs ink-3 italic">"Domino tudo, quero resultados extraordin&aacute;rios."</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CASES REAIS ============ -->
+<section class="py-28 lg:py-36">
+  <div class="max-w-[1280px] mx-auto px-6">
+    <div class="grid lg:grid-cols-12 gap-10 mb-16 items-end">
+      <div class="lg:col-span-7">
+        <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Cases reais implementados</p>
+        <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05]">
+          Neg&oacute;cios que j&aacute; passaram pelo Setup<span class="red">.</span>
+        </h2>
+      </div>
+      <p class="lg:col-span-4 lg:col-start-9 ink-2 leading-relaxed prose-narrow">
+        Tr&ecirc;s opera&ccedil;&otilde;es com pontos de partida e setores diferentes. Mesma base de funda&ccedil;&atilde;o digital constru&iacute;da pela V4.
+      </p>
+    </div>
+
+    <div class="grid lg:grid-cols-3 gap-px surface-2 line border">
+      <a href="https://lp.luminareclinica.com.br/ht" target="_blank" rel="noopener" class="surface p-8 lg:p-10 smooth hover:bg-[color:var(--bg-2)] block group">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-8">Case 01 &middot; Est&eacute;tica</p>
+        <h3 class="display text-2xl font-bold mb-3">Luminare Cl&iacute;nica</h3>
+        <p class="ink-2 leading-relaxed mb-10">Especialista em harmoniza&ccedil;&atilde;o facial, unindo t&eacute;cnicas avan&ccedil;adas e resultados que valorizam a beleza natural.</p>
+        <div class="flex items-center gap-2 text-sm font-medium ink-3 group-hover:text-white smooth">
+          Visitar landing
+          <svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </div>
+      </a>
+
+      <a href="https://lp.clinicafamilie.com.br/" target="_blank" rel="noopener" class="surface p-8 lg:p-10 smooth hover:bg-[color:var(--bg-2)] block group">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-8">Case 02 &middot; Sa&uacute;de</p>
+        <h3 class="display text-2xl font-bold mb-3">Cl&iacute;nica Familie</h3>
+        <p class="ink-2 leading-relaxed mb-10">Sa&uacute;de da mulher e da crian&ccedil;a com acompanhamento cont&iacute;nuo, foco em v&iacute;nculo e cuidado integrado.</p>
+        <div class="flex items-center gap-2 text-sm font-medium ink-3 group-hover:text-white smooth">
+          Visitar landing
+          <svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </div>
+      </a>
+
+      <a href="https://lp.bosquedacorujinha.com.br/" target="_blank" rel="noopener" class="surface p-8 lg:p-10 smooth hover:bg-[color:var(--bg-2)] block group">
+        <p class="num-eyebrow text-[10px] uppercase ink-4 mb-8">Case 03 &middot; Educa&ccedil;&atilde;o</p>
+        <h3 class="display text-2xl font-bold mb-3">Bosque da Corujinha</h3>
+        <p class="ink-2 leading-relaxed mb-10">Espa&ccedil;o de educa&ccedil;&atilde;o infantil que valoriza o afeto, as descobertas e o desenvolvimento integral.</p>
+        <div class="flex items-center gap-2 text-sm font-medium ink-3 group-hover:text-white smooth">
+          Visitar landing
+          <svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section class="py-28 lg:py-36 surface-2 border-y line">
+  <div class="max-w-[900px] mx-auto px-6">
+    <p class="num-eyebrow text-[10px] uppercase red mb-4 font-semibold">Caso ainda esteja com dúvida</p>
+    <h2 class="display text-4xl lg:text-5xl font-bold leading-[1.05] mb-14">Perguntas frequentes</h2>
+
+    <div class="border-t line">
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">As contas de anúncio ficam no meu CNPJ ou no da V4?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          Sempre no seu CNPJ. O Business Manager, conta de Google Ads, GMN e GTM são criados ou recuperados sob a propriedade da sua empresa. A V4 entra como gestora com permissão de admin, mas a posse do ativo é integralmente sua. Se em algum momento você quiser tocar internamente ou trocar de parceiro, o setup vai junto.
+        </p>
+      </details>
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">Em quanto tempo eu consigo subir a primeira campanha?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          O ciclo completo é de aproximadamente 30 dias. As frentes técnicas (GMN, contas de anúncio, GTM) ficam prontas até a semana 3. A landing e os criativos finalizam na semana 3 ou 4. No final da semana 4 você recebe o deck de planejamento e tem tudo para ativar a primeira campanha.
+        </p>
+      </details>
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">A verba de mídia está incluída no valor?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          Não. O bundle cobre toda a implementação: estratégia, criativos, landing, contas de anúncio configuradas, GMN, plano de mídia projetado. A verba que vai para Meta e Google é separada, paga diretamente nas plataformas com seu cartão e CNPJ. No próprio plano de mídia entregue, recomendamos um piso saudável para começar.
+        </p>
+      </details>
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">Já tenho parte das coisas. Faz sentido contratar mesmo assim?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          Sim, e nesses casos o ganho costuma ser maior. A maioria dos clientes que chegam com "alguma coisa pronta" tem ativos desconectados, dados inconsistentes ou setup técnico falho que justamente queima a verba. O bundle audita o que existe, recupera o que dá para recuperar, refaz o que precisa ser refeito e amarra tudo em uma estrutura coerente.
+        </p>
+      </details>
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">E depois do setup, como funciona a operação contínua?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          O Setup no Digital é a fundação (categoria TER). Para rodar mídia, conteúdo e CRM no dia a dia, você avança para a categoria EXECUTAR, com profissionais alocados (Gestor de Tráfego, Designer, Social Media, Analista de CRM). A transição é desenhada já no handover do bundle.
+        </p>
+      </details>
+      <details class="border-b line">
+        <summary class="flex items-center justify-between py-6 smooth">
+          <h3 class="display text-lg font-semibold pr-6">Quem executa o projeto?</h3>
+          <svg class="chev ink-3 flex-shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <p class="pb-6 ink-2 leading-relaxed prose-wide">
+          Um squad multidisciplinar composto por Account Manager (DRI do projeto), Gestor de Mídia Paga, Designer Gráfico, Redator Publicitário e Social Media, com supervisão do Coordenador e Gerente de PE&G. A comunicação acontece através de check-ins semanais e grupo no WhatsApp para atualizações diárias.
+        </p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA FINAL ============ -->
+<section id="cta" class="py-28 lg:py-40 relative overflow-hidden border-t line">
+  <div class="absolute -top-32 left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full pointer-events-none"
+       style="background:radial-gradient(circle,oklch(0.62 0.235 27 / 0.16),transparent 60%);filter:blur(60px);"></div>
+  <div class="absolute inset-0 dots opacity-40 pointer-events-none"></div>
+
+  <div class="max-w-[900px] mx-auto px-6 text-center relative">
+    <h2 class="display text-[clamp(2.5rem,7vw,5rem)] font-bold leading-[1.0] mb-8">
+      Pronto para vender no digital com a <span class="red italic font-medium">estrutura certa</span>?
+    </h2>
+    <p class="text-lg lg:text-xl ink-2 mb-12 max-w-2xl mx-auto leading-relaxed">
+      Em aproximadamente 30 dias seu negócio sai do invisível para uma operação digital completa, auditável, pronta para escalar.
+    </p>
+    <a href="#" class="inline-flex items-center gap-3 bg-red text-white font-semibold rounded-full px-10 py-5 text-lg smooth hover:scale-[1.02] arrow-hover">
+      Falar com um consultor
+      <svg class="arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </a>
+    <p class="text-xs ink-4 mt-6 num-eyebrow uppercase">Resposta em 24h úteis &middot; Sem compromisso</p>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer class="border-t line py-10 surface-2">
+  <div class="max-w-[1280px] mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
+    <div class="flex items-center">
+      <img src="./img/v4-logo.png" alt="V4 Company" class="h-6 w-auto opacity-80" />
+    </div>
+    <p class="text-xs ink-3">2026 &copy; V4 Company. Todos os direitos reservados.</p>
+    <a href="https://v4company.com/politica-de-privacidade" class="text-xs ink-3 hover:text-white smooth">Pol&iacute;ticas de privacidade</a>
+  </div>
+</footer>
+
+<script>
+  const stars = document.querySelectorAll('.nps-star');
+  stars.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const value = parseInt(btn.dataset.value);
+      stars.forEach(s => {
+        const v = parseInt(s.dataset.value);
+        if (v <= value) s.setAttribute('data-on','true');
+        else s.removeAttribute('data-on');
+      });
+    });
+  });
+
+  (function(){
+    const root = document.querySelector('[data-pricing-slider]');
+    if (!root) return;
+    const track = root.querySelector('[data-track]');
+    const slides = track.querySelectorAll('.slider-slide');
+    const dots = root.querySelectorAll('.slider-dot');
+    const prev = root.querySelector('.slider-prev');
+    const next = root.querySelector('.slider-next');
+    const total = slides.length;
+    let current = 0;
+    function goTo(i){
+      current = ((i % total) + total) % total;
+      track.style.transform = 'translateX(-' + (current * 100) + '%)';
+      dots.forEach((d, idx) => d.classList.toggle('active', idx === current));
+    }
+    prev.addEventListener('click', () => goTo(current - 1));
+    next.addEventListener('click', () => goTo(current + 1));
+    dots.forEach((d, idx) => d.addEventListener('click', () => goTo(idx)));
+    // Auto-rotate every 6s
+    let timer = setInterval(() => goTo(current + 1), 6500);
+    root.addEventListener('mouseenter', () => clearInterval(timer));
+    root.addEventListener('mouseleave', () => { timer = setInterval(() => goTo(current + 1), 6500); });
+  })();
+</script>
+
+</body>
+</html>
