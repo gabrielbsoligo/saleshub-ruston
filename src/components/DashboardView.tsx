@@ -215,8 +215,10 @@ export const DashboardView: React.FC = () => {
   const todayStr = new Date().toISOString().slice(0, 10);
   const ligacoesHoje = useMemo(() => ligacoes.filter(l => l.started_at && l.started_at.slice(0, 10) === todayStr), [ligacoes, todayStr]);
   const callsBySdr = useMemo(() => {
-    const sdrs = activeMembers.filter(m => m.role === 'sdr' || m.role === 'gestor');
-    return sdrs
+    // Inclui qualquer membro ativo que tenha ligado hoje (sdr/closer/gestor).
+    // Filtro por role foi removido porque closers tambem fazem ligacoes
+    // (follow-up, retorno, fechamento).
+    return activeMembers
       .map(sdr => {
         const sdrCalls = ligacoesHoje.filter(l => l.member_id === sdr.id);
         const total = sdrCalls.length;
@@ -224,7 +226,7 @@ export const DashboardView: React.FC = () => {
         const durTotal = sdrCalls.filter(l => l.atendida).reduce((a, l) => a + (l.duration || 0), 0);
         return { sdr, total, atendidas, naoAtendidas: total - atendidas, durMedia: atendidas > 0 ? Math.round(durTotal / atendidas) : 0 };
       })
-      .filter(row => row.total > 0) // só mostra quem ligou hoje
+      .filter(row => row.total > 0)
       .sort((a, b) => b.total - a.total);
   }, [activeMembers, ligacoesHoje]);
 
