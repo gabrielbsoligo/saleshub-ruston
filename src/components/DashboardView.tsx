@@ -108,7 +108,7 @@ export const DashboardView: React.FC = () => {
 
   useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
 
-  // Auto-refresh every 30s
+  // Auto-refresh every 30s (fallback)
   useEffect(() => {
     const interval = setInterval(() => {
       fetchDashboardData();
@@ -116,6 +116,19 @@ export const DashboardView: React.FC = () => {
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchDashboardData, fetchLigacoes]);
+
+  // Realtime: atualiza imediatamente quando chega nova ligação via webhook 4com
+  useEffect(() => {
+    const channel = supabase
+      .channel('ligacoes_4com_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ligacoes_4com' },
+        () => fetchLigacoes(),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [fetchLigacoes]);
 
   const [year, month] = selectedMonth.split('-').map(Number);
   const mesStart = new Date(year, month - 1, 1);

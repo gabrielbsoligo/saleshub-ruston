@@ -77,6 +77,7 @@ export interface TeamMember {
   auth_user_id?: string;
   kommo_user_id?: number;
   ramal_4com?: string;
+  google_calendar_connected?: boolean;
   created_at: string;
 }
 
