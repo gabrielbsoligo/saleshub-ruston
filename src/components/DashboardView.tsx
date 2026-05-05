@@ -216,13 +216,16 @@ export const DashboardView: React.FC = () => {
   const ligacoesHoje = useMemo(() => ligacoes.filter(l => l.started_at && l.started_at.slice(0, 10) === todayStr), [ligacoes, todayStr]);
   const callsBySdr = useMemo(() => {
     const sdrs = activeMembers.filter(m => m.role === 'sdr' || m.role === 'gestor');
-    return sdrs.map(sdr => {
-      const sdrCalls = ligacoesHoje.filter(l => l.member_id === sdr.id);
-      const total = sdrCalls.length;
-      const atendidas = sdrCalls.filter(l => l.atendida).length;
-      const durTotal = sdrCalls.filter(l => l.atendida).reduce((a, l) => a + (l.duration || 0), 0);
-      return { sdr, total, atendidas, naoAtendidas: total - atendidas, durMedia: atendidas > 0 ? Math.round(durTotal / atendidas) : 0 };
-    }).sort((a, b) => b.total - a.total);
+    return sdrs
+      .map(sdr => {
+        const sdrCalls = ligacoesHoje.filter(l => l.member_id === sdr.id);
+        const total = sdrCalls.length;
+        const atendidas = sdrCalls.filter(l => l.atendida).length;
+        const durTotal = sdrCalls.filter(l => l.atendida).reduce((a, l) => a + (l.duration || 0), 0);
+        return { sdr, total, atendidas, naoAtendidas: total - atendidas, durMedia: atendidas > 0 ? Math.round(durTotal / atendidas) : 0 };
+      })
+      .filter(row => row.total > 0) // só mostra quem ligou hoje
+      .sort((a, b) => b.total - a.total);
   }, [activeMembers, ligacoesHoje]);
 
   const individualData = useMemo(() => activeMembers.map(member => {
