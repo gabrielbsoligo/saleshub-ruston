@@ -242,6 +242,32 @@
       animation: spin 0.6s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Fila de incompletos */
+    .incomplete-row {
+      background:#0f0f0f; border:1px solid #2a2a2a; border-radius:6px;
+      padding:10px; margin-bottom:8px;
+    }
+    .incomplete-row.imported { opacity:0.5; border-color:#16a34a; }
+    .incomplete-empresa { font-weight:600; color:#fff; font-size:12px; }
+    .incomplete-meta { font-size:11px; color:#9ca3af; margin-top:2px; }
+    .incomplete-link { color:#60a5fa; margin-left:8px; text-decoration:underline; }
+    .incomplete-missing { font-size:11px; color:#fbbf24; margin-top:4px; }
+    .incomplete-warn { font-size:11px; color:#f87171; margin-top:4px; }
+    .tag-missing {
+      display:inline-block; background:#fbbf2415; color:#fbbf24;
+      padding:1px 6px; border-radius:3px; margin:0 3px 2px 0; font-size:10px;
+    }
+    .incomplete-fields { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+    .incomplete-fields input {
+      flex:1; min-width:0; background:#1a1a1a; border:1px solid #2e2e2e;
+      color:#fff; padding:5px 8px; font-size:11px; border-radius:4px;
+    }
+    .btn-import-incomplete {
+      background:#ef4444; color:#fff; border:none; border-radius:4px;
+      padding:5px 12px; font-size:11px; cursor:pointer;
+    }
+    .btn-import-incomplete:disabled { opacity:0.5; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -387,6 +413,15 @@
         <button class="btn btn-primary" id="btn-new-import" style="margin-top:12px;">
           Nova Importacao
         </button>
+      </div>
+
+      <!-- Fila de incompletos: leads que nao passaram no validation gate -->
+      <div id="incomplete-section" class="section" style="display:none; margin-top:16px;">
+        <div class="section-title" style="color:#fbbf24;">⚠ Leads incompletos (revisão manual)</div>
+        <p style="font-size:12px; color:#9ca3af; margin:8px 0;">
+          Esses leads não foram importados porque faltam dados essenciais (empresa, nome do contato ou telefone). O scraper do MKTLAB não conseguiu pegar — preencha abaixo e importe manual.
+        </p>
+        <div id="incomplete-list"></div>
       </div>
     </div>
   </div>

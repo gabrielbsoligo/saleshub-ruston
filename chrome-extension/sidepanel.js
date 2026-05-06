@@ -392,6 +392,20 @@ $('select-all').addEventListener('change', function () {
 });
 
 // ---- Import ----
+// Lista global de incompletos detectados na ultima importacao.
+// Cada item: { lead, detail, missingFields, canal, fonte, sdrId }
+let incompleteLeads = [];
+
+function leadIsComplete(payload) {
+  // Validation gate: lead so eh inserido se tiver os 3 campos minimos.
+  // Bug Zeom: scraper retornou null em todos e mesmo assim era inserido.
+  const missing = [];
+  if (!payload.empresa || payload.empresa === 'Sem nome') missing.push('empresa');
+  if (!payload.nome_contato) missing.push('nome_contato');
+  if (!payload.telefone) missing.push('telefone');
+  return missing;
+}
+
 async function importLeads() {
   const leadsToImport = enrichedLeads.filter(l => selectedLeadIds.has(l.mktlabId));
   if (leadsToImport.length === 0) return;
@@ -405,6 +419,7 @@ async function importLeads() {
   let imported = 0;
   let skipped = 0;
   let errors = 0;
+  incompleteLeads = []; // reset
 
   for (let i = 0; i < leadsToImport.length; i++) {
     const lead = leadsToImport[i];
@@ -415,6 +430,7 @@ async function importLeads() {
     try {
       // Fetch detail from MKTLAB (basic-data + custom-fields)
       let detail = { basicData: {}, customFields: {} };
+      let detailFailed = false;
       try {
         const detailResp = await sendToContentScript({
           type: 'FETCH_LEAD_DETAIL',
@@ -422,9 +438,11 @@ async function importLeads() {
         });
         if (detailResp?.success) {
           detail = detailResp.detail;
+        } else {
+          detailFailed = true;
         }
       } catch (e) {
-        // Continue without details
+        detailFailed = true;
       }
 
       // Map canal from custom fields
@@ -471,12 +489,24 @@ async function importLeads() {
         sdr_id: sdrId,
       };
 
+      // Validation gate: campos minimos antes de inserir.
+      // Sem isso, leads sem nome_contato/telefone passam silenciosamente
+      // e chegam no Kommo incompletos (caso Zeom).
+      const missing = leadIsComplete(payload);
+      if (missing.length > 0) {
+        incompleteLeads.push({
+          lead, detail, payload, canal, fonte, sdrId, missing,
+          detailFailed,
+        });
+        skipped++;
+        continue;
+      }
+
       // Remove null/empty fields
       Object.keys(payload).forEach(k => {
         if (payload[k] === null || payload[k] === '' || payload[k] === 0) delete payload[k];
       });
       // Ensure required fields
-      payload.empresa = payload.empresa || 'Sem nome';
       payload.canal = payload.canal || 'leadbroker';
       payload.status = 'sem_contato';
       if (sdrId) payload.sdr_id = sdrId;
@@ -504,6 +534,7 @@ async function importLeads() {
 
   // Show done
   showStep('done');
+  const incompleteCount = incompleteLeads.length;
   $('done-summary').innerHTML = `
     <div class="summary-card green">
       <div class="number">${imported}</div>
@@ -511,7 +542,7 @@ async function importLeads() {
     </div>
     <div class="summary-card yellow">
       <div class="number">${skipped}</div>
-      <div class="label">Pulados (dup)</div>
+      <div class="label">${incompleteCount > 0 ? 'Incompletos' : 'Pulados (dup)'}</div>
     </div>
     <div class="summary-card red">
       <div class="number">${errors}</div>
@@ -523,7 +554,87 @@ async function importLeads() {
     </div>
   `;
 
-  showToast(`${imported} leads importados com sucesso!`, 'success');
+  // Lista incompletos pra revisão manual (caso Zeom)
+  if (incompleteCount > 0) {
+    renderIncompleteList();
+  } else {
+    const inc = $('incomplete-section');
+    if (inc) inc.style.display = 'none';
+  }
+
+  showToast(`${imported} importados${incompleteCount > 0 ? ` · ${incompleteCount} precisam revisão` : ''}`, incompleteCount > 0 ? 'warn' : 'success');
+}
+
+function renderIncompleteList() {
+  const section = $('incomplete-section');
+  if (!section) return;
+  section.style.display = 'block';
+  const list = $('incomplete-list');
+  list.innerHTML = incompleteLeads.map((it, i) => {
+    const missingTags = it.missing.map(f => `<span class="tag-missing">${f}</span>`).join('');
+    return `
+      <div class="incomplete-row" data-idx="${i}">
+        <div class="incomplete-info">
+          <div class="incomplete-empresa">${escapeHtml(it.payload.empresa || '(sem empresa)')}</div>
+          <div class="incomplete-meta">
+            ${it.payload.nome_contato ? '👤 ' + escapeHtml(it.payload.nome_contato) : ''}
+            ${it.payload.telefone ? ' · 📞 ' + escapeHtml(it.payload.telefone) : ''}
+            ${it.payload.email ? ' · 📧 ' + escapeHtml(it.payload.email) : ''}
+            <a href="${escapeHtml(it.payload.mktlab_link || '#')}" target="_blank" class="incomplete-link">abrir MKTLAB</a>
+          </div>
+          <div class="incomplete-missing">Faltando: ${missingTags}</div>
+          ${it.detailFailed ? '<div class="incomplete-warn">⚠ Falha ao buscar detalhe do MKTLAB. Tente recarregar a aba do MKTLAB e re-importar.</div>' : ''}
+        </div>
+        <div class="incomplete-fields">
+          ${it.missing.includes('nome_contato') ? `<input type="text" placeholder="Nome do contato" class="inc-nome" value="${escapeHtml(it.payload.nome_contato || '')}">` : ''}
+          ${it.missing.includes('telefone') ? `<input type="text" placeholder="Telefone" class="inc-telefone" value="${escapeHtml(it.payload.telefone || '')}">` : ''}
+          ${it.missing.includes('empresa') ? `<input type="text" placeholder="Empresa" class="inc-empresa" value="${escapeHtml(it.payload.empresa || '')}">` : ''}
+          <button class="btn-import-incomplete" data-idx="${i}">Importar</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Wire botoes individuais
+  list.querySelectorAll('.btn-import-incomplete').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = Number(btn.dataset.idx);
+      const item = incompleteLeads[idx];
+      if (!item) return;
+      const row = btn.closest('.incomplete-row');
+      const nomeInput = row.querySelector('.inc-nome');
+      const telInput = row.querySelector('.inc-telefone');
+      const empInput = row.querySelector('.inc-empresa');
+      if (nomeInput) item.payload.nome_contato = nomeInput.value.trim();
+      if (telInput) item.payload.telefone = telInput.value.trim();
+      if (empInput) item.payload.empresa = empInput.value.trim();
+
+      const missing = leadIsComplete(item.payload);
+      if (missing.length > 0) {
+        showToast(`Ainda faltando: ${missing.join(', ')}`, 'error');
+        return;
+      }
+
+      btn.disabled = true; btn.textContent = '...';
+      try {
+        Object.keys(item.payload).forEach(k => {
+          if (item.payload[k] === null || item.payload[k] === '' || item.payload[k] === 0) delete item.payload[k];
+        });
+        item.payload.status = 'sem_contato';
+        await supabaseFetch('/rest/v1/leads', { method: 'POST', headers: { 'Prefer': 'return=representation' }, body: JSON.stringify(item.payload) });
+        row.classList.add('imported');
+        btn.textContent = '✓ Importado';
+        showToast(`${item.payload.empresa} importado`, 'success');
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Importar';
+        showToast(err.message || 'Erro ao importar', 'error');
+      }
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 // ---- Communication with content script ----
