@@ -473,14 +473,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const { data, error } = await supabase.from('reunioes').insert({ ...r, tipo }).select('*, sdr:team_members!sdr_id(*), closer:team_members!closer_id(*)').single();
+    // REGRA: quem cria a reunião é dono dela. Sobrescreve sdr_id passado pelo caller
+    // (que historicamente herdava do lead). Se nao houver currentUser, mantem o que veio.
+    const sdrIdCriador = currentUser?.id || r.sdr_id;
+    const insertPayload = { ...r, tipo, sdr_id: sdrIdCriador };
+
+    const { data, error } = await supabase.from('reunioes').insert(insertPayload).select('*, sdr:team_members!sdr_id(*), closer:team_members!closer_id(*)').single();
     if (error) { toast.error(error.message); return; }
     if (data) setReunioes(prev => [data, ...prev]);
 
     // AUTOMACAO: agendar reuniao → lead muda pra reuniao_marcada (SÓ primeira_call)
+    // REGRA: lead reatribui pra quem criou a reuniao (sdrIdCriador)
     if (tipo === 'primeira_call' && r.lead_id) {
-      await supabase.from('leads').update({ status: 'reuniao_marcada' }).eq('id', r.lead_id);
-      setLeads(prev => prev.map(l => l.id === r.lead_id ? { ...l, status: 'reuniao_marcada' } : l));
+      const leadUpdate: any = { status: 'reuniao_marcada' };
+      if (sdrIdCriador) leadUpdate.sdr_id = sdrIdCriador;
+      await supabase.from('leads').update(leadUpdate).eq('id', r.lead_id);
+      setLeads(prev => prev.map(l => l.id === r.lead_id ? { ...l, ...leadUpdate } : l));
     }
 
     // Google Calendar - create event
