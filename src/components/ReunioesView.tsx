@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../store";
 import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type PostMeetingAutomation } from "../types";
-import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle, Edit2 } from "lucide-react";
 import { createCalendarEvent } from "../lib/googleCalendar";
 import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { FeedbackDrawer } from "./FeedbackDrawer";
+import { ReuniaoEditModal } from "./ReuniaoEditModal";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { supabase } from "../lib/supabase";
 import type { Reuniao } from "../types";
@@ -112,6 +113,7 @@ export const ReunioesView: React.FC = () => {
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
+  const [editar, setEditar] = useState<Reuniao | null>(null);
   const [feedbackDealId, setFeedbackDealId] = useState<string | null>(null);
   const [leadSearch, setLeadSearch] = useState('');
   const [showReplace, setShowReplace] = useState(false);
@@ -121,6 +123,7 @@ export const ReunioesView: React.FC = () => {
   const [filterNoshowReagendados, setFilterNoshowReagendados] = useState(false);
   const [showNoshowsAntigos, setShowNoshowsAntigos] = useState(false);
   const isCloser = useAppStore().currentUser?.role === 'closer';
+  const isGestor = useAppStore().currentUser?.role === 'gestor';
   const myId = useAppStore().currentUser?.id || '';
   const [filterCloser, setFilterCloser] = useState<string[]>([]);
   const [filterSdr, setFilterSdr] = useState<string[]>([]);
@@ -382,6 +385,14 @@ export const ReunioesView: React.FC = () => {
           )}
           {/* Botao Pos-Reuniao IA - so aparece em reunioes realizadas com show */}
           {r.realizada && r.show && <PostMeetingButton reuniao={r} />}
+          {/* Botao editar — somente gestor */}
+          {isGestor && (
+            <button onClick={(e) => { e.stopPropagation(); setEditar(r); }}
+                    title="Editar reunião"
+                    className="p-1.5 rounded text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)]">
+              <Edit2 size={12} />
+            </button>
+          )}
         </div>
       </div>
     );
@@ -552,6 +563,7 @@ export const ReunioesView: React.FC = () => {
 
       {selectedLead && !showReplace && <AgendarReuniaoModal lead={selectedLead} onConfirm={handleAgendarConfirm} onClose={() => setSelectedLead(null)} />}
       {confirmar && <ConfirmarReuniaoModal reuniao={confirmar} onConfirm={handleConfirm} onClose={() => setConfirmar(null)} />}
+      <ReuniaoEditModal reuniao={editar} onClose={() => setEditar(null)} />
       {feedbackDealId && (() => {
         const d = deals.find(dd => dd.id === feedbackDealId);
         return d ? <FeedbackDrawer deal={d} onClose={() => setFeedbackDealId(null)} /> : null;
