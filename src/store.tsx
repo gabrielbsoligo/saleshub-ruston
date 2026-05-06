@@ -563,6 +563,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // AUTOMACAO: reuniao realizada (show=true) → cria deal automaticamente
       if (updates.realizada && updates.show && reuniao) {
+        // Guard: se ja existe deal vinculado a essa reuniao, NAO duplica.
+        // Causa raiz historica do bug Arena Race (06/05/2026): mesma reuniao
+        // updated 2x com show=true e o codigo criava deal a cada update.
+        const { data: dealExistente } = await supabase
+          .from('deals')
+          .select('id')
+          .eq('reuniao_id', id)
+          .limit(1)
+          .maybeSingle();
+
+        if (dealExistente) {
+          // Reuniao ja tem deal — apenas garante lead em 'reuniao_realizada' e termina
+          if (reuniao.lead_id) {
+            await supabase.from('leads').update({ status: 'reuniao_realizada' }).eq('id', reuniao.lead_id);
+            setLeads(prev => prev.map(l => l.id === reuniao.lead_id ? { ...l, status: 'reuniao_realizada' as any } : l));
+          }
+          return;
+        }
+
         if (reuniao.lead_id) {
           await supabase.from('leads').update({ status: 'reuniao_realizada' }).eq('id', reuniao.lead_id);
           setLeads(prev => prev.map(l => l.id === reuniao.lead_id ? { ...l, status: 'reuniao_realizada' as any } : l));
