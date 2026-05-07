@@ -25,6 +25,7 @@ const CATEGORIAS: { value: ComissaoCategoria; label: string; tipoAuto?: Comissao
   { value: 'ee_ot', label: 'EE > OT', tipoAuto: 'ot' },
   { value: 'indicacao', label: 'Indicação' },
   { value: 'recomendacao', label: 'Recomendação' },
+  { value: 'variavel', label: 'Variável (revenue share em base ativa)', tipoAuto: 'variavel' },
 ];
 
 const TIPOS: { value: ComissaoTipoValor; label: string }[] = [

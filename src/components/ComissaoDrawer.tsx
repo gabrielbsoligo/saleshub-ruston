@@ -237,6 +237,7 @@ export const ComissaoDrawer: React.FC<Props> = ({ comissao, onClose, onSaved, on
                     <option value="ee_ot">EE OT</option>
                     <option value="indicacao">Indicação</option>
                     <option value="recomendacao">Recomendação</option>
+                    <option value="variavel">Variável (revenue share)</option>
                   </select>
                 </Field>
                 <Field label="Parcela">

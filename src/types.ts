@@ -246,7 +246,7 @@ export interface EntregaDia {
 }
 
 export type ComissaoRole = 'closer' | 'sdr' | 'account' | 'designer' | 'gt' | 'levantou' | 'fechou' | 'indicador';
-export type ComissaoCategoria = 'inbound' | 'outbound' | 'upsell' | 'ee_assessoria' | 'ee_ot' | 'indicacao' | 'recomendacao';
+export type ComissaoCategoria = 'inbound' | 'outbound' | 'upsell' | 'ee_assessoria' | 'ee_ot' | 'indicacao' | 'recomendacao' | 'variavel';
 export type ComissaoTipoValor = 'mrr' | 'ot' | 'variavel';
 
 export interface ComissaoConfig {
