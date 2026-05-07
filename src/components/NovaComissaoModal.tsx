@@ -49,10 +49,15 @@ interface Props {
   onCreated: () => void;
 }
 
+// Sentinela: indica que essa linha eh um colaborador externo (sem cadastro
+// no team_members) — usuario digita o nome livremente.
+const EXTERNO = 'EXTERNO' as const;
+
 interface ColaboradorLinha {
   id: string; // key local
   role: ComissaoRole;
-  member_id: string;
+  member_id: string; // '' = vazio, 'EXTERNO' = externo, UUID = cadastrado
+  member_name_externo?: string; // so' usado quando member_id === EXTERNO
   percentual_override?: string; // vazio usa sugerido
 }
 
@@ -154,10 +159,14 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
       const sugerido = rule?.percentual || 0;
       const pct = c.percentual_override ? parseFloat(c.percentual_override) : sugerido;
       const valor = valorContratoNum * pct;
-      const member = members.find(m => m.id === c.member_id);
+      const isExterno = c.member_id === EXTERNO;
+      const member = isExterno ? null : members.find(m => m.id === c.member_id);
+      const member_name = isExterno
+        ? (c.member_name_externo?.trim() || '(externo)')
+        : (member?.name || '(selecionar)');
       return {
         ...c,
-        member_name: member?.name || '(selecionar)',
+        member_name,
         percentual_efetivo: pct,
         valor_comissao: valor,
       };
@@ -231,8 +240,13 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
       return toast.error('Adicione pelo menos um colaborador');
     }
     if (!modoAutomatico) {
-      const incompletos = comissoesPreview.filter(c => !c.member_id);
-      if (incompletos.length > 0) return toast.error('Preencha colaborador em todas as linhas');
+      const incompletos = comissoesPreview.filter(c => {
+        if (c.member_id === EXTERNO) {
+          return !c.member_name_externo || c.member_name_externo.trim().length === 0;
+        }
+        return !c.member_id;
+      });
+      if (incompletos.length > 0) return toast.error('Preencha colaborador (cadastrado ou nome externo) em todas as linhas');
     }
 
     setSaving(true);
@@ -260,13 +274,16 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
       // 2. Se manual, cria as comissoes explicitamente
       if (!modoAutomatico) {
         const rows = comissoesPreview.map(c => {
-          const member = members.find(m => m.id === c.member_id);
+          const isExterno = c.member_id === EXTERNO;
+          const member = isExterno ? null : members.find(m => m.id === c.member_id);
           return {
             deal_id: dealId || null,
             recebimento_id: recebimento.id,
             numero_parcela: 1,
-            member_id: c.member_id,
-            member_name: member?.name || '(desconhecido)',
+            member_id: isExterno ? null : c.member_id,
+            member_name: isExterno
+              ? (c.member_name_externo || '(externo)').trim()
+              : (member?.name || '(desconhecido)'),
             role_comissao: c.role,
             tipo,
             categoria,
@@ -492,6 +509,7 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
                 const preview = comissoesPreview.find(p => p.id === c.id);
                 const rule = regrasDisponiveis.find(r => r.role === c.role);
                 const sugerido = rule?.percentual || 0;
+                const isExterno = c.member_id === EXTERNO;
                 return (
                   <div key={c.id} className="grid grid-cols-12 gap-2 items-center bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded p-2">
                     <select
@@ -503,14 +521,36 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
                         <option key={r.role} value={r.role}>{r.role}</option>
                       ))}
                     </select>
-                    <select
-                      value={c.member_id}
-                      onChange={e => updateLinha(c.id, { member_id: e.target.value })}
-                      className="col-span-5 px-2 py-1.5 rounded bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] text-white text-[11px]"
-                    >
-                      <option value="">Selecione…</option>
-                      {activeMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
+                    {isExterno ? (
+                      <div className="col-span-5 flex gap-1">
+                        <input
+                          type="text"
+                          value={c.member_name_externo || ''}
+                          onChange={e => updateLinha(c.id, { member_name_externo: e.target.value })}
+                          placeholder="Nome do colaborador externo"
+                          className="flex-1 px-2 py-1.5 rounded bg-[var(--color-v4-card)] border border-amber-500/40 text-white text-[11px] placeholder-amber-300/50"
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => updateLinha(c.id, { member_id: '', member_name_externo: '' })}
+                          title="Trocar pra membro cadastrado"
+                          className="px-2 rounded bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:text-white text-[10px]"
+                        >
+                          ↺
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={c.member_id}
+                        onChange={e => updateLinha(c.id, { member_id: e.target.value, member_name_externo: '' })}
+                        className="col-span-5 px-2 py-1.5 rounded bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] text-white text-[11px]"
+                      >
+                        <option value="">Selecione…</option>
+                        {activeMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        <option disabled>──────────</option>
+                        <option value={EXTERNO}>+ Colaborador externo (digitar nome)</option>
+                      </select>
+                    )}
                     <input
                       type="number"
                       step="0.001"
