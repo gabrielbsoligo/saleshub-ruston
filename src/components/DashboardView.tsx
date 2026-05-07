@@ -253,9 +253,18 @@ export const DashboardView: React.FC = () => {
   const pendentes = deals.filter(d => d.status === 'dar_feedback');
   const activeMembers = members.filter(m => m.active);
 
-  // Daily calls by SDR (today)
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const ligacoesHoje = useMemo(() => ligacoes.filter(l => l.started_at && l.started_at.slice(0, 10) === todayStr), [ligacoes, todayStr]);
+  // Daily calls — usa fuso local (não UTC) pra "hoje" bater com a expectativa do BR.
+  // Bug histórico: l.started_at.slice(0,10) === today UTC dava 0 ligações de noite no BR.
+  const ligacoesHoje = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const end = start + 24 * 3600 * 1000;
+    return ligacoes.filter(l => {
+      if (!l.started_at) return false;
+      const t = new Date(l.started_at).getTime();
+      return t >= start && t < end;
+    });
+  }, [ligacoes]);
   const callsBySdr = useMemo(() => {
     // Inclui qualquer membro ativo que tenha ligado hoje (sdr/closer/gestor).
     // Filtro por role foi removido porque closers tambem fazem ligacoes

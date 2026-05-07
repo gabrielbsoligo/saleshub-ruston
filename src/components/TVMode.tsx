@@ -26,20 +26,23 @@ function useTVData() {
   const [reunioes, setReunioes] = useState<Reuniao[]>([]);
   const [metas, setMetas] = useState<Meta[]>([]);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const yearMonth = todayStr.slice(0, 7);
-  const [year, month] = yearMonth.split('-').map(Number);
-  const monthStart = `${yearMonth}-01`;
-  const monthEnd = new Date(year, month, 0).toISOString().slice(0, 10);
+  // Hoje BR (fuso local). UTC dava bug de virar dia antes.
+  const now = new Date();
+  const todayStartLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayEndLocal = new Date(todayStartLocal.getTime() + 24 * 3600 * 1000);
+  const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
 
   useEffect(() => {
     const load = async () => {
-      const [m, l, d, r, mt] = await Promise.all([
+      const [m, l, d] = await Promise.all([
         supabase.from('team_members').select('*').eq('active', true),
-        supabase.from('ligacoes_4com').select('*').gte('started_at', `${todayStr}T00:00:00`).lte('started_at', `${todayStr}T23:59:59`),
+        supabase.from('ligacoes_4com').select('*')
+          .gte('started_at', todayStartLocal.toISOString())
+          .lt('started_at', todayEndLocal.toISOString()),
+        // get_dashboard_data ja traz deals + reunioes + metas agregados do mes
         supabase.rpc('get_dashboard_data', { p_month: yearMonth }),
-        supabase.from('reunioes').select('*').gte('data_reuniao', monthStart).lte('data_reuniao', monthEnd),
-        supabase.from('metas').select('*').gte('mes_ano', monthStart).lte('mes_ano', monthEnd),
       ]);
       setMembers((m.data as TeamMember[]) || []);
       setLigacoesHoje((l.data as Ligacao4com[]) || []);
@@ -51,22 +54,22 @@ function useTVData() {
     load();
     const id = setInterval(load, 30000); // fallback 30s
     return () => clearInterval(id);
-  }, [todayStr, yearMonth, monthStart, monthEnd]);
+  }, [yearMonth]);
 
-  // realtime subscribe pras 4 tabelas relevantes
+  // realtime subscribe pra ligacoes
   useEffect(() => {
     const ch = supabase
       .channel('tv-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ligacoes_4com' }, async () => {
         const { data } = await supabase
           .from('ligacoes_4com').select('*')
-          .gte('started_at', `${todayStr}T00:00:00`)
-          .lte('started_at', `${todayStr}T23:59:59`);
+          .gte('started_at', todayStartLocal.toISOString())
+          .lt('started_at', todayEndLocal.toISOString());
         setLigacoesHoje((data as Ligacao4com[]) || []);
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [todayStr]);
+  }, []);
 
   return { members, ligacoesHoje, deals, reunioes, metas, yearMonth, year, month };
 }
@@ -131,7 +134,8 @@ export const TVMode: React.FC = () => {
       .slice(0, 6);
   }, [ligacoesHoje, members]);
 
-  // Pace agregado
+  // Pace agregado — calculatePace tem assinatura
+  // (metaMrr, metaOt, metaReunioes, realizadoMrr, realizadoOt, realizadoReunioes, pct)
   const pace = useMemo(() => {
     const dealsGanhos = deals.filter(d => d.status === 'contrato_assinado' && d.data_fechamento);
     const reunioesRealizadas = reunioes.filter(r => r.realizada && r.show);
@@ -148,12 +152,8 @@ export const TVMode: React.FC = () => {
     const bizSoFar = getBusinessDaysSoFar(year, month - 1, today);
     const pct = getPacePercentage(year, month - 1, today);
 
-    return {
-      mrr: calculatePace(realMrr, totalMetaMrr, pct),
-      ot: calculatePace(realOt, totalMetaOt, pct),
-      reu: calculatePace(realReu, totalMetaReu, pct),
-      bizSoFar, totalBiz, pct,
-    };
+    const data = calculatePace(totalMetaMrr, totalMetaOt, totalMetaReu, realMrr, realOt, realReu, pct);
+    return { ...data, bizSoFar, totalBiz, pct };
   }, [deals, reunioes, metas, year, month]);
 
   return (
@@ -211,9 +211,9 @@ export const TVMode: React.FC = () => {
         {/* Q3 — Pace */}
         <Quadrant icon={<TrendingUp size={28} className="text-green-400" />} title="Pace do Mês">
           <div className="flex flex-col gap-5 mt-2">
-            <PaceRow label="MRR" v={pace.mrr.realizado} m={pace.mrr.metaMrr || pace.mrr.expectedMrr * 1} expected={pace.mrr.expectedMrr} ok={pace.mrr.mrrOnTrack} currency />
-            <PaceRow label="OT" v={pace.ot.realizado} m={pace.ot.metaOt || 1} expected={pace.ot.expectedOt} ok={pace.ot.otOnTrack} currency />
-            <PaceRow label="Reuniões" v={pace.reu.realizado} m={pace.reu.metaReunioes || 1} expected={pace.reu.expectedReunioes} ok={pace.reu.reunioesOnTrack} />
+            <PaceRow label="MRR" v={pace.realizadoMrr} m={pace.metaMrr} expected={pace.expectedMrr} ok={pace.mrrOnTrack} currency />
+            <PaceRow label="OT" v={pace.realizadoOt} m={pace.metaOt} expected={pace.expectedOt} ok={pace.otOnTrack} currency />
+            <PaceRow label="Reuniões" v={pace.realizadoReunioes} m={pace.metaReunioes} expected={pace.expectedReunioes} ok={pace.reunioesOnTrack} />
           </div>
         </Quadrant>
 
