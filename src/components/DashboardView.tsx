@@ -10,6 +10,7 @@ import { CompromissoCard } from "./CompromissoCard";
 import { CompromissoTeamPanel } from "./CompromissoTeamPanel";
 import { CompromissoModal } from "./CompromissoModal";
 import { HourlyCallsChart } from "./HourlyCallsChart";
+import { ResumoDoDia } from "./ResumoDoDia";
 
 function fmt(value: number) {
   if (Math.abs(value) >= 1000) return `R$ ${(value / 1000).toFixed(1)}k`;
@@ -330,6 +331,9 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Resumo do dia (ontem/hoje/custom) — daily ritual */}
+      <ResumoDoDia />
 
       {/* Compromisso pessoal — todos veem o próprio */}
       <CompromissoCard onEdit={() => setShowCompromissoModal(true)} />
