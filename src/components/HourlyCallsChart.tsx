@@ -105,10 +105,27 @@ export const HourlyCallsChart: React.FC<Props> = ({
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <ComposedChart data={data} margin={{ top: 10, right: 16, left: 0, bottom: 4 }}>
+      <ComposedChart data={data} margin={{ top: 10, right: 8, left: 0, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#2a2a2a" />
         <XAxis dataKey="hora" stroke="#a0a0a0" fontSize={11} />
-        <YAxis stroke="#a0a0a0" fontSize={11} allowDecimals={false} />
+        {/* Eixo esquerdo: volume por hora (barras) */}
+        <YAxis
+          yAxisId="left"
+          orientation="left"
+          stroke="#a0a0a0"
+          fontSize={11}
+          allowDecimals={false}
+          label={{ value: 'por hora', angle: -90, position: 'insideLeft', fill: '#666', fontSize: 10, dx: 12 }}
+        />
+        {/* Eixo direito: acumulado (linhas) */}
+        <YAxis
+          yAxisId="right"
+          orientation="right"
+          stroke="#666"
+          fontSize={11}
+          allowDecimals={false}
+          label={{ value: 'acumulado', angle: 90, position: 'insideRight', fill: '#666', fontSize: 10, dx: -12 }}
+        />
         <Tooltip
           contentStyle={{ background: '#0a0a0a', border: '1px solid #2a2a2a', borderRadius: 8, fontSize: 12 }}
           labelStyle={{ color: '#fff' }}
@@ -117,9 +134,9 @@ export const HourlyCallsChart: React.FC<Props> = ({
         {activeMembers.map(m => {
           const k = m.name.split(' ')[0];
           const c = colorForMember(m.name);
-          // sem stackId = barras lado a lado (grouped bars)
+          // sem stackId = barras lado a lado (grouped bars). yAxisId=left.
           return (
-            <Bar key={`bar-${m.id}`} dataKey={`bar_${k}`} fill={c} name={k} />
+            <Bar key={`bar-${m.id}`} yAxisId="left" dataKey={`bar_${k}`} fill={c} name={k} />
           );
         })}
         {activeMembers.map(m => {
@@ -128,6 +145,7 @@ export const HourlyCallsChart: React.FC<Props> = ({
           return (
             <Line
               key={`line-${m.id}`}
+              yAxisId="right"
               type="monotone"
               dataKey={`cum_${k}`}
               stroke={c}
