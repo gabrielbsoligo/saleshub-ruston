@@ -3,6 +3,7 @@ import { useAppStore } from "../store";
 import { ROLE_LABELS, type TeamRole, type TeamMember } from "../types";
 import { Plus, Search, Phone, Mail, Calendar } from "lucide-react";
 import { MemberDrawer } from "./MemberDrawer";
+import { colorForMember } from "./HourlyCallsChart";
 
 export const EquipeView: React.FC = () => {
   const { members, addMember, currentUser } = useAppStore();
@@ -155,8 +156,14 @@ export const EquipeView: React.FC = () => {
               }`}
             >
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full bg-[var(--color-v4-red)] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+                <div className="w-10 h-10 rounded-full bg-[var(--color-v4-red)] flex items-center justify-center text-white font-bold text-sm flex-shrink-0 relative">
                   {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  {/* Bolinha indicando cor nos gráficos */}
+                  <span
+                    className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-[var(--color-v4-card)]"
+                    style={{ backgroundColor: colorForMember(member) }}
+                    title={`Cor nos gráficos: ${member.cor_grafico || 'auto'}`}
+                  />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-white truncate">{member.name}</p>

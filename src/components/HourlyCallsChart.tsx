@@ -22,7 +22,8 @@ interface Props {
 
 // Paleta determinística por nome do membro (estável entre renders).
 // 16 cores bem distintas pra evitar duplicatas em times pequenos.
-const PALETTE = [
+// Exportada pro MemberDrawer mostrar como sugestoes no color picker.
+export const CHART_PALETTE = [
   '#ef4444', // red-500
   '#3b82f6', // blue-500
   '#facc15', // yellow-400
@@ -41,10 +42,19 @@ const PALETTE = [
   '#65a30d', // lime-600
 ];
 
-function colorForMember(name: string): string {
+// Hash deterministico por nome (fallback quando member.cor_grafico=null)
+export function colorForMemberHash(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return PALETTE[h % PALETTE.length];
+  return CHART_PALETTE[h % CHART_PALETTE.length];
+}
+
+// Resolve cor de um member: prioriza cor_grafico explicita, fallback no hash
+export function colorForMember(member: { name: string; cor_grafico?: string | null }): string {
+  if (member.cor_grafico && /^#[0-9a-f]{6}$/i.test(member.cor_grafico)) {
+    return member.cor_grafico;
+  }
+  return colorForMemberHash(member.name);
 }
 
 export const HourlyCallsChart: React.FC<Props> = ({
@@ -133,7 +143,7 @@ export const HourlyCallsChart: React.FC<Props> = ({
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {activeMembers.map(m => {
           const k = m.name.split(' ')[0];
-          const c = colorForMember(m.name);
+          const c = colorForMember(m);
           // sem stackId = barras lado a lado (grouped bars). yAxisId=left.
           return (
             <Bar key={`bar-${m.id}`} yAxisId="left" dataKey={`bar_${k}`} fill={c} name={k} />
@@ -141,7 +151,7 @@ export const HourlyCallsChart: React.FC<Props> = ({
         })}
         {activeMembers.map(m => {
           const k = m.name.split(' ')[0];
-          const c = colorForMember(m.name);
+          const c = colorForMember(m);
           return (
             <Line
               key={`line-${m.id}`}

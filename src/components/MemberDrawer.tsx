@@ -6,11 +6,12 @@
 // Campos editaveis: nome, email, role, ramal_4com, kommo_user_id, ativo.
 // =============================================================
 import React, { useEffect, useState } from 'react';
-import { X, Save, UserX, UserCheck, Calendar, ExternalLink } from 'lucide-react';
+import { X, Save, UserX, UserCheck, Calendar, ExternalLink, Palette } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../store';
 import { ROLE_LABELS, type TeamMember, type TeamRole } from '../types';
 import { getGoogleAuthUrl } from '../lib/googleCalendar';
+import { CHART_PALETTE, colorForMemberHash } from './HourlyCallsChart';
 
 interface Props {
   member: TeamMember | null;
@@ -35,6 +36,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         ramal_4com: member.ramal_4com || '',
         kommo_user_id: member.kommo_user_id,
         meta_ligacoes_diaria: member.meta_ligacoes_diaria ?? 100,
+        cor_grafico: member.cor_grafico ?? null,
         active: member.active,
       });
     }
@@ -60,6 +62,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         ramal_4com: form.ramal_4com?.trim() || undefined,
         kommo_user_id: form.kommo_user_id || undefined,
         meta_ligacoes_diaria: form.meta_ligacoes_diaria ?? 100,
+        cor_grafico: form.cor_grafico ?? null,
       };
       await updateMember(member.id, payload);
       toast.success('Membro atualizado');
@@ -187,6 +190,64 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
               onChange={(e) => setForm((p) => ({ ...p, meta_ligacoes_diaria: e.target.value ? Number(e.target.value) : 0 }))}
               className={inputClass}
             />
+          </Field>
+
+          {/* Cor para gráficos */}
+          <Field
+            label="Cor nos gráficos"
+            hint="Usada nos gráficos do Dashboard (ligações por hora, rankings, TV). Vazio = automático pelo nome."
+          >
+            <div className="space-y-2">
+              {/* Paleta sugerida */}
+              <div className="flex flex-wrap gap-1.5">
+                {CHART_PALETTE.map((c) => {
+                  const selected = form.cor_grafico?.toLowerCase() === c.toLowerCase();
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      disabled={!isGestor}
+                      onClick={() => setForm((p) => ({ ...p, cor_grafico: c }))}
+                      title={c}
+                      className={`w-7 h-7 rounded transition-all ${
+                        selected ? 'ring-2 ring-white scale-110' : 'hover:scale-110 opacity-80 hover:opacity-100'
+                      } disabled:cursor-not-allowed`}
+                      style={{ backgroundColor: c }}
+                    />
+                  );
+                })}
+              </div>
+              {/* Picker custom + reset */}
+              <div className="flex items-center gap-2">
+                <Palette size={14} className="text-[var(--color-v4-text-muted)]" />
+                <input
+                  type="color"
+                  disabled={!isGestor}
+                  value={form.cor_grafico || colorForMemberHash(form.name || '')}
+                  onChange={(e) => setForm((p) => ({ ...p, cor_grafico: e.target.value }))}
+                  className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--color-v4-border)]"
+                  title="Cor custom"
+                />
+                <input
+                  type="text"
+                  disabled={!isGestor}
+                  value={form.cor_grafico || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, cor_grafico: e.target.value || null }))}
+                  placeholder={`auto: ${colorForMemberHash(form.name || '')}`}
+                  className="flex-1 px-2 py-1 rounded bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-xs font-mono"
+                />
+                {form.cor_grafico && isGestor && (
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, cor_grafico: null }))}
+                    title="Voltar pra automático"
+                    className="text-[10px] px-2 py-1 rounded text-[var(--color-v4-text-muted)] hover:text-white hover:bg-[var(--color-v4-surface)]"
+                  >
+                    automático
+                  </button>
+                )}
+              </div>
+            </div>
           </Field>
 
           {/* Google Calendar status */}

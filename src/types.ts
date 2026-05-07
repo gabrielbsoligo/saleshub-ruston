@@ -79,6 +79,7 @@ export interface TeamMember {
   ramal_4com?: string;
   google_calendar_connected?: boolean;
   meta_ligacoes_diaria?: number;
+  cor_grafico?: string | null;
   created_at: string;
 }
 
