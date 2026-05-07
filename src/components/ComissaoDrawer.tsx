@@ -18,6 +18,7 @@ interface Props {
   onSaved: () => void;
   onDeleted: () => void;
   canEdit: boolean;
+  canViewAudit?: boolean;
 }
 
 interface AuditEntry {
@@ -36,7 +37,7 @@ function fmtDateTime(d: string) {
   return new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-export const ComissaoDrawer: React.FC<Props> = ({ comissao, onClose, onSaved, onDeleted, canEdit }) => {
+export const ComissaoDrawer: React.FC<Props> = ({ comissao, onClose, onSaved, onDeleted, canEdit, canViewAudit = false }) => {
   const [form, setForm] = useState<Partial<ComissaoRegistro>>({});
   const [saving, setSaving] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
@@ -127,10 +128,12 @@ export const ComissaoDrawer: React.FC<Props> = ({ comissao, onClose, onSaved, on
             </div>
           </div>
           <div className="flex gap-1 ml-3">
-            <button onClick={() => setShowAudit(!showAudit)} title="Histórico"
-                    className={`p-2 rounded hover:bg-[var(--color-v4-surface)] ${showAudit ? 'text-[var(--color-v4-red)]' : 'text-[var(--color-v4-text-muted)] hover:text-white'}`}>
-              <History size={14} />
-            </button>
+            {canViewAudit && (
+              <button onClick={() => setShowAudit(!showAudit)} title="Histórico"
+                      className={`p-2 rounded hover:bg-[var(--color-v4-surface)] ${showAudit ? 'text-[var(--color-v4-red)]' : 'text-[var(--color-v4-text-muted)] hover:text-white'}`}>
+                <History size={14} />
+              </button>
+            )}
             {canEdit && (
               <button onClick={handleDelete} title="Apagar"
                       className="p-2 rounded hover:bg-red-500/10 text-[var(--color-v4-text-muted)] hover:text-red-400">

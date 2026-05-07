@@ -13,7 +13,7 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { ChevronUp, ChevronDown, Search, Edit2 } from "lucide-react";
+import { ChevronUp, ChevronDown, Search, Edit2, History } from "lucide-react";
 import toast from "react-hot-toast";
 import { useComissoes } from "../hooks/comissoes/useComissoes";
 import { ComissaoRegistro, StatusComissao } from "../hooks/comissoes/types";
@@ -28,6 +28,7 @@ import {
 import { NovaComissaoModal } from "./NovaComissaoModal";
 import { NovaParcelaModal } from "./NovaParcelaModal";
 import { ComissaoDrawer } from "./ComissaoDrawer";
+import { AuditLogDrawer } from "./AuditLogDrawer";
 import { cn } from "./Layout";
 
 type DateField = "data_pgto" | "data_liberacao" | "data_pgto_real" | "data_pgto_vendedor";
@@ -72,6 +73,7 @@ export const ComissoesView: React.FC = () => {
   const [showNovaComissao, setShowNovaComissao] = useState(false);
   const [showNovaParcela, setShowNovaParcela] = useState(false);
   const [showColumnsModal, setShowColumnsModal] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
 
   const { config: columnsConfig, visibleColumns, setConfig: setColumnsConfig, resetDefaults } = useComissoesColumns();
 
@@ -260,6 +262,13 @@ export const ComissoesView: React.FC = () => {
           </span>
         </h2>
         <div className="flex items-center gap-2 flex-wrap">
+          {isGestor && (
+            <button onClick={() => setShowAuditLog(true)}
+                    title="Ver log de auditoria de mudanças (gestor)"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-xs">
+              <History size={13} /> Audit log
+            </button>
+          )}
           {canEdit && (
             <>
               <button onClick={() => setShowNovaParcela(true)}
@@ -524,6 +533,14 @@ export const ComissoesView: React.FC = () => {
         onCreated={refetch}
       />
 
+      {/* Audit log (gestor only) */}
+      {isGestor && (
+        <AuditLogDrawer
+          open={showAuditLog}
+          onClose={() => setShowAuditLog(false)}
+        />
+      )}
+
       {/* Drawer edit */}
       <ComissaoDrawer
         comissao={drawerReg}
@@ -531,6 +548,7 @@ export const ComissoesView: React.FC = () => {
         onSaved={refetch}
         onDeleted={refetch}
         canEdit={canEdit}
+        canViewAudit={isGestor}
       />
     </div>
   );
