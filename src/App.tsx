@@ -15,6 +15,7 @@ import { AuditoriaView } from "./components/AuditoriaView";
 import { PrepCallView } from "./components/PrepCallView";
 import { AuditPanel } from "./components/AuditPanel";
 import { BriefingApresentacao } from "./components/BriefingApresentacao";
+import { TVMode } from "./components/TVMode";
 import { supabase } from "./lib/supabase";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
@@ -239,10 +240,21 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const auditPanelSession = params.get('audit_panel') === '1' ? params.get('session') : null;
   const briefingId = params.get('briefing');
+  const tvMode = params.get('tv') === '1';
 
   // Rota pública /?briefing=<uuid> → página de apresentação (sem login, sem AppProvider)
   if (briefingId) {
     return <BriefingApresentacao briefingId={briefingId} />;
+  }
+
+  // Rota /?tv=1 → TV mode (sem login, fullscreen 4 quadrantes)
+  if (tvMode) {
+    return (
+      <AppProvider>
+        <Toaster position="top-right" />
+        <TVMode />
+      </AppProvider>
+    );
   }
 
   if (auditPanelSession) {

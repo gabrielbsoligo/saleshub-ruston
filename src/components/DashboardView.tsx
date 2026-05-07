@@ -2,9 +2,14 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
 import { DEAL_STATUS_LABELS, CANAL_LABELS, ROLE_LABELS, type Deal, type Reuniao, type Meta } from "../types";
-import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw } from "lucide-react";
+import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw, Tv } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
+import toast from "react-hot-toast";
+import { CompromissoCard } from "./CompromissoCard";
+import { CompromissoTeamPanel } from "./CompromissoTeamPanel";
+import { CompromissoModal } from "./CompromissoModal";
+import { HourlyCallsChart } from "./HourlyCallsChart";
 
 function fmt(value: number) {
   if (Math.abs(value) >= 1000) return `R$ ${(value / 1000).toFixed(1)}k`;
@@ -80,13 +85,37 @@ function PaceLineChart({ title, data, isCurrency = true, color = '#22c55e' }: {
 }
 
 export const DashboardView: React.FC = () => {
-  const { members, ligacoes, fetchLigacoes } = useAppStore();
+  const { members, ligacoes, fetchLigacoes, currentUser } = useAppStore();
+  const isGestor = currentUser?.role === 'gestor';
   const [viewMode, setViewMode] = useState<'geral' | 'individual'>('geral');
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [showPendentes, setShowPendentes] = useState(true);
+  const [showCompromissoModal, setShowCompromissoModal] = useState(false);
+
+  // Auto-abertura do modal de compromisso na primeira sessao do dia apos 7h
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const dismissed = localStorage.getItem(`compromisso_dismissed_${today}`) === '1';
+    if (dismissed) return;
+    const now = new Date();
+    if (now.getHours() < 7) return;
+    (async () => {
+      const { data } = await supabase
+        .from('compromissos_dia')
+        .select('id')
+        .eq('member_id', currentUser.id)
+        .eq('data', today)
+        .maybeSingle();
+      if (!data) {
+        // ainda nao declarou hoje — abre modal
+        setShowCompromissoModal(true);
+      }
+    })();
+  }, [currentUser?.id]);
 
   // Dashboard data vem via RPC SECURITY DEFINER (bypassa RLS) — mesmos numeros
   // pra gestor e closer. Privacidade: so campos agregaveis, sem nome/empresa.
@@ -116,6 +145,19 @@ export const DashboardView: React.FC = () => {
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchDashboardData, fetchLigacoes]);
+
+  // Marcos: ouve broadcast pra mostrar toast
+  useEffect(() => {
+    const ch = supabase
+      .channel('marcos')
+      .on('broadcast', { event: 'marco' }, (payload: any) => {
+        const emoji = payload.payload?.emoji || '🎉';
+        const texto = payload.payload?.texto || '';
+        if (texto) toast.success(`${emoji} ${texto}`, { duration: 6000 });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
 
   // Realtime: atualiza imediatamente quando chega nova ligação via webhook 4com
   useEffect(() => {
@@ -266,6 +308,11 @@ export const DashboardView: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-display font-bold text-white">Dashboard</h2>
         <div className="flex items-center gap-3">
+          <a href="/?tv=1" target="_blank" rel="noopener"
+             title="Modo TV (rota pública)"
+             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-xs hover:border-[var(--color-v4-red)]">
+            <Tv size={14} /> TV
+          </a>
           <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
             className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm" />
           <div className="flex bg-[var(--color-v4-surface)] rounded-lg p-0.5">
@@ -274,6 +321,12 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Compromisso pessoal — todos veem o próprio */}
+      <CompromissoCard onEdit={() => setShowCompromissoModal(true)} />
+
+      {/* Compromisso do time — só gestor */}
+      {isGestor && <CompromissoTeamPanel />}
 
       {/* LIGACOES DO DIA POR SDR */}
       <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-5 mb-6">
@@ -316,6 +369,12 @@ export const DashboardView: React.FC = () => {
         ) : (
           <p className="text-xs text-[var(--color-v4-text-muted)] text-center py-2">Nenhuma ligação registrada hoje</p>
         )}
+
+        {/* Chart por hora */}
+        <div className="mt-5 pt-4 border-t border-[var(--color-v4-border)]">
+          <div className="text-[10px] uppercase text-[var(--color-v4-text-muted)] mb-2">Atividade por hora — barras (volume) + linhas (acumulado)</div>
+          <HourlyCallsChart ligacoes={ligacoesHoje} members={members} />
+        </div>
       </div>
 
       {/* GERAL */}
@@ -459,6 +518,12 @@ export const DashboardView: React.FC = () => {
           })}
         </div>
       )}
+
+      <CompromissoModal
+        open={showCompromissoModal}
+        onClose={() => setShowCompromissoModal(false)}
+        onSaved={() => fetchLigacoes()}
+      />
     </div>
   );
 };

@@ -78,6 +78,7 @@ export interface TeamMember {
   kommo_user_id?: number;
   ramal_4com?: string;
   google_calendar_connected?: boolean;
+  meta_ligacoes_diaria?: number;
   created_at: string;
 }
 
@@ -220,6 +221,28 @@ export interface Meta {
   meta_leads: number;
   meta_projetos: number;
   created_at: string;
+}
+
+export interface CompromissoDia {
+  id: string;
+  member_id: string;
+  data: string; // YYYY-MM-DD
+  declarado_em: string;
+  meta_ligacoes: number;
+  meta_reunioes_marcadas: number;
+  meta_reunioes_realizadas: number;
+  meta_contratos_rua: number;
+  meta_contratos_fechados: number;
+  observacao?: string;
+  fechado_em?: string;
+}
+
+export interface EntregaDia {
+  ligacoes: number;
+  reunioes_marcadas: number;
+  reunioes_realizadas: number;
+  contratos_rua: number;
+  contratos_fechados: number;
 }
 
 export type ComissaoRole = 'closer' | 'sdr' | 'account' | 'designer' | 'gt' | 'levantou' | 'fechou' | 'indicador';

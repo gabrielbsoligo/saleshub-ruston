@@ -34,6 +34,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         role: member.role,
         ramal_4com: member.ramal_4com || '',
         kommo_user_id: member.kommo_user_id,
+        meta_ligacoes_diaria: member.meta_ligacoes_diaria ?? 100,
         active: member.active,
       });
     }
@@ -58,6 +59,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         role: form.role,
         ramal_4com: form.ramal_4com?.trim() || undefined,
         kommo_user_id: form.kommo_user_id || undefined,
+        meta_ligacoes_diaria: form.meta_ligacoes_diaria ?? 100,
       };
       await updateMember(member.id, payload);
       toast.success('Membro atualizado');
@@ -172,6 +174,17 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
               disabled={!isGestor}
               placeholder="ex: 12345678"
               onChange={(e) => setForm((p) => ({ ...p, kommo_user_id: e.target.value ? Number(e.target.value) : undefined }))}
+              className={inputClass}
+            />
+          </Field>
+
+          <Field label="Meta de ligações por dia" hint="Default 100. Usado no dashboard pra calcular % e disparar marco quando bater.">
+            <input
+              type="number"
+              min={0}
+              value={form.meta_ligacoes_diaria ?? 100}
+              disabled={!isGestor}
+              onChange={(e) => setForm((p) => ({ ...p, meta_ligacoes_diaria: e.target.value ? Number(e.target.value) : 0 }))}
               className={inputClass}
             />
           </Field>
