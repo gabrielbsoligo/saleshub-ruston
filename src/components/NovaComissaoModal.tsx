@@ -119,6 +119,23 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
 
   const valorContratoNum = parseFloat(valorContrato) || 0;
 
+  // Sugere member_id a partir do deal vinculado, baseado na role.
+  // closer/fechou → closer_id do deal; sdr/levantou → sdr_id; outras → vazio.
+  const sugerirMemberId = (role: ComissaoRole): string => {
+    if (!dealId) return '';
+    const d = deals.find(x => x.id === dealId);
+    if (!d) return '';
+    if (role === 'closer' || role === 'fechou') return d.closer_id || '';
+    if (role === 'sdr' || role === 'levantou') return d.sdr_id || '';
+    return '';
+  };
+
+  // Sugere percentual a partir das regras ativas pra (categoria, tipo, role).
+  const sugerirPercentual = (role: ComissaoRole): string => {
+    const rule = regrasDisponiveis.find(r => r.role === role);
+    return rule ? String(rule.percentual) : '';
+  };
+
   // Validacao step 1
   const step1Valid =
     !!categoria && !!tipo && !!dataPrevista && valorContratoNum > 0 &&
@@ -149,18 +166,39 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
 
   const totalComissoes = comissoesPreview.reduce((sum, c) => sum + (c.valor_comissao || 0), 0);
 
-  // Adicionar linha (start com a primeira role disponível)
+  // Adicionar linha (start com a primeira role disponível, member e % sugeridos)
   const addLinha = () => {
-    const roleDefault = regrasDisponiveis[0]?.role || 'account';
+    const roleDefault = (regrasDisponiveis[0]?.role || 'account') as ComissaoRole;
     setColaboradores(prev => [
       ...prev,
-      { id: crypto.randomUUID(), role: roleDefault as ComissaoRole, member_id: '', percentual_override: '' },
+      {
+        id: crypto.randomUUID(),
+        role: roleDefault,
+        member_id: sugerirMemberId(roleDefault),
+        percentual_override: sugerirPercentual(roleDefault),
+      },
     ]);
   };
 
   const removeLinha = (id: string) => setColaboradores(prev => prev.filter(x => x.id !== id));
+
+  // updateLinha: ao trocar a role, refrescar member_id e % com os sugeridos
+  // (mas só se ainda estiverem nos valores antigos sugeridos — se o usuário
+  // já editou, preserva o valor manual).
   const updateLinha = (id: string, patch: Partial<ColaboradorLinha>) =>
-    setColaboradores(prev => prev.map(x => (x.id === id ? { ...x, ...patch } : x)));
+    setColaboradores(prev => prev.map(x => {
+      if (x.id !== id) return x;
+      const next = { ...x, ...patch };
+      // Se a role mudou, recalcula sugestões (sobrescreve apenas se o valor
+      // anterior era o sugerido da role anterior — mantém edits manuais).
+      if (patch.role && patch.role !== x.role) {
+        const oldMemberSugerido = sugerirMemberId(x.role);
+        const oldPctSugerido = sugerirPercentual(x.role);
+        if (x.member_id === oldMemberSugerido) next.member_id = sugerirMemberId(patch.role);
+        if (x.percentual_override === oldPctSugerido) next.percentual_override = sugerirPercentual(patch.role);
+      }
+      return next;
+    }));
 
   // Avança para step 2
   const handleNext = () => {
@@ -171,14 +209,18 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
       handleSubmit();
       return;
     }
-    // Pré-popula linhas com todas as roles disponíveis sem colaborador
+    // Pré-popula linhas com todas as roles disponíveis,
+    // já com member_id sugerido (do deal) e % da regra preenchido.
     if (colaboradores.length === 0 && regrasDisponiveis.length > 0) {
-      setColaboradores(regrasDisponiveis.map(r => ({
-        id: crypto.randomUUID(),
-        role: r.role as ComissaoRole,
-        member_id: '',
-        percentual_override: '',
-      })));
+      setColaboradores(regrasDisponiveis.map(r => {
+        const role = r.role as ComissaoRole;
+        return {
+          id: crypto.randomUUID(),
+          role,
+          member_id: sugerirMemberId(role),
+          percentual_override: String(r.percentual),
+        };
+      }));
     }
     setStep(2);
   };
@@ -498,7 +540,7 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
             <div className="grid grid-cols-12 gap-1 mt-2 text-[9px] text-[var(--color-v4-text-muted)] uppercase px-2">
               <div className="col-span-3">Role</div>
               <div className="col-span-5">Colaborador</div>
-              <div className="col-span-2 text-center">% (vazio = sugerido)</div>
+              <div className="col-span-2 text-center">% (editável)</div>
               <div className="col-span-1 text-right">Valor</div>
               <div className="col-span-1"></div>
             </div>
