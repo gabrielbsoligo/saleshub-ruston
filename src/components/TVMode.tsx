@@ -134,17 +134,32 @@ export const TVMode: React.FC = () => {
       .slice(0, 6);
   }, [ligacoesHoje, members]);
 
-  // Pace agregado — calculatePace tem assinatura
-  // (metaMrr, metaOt, metaReunioes, realizadoMrr, realizadoOt, realizadoReunioes, pct)
+  // Pace agregado — alinhado com DashboardView: filtra deals/reunioes do mes
+  // antes de agregar. RPC get_dashboard_data retorna TUDO; filtro vive no client.
   const pace = useMemo(() => {
-    const dealsGanhos = deals.filter(d => d.status === 'contrato_assinado' && d.data_fechamento);
-    const reunioesRealizadas = reunioes.filter(r => r.realizada && r.show);
+    const mesStart = new Date(year, month - 1, 1);
+    const mesEnd = new Date(year, month, 0, 23, 59, 59);
+
+    // Deals do mes: data_fechamento ou data_call dentro do mes corrente
+    const dealsDoMes = deals.filter(d => {
+      const dc = d.data_fechamento ? new Date(d.data_fechamento)
+              : d.data_call ? new Date(d.data_call) : null;
+      return dc && dc >= mesStart && dc <= mesEnd;
+    });
+    const dealsGanhosMes = dealsDoMes.filter(d => d.status === 'contrato_assinado');
+    const realMrr = dealsGanhosMes.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
+    const realOt = dealsGanhosMes.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
+
+    // Reunioes do mes (realizada+show)
+    const reunioesDoMes = reunioes.filter(r => {
+      const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
+      return dr && dr >= mesStart && dr <= mesEnd;
+    });
+    const realReu = reunioesDoMes.filter(r => r.realizada && r.show).length;
+
     const totalMetaMrr = metas.reduce((a, m) => a + (m.meta_mrr || 0), 0);
     const totalMetaOt = metas.reduce((a, m) => a + (m.meta_ot || 0), 0);
     const totalMetaReu = metas.reduce((a, m) => a + (m.meta_reunioes || 0), 0);
-    const realMrr = dealsGanhos.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
-    const realOt = dealsGanhos.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
-    const realReu = reunioesRealizadas.length;
 
     const totalBiz = getBusinessDaysInMonth(year, month - 1);
     const now = new Date();

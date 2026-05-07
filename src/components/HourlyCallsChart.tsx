@@ -20,12 +20,31 @@ interface Props {
   height?: number;
 }
 
-// Paleta determinística por nome do membro (estável entre renders)
+// Paleta determinística por nome do membro (estável entre renders).
+// 16 cores bem distintas pra evitar duplicatas em times pequenos.
+const PALETTE = [
+  '#ef4444', // red-500
+  '#3b82f6', // blue-500
+  '#facc15', // yellow-400
+  '#10b981', // emerald-500
+  '#a855f7', // purple-500
+  '#f97316', // orange-500
+  '#06b6d4', // cyan-500
+  '#ec4899', // pink-500
+  '#84cc16', // lime-500
+  '#8b5cf6', // violet-500
+  '#14b8a6', // teal-500
+  '#f59e0b', // amber-500
+  '#6366f1', // indigo-500
+  '#22d3ee', // cyan-400
+  '#f43f5e', // rose-500
+  '#65a30d', // lime-600
+];
+
 function colorForMember(name: string): string {
-  const palette = ['#ef4444', '#22c55e', '#3b82f6', '#f59e0b', '#a855f7', '#06b6d4', '#ec4899', '#84cc16', '#facc15', '#14b8a6'];
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return palette[h % palette.length];
+  return PALETTE[h % PALETTE.length];
 }
 
 export const HourlyCallsChart: React.FC<Props> = ({
@@ -98,8 +117,9 @@ export const HourlyCallsChart: React.FC<Props> = ({
         {activeMembers.map(m => {
           const k = m.name.split(' ')[0];
           const c = colorForMember(m.name);
+          // sem stackId = barras lado a lado (grouped bars)
           return (
-            <Bar key={`bar-${m.id}`} dataKey={`bar_${k}`} stackId="a" fill={c} name={k} />
+            <Bar key={`bar-${m.id}`} dataKey={`bar_${k}`} fill={c} name={k} />
           );
         })}
         {activeMembers.map(m => {
