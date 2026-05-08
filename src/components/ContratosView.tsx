@@ -95,37 +95,6 @@ export const ContratosView: React.FC = () => {
         </p>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
-          <span className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">Contratos no período</span>
-          <p className="text-2xl font-bold text-white mt-1">{totals.total}</p>
-        </div>
-        <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
-          <span className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">MRR fechado</span>
-          <p className="text-2xl font-bold text-green-400 mt-1">{fmtBRL(totals.valorMrr)}</p>
-          <p className="text-[10px] text-[var(--color-v4-text-muted)]">+ OT {fmtBRL(totals.valorOt)}</p>
-        </div>
-        <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-4">
-          <span className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">Com contrato anexo</span>
-          <p className="text-2xl font-bold text-white mt-1">
-            {totals.comAnexo}
-            <span className="text-sm text-[var(--color-v4-text-muted)] ml-2">
-              {totals.total > 0 ? `${Math.round((totals.comAnexo / totals.total) * 100)}%` : '—'}
-            </span>
-          </p>
-        </div>
-        <div className={`bg-[var(--color-v4-card)] border rounded-xl p-4 ${totals.semAnexo > 0 ? 'border-amber-500/30 bg-amber-500/5' : 'border-[var(--color-v4-border)]'}`}>
-          <span className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">Sem contrato anexo</span>
-          <p className={`text-2xl font-bold mt-1 ${totals.semAnexo > 0 ? 'text-amber-400' : 'text-white'}`}>
-            {totals.semAnexo}
-          </p>
-          {totals.semAnexo > 0 && (
-            <p className="text-[10px] text-amber-400/80">⚠ pendente anexar</p>
-          )}
-        </div>
-      </div>
-
       {/* Filtros */}
       <div className="flex flex-wrap gap-2 mb-4 items-center">
         <div className="relative flex-1 min-w-[200px] max-w-xs">
