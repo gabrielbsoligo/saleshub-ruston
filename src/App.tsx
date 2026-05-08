@@ -11,6 +11,7 @@ import { MetasView } from "./components/MetasView";
 import { EquipeView } from "./components/EquipeView";
 import { BlackBoxView } from "./components/BlackBoxView";
 import { ComissoesView } from "./components/ComissoesView";
+import { ContratosView } from "./components/ContratosView";
 import { AuditoriaView } from "./components/AuditoriaView";
 import { PrepCallView } from "./components/PrepCallView";
 import { AuditPanel } from "./components/AuditPanel";
@@ -221,6 +222,7 @@ const MainApp: React.FC = () => {
       case "performance": return <PerformanceView />;
       case "metas": return <MetasView />;
       case "comissoes": return <ComissoesView />;
+      case "contratos": return <ContratosView />;
       case "blackbox": return <BlackBoxView />;
       case "auditoria": return <AuditoriaView />;
       case "prepcall": return <PrepCallView />;

@@ -14,16 +14,17 @@ import {
   Box,
   ClipboardCheck,
   Sparkles,
+  FileText,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { ROLE_LABELS } from "../types";
+import { ROLE_LABELS, type TeamRole } from "../types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "equipe" | "dashboard" | "blackbox" | "auditoria" | "prepcall";
+export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "auditoria" | "prepcall";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -44,14 +45,19 @@ export const Layout: React.FC<{
     { id: "performance" as const, label: "Performance", icon: BarChart3 },
     { id: "metas" as const, label: "Metas", icon: Target },
     { id: "comissoes" as const, label: "Comissões", icon: DollarSign },
+    { id: "contratos" as const, label: "Contratos", icon: FileText, allowedRoles: ['gestor', 'financeiro'] as TeamRole[] },
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
-    { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, gestorOnly: true },
+    { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "equipe" as const, label: "Equipe", icon: Users },
-  ] as Array<{ id: View; label: string; icon: any; gestorOnly?: boolean }>;
+  ] as Array<{ id: View; label: string; icon: any; allowedRoles?: TeamRole[] }>;
 
-  const navItems = currentUser.role === 'financeiro'
-    ? allNavItems.filter(item => item.id === 'comissoes')
-    : allNavItems.filter(item => !item.gestorOnly || currentUser.role === 'gestor');
+  const navItems = allNavItems.filter(item => {
+    // Se item explicita roles permitidas, so' esses podem ver
+    if (item.allowedRoles) return item.allowedRoles.includes(currentUser.role);
+    // Sem allowedRoles: financeiro so' acessa "comissoes" (e os com allowedRoles que o incluem)
+    if (currentUser.role === 'financeiro') return item.id === 'comissoes';
+    return true;
+  });
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[var(--color-v4-bg)]">
