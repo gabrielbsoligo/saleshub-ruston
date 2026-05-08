@@ -288,11 +288,15 @@ export const ContratosView: React.FC = () => {
         </div>
       </div>
 
-      {/* Drawer (mesmo do Pipeline pra editar/anexar) */}
-      <DealDrawer
-        deal={drawerDeal}
-        onClose={() => setDrawerDeal(null)}
-      />
+      {/* Drawer (mesmo do Pipeline pra editar/anexar).
+          Renderiza so' quando ha um deal selecionado — DealDrawer com
+          deal=null abre em modo "Nova Negociacao", que nao queremos aqui. */}
+      {drawerDeal && (
+        <DealDrawer
+          deal={drawerDeal}
+          onClose={() => setDrawerDeal(null)}
+        />
+      )}
     </div>
   );
 };
