@@ -24,7 +24,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "auditoria" | "prepcall";
+export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -47,6 +47,7 @@ export const Layout: React.FC<{
     { id: "comissoes" as const, label: "Comissões", icon: DollarSign },
     { id: "contratos" as const, label: "Contratos", icon: FileText, allowedRoles: ['gestor', 'financeiro'] as TeamRole[] },
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
+    { id: "leadbroker" as const, label: "LeadBroker", icon: Box },
     { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "equipe" as const, label: "Equipe", icon: Users },
   ] as Array<{ id: View; label: string; icon: any; allowedRoles?: TeamRole[] }>;
