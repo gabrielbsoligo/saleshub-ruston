@@ -51,6 +51,7 @@ export const PRODUTOS_MRR = [
   'Landing Page Recorrente',
   'CRM',
   'Email Mkt',
+  'ISAAS',
 ] as const;
 
 // Produtos OT (one-time / pontuais)
