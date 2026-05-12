@@ -4,7 +4,7 @@ import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, Performance
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
 import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
-import { emitDealGanhoWebhook } from './lib/n8nWebhook';
+import { emitDealGanhoWebhook } from './lib/rokkoWebhook';
 import toast from 'react-hot-toast';
 
 interface AppState {
@@ -349,8 +349,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('comissoes_registros').insert(comissaoRecords);
     }
 
-    // 2. Webhook n8n (formato Kommo)
-    await emitDealGanhoWebhook(merged, prevStatus);
+    // 2. Webhook Rokko (lead-intake — abre projeto de onboarding)
+    await emitDealGanhoWebhook(merged);
   };
 
   const addDeal = async (d: Partial<Deal>) => {
