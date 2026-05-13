@@ -563,7 +563,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // AUTOMACAO: reuniao realizada (show=true) → cria deal automaticamente
       if (updates.realizada && updates.show && reuniao) {
-        // Guard: se ja existe deal vinculado a essa reuniao, NAO duplica.
+        // Guard 1: retorno NUNCA cria deal — o deal pai ja existe e esta
+        // referenciado em reuniao.deal_id. Retorno e' uma call dentro de
+        // um deal em andamento (negociacao/contrato_na_rua), nao gera
+        // novo deal. Bug ATSD (13/05/2026): retorno virou deal_orfao em
+        // 'dar_feedback' apesar do deal pai ja estar em 'negociacao'.
+        if (reuniao.tipo === 'retorno') {
+          return;
+        }
+
+        // Guard 2: se ja existe deal vinculado a essa reuniao, NAO duplica.
         // Causa raiz historica do bug Arena Race (06/05/2026): mesma reuniao
         // updated 2x com show=true e o codigo criava deal a cada update.
         const { data: dealExistente } = await supabase
