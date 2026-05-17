@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Jogo do Impostor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(160deg, #1a1033 0%, #0d0721 100%);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    overflow-y: auto;
+    min-height: 100vh;
+    user-select: none;
+  }
+  .app {
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 2rem;
+    margin-bottom: 8px;
+    background: linear-gradient(90deg, #ff5e8a, #b16dff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .subtitle {
+    color: #aaa;
+    margin-bottom: 32px;
+    font-size: 0.95rem;
+  }
+  .card {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
+    padding: 28px 20px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(10px);
+  }
+  label {
+    display: block;
+    font-size: 0.9rem;
+    color: #ccc;
+    margin-bottom: 12px;
+  }
+  .counter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 8px;
+  }
+  .counter button {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .counter button:active { transform: scale(0.92); }
+  .counter .value {
+    font-size: 2.5rem;
+    font-weight: 700;
+    min-width: 60px;
+  }
+  button.primary {
+    width: 100%;
+    background: linear-gradient(90deg, #ff5e8a, #b16dff);
+    color: #fff;
+    border: none;
+    padding: 18px;
+    border-radius: 16px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+    letter-spacing: 0.5px;
+  }
+  button.primary:active { transform: scale(0.97); }
+  button.secondary {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.15);
+    padding: 16px;
+    border-radius: 16px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+  button.secondary:active { background: rgba(255,255,255,0.15); }
+  .player-pass {
+    font-size: 1.4rem;
+    margin: 24px 0 12px;
+    color: #ccc;
+  }
+  .player-name {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 28px;
+  }
+  .reveal-area {
+    min-height: 220px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.3);
+    border-radius: 20px;
+    padding: 32px 20px;
+    margin: 24px 0;
+    border: 2px dashed rgba(255,255,255,0.15);
+    cursor: pointer;
+  }
+  .hidden-text {
+    font-size: 1rem;
+    color: #888;
+  }
+  .role {
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+  .role.normal { color: #62e08a; }
+  .role.impostor { color: #ff5e8a; }
+  .word {
+    font-size: 2.6rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .hint-label {
+    font-size: 0.85rem;
+    color: #aaa;
+    margin-top: 4px;
+  }
+  .start-banner {
+    background: linear-gradient(135deg, rgba(255,94,138,0.2), rgba(177,109,255,0.2));
+    border: 1px solid rgba(255,94,138,0.4);
+    border-radius: 20px;
+    padding: 28px 20px;
+    margin-bottom: 16px;
+  }
+  .start-banner .label {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #ffb3c6;
+    margin-bottom: 10px;
+  }
+  .start-banner .name {
+    font-size: 2.2rem;
+    font-weight: 700;
+  }
+  .footer-note {
+    font-size: 0.8rem;
+    color: #777;
+    margin-top: 20px;
+  }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <h1>Jogo do Impostor</h1>
+  <p class="subtitle">Passe o celular entre os jogadores</p>
+
+  <!-- Tela 1: Setup -->
+  <div id="screen-setup">
+    <div class="card">
+      <label>Quantos jogadores?</label>
+      <div class="counter">
+        <button id="btn-minus">−</button>
+        <div class="value" id="player-count">5</div>
+        <button id="btn-plus">+</button>
+      </div>
+      <p class="footer-note">Mínimo 3 · Máximo 12</p>
+    </div>
+    <button class="primary" id="btn-start">Iniciar jogo</button>
+  </div>
+
+  <!-- Tela 2: Passar celular -->
+  <div id="screen-pass" class="hide">
+    <p class="player-pass">Passe o celular para</p>
+    <div class="player-name" id="pass-name">Jogador 1</div>
+    <div class="reveal-area" id="reveal-area">
+      <div class="hidden-text">Toque para revelar</div>
+    </div>
+    <button class="primary hide" id="btn-next">Pronto, próximo</button>
+  </div>
+
+  <!-- Tela 3: Quem começa -->
+  <div id="screen-final" class="hide">
+    <div class="start-banner">
+      <div class="label">Começa o jogo</div>
+      <div class="name" id="starter-name">Jogador 1</div>
+    </div>
+    <div class="card">
+      <p style="color:#ccc; line-height:1.5;">Conversem, descrevam a palavra sem entregar nada, e tentem descobrir quem é o impostor!</p>
+    </div>
+    <button class="primary" id="btn-new-game">Nova rodada</button>
+    <button class="secondary" id="btn-reset">Mudar nº de jogadores</button>
+  </div>
+</div>
+
+<script>
+const WORDS = [
+  { word: "Praia", hint: "Lugar de férias" },
+  { word: "Pizza", hint: "Comida italiana" },
+  { word: "Cachorro", hint: "Animal de estimação" },
+  { word: "Futebol", hint: "Esporte popular" },
+  { word: "Netflix", hint: "Entretenimento em casa" },
+  { word: "Hospital", hint: "Lugar com profissionais" },
+  { word: "Casamento", hint: "Evento importante" },
+  { word: "Carnaval", hint: "Festa brasileira" },
+  { word: "Sushi", hint: "Comida japonesa" },
+  { word: "Academia", hint: "Lugar de exercício" },
+  { word: "Avião", hint: "Meio de transporte" },
+  { word: "Médico", hint: "Profissão" },
+  { word: "Professor", hint: "Profissão" },
+  { word: "Banana", hint: "Fruta tropical" },
+  { word: "Chocolate", hint: "Doce" },
+  { word: "Cinema", hint: "Lugar de lazer" },
+  { word: "Padaria", hint: "Estabelecimento comercial" },
+  { word: "Shopping", hint: "Lugar de compras" },
+  { word: "Carro", hint: "Meio de transporte" },
+  { word: "Bicicleta", hint: "Veículo" },
+  { word: "Computador", hint: "Aparelho eletrônico" },
+  { word: "Celular", hint: "Aparelho do dia a dia" },
+  { word: "Geladeira", hint: "Eletrodoméstico" },
+  { word: "Pijama", hint: "Roupa" },
+  { word: "Óculos", hint: "Acessório" },
+  { word: "Guitarra", hint: "Instrumento musical" },
+  { word: "Piano", hint: "Instrumento musical" },
+  { word: "Floresta", hint: "Ambiente natural" },
+  { word: "Deserto", hint: "Ambiente natural" },
+  { word: "Montanha", hint: "Local geográfico" },
+  { word: "Rio", hint: "Curso d'água" },
+  { word: "Pirata", hint: "Personagem clássico" },
+  { word: "Bruxa", hint: "Personagem de história" },
+  { word: "Astronauta", hint: "Profissão rara" },
+  { word: "Bombeiro", hint: "Profissão de risco" },
+  { word: "Policial", hint: "Profissão de risco" },
+  { word: "Padre", hint: "Profissão religiosa" },
+  { word: "Brasil", hint: "País" },
+  { word: "Japão", hint: "País asiático" },
+  { word: "Paris", hint: "Cidade famosa" },
+  { word: "Disney", hint: "Lugar de diversão" },
+  { word: "Casamento", hint: "Cerimônia" },
+  { word: "Aniversário", hint: "Comemoração" },
+  { word: "Igreja", hint: "Lugar religioso" },
+  { word: "Escola", hint: "Lugar de aprendizado" },
+  { word: "Hospital", hint: "Estabelecimento de saúde" },
+  { word: "Café", hint: "Bebida quente" },
+  { word: "Cerveja", hint: "Bebida alcoólica" },
+  { word: "Vinho", hint: "Bebida alcoólica" },
+  { word: "Suco", hint: "Bebida não alcoólica" },
+  { word: "Pão", hint: "Alimento básico" },
+  { word: "Arroz", hint: "Comida brasileira" },
+  { word: "Feijão", hint: "Comida brasileira" },
+  { word: "Hambúrguer", hint: "Fast food" },
+  { word: "Sorvete", hint: "Sobremesa gelada" },
+  { word: "Pipoca", hint: "Petisco" },
+  { word: "Sabão", hint: "Produto de limpeza" },
+  { word: "Shampoo", hint: "Produto de higiene" },
+  { word: "Espelho", hint: "Objeto comum" },
+  { word: "Travesseiro", hint: "Item da cama" },
+  { word: "Chuveiro", hint: "Item do banheiro" },
+  { word: "Sofá", hint: "Móvel da casa" },
+  { word: "Televisão", hint: "Aparelho da sala" },
+  { word: "Livro", hint: "Item de leitura" },
+  { word: "Caneta", hint: "Item escolar" },
+  { word: "Mochila", hint: "Item escolar" },
+  { word: "Tatuagem", hint: "Marca no corpo" },
+  { word: "Barba", hint: "Característica facial" },
+  { word: "Cabelo", hint: "Parte do corpo" },
+  { word: "Tênis", hint: "Calçado" },
+  { word: "Chinelo", hint: "Calçado" },
+  { word: "Anel", hint: "Joia" },
+  { word: "Relógio", hint: "Acessório" },
+  { word: "Mala", hint: "Item de viagem" },
+  { word: "Passaporte", hint: "Documento" },
+  { word: "Dinheiro", hint: "Item valioso" },
+  { word: "Banco", hint: "Instituição" },
+  { word: "Igreja", hint: "Construção" },
+  { word: "Museu", hint: "Lugar cultural" },
+  { word: "Teatro", hint: "Lugar artístico" },
+  { word: "Show", hint: "Evento musical" },
+  { word: "Festa", hint: "Comemoração" },
+  { word: "Beijo", hint: "Demonstração de afeto" },
+  { word: "Abraço", hint: "Demonstração de afeto" },
+  { word: "Chuva", hint: "Fenômeno natural" },
+  { word: "Neve", hint: "Fenômeno natural" },
+  { word: "Sol", hint: "Astro" },
+  { word: "Lua", hint: "Astro" },
+  { word: "Estrela", hint: "Algo no céu" },
+  { word: "Foguete", hint: "Veículo espacial" },
+  { word: "Galinha", hint: "Animal de granja" },
+  { word: "Vaca", hint: "Animal de fazenda" },
+  { word: "Cavalo", hint: "Animal grande" },
+  { word: "Leão", hint: "Animal selvagem" },
+  { word: "Tubarão", hint: "Animal marinho" },
+  { word: "Golfinho", hint: "Animal aquático" },
+  { word: "Borboleta", hint: "Inseto" },
+  { word: "Aranha", hint: "Aracnídeo" }
+];
+
+const state = {
+  numPlayers: 5,
+  impostorIndex: 0,
+  starterIndex: 0,
+  currentWord: null,
+  currentPlayer: 0,
+  revealed: false
+};
+
+const $ = id => document.getElementById(id);
+
+// Setup screen
+$('btn-minus').addEventListener('click', () => {
+  if (state.numPlayers > 3) {
+    state.numPlayers--;
+    $('player-count').textContent = state.numPlayers;
+  }
+});
+$('btn-plus').addEventListener('click', () => {
+  if (state.numPlayers < 12) {
+    state.numPlayers++;
+    $('player-count').textContent = state.numPlayers;
+  }
+});
+
+$('btn-start').addEventListener('click', startGame);
+$('btn-new-game').addEventListener('click', startGame);
+$('btn-reset').addEventListener('click', () => {
+  showScreen('setup');
+});
+
+function startGame() {
+  state.impostorIndex = Math.floor(Math.random() * state.numPlayers);
+  state.starterIndex = Math.floor(Math.random() * state.numPlayers);
+  state.currentWord = WORDS[Math.floor(Math.random() * WORDS.length)];
+  state.currentPlayer = 0;
+  state.revealed = false;
+  showScreen('pass');
+  renderPassScreen();
+}
+
+function renderPassScreen() {
+  state.revealed = false;
+  $('pass-name').textContent = `Jogador ${state.currentPlayer + 1}`;
+  $('reveal-area').innerHTML = '<div class="hidden-text">Toque para revelar</div>';
+  $('btn-next').classList.add('hide');
+}
+
+$('reveal-area').addEventListener('click', () => {
+  if (state.revealed) return;
+  state.revealed = true;
+  const isImpostor = state.currentPlayer === state.impostorIndex;
+  const area = $('reveal-area');
+  if (isImpostor) {
+    area.innerHTML = `
+      <div class="role impostor">Você é o IMPOSTOR</div>
+      <div class="word" style="font-size:1.8rem;">${state.currentWord.hint}</div>
+      <div class="hint-label">(dica · não conhece a palavra)</div>
+    `;
+  } else {
+    area.innerHTML = `
+      <div class="role normal">Sua palavra é</div>
+      <div class="word">${state.currentWord.word}</div>
+    `;
+  }
+  $('btn-next').classList.remove('hide');
+});
+
+$('btn-next').addEventListener('click', () => {
+  state.currentPlayer++;
+  if (state.currentPlayer >= state.numPlayers) {
+    $('starter-name').textContent = `Jogador ${state.starterIndex + 1}`;
+    showScreen('final');
+  } else {
+    renderPassScreen();
+  }
+});
+
+function showScreen(name) {
+  ['setup', 'pass', 'final'].forEach(s => {
+    $('screen-' + s).classList.toggle('hide', s !== name);
+  });
+}
+</script>
+</body>
+</html>
