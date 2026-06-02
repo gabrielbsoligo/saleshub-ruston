@@ -52,7 +52,26 @@
     <hr style="border-color:#2e2e2e; margin:30px 0;">
 
     <h1>📦 Importador em Lote</h1>
-    <p>O bookmarklet foi descontinuado em favor da extensão Chrome (mais robusta, com validação de dados e fila de incompletos). Use a extensão acima.</p>
+    <p>Importa vários leads de uma coluna do MKTLAB de uma vez. Roda direto no <code>mktlab.app/crm/leads</code>, sem instalar extensão.</p>
+
+    <div class="step">
+      <span class="step-num">1</span>
+      <strong>Arraste o botão abaixo para a barra de favoritos:</strong><br><br>
+      <a class="bookmarklet-btn" href="javascript:void(fetch('https://gestao-comercial-rosy.vercel.app/mktlab-batch-importer.js').then(r=>r.text()).then(t=>eval(t)))">
+        📦 Importar Lote → SalesHub
+      </a>
+      <p style="font-size:12px; color:#666;">Mesmo método do botão individual: arraste pra barra de favoritos.</p>
+    </div>
+
+    <div class="step">
+      <span class="step-num">2</span>
+      <strong>Use no MKTLAB</strong><br>
+      <p>Abra <code>mktlab.app/crm/leads</code> → clique no bookmarklet → painel lateral abre com login e seleção de coluna → escolhe leads → importa em lote pro SalesHub.</p>
+    </div>
+
+    <div class="warning">
+      ⚠️ <strong>Trava de contato:</strong> leads sem empresa, nome do contato ou telefone são <strong>bloqueados na importação</strong> (não vão pro Kommo incompletos). Aparecem como inválidos no painel — você pode corrigir manualmente ou pular.
+    </div>
 
     <hr style="border-color:#2e2e2e; margin:30px 0;">
 
