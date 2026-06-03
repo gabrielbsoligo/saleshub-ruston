@@ -19,6 +19,7 @@ import { AuditPanel } from "./components/AuditPanel";
 import { BriefingApresentacao } from "./components/BriefingApresentacao";
 import { TVMode } from "./components/TVMode";
 import { supabase } from "./lib/supabase";
+import { parseBRL } from "./lib/parseBRL";
 import { Toaster } from "react-hot-toast";
 import toast from "react-hot-toast";
 import { Loader2, AlertTriangle } from "lucide-react";
@@ -168,7 +169,7 @@ const MainApp: React.FC = () => {
         canal: data.canal || 'leadbroker',
         fonte: data.fonte || null,
         status: 'sem_contato',
-        valor_lead: data.valor_lead ? Number(data.valor_lead) : null,
+        valor_lead: parseBRL(data.valor_lead),
         mktlab_link: data.mktlab_link || null,
         mktlab_id: data.mktlab_id || null,
         sdr_id: data.auto_assign_sdr ? currentUser.id : null,

@@ -4,6 +4,18 @@
   'use strict';
   var SALESHUB_URL = 'https://gestao-comercial-rosy.vercel.app';
 
+  // Parser BRL: "R$ 1.234,56" / "889,20" / "889.20" / 889 → 1234.56 / 889.2 / 889.2 / 889
+  // Null se vazio, NaN ou <= 0.
+  function parseBRL(s) {
+    if (s == null) return null;
+    if (typeof s === 'number') return isFinite(s) && s > 0 ? s : null;
+    var str = String(s).trim().replace(/R\$\s*/gi, '').replace(/\s+/g, '');
+    if (!str) return null;
+    if (str.indexOf(',') >= 0) str = str.replace(/\./g, '').replace(',', '.');
+    var n = parseFloat(str);
+    return isFinite(n) && n > 0 ? n : null;
+  }
+
   function getField(labelText) {
     var labels = document.querySelectorAll('label.text-sm.leading-0.font-medium.text-content-foreground');
     for (var i = 0; i < labels.length; i++) {
@@ -41,7 +53,7 @@
       return '';
     })(),
     produto: getField('Produtos Marketing') || getField('Produto') || '',
-    valor_lead: getField('Valor Leadbroker') || getField('Valor') || '',
+    valor_lead: parseBRL(getField('Valor Leadbroker') || getField('Valor')),
     canal_aquisicao: getField('Canal de Aquisição') || getField('Canal de aquisição') || getField('Status Leadbroker') || '',
     canal_origem: getField('Canal de Origem') || '',
     mktlab_link: window.location.href,
