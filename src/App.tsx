@@ -170,6 +170,12 @@ const MainApp: React.FC = () => {
         fonte: data.fonte || null,
         status: 'sem_contato',
         valor_lead: parseBRL(data.valor_lead),
+        // data_cadastro = hoje (TZ local): import single acontece no dia da
+        // compra do lead. Sem isso o lead nao agrupa por mes no LeadBroker.
+        data_cadastro: (() => {
+          const n = new Date();
+          return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+        })(),
         mktlab_link: data.mktlab_link || null,
         mktlab_id: data.mktlab_id || null,
         sdr_id: data.auto_assign_sdr ? currentUser.id : null,

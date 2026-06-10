@@ -17,26 +17,40 @@
   }
 
   function getField(labelText) {
+    // v4 (jun/2026): MKTLAB redesenhou a pagina do lead — labels perderam
+    // as classes antigas e o valor nao e' mais span.text-sm... Estrategia
+    // em camadas: tenta seletor antigo, cai pra qualquer <label>, e extrai
+    // o valor por 3 caminhos (span antigo → qualquer elemento folha →
+    // texto do container menos o label).
     var labels = document.querySelectorAll('label.text-sm.leading-0.font-medium.text-content-foreground');
+    if (!labels.length) labels = document.querySelectorAll('label');
+    var SYMBOLS_ONLY = /^[#*ⓘ\s\-–—]*$/; // #, *, ⓘ, whitespace, traços
     for (var i = 0; i < labels.length; i++) {
       var clean = labels[i].textContent.replace(/\*/g, '').replace(/ⓘ/g, '').trim();
-      if (clean === labelText) {
-        var container = labels[i].closest('div.flex.gap-4') || labels[i].closest('div.flex.flex-col') || labels[i].parentElement.parentElement;
-        if (container) {
-          var valueEl = container.querySelector('span.text-sm.leading-0.font-normal.text-content-foreground');
-          if (valueEl) {
-            var val = valueEl.textContent.trim();
-            return (val && val !== '-') ? val : '';
-          }
-          var spans = container.querySelectorAll('span.font-normal, span.text-content-foreground');
-          for (var j = 0; j < spans.length; j++) {
-            if (spans[j] !== labels[i]) {
-              var v = spans[j].textContent.trim();
-              if (v && v !== '-' && v !== labelText) return v;
-            }
-          }
-        }
+      if (clean !== labelText) continue;
+      var container = labels[i].closest('div.flex.gap-4') || labels[i].closest('div.flex.flex-col') || labels[i].parentElement.parentElement;
+      if (!container) continue;
+      // 1) layout antigo: span com classes conhecidas
+      var valueEl = container.querySelector('span.text-sm.leading-0.font-normal.text-content-foreground');
+      if (valueEl) {
+        var val = valueEl.textContent.trim();
+        if (val && val !== '-') return val;
       }
+      // 2) layout novo: qualquer elemento folha que nao seja (nem contenha) o label
+      var els = container.querySelectorAll('span, p, div');
+      for (var j = 0; j < els.length; j++) {
+        if (els[j] === labels[i] || els[j].contains(labels[i]) || labels[i].contains(els[j])) continue;
+        var v = els[j].textContent.trim();
+        if (!v || v === '-' || v === labelText || v === labels[i].textContent.trim()) continue;
+        if (SYMBOLS_ONLY.test(v)) continue; // pula icones tipo "#"
+        return v;
+      }
+      // 3) fallback: texto do container menos o texto do label (e simbolos soltos)
+      var rest = (container.textContent || '')
+        .replace(labels[i].textContent, '')
+        .replace(/[#*ⓘ]/g, '')
+        .trim();
+      if (rest && rest !== '-') return rest;
     }
     return '';
   }
@@ -101,6 +115,21 @@
     mktlab_id: mktlab_id,
     auto_assign_sdr: true,
   };
+
+  // Guard: as secoes da pagina do MKTLAB sao accordions (Radix) e secao
+  // FECHADA e' desmontada do DOM — se "Informações do Leadbroker" estiver
+  // fechada, o valor nao existe pra ser extraido. Avisa em vez de importar
+  // calado sem valor (causa raiz dos leads com valor_lead null em jun/2026).
+  if (!payload.valor_lead) {
+    var prosseguir = confirm(
+      '⚠ VALOR DO LEAD NAO ENCONTRADO na pagina.\n\n' +
+      'Provavel causa: a secao "Informações do Leadbroker" esta fechada.\n' +
+      'Clique nela pra expandir e clique no bookmarklet de novo.\n\n' +
+      'OK = importar mesmo assim (sem valor)\n' +
+      'Cancelar = abortar pra tentar de novo'
+    );
+    if (!prosseguir) return;
+  }
 
   var url = SALESHUB_URL + '?mktlab_import=' + encodeURIComponent(JSON.stringify(payload));
   window.open(url, '_blank');
