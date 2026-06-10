@@ -13,7 +13,8 @@
 // =============================================================
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { FileText } from 'lucide-react';
+import { ReconciliarCsvModal } from './ReconciliarCsvModal';
 
 function fmt(v: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 }).format(v);
@@ -56,7 +57,9 @@ function faixaDoLead(valor: number | null | undefined): FaixaPreco | null {
 }
 
 export const LeadBrokerView: React.FC = () => {
-  const { leads, reunioes, deals } = useAppStore();
+  const { leads, reunioes, deals, currentUser, fetchLeads } = useAppStore();
+  const podeReconciliar = currentUser?.role === 'gestor' || currentUser?.role === 'financeiro';
+  const [showReconciliar, setShowReconciliar] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -172,12 +175,23 @@ export const LeadBrokerView: React.FC = () => {
             Compra avulsa lead-a-lead (preço variável). Investimento = soma do valor pago.
           </p>
         </div>
-        <input
-          type="month"
-          value={selectedMonth}
-          onChange={e => setSelectedMonth(e.target.value)}
-          className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm"
-        />
+        <div className="flex items-center gap-2">
+          {podeReconciliar && (
+            <button
+              onClick={() => setShowReconciliar(true)}
+              title="Reconciliar preços a partir do CSV de aquisições do LeadBroker"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-xs"
+            >
+              <FileText size={13} /> Reconciliar CSV
+            </button>
+          )}
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] text-white text-sm"
+          />
+        </div>
       </div>
 
       {/* KPIs principais */}
@@ -326,6 +340,14 @@ export const LeadBrokerView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {podeReconciliar && (
+        <ReconciliarCsvModal
+          open={showReconciliar}
+          onClose={() => setShowReconciliar(false)}
+          onReconciled={fetchLeads}
+        />
+      )}
     </div>
   );
 };
