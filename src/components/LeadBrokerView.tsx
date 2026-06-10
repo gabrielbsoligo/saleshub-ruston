@@ -140,12 +140,11 @@ export const LeadBrokerView: React.FC = () => {
     });
   }, [lbLeads, lbDeals]);
 
-  // Top leads por preco — analise ROI lead-a-lead
-  const topLeadsCaros = useMemo(() => {
+  // Todos os leads do mes ordenados por preco — analise ROI lead-a-lead
+  const leadsOrdenados = useMemo(() => {
     return [...lbLeads]
       .filter(l => (l.valor_lead || 0) > 0)
       .sort((a, b) => (b.valor_lead || 0) - (a.valor_lead || 0))
-      .slice(0, 10)
       .map(l => {
         const deal = deals.find(d => d.lead_id === l.id && d.status === 'contrato_assinado');
         const fat = deal ? ((deal.valor_recorrente || deal.valor_mrr || 0) + (deal.valor_escopo || deal.valor_ot || 0)) : 0;
@@ -286,39 +285,41 @@ export const LeadBrokerView: React.FC = () => {
         </div>
       </div>
 
-      {/* Top leads mais caros — ROI lead-a-lead */}
+      {/* Todos os leads do mes — ROI lead-a-lead */}
       <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl p-5 mt-6">
-        <h3 className="text-sm font-semibold text-white mb-1">Top 10 leads mais caros do mês</h3>
+        <h3 className="text-sm font-semibold text-white mb-1">
+          Leads do mês <span className="text-[var(--color-v4-text-muted)] font-normal">({leadsOrdenados.length})</span>
+        </h3>
         <p className="text-[11px] text-[var(--color-v4-text-muted)] mb-4">
-          Quais leads premium voltaram o investimento? Verde = virou venda.
+          Ordenados por preço pago. Quais voltaram o investimento? Verde = virou venda.
         </p>
-        {topLeadsCaros.length === 0 ? (
+        {leadsOrdenados.length === 0 ? (
           <p className="text-center py-6 text-xs text-[var(--color-v4-text-muted)]">
             Nenhum lead com preço registrado neste mês.
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[480px] overflow-y-auto rounded-lg border border-[var(--color-v4-border)]">
             <table className="w-full text-xs">
-              <thead className="text-[var(--color-v4-text-muted)] uppercase text-[9px]">
+              <thead className="text-[var(--color-v4-text-muted)] uppercase text-[9px] bg-[var(--color-v4-card)] sticky top-0 z-10">
                 <tr>
-                  <th className="text-left py-2">Empresa</th>
-                  <th className="text-left py-2">SDR</th>
-                  <th className="text-right py-2">Pago</th>
-                  <th className="text-left py-2">Status</th>
-                  <th className="text-right py-2">Faturamento</th>
-                  <th className="text-right py-2">ROI</th>
+                  <th className="text-left py-2 px-2">Empresa</th>
+                  <th className="text-left py-2 px-2">SDR</th>
+                  <th className="text-right py-2 px-2">Pago</th>
+                  <th className="text-left py-2 px-3">Status</th>
+                  <th className="text-right py-2 px-2">Faturamento</th>
+                  <th className="text-right py-2 px-2">ROI</th>
                 </tr>
               </thead>
               <tbody>
-                {topLeadsCaros.map(({ lead, deal, fat, virouVenda }) => {
+                {leadsOrdenados.map(({ lead, deal, fat, virouVenda }) => {
                   const roi = (lead.valor_lead || 0) > 0 ? fat / (lead.valor_lead || 1) : 0;
                   return (
-                    <tr key={lead.id} className={`border-t border-[var(--color-v4-border)] ${virouVenda ? 'bg-green-500/5' : ''}`}>
-                      <td className="py-2 text-white">{lead.empresa}</td>
-                      <td className="py-2 text-[var(--color-v4-text-muted)]">{lead.sdr?.name?.split(' ')[0] || '—'}</td>
-                      <td className="py-2 text-right text-white">{fmt(lead.valor_lead || 0)}</td>
-                      <td className="py-2">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    <tr key={lead.id} className={`border-t border-[var(--color-v4-border)]/40 ${virouVenda ? 'bg-green-500/5' : ''}`}>
+                      <td className="py-2 px-2 text-white">{lead.empresa}</td>
+                      <td className="py-2 px-2 text-[var(--color-v4-text-muted)]">{lead.sdr?.name?.split(' ')[0] || '—'}</td>
+                      <td className="py-2 px-2 text-right text-white whitespace-nowrap">{fmt(lead.valor_lead || 0)}</td>
+                      <td className="py-2 px-3">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${
                           virouVenda ? 'bg-green-500/15 text-green-400'
                           : lead.status === 'reuniao_realizada' ? 'bg-blue-500/15 text-blue-400'
                           : lead.status === 'reuniao_marcada' ? 'bg-amber-500/15 text-amber-400'
@@ -328,8 +329,8 @@ export const LeadBrokerView: React.FC = () => {
                           {virouVenda ? 'Fechado' : lead.status.replace(/_/g, ' ')}
                         </span>
                       </td>
-                      <td className="py-2 text-right text-green-400">{fat > 0 ? fmt(fat) : '—'}</td>
-                      <td className={`py-2 text-right font-medium ${roi >= 1 ? 'text-green-400' : roi > 0 ? 'text-amber-400' : 'text-[var(--color-v4-text-muted)]'}`}>
+                      <td className="py-2 px-2 text-right text-green-400 whitespace-nowrap">{fat > 0 ? fmt(fat) : '—'}</td>
+                      <td className={`py-2 px-2 text-right font-medium ${roi >= 1 ? 'text-green-400' : roi > 0 ? 'text-amber-400' : 'text-[var(--color-v4-text-muted)]'}`}>
                         {roi > 0 ? `${roi.toFixed(1)}x` : '—'}
                       </td>
                     </tr>
