@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 2000,
           system: 'Voce e um analista especializado em calls de vendas da V4 Company. Analise transcricoes e retorne APENAS um JSON valido, sem texto adicional. Responda em portugues brasileiro.',
           messages: [
