@@ -12,10 +12,14 @@ function getAuthHeaders(): Record<string, string> {
   };
 }
 
+export type RsvpStatus = 'accepted' | 'declined' | 'tentative' | 'needsAction';
+
 export interface BusyBlock {
   start: string;
   end: string;
   title?: string;
+  all_day?: boolean;
+  status?: RsvpStatus;
 }
 
 export interface PersonAvailability {

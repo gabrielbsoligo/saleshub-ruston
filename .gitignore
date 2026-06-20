@@ -3,6 +3,7 @@ build/
 dist/
 coverage/
 .DS_Store
+supabase/.temp/
 *.log
 .env*
 !.env.example
