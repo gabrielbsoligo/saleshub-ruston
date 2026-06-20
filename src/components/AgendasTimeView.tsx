@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
-import { RefreshCw, Loader2, AlertTriangle, CalendarClock, ChevronLeft, ChevronRight, Check, X, HelpCircle, Clock } from "lucide-react";
+import { RefreshCw, Loader2, AlertTriangle, CalendarClock, ChevronLeft, ChevronRight, Check, X, HelpCircle, Clock, Video, MapPin, Users, User } from "lucide-react";
 import toast from "react-hot-toast";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
@@ -11,6 +11,13 @@ const PX_PER_HOUR = 48;
 const DAY_HEIGHT = 24 * PX_PER_HOUR;
 const COL_MIN_WIDTH = 150;
 const GUTTER_W = 52;
+
+const STATUS_LABEL: Record<RsvpStatus, string> = {
+  accepted: "Sim",
+  declined: "Não",
+  tentative: "Talvez",
+  needsAction: "Pendente",
+};
 
 // ---- helpers de data (YYYY-MM-DD, sem drift de fuso) ----
 function todayISODate(): string {
@@ -98,6 +105,73 @@ const STATUS_ICON: Record<RsvpStatus, React.ReactNode> = {
   needsAction: <Clock size={10} />,
 };
 
+interface SelectedEvent {
+  block: BusyBlock;
+  personName: string;
+  color: string;
+}
+
+// ---- modal de detalhes do evento (estilo card do Google Agenda) ----
+const EventModal: React.FC<{ ev: SelectedEvent; onClose: () => void }> = ({ ev, onClose }) => {
+  const b = ev.block;
+  const yes = (b.attendees || []).filter((a) => a.responseStatus === "accepted").length;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50" />
+      <div className="relative w-full max-w-md bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl shadow-2xl p-5 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-4 right-4 text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
+
+        <div className="flex items-start gap-3 pr-6">
+          <span className="w-3.5 h-3.5 rounded-sm flex-shrink-0 mt-1.5" style={{ backgroundColor: ev.color }} />
+          <div>
+            <h3 className="text-lg font-semibold text-white leading-snug">{b.title || "(sem título)"}</h3>
+            <p className="text-sm text-[var(--color-v4-text-muted)] mt-0.5">
+              {b.all_day ? "Dia inteiro" : `${fmtTime(b.start)} – ${fmtTime(b.end)}`}
+              {b.status && <span className="ml-2 inline-flex items-center gap-1">· {STATUS_ICON[b.status]} {STATUS_LABEL[b.status]}</span>}
+            </p>
+            <p className="text-xs text-[var(--color-v4-text-muted)]">Agenda de {ev.personName}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3 text-sm">
+          {b.meet_link && (
+            <a href={b.meet_link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-[var(--color-v4-red)] hover:underline">
+              <Video size={16} /> Entrar com o Google Meet
+            </a>
+          )}
+          {b.location && (
+            <div className="flex items-center gap-2 text-white"><MapPin size={16} className="text-[var(--color-v4-text-muted)]" /> {b.location}</div>
+          )}
+          {b.organizer && (
+            <div className="flex items-center gap-2 text-white"><User size={16} className="text-[var(--color-v4-text-muted)]" /> {b.organizer.name || b.organizer.email} <span className="text-xs text-[var(--color-v4-text-muted)]">organizador</span></div>
+          )}
+          {b.attendees && b.attendees.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 text-white mb-1.5"><Users size={16} className="text-[var(--color-v4-text-muted)]" /> {b.attendees.length} convidado(s) · {yes} sim</div>
+              <ul className="space-y-1 pl-6">
+                {b.attendees.map((a) => (
+                  <li key={a.email} className="flex items-center gap-1.5 text-xs">
+                    <span className="text-[var(--color-v4-text-muted)]">{STATUS_ICON[a.responseStatus]}</span>
+                    <span className="text-white truncate">{a.name || a.email}</span>
+                    {a.organizer && <span className="text-[10px] text-[var(--color-v4-text-muted)]">(org)</span>}
+                    <span className="text-[10px] text-[var(--color-v4-text-muted)] ml-auto">{STATUS_LABEL[a.responseStatus]}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {b.description && (
+            <p className="text-xs text-[var(--color-v4-text-muted)] whitespace-pre-wrap border-t border-[var(--color-v4-border)] pt-3">{b.description}</p>
+          )}
+          {b.html_link && (
+            <a href={b.html_link} target="_blank" rel="noreferrer" className="inline-block text-xs text-[var(--color-v4-text-muted)] hover:text-white underline">Abrir no Google Agenda</a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const AgendasTimeView: React.FC = () => {
   const { members } = useAppStore();
 
@@ -108,27 +182,32 @@ export const AgendasTimeView: React.FC = () => {
     return map;
   }, [members]);
 
+  // Padrão: somente closers (acelera o carregamento)
   const [selectedIds, setSelectedIds] = useState<string[]>(() =>
-    members.filter((m) => m.active && m.email && m.google_calendar_connected).map((m) => m.id),
+    members.filter((m) => m.active && m.email && m.role === "closer").map((m) => m.id),
   );
   const [date, setDate] = useState<string>(todayISODate());
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TeamAvailability | null>(null);
+  const [selected, setSelected] = useState<SelectedEvent | null>(null);
 
-  // cache em memória: evita recarregar dias já vistos (navegação instantânea)
   const cache = useRef<Map<string, TeamAvailability>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
   const didInitialScroll = useRef(false);
 
-  const windowStart = useMemo(() => new Date(`${date}T00:00:00-03:00`), [date]);
-  const windowStartMs = windowStart.getTime();
-
   const cacheKey = useMemo(() => `${date}|${[...selectedIds].sort().join(",")}`, [date, selectedIds]);
+
+  // Ancorar o layout no dia do RESULTADO (evita blocos "fora de esquadro" ao trocar de dia
+  // enquanto a nova consulta ainda não chegou)
+  const dayStartMs = useMemo(
+    () => (result ? new Date(result.timeMin).getTime() : new Date(`${date}T00:00:00-03:00`).getTime()),
+    [result, date],
+  );
 
   const load = useCallback(
     async (force = false) => {
-      const selected = selectedIds.map((id) => memberById.get(id)).filter(Boolean) as typeof members;
-      const emails = selected.map((m) => m.email).filter(Boolean) as string[];
+      const selectedMembers = selectedIds.map((id) => memberById.get(id)).filter(Boolean) as typeof members;
+      const emails = selectedMembers.map((m) => m.email).filter(Boolean) as string[];
       if (!emails.length) { setResult(null); return; }
 
       if (!force && cache.current.has(cacheKey)) {
@@ -156,13 +235,11 @@ export const AgendasTimeView: React.FC = () => {
     [selectedIds, memberById, cacheKey, date],
   );
 
-  // auto-load (debounce) ao mudar dia/membros
   useEffect(() => {
     const t = setTimeout(() => { load(); }, 200);
     return () => clearTimeout(t);
   }, [load]);
 
-  // scroll inicial para ~7h
   useEffect(() => {
     if (result && scrollRef.current && !didInitialScroll.current) {
       scrollRef.current.scrollTop = 7 * PX_PER_HOUR;
@@ -186,6 +263,11 @@ export const AgendasTimeView: React.FC = () => {
   const hours = useMemo(() => Array.from({ length: 24 }, (_, i) => i), []);
   const people = result?.people ?? [];
   const isToday = date === todayISODate();
+
+  const openEvent = (p: PersonAvailability, b: BusyBlock) => {
+    if (p.source === "freebusy" && !b.title) return; // freebusy sem detalhe
+    setSelected({ block: b, personName: p.name || p.email, color: colorForPerson(p) });
+  };
 
   return (
     <div className="p-6 flex flex-col h-full">
@@ -282,7 +364,7 @@ export const AgendasTimeView: React.FC = () => {
                   {people.map((p) => (
                     <div key={p.email} className="flex-1 min-w-[150px] px-1 py-1 border-l border-[var(--color-v4-border)] space-y-0.5">
                       {p.busy.filter((b) => b.all_day).map((b, i) => (
-                        <div key={i} className="text-[10px] px-1.5 py-0.5 rounded truncate" style={blockStyle(colorForPerson(p), b.status)} title={b.title}>
+                        <div key={i} onClick={() => openEvent(p, b)} className="text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer" style={blockStyle(colorForPerson(p), b.status)} title={b.title}>
                           {b.title}
                         </div>
                       ))}
@@ -304,10 +386,9 @@ export const AgendasTimeView: React.FC = () => {
 
                 {/* Colunas por pessoa */}
                 {people.map((p) => {
-                  const timed = layoutTimed(p.busy.filter((b) => !b.all_day), windowStartMs);
+                  const timed = layoutTimed(p.busy.filter((b) => !b.all_day), dayStartMs);
                   return (
                     <div key={p.email} className="flex-1 min-w-[150px] relative border-l border-[var(--color-v4-border)]">
-                      {/* linhas de hora */}
                       {hours.map((h) => (
                         <div key={h} className="absolute left-0 right-0 border-t border-[var(--color-v4-border)]/30" style={{ top: h * PX_PER_HOUR }} />
                       ))}
@@ -320,9 +401,10 @@ export const AgendasTimeView: React.FC = () => {
                         timed.map((b, i) => (
                           <div
                             key={i}
-                            className="absolute rounded px-1 py-0.5 overflow-hidden shadow-sm"
+                            onClick={() => openEvent(p, b)}
+                            className="absolute rounded px-1 py-0.5 overflow-hidden shadow-sm cursor-pointer hover:brightness-110 hover:z-10 transition-[filter]"
                             style={{ top: b.top, height: b.height, left: `calc(${b.leftPct}% + 1px)`, width: `calc(${b.widthPct}% - 2px)`, ...blockStyle(colorForPerson(p), b.status) }}
-                            title={`${b.title ? b.title + " · " : ""}${fmtTime(b.start)}–${fmtTime(b.end)}${b.status ? ` · ${b.status}` : ""}`}
+                            title={`${b.title ? b.title + " · " : ""}${fmtTime(b.start)}–${fmtTime(b.end)}`}
                           >
                             <div className="flex items-center gap-0.5 text-[9px] leading-tight font-medium">
                               {b.status && b.status !== "accepted" && STATUS_ICON[b.status]}
@@ -340,6 +422,8 @@ export const AgendasTimeView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {selected && <EventModal ev={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 };

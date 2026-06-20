@@ -255,12 +255,29 @@ Deno.serve(async (req) => {
                   const self = (ev.attendees || []).find((a: any) => a.self)
                   const status = self?.responseStatus
                     || (ev.organizer?.self ? 'accepted' : ((ev.attendees && ev.attendees.length) ? 'needsAction' : 'accepted'))
+                  const meet_link = ev.hangoutLink
+                    || ev.conferenceData?.entryPoints?.find((e: any) => e.entryPointType === 'video')?.uri
+                    || null
+                  const attendees = (ev.attendees || []).map((a: any) => ({
+                    email: a.email,
+                    name: a.displayName || null,
+                    responseStatus: a.responseStatus || 'needsAction',
+                    organizer: !!a.organizer,
+                    self: !!a.self,
+                    optional: !!a.optional,
+                  }))
                   return {
                     start: ev.start.dateTime || ev.start.date,
                     end: ev.end?.dateTime || ev.end?.date || ev.start.dateTime || ev.start.date,
                     title: ev.summary || '(sem título)',
                     all_day: !ev.start.dateTime,
                     status,
+                    meet_link,
+                    html_link: ev.htmlLink || null,
+                    location: ev.location || null,
+                    description: ev.description ? String(ev.description).slice(0, 600) : null,
+                    organizer: ev.organizer ? { email: ev.organizer.email || null, name: ev.organizer.displayName || null, self: !!ev.organizer.self } : null,
+                    attendees,
                   }
                 })
               return { email, member_id: m.id, name: m.name, connected: true, source: 'events', busy }

@@ -14,12 +14,27 @@ function getAuthHeaders(): Record<string, string> {
 
 export type RsvpStatus = 'accepted' | 'declined' | 'tentative' | 'needsAction';
 
+export interface EventAttendee {
+  email: string;
+  name?: string | null;
+  responseStatus: RsvpStatus;
+  organizer?: boolean;
+  self?: boolean;
+  optional?: boolean;
+}
+
 export interface BusyBlock {
   start: string;
   end: string;
   title?: string;
   all_day?: boolean;
   status?: RsvpStatus;
+  meet_link?: string | null;
+  html_link?: string | null;
+  location?: string | null;
+  description?: string | null;
+  organizer?: { email?: string | null; name?: string | null; self?: boolean } | null;
+  attendees?: EventAttendee[];
 }
 
 export interface PersonAvailability {
