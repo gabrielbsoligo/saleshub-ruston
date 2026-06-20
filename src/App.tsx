@@ -6,6 +6,7 @@ import { DashboardView } from "./components/DashboardView";
 import { PipelineView } from "./components/PipelineView";
 import { LeadsView } from "./components/LeadsView";
 import { ReunioesView } from "./components/ReunioesView";
+import { AgendasTimeView } from "./components/AgendasTimeView";
 import { PerformanceView } from "./components/PerformanceView";
 import { MetasView } from "./components/MetasView";
 import { EquipeView } from "./components/EquipeView";
@@ -227,6 +228,7 @@ const MainApp: React.FC = () => {
       case "pipeline": return <PipelineView />;
       case "leads": return <LeadsView />;
       case "reunioes": return <ReunioesView />;
+      case "agendas_time": return <AgendasTimeView />;
       case "performance": return <PerformanceView />;
       case "metas": return <MetasView />;
       case "comissoes": return <ComissoesView />;
