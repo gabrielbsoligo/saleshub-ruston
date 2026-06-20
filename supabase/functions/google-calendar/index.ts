@@ -51,7 +51,7 @@ const EVENT_DESCRIPTION = `✅ Para acessar a reunião basta clicar no link abai
 // une todos os blocos busy de todas as pessoas, faz merge dos sobrepostos
 // e inverte dentro do intervalo. Pessoas com erro (busy desconhecido) não contam.
 function computeCommonFree(
-  people: { busy?: { start: string; end: string }[] }[],
+  people: { busy?: { start: string; end: string; status?: string; all_day?: boolean }[] }[],
   timeMin: string,
   timeMax: string,
 ): { start: string; end: string }[] {
@@ -62,6 +62,8 @@ function computeCommonFree(
   const intervals: [number, number][] = []
   for (const p of people) {
     for (const b of p.busy || []) {
+      // Recusados e eventos de dia inteiro não bloqueiam a janela livre
+      if (b.status === 'declined' || b.all_day) continue
       const s = Math.max(new Date(b.start).getTime(), rangeStart)
       const e = Math.min(new Date(b.end).getTime(), rangeEnd)
       if (s < e) intervals.push([s, e])
@@ -231,10 +233,8 @@ Deno.serve(async (req) => {
         return fallbackToken
       }
 
-      const people: any[] = []
-      const freebusyEmails: string[] = []
-
-      for (const email of emails) {
+      // Busca em paralelo (events.list por membro conectado) para reduzir latência
+      const people: any[] = await Promise.all(emails.map(async (email) => {
         const m = memberByEmail.get(email.toLowerCase())
         if (m && m.connected) {
           const token = await getValidToken(supabase, m.id)
@@ -250,21 +250,30 @@ Deno.serve(async (req) => {
               const evData = await evResp.json()
               const busy = (evData.items || [])
                 .filter((ev: any) => ev.status !== 'cancelled' && ev.transparency !== 'transparent' && (ev.start?.dateTime || ev.start?.date))
-                .map((ev: any) => ({
-                  start: ev.start.dateTime || ev.start.date,
-                  end: ev.end?.dateTime || ev.end?.date || ev.start.dateTime || ev.start.date,
-                  title: ev.summary || '(sem título)',
-                }))
-              people.push({ email, member_id: m.id, name: m.name, connected: true, source: 'events', busy })
-              continue
+                .map((ev: any) => {
+                  // Status de resposta do próprio usuário: accepted | declined | tentative | needsAction
+                  const self = (ev.attendees || []).find((a: any) => a.self)
+                  const status = self?.responseStatus
+                    || (ev.organizer?.self ? 'accepted' : ((ev.attendees && ev.attendees.length) ? 'needsAction' : 'accepted'))
+                  return {
+                    start: ev.start.dateTime || ev.start.date,
+                    end: ev.end?.dateTime || ev.end?.date || ev.start.dateTime || ev.start.date,
+                    title: ev.summary || '(sem título)',
+                    all_day: !ev.start.dateTime,
+                    status,
+                  }
+                })
+              return { email, member_id: m.id, name: m.name, connected: true, source: 'events', busy }
             } catch (_e) {
               // token/calendário falhou -> cai pro freeBusy
             }
           }
         }
-        freebusyEmails.push(email)
-        people.push({ email, member_id: m?.id, name: m?.name, connected: !!(m && m.connected), source: 'freebusy', busy: [] })
-      }
+        return { email, member_id: m?.id, name: m?.name, connected: !!(m && m.connected), source: 'freebusy', busy: [], _needsFreebusy: true }
+      }))
+
+      const freebusyEmails: string[] = people.filter((p) => p._needsFreebusy).map((p) => p.email)
+      for (const p of people) delete p._needsFreebusy
 
       // FreeBusy em lote para os e-mails restantes (sem título, só ocupado/livre)
       if (freebusyEmails.length) {
