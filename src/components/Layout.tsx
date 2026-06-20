@@ -15,6 +15,7 @@ import {
   ClipboardCheck,
   Sparkles,
   FileText,
+  CalendarClock,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -24,7 +25,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall";
+export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -41,6 +42,7 @@ export const Layout: React.FC<{
     { id: "pipeline" as const, label: "Pipeline", icon: Briefcase },
     { id: "leads" as const, label: "Leads", icon: Target },
     { id: "reunioes" as const, label: "Reuniões", icon: Calendar },
+    { id: "agendas_time" as const, label: "Agendas", icon: CalendarClock },
     { id: "prepcall" as const, label: "Prep Call", icon: Sparkles },
     { id: "performance" as const, label: "Performance", icon: BarChart3 },
     { id: "metas" as const, label: "Metas", icon: Target },
