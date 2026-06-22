@@ -109,7 +109,7 @@ function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: 
 }
 
 export const ReunioesView: React.FC = () => {
-  const { reunioes, leads, deals, addReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
+  const { reunioes, leads, deals, addReuniao, rescheduleReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
@@ -206,17 +206,24 @@ export const ReunioesView: React.FC = () => {
 
   const handleReplaceReuniao = async () => {
     if (!selectedLead || !pendingAgendar || isProcessing) return;
+    // Reagenda a reunião ativa existente (move a mesma reunião) — sem fantasma
+    const existing = reunioes.find(re => re.lead_id === selectedLead.id && !re.realizada && re.tipo !== 'retorno');
+    if (!existing) {
+      toast.error('Reunião ativa existente não encontrada.');
+      setShowReplace(false); setPendingAgendar(null); setSelectedLead(null);
+      return;
+    }
     setIsProcessing(true);
     try {
-      await addReuniao({
-        lead_id: selectedLead.id, empresa: selectedLead.empresa,
-        nome_contato: selectedLead.nome_contato || undefined, canal: selectedLead.canal,
-        sdr_id: selectedLead.sdr_id || currentUser?.id || undefined, closer_id: pendingAgendar.closerId || undefined,
-        kommo_id: selectedLead.kommo_id || undefined,
-        data_agendamento: new Date().toISOString().split('T')[0], data_reuniao: pendingAgendar.iso,
-        participantes_extras: pendingAgendar.extras || undefined, lead_email: pendingAgendar.leadEmail || undefined,
-      } as any, true);
+      await rescheduleReuniao(existing, {
+        data_reuniao: pendingAgendar.iso,
+        closer_id: pendingAgendar.closerId || undefined,
+        lead_email: pendingAgendar.leadEmail,
+        participantes_extras: pendingAgendar.extras,
+      });
       setSelectedLead(null); setShowReplace(false); setPendingAgendar(null);
+    } catch (e: any) {
+      toast.error(e.message || 'Falha ao reagendar');
     } finally { setIsProcessing(false); }
   };
 
@@ -569,21 +576,37 @@ export const ReunioesView: React.FC = () => {
         return d ? <FeedbackDrawer deal={d} onClose={() => setFeedbackDealId(null)} /> : null;
       })()}
 
-      {showReplace && (
+      {showReplace && (() => {
+        const existingR = selectedLead ? reunioes.find(re => re.lead_id === selectedLead.id && !re.realizada && re.tipo !== 'retorno') : null;
+        const fmtDT = (iso?: string) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+        return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/60" onClick={() => { setShowReplace(false); setPendingAgendar(null); setSelectedLead(null); }} />
           <div className="relative w-full max-w-sm bg-[var(--color-v4-card)] border border-yellow-500/30 rounded-2xl shadow-2xl p-6">
-            <h3 className="text-sm font-bold text-yellow-400 mb-2">Reunião já existente</h3>
-            <p className="text-xs text-[var(--color-v4-text-muted)] mb-4">Este lead já tem uma reunião ativa. Deseja substituir?</p>
+            <h3 className="text-sm font-bold text-yellow-400 mb-1">Reunião já existente</h3>
+            <p className="text-xs text-[var(--color-v4-text-muted)] mb-4">Este lead já tem uma reunião ativa. Deseja <strong className="text-white">reagendá-la</strong> para o novo horário? A reunião atual será movida (sem deixar evento duplicado).</p>
+            {pendingAgendar && (
+              <div className="space-y-2 mb-5 text-sm">
+                <div className="flex items-center justify-between bg-[var(--color-v4-surface)] rounded-lg px-3 py-2">
+                  <span className="text-[var(--color-v4-text-muted)] text-xs">De</span>
+                  <span className="text-white line-through opacity-70">{fmtDT(existingR?.data_reuniao)}</span>
+                </div>
+                <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                  <span className="text-emerald-300/80 text-xs">Para</span>
+                  <span className="text-emerald-300 font-medium">{fmtDT(pendingAgendar.iso)}</span>
+                </div>
+              </div>
+            )}
             <div className="flex gap-3">
               <button onClick={() => { setShowReplace(false); setPendingAgendar(null); setSelectedLead(null); }}
                 className="flex-1 py-2.5 rounded-xl border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] text-sm">Cancelar</button>
               <button onClick={handleReplaceReuniao} disabled={isProcessing}
-                className="flex-1 py-2.5 rounded-xl bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-black font-bold text-sm">{isProcessing ? 'Substituindo...' : 'Substituir'}</button>
+                className="flex-1 py-2.5 rounded-xl bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-black font-bold text-sm">{isProcessing ? 'Reagendando...' : 'Reagendar'}</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
