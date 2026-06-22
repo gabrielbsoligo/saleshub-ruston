@@ -501,17 +501,21 @@ export const AgendasTimeView: React.FC = () => {
                         <div key={h} className="absolute left-0 right-0 border-t border-[var(--color-v4-border)]/30 pointer-events-none" style={{ top: h * PX_PER_HOUR }} />
                       ))}
 
-                      {/* destaque do bloco de 30min sob o cursor */}
-                      {hoverSlot?.email === p.email && (
-                        <div
-                          className="absolute left-0.5 right-0.5 rounded-sm bg-[var(--color-v4-red)]/20 border border-[var(--color-v4-red)]/50 pointer-events-none z-[5] flex items-start justify-end px-1"
-                          style={{ top: hoverSlot.slot * SLOT_PX, height: SLOT_PX }}
-                        >
-                          <span className="text-[8px] text-white/80 leading-tight mt-0.5">
-                            {String(Math.floor((hoverSlot.slot * SLOT_MIN) / 60)).padStart(2, "0")}:{String((hoverSlot.slot * SLOT_MIN) % 60).padStart(2, "0")}
-                          </span>
-                        </div>
-                      )}
+                      {/* destaque do bloco de 1h (duração da reunião); início snap de 30min */}
+                      {hoverSlot?.email === p.email && (() => {
+                        const startMin = hoverSlot.slot * SLOT_MIN;
+                        const endMin = startMin + 60;
+                        const fmt = (min: number) => `${String(Math.floor((min % 1440) / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+                        const top = Math.min(hoverSlot.slot * SLOT_PX, DAY_HEIGHT - PX_PER_HOUR);
+                        return (
+                          <div
+                            className="absolute left-0.5 right-0.5 rounded-sm bg-[var(--color-v4-red)]/20 border border-[var(--color-v4-red)]/50 pointer-events-none z-[5] flex items-start justify-end px-1"
+                            style={{ top, height: PX_PER_HOUR }}
+                          >
+                            <span className="text-[8px] text-white/80 leading-tight mt-0.5">{fmt(startMin)}–{fmt(endMin)}</span>
+                          </div>
+                        );
+                      })()}
 
                       {p.error ? (
                         <div className="absolute inset-x-0 top-1/3 flex items-center justify-center text-center px-1 pointer-events-none">
