@@ -51,6 +51,9 @@ export const ComissoesView: React.FC = () => {
   const isFinanceiro = currentUser?.role === "financeiro";
   const canEdit = isGestor || isFinanceiro;
   const canConfirm = isGestor || isFinanceiro;
+  // Gestor/financeiro veem tudo; SDR/closer só veem as próprias comissões.
+  const canSeeAll = isGestor || isFinanceiro;
+  const restrictMemberId = canSeeAll ? undefined : currentUser?.id;
 
   const [dateField, setDateField] = useState<DateField>("data_liberacao");
   // Default vazio = mostra TODAS as comissoes. Ao selecionar um mes, filtra.
@@ -82,6 +85,7 @@ export const ComissoesView: React.FC = () => {
     view: "time",
     dateField,
     yearMonth,
+    restrictMemberId,
     filters: {
       status: filterStatus,
       empresa: searchEmpresa,
@@ -325,12 +329,14 @@ export const ComissoesView: React.FC = () => {
           placeholder="Status"
         />
 
-        <MultiSelectFilter
-          options={vendedoresUnicos.map((v) => ({ value: v, label: v }))}
-          selected={filterVendedor}
-          onChange={setFilterVendedor}
-          placeholder="Vendedor"
-        />
+        {canSeeAll && (
+          <MultiSelectFilter
+            options={vendedoresUnicos.map((v) => ({ value: v, label: v }))}
+            selected={filterVendedor}
+            onChange={setFilterVendedor}
+            placeholder="Vendedor"
+          />
+        )}
 
         <select value={groupBy}
                 onChange={(e) => setGroupBy(e.target.value as GroupBy)}
