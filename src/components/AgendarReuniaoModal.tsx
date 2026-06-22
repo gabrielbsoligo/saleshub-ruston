@@ -7,16 +7,19 @@ import { useAppStore } from "../store";
 
 interface Props {
   lead: Lead;
+  initialDate?: string;
+  initialTime?: string;
+  initialCloserId?: string;
   onConfirm: (dataReuniaoISO: string, closerId: string, participantesExtras?: string[], leadEmail?: string) => void;
   onClose: () => void;
 }
 
-export const AgendarReuniaoModal: React.FC<Props> = ({ lead, onConfirm, onClose }) => {
+export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initialTime, initialCloserId, onConfirm, onClose }) => {
   const { members } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [closerId, setCloserId] = useState('');
+  const [date, setDate] = useState(initialDate || '');
+  const [time, setTime] = useState(initialTime || '');
+  const [closerId, setCloserId] = useState(initialCloserId || '');
   const [leadEmail, setLeadEmail] = useState((lead as any).email || '');
   const [extraEmails, setExtraEmails] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);

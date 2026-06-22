@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
-import { RefreshCw, Loader2, AlertTriangle, CalendarClock, ChevronLeft, ChevronRight, Check, X, HelpCircle, Clock, Video, MapPin, Users, User } from "lucide-react";
+import { RefreshCw, Loader2, AlertTriangle, CalendarClock, ChevronLeft, ChevronRight, Check, X, HelpCircle, Clock, Video, MapPin, Users, User, Search } from "lucide-react";
 import toast from "react-hot-toast";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
+import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
+import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead } from "../types";
 import { queryTeamAvailability, type TeamAvailability, type PersonAvailability, type BusyBlock, type RsvpStatus } from "../lib/teamAvailability";
 
 const TZ = "America/Sao_Paulo";
@@ -173,7 +175,7 @@ const EventModal: React.FC<{ ev: SelectedEvent; onClose: () => void }> = ({ ev, 
 };
 
 export const AgendasTimeView: React.FC = () => {
-  const { members } = useAppStore();
+  const { members, leads, addReuniao, currentUser } = useAppStore();
 
   const eligible = useMemo(() => members.filter((m) => m.active && m.email), [members]);
   const memberById = useMemo(() => {
@@ -190,6 +192,13 @@ export const AgendasTimeView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TeamAvailability | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
+
+  // agendamento ao clicar num espaço livre
+  const [scheduling, setScheduling] = useState<{ date: string; time: string; closerId: string } | null>(null);
+  const [showLeadPicker, setShowLeadPicker] = useState(false);
+  const [schedLead, setSchedLead] = useState<Lead | null>(null);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const cache = useRef<Map<string, TeamAvailability>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -264,9 +273,61 @@ export const AgendasTimeView: React.FC = () => {
   const people = result?.people ?? [];
   const isToday = date === todayISODate();
 
-  const openEvent = (p: PersonAvailability, b: BusyBlock) => {
+  const openEvent = (p: PersonAvailability, b: BusyBlock, e: React.MouseEvent) => {
+    e.stopPropagation();
     if (p.source === "freebusy" && !b.title) return; // freebusy sem detalhe
     setSelected({ block: b, personName: p.name || p.email, color: colorForPerson(p) });
+  };
+
+  const leadsDisponiveis = useMemo(
+    () => leads.filter((l) =>
+      !["perdido", "estorno", "convertido"].includes(l.status) &&
+      (leadSearch ? l.empresa.toLowerCase().includes(leadSearch.toLowerCase()) : true),
+    ),
+    [leads, leadSearch],
+  );
+
+  // clique num espaço livre -> abre fluxo de agendamento com horário/closer pré-preenchidos
+  const onSlotClick = (p: PersonAvailability, e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    let totalMin = Math.round(((y / PX_PER_HOUR) * 60) / 30) * 30; // snap 30min
+    totalMin = Math.max(0, Math.min(totalMin, 23 * 60 + 30));
+    const hh = String(Math.floor(totalMin / 60)).padStart(2, "0");
+    const mm = String(totalMin % 60).padStart(2, "0");
+    const m = p.member_id ? memberById.get(p.member_id) : undefined;
+    const closerId = m && (m.role === "closer" || m.role === "gestor") ? m.id : "";
+    setScheduling({ date, time: `${hh}:${mm}`, closerId });
+    setSchedLead(null);
+    setLeadSearch("");
+    setShowLeadPicker(true);
+  };
+
+  const handleAgendarConfirm = async (dataReuniaoISO: string, closerId: string, participantesExtras?: string[], leadEmail?: string) => {
+    if (!schedLead || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await addReuniao({
+        lead_id: schedLead.id, empresa: schedLead.empresa,
+        nome_contato: schedLead.nome_contato || undefined, canal: schedLead.canal,
+        sdr_id: schedLead.sdr_id || currentUser?.id || undefined, closer_id: closerId || undefined,
+        kommo_id: schedLead.kommo_id || undefined,
+        data_agendamento: new Date().toISOString().split("T")[0], data_reuniao: dataReuniaoISO,
+        participantes_extras: participantesExtras || undefined, lead_email: leadEmail || undefined,
+      } as any);
+      toast.success("Reunião agendada!");
+      setSchedLead(null); setScheduling(null);
+      cache.current.delete(cacheKey); // invalida o dia para mostrar o novo evento
+      load(true);
+    } catch (err: any) {
+      if (err.message === "REUNIAO_ATIVA_EXISTENTE") {
+        toast.error("Já existe uma reunião ativa para esse lead. Use a tela de Reuniões para substituir.");
+      } else {
+        toast.error(err.message || "Falha ao agendar reunião");
+      }
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -364,7 +425,7 @@ export const AgendasTimeView: React.FC = () => {
                   {people.map((p) => (
                     <div key={p.email} className="flex-1 min-w-[150px] px-1 py-1 border-l border-[var(--color-v4-border)] space-y-0.5">
                       {p.busy.filter((b) => b.all_day).map((b, i) => (
-                        <div key={i} onClick={() => openEvent(p, b)} className="text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer" style={blockStyle(colorForPerson(p), b.status)} title={b.title}>
+                        <div key={i} onClick={(e) => openEvent(p, b, e)} className="text-[10px] px-1.5 py-0.5 rounded truncate cursor-pointer" style={blockStyle(colorForPerson(p), b.status)} title={b.title}>
                           {b.title}
                         </div>
                       ))}
@@ -388,20 +449,25 @@ export const AgendasTimeView: React.FC = () => {
                 {people.map((p) => {
                   const timed = layoutTimed(p.busy.filter((b) => !b.all_day), dayStartMs);
                   return (
-                    <div key={p.email} className="flex-1 min-w-[150px] relative border-l border-[var(--color-v4-border)]">
+                    <div
+                      key={p.email}
+                      onClick={(e) => onSlotClick(p, e)}
+                      title="Clique num espaço livre para agendar"
+                      className="flex-1 min-w-[150px] relative border-l border-[var(--color-v4-border)] cursor-pointer hover:bg-white/[0.02]"
+                    >
                       {hours.map((h) => (
-                        <div key={h} className="absolute left-0 right-0 border-t border-[var(--color-v4-border)]/30" style={{ top: h * PX_PER_HOUR }} />
+                        <div key={h} className="absolute left-0 right-0 border-t border-[var(--color-v4-border)]/30 pointer-events-none" style={{ top: h * PX_PER_HOUR }} />
                       ))}
 
                       {p.error ? (
-                        <div className="absolute inset-x-0 top-1/3 flex items-center justify-center text-center px-1">
+                        <div className="absolute inset-x-0 top-1/3 flex items-center justify-center text-center px-1 pointer-events-none">
                           <span className="text-[10px] text-amber-400/80 flex items-center gap-1"><AlertTriangle size={11} /> sem acesso ao free/busy</span>
                         </div>
                       ) : (
                         timed.map((b, i) => (
                           <div
                             key={i}
-                            onClick={() => openEvent(p, b)}
+                            onClick={(e) => openEvent(p, b, e)}
                             className="absolute rounded px-1 py-0.5 overflow-hidden shadow-sm cursor-pointer hover:brightness-110 hover:z-10 transition-[filter]"
                             style={{ top: b.top, height: b.height, left: `calc(${b.leftPct}% + 1px)`, width: `calc(${b.widthPct}% - 2px)`, ...blockStyle(colorForPerson(p), b.status) }}
                             title={`${b.title ? b.title + " · " : ""}${fmtTime(b.start)}–${fmtTime(b.end)}`}
@@ -424,6 +490,54 @@ export const AgendasTimeView: React.FC = () => {
       )}
 
       {selected && <EventModal ev={selected} onClose={() => setSelected(null)} />}
+
+      {/* Seletor de lead (mesmo fluxo da tela de Reuniões) */}
+      {showLeadPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => { setShowLeadPicker(false); setScheduling(null); }} />
+          <div className="relative w-full max-w-md bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
+            <div className="px-5 py-4 border-b border-[var(--color-v4-border)] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">Selecionar Lead</h3>
+                {scheduling && <p className="text-xs text-[var(--color-v4-text-muted)]">{formatDayLabel(scheduling.date)} · {scheduling.time}</p>}
+              </div>
+              <button onClick={() => { setShowLeadPicker(false); setScheduling(null); }} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="p-3 border-b border-[var(--color-v4-border)]">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-v4-text-muted)]" />
+                <input className="w-full pl-9 pr-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm" placeholder="Buscar lead..." value={leadSearch} onChange={(e) => setLeadSearch(e.target.value)} autoFocus />
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {leadsDisponiveis.slice(0, 30).map((l) => (
+                <button key={l.id} onClick={() => { setSchedLead(l); setShowLeadPicker(false); setLeadSearch(""); }}
+                  className="w-full text-left px-4 py-3 hover:bg-[var(--color-v4-card-hover)] border-b border-[var(--color-v4-border)] last:border-0 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-sm text-white font-medium">{l.empresa}</span>
+                      <p className="text-xs text-[var(--color-v4-text-muted)]">{l.nome_contato || "—"} · {CANAL_LABELS[l.canal]}</p>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)]">{LEAD_STATUS_LABELS[l.status]}</span>
+                  </div>
+                </button>
+              ))}
+              {leadsDisponiveis.length === 0 && <p className="text-sm text-[var(--color-v4-text-muted)] text-center py-8">Nenhum lead encontrado</p>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {schedLead && scheduling && (
+        <AgendarReuniaoModal
+          lead={schedLead}
+          initialDate={scheduling.date}
+          initialTime={scheduling.time}
+          initialCloserId={scheduling.closerId}
+          onConfirm={handleAgendarConfirm}
+          onClose={() => { setSchedLead(null); setScheduling(null); }}
+        />
+      )}
     </div>
   );
 };
