@@ -41,6 +41,7 @@ interface AppState {
 
   fetchReunioes: () => Promise<void>;
   addReuniao: (r: Partial<Reuniao>, replaceExisting?: boolean) => Promise<void>;
+  rescheduleReuniao: (existing: Reuniao, opts: { data_reuniao: string; closer_id?: string; lead_email?: string; participantes_extras?: string[] }) => Promise<void>;
   updateReuniao: (id: string, updates: Partial<Reuniao>) => Promise<void>;
 
   fetchMetas: () => Promise<void>;
@@ -543,6 +544,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toast.success('Reunião agendada!');
   };
 
+  // Reagenda uma reunião existente para um novo horário/closer (substituição).
+  // Move a MESMA reunião (não cria nova linha) e move o evento do Google Calendar
+  // (apaga o antigo + cria no novo horário) — assim não fica reunião fantasma pra trás.
+  const rescheduleReuniao = async (
+    existing: Reuniao,
+    opts: { data_reuniao: string; closer_id?: string; lead_email?: string; participantes_extras?: string[] },
+  ) => {
+    // 1. apaga o evento antigo no Calendar (se houver)
+    const oldEventId = (existing as any).calendar_event_id;
+    const oldOrganizer = existing.sdr_id || existing.closer_id;
+    if (oldEventId && oldOrganizer) {
+      await deleteCalendarEvent(oldOrganizer, oldEventId).catch(e => console.error('reschedule: falha ao apagar evento antigo:', e));
+    }
+
+    // 2. atualiza a própria reunião (mesma linha) com o novo horário/closer
+    const newCloserId = opts.closer_id ?? existing.closer_id;
+    const rowUpdates: any = {
+      data_reuniao: opts.data_reuniao,
+      closer_id: newCloserId || null,
+      calendar_event_id: null,
+      meet_link: null,
+    };
+    if (opts.participantes_extras) rowUpdates.participantes_extras = opts.participantes_extras;
+
+    const { error: upErr } = await supabase.from('reunioes').update(rowUpdates).eq('id', existing.id);
+    if (upErr) { toast.error(upErr.message); return; }
+    setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, ...rowUpdates } : r));
+
+    // 3. cria o evento novo no novo horário
+    const sdrId = existing.sdr_id;
+    const closer = newCloserId ? members.find(m => m.id === newCloserId) : null;
+    const sdrMember = sdrId ? members.find(m => m.id === sdrId) : null;
+    const calendarAvailable = sdrMember?.google_calendar_connected || closer?.google_calendar_connected;
+
+    if (calendarAvailable) {
+      const lead = existing.lead_id ? leads.find(l => l.id === existing.lead_id) : null;
+      try {
+        const calResult = await createCalendarEvent({
+          empresa: existing.empresa || lead?.empresa || 'Reunião',
+          nome_contato: existing.nome_contato || lead?.nome_contato || undefined,
+          canal: existing.canal || lead?.canal || undefined,
+          data_reuniao: opts.data_reuniao,
+          closer_id: newCloserId || undefined,
+          sdr_id: sdrId || undefined,
+          lead_email: opts.lead_email || (lead as any)?.email || undefined,
+          participantes_extras: opts.participantes_extras || (existing as any).participantes_extras || undefined,
+          lead_id: existing.lead_id || undefined,
+          reuniao_id: existing.id,
+        } as any);
+
+        if (calResult) {
+          await supabase.from('reunioes').update({ calendar_event_id: calResult.event_id, meet_link: calResult.meet_link }).eq('id', existing.id);
+          setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, calendar_event_id: calResult.event_id, meet_link: calResult.meet_link } : r));
+          toast.success('Reunião reagendada!', { icon: '📅' });
+          return;
+        }
+      } catch (e: any) {
+        console.error('reschedule: falha ao criar evento novo:', e);
+        toast.error('Reagendado, mas falhou criar o evento no Calendar: ' + (e.message || 'erro'));
+        return;
+      }
+    }
+
+    toast.success('Reunião reagendada!');
+  };
+
   // Lock para impedir dupla execução
   const reuniaoProcessingRef = React.useRef<Set<string>>(new Set());
 
@@ -857,7 +924,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchMembers, addMember, updateMember,
       fetchLeads, addLead, updateLead, deleteLead,
       fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal,
-      fetchReunioes, addReuniao, updateReuniao,
+      fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
       fetchMetas, saveMeta,
       fetchPerformanceSdr, savePerformanceSdr,
       fetchPerformanceCloser, savePerformanceCloser,
