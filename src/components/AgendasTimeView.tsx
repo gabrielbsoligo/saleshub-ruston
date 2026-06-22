@@ -5,7 +5,7 @@ import toast from "react-hot-toast";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
-import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead } from "../types";
+import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type Reuniao } from "../types";
 import { queryTeamAvailability, type TeamAvailability, type PersonAvailability, type BusyBlock, type RsvpStatus } from "../lib/teamAvailability";
 
 const TZ = "America/Sao_Paulo";
@@ -175,7 +175,7 @@ const EventModal: React.FC<{ ev: SelectedEvent; onClose: () => void }> = ({ ev, 
 };
 
 export const AgendasTimeView: React.FC = () => {
-  const { members, leads, addReuniao, currentUser } = useAppStore();
+  const { members, leads, reunioes, addReuniao, rescheduleReuniao, currentUser } = useAppStore();
 
   const eligible = useMemo(() => members.filter((m) => m.active && m.email), [members]);
   const memberById = useMemo(() => {
@@ -199,6 +199,10 @@ export const AgendasTimeView: React.FC = () => {
   const [schedLead, setSchedLead] = useState<Lead | null>(null);
   const [leadSearch, setLeadSearch] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  // substituição: reagendar reunião ativa existente do lead
+  const [pendingReschedule, setPendingReschedule] = useState<
+    { existing: Reuniao; data_reuniao: string; closer_id: string; lead_email?: string; participantes_extras?: string[] } | null
+  >(null);
 
   const cache = useRef<Map<string, TeamAvailability>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -315,16 +319,43 @@ export const AgendasTimeView: React.FC = () => {
         data_agendamento: new Date().toISOString().split("T")[0], data_reuniao: dataReuniaoISO,
         participantes_extras: participantesExtras || undefined, lead_email: leadEmail || undefined,
       } as any);
-      toast.success("Reunião agendada!");
       setSchedLead(null); setScheduling(null);
       cache.current.delete(cacheKey); // invalida o dia para mostrar o novo evento
       load(true);
     } catch (err: any) {
       if (err.message === "REUNIAO_ATIVA_EXISTENTE") {
-        toast.error("Já existe uma reunião ativa para esse lead. Use a tela de Reuniões para substituir.");
+        // lead já tem reunião ativa → abre substituição (reagendamento da existente)
+        const existing = reunioes.find((re) => re.lead_id === schedLead.id && !re.realizada && re.tipo !== "retorno");
+        if (existing) {
+          setPendingReschedule({ existing, data_reuniao: dataReuniaoISO, closer_id: closerId, lead_email: leadEmail, participantes_extras: participantesExtras });
+          setSchedLead(null); // fecha o modal de agendar; abre o de substituição
+        } else {
+          toast.error("Reunião ativa existente não encontrada.");
+        }
       } else {
         toast.error(err.message || "Falha ao agendar reunião");
       }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReplaceConfirm = async () => {
+    if (!pendingReschedule || isProcessing) return;
+    setIsProcessing(true);
+    try {
+      await rescheduleReuniao(pendingReschedule.existing, {
+        data_reuniao: pendingReschedule.data_reuniao,
+        closer_id: pendingReschedule.closer_id || undefined,
+        lead_email: pendingReschedule.lead_email,
+        participantes_extras: pendingReschedule.participantes_extras,
+      });
+      setPendingReschedule(null);
+      setScheduling(null);
+      cache.current.delete(cacheKey);
+      load(true);
+    } catch (err: any) {
+      toast.error(err.message || "Falha ao reagendar reunião");
     } finally {
       setIsProcessing(false);
     }
@@ -537,6 +568,39 @@ export const AgendasTimeView: React.FC = () => {
           onConfirm={handleAgendarConfirm}
           onClose={() => { setSchedLead(null); setScheduling(null); }}
         />
+      )}
+
+      {/* Substituição: reagendar a reunião ativa existente do lead */}
+      {pendingReschedule && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => { setPendingReschedule(null); setScheduling(null); }} />
+          <div className="relative w-full max-w-sm bg-[var(--color-v4-card)] border border-yellow-500/30 rounded-2xl shadow-2xl p-6">
+            <h3 className="text-sm font-bold text-yellow-400 mb-1">Reunião já existente</h3>
+            <p className="text-xs text-[var(--color-v4-text-muted)] mb-4">
+              Este lead já tem uma reunião ativa. Deseja <strong className="text-white">reagendá-la</strong> para o novo horário? A reunião atual será movida (sem deixar evento duplicado).
+            </p>
+            <div className="space-y-2 mb-5 text-sm">
+              <div className="flex items-center justify-between bg-[var(--color-v4-surface)] rounded-lg px-3 py-2">
+                <span className="text-[var(--color-v4-text-muted)] text-xs">De</span>
+                <span className="text-white line-through opacity-70">
+                  {pendingReschedule.existing.data_reuniao ? new Date(pendingReschedule.existing.data_reuniao).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: TZ }) : "—"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                <span className="text-emerald-300/80 text-xs">Para</span>
+                <span className="text-emerald-300 font-medium">
+                  {new Date(pendingReschedule.data_reuniao).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: TZ })}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => { setPendingReschedule(null); setScheduling(null); }}
+                className="flex-1 py-2.5 rounded-xl border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] text-sm">Cancelar</button>
+              <button onClick={handleReplaceConfirm} disabled={isProcessing}
+                className="flex-1 py-2.5 rounded-xl bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-black font-bold text-sm">{isProcessing ? "Reagendando..." : "Reagendar"}</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
