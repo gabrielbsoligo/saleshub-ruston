@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
+import { RoletaPanel } from "./RoletaPanel";
 import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type Reuniao } from "../types";
 import { queryTeamAvailability, type TeamAvailability, type PersonAvailability, type BusyBlock, type RsvpStatus } from "../lib/teamAvailability";
 
@@ -402,6 +403,9 @@ export const AgendasTimeView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Indicador do rodízio de closers */}
+      <RoletaPanel />
 
       {/* Janelas livres + legenda */}
       <div className="flex items-center gap-3 flex-wrap mb-3">
