@@ -18,6 +18,9 @@ export interface ComissoesConfig {
   dateField: DateField;
   yearMonth: string;
   filters?: ComissoesFilters;
+  // Quando definido, restringe os registros ao próprio colaborador
+  // (SDR/Closer só veem as próprias comissões). Vazio = vê tudo (gestor/financeiro).
+  restrictMemberId?: string;
 }
 
 export interface ComissoesTotals {
@@ -52,7 +55,7 @@ function groupKeyForView(view: ViewMode): (r: ComissaoRegistro) => string {
 }
 
 export function useComissoes(config: ComissoesConfig): UseComissoesResult {
-  const { view, dateField, yearMonth, filters } = config;
+  const { view, dateField, yearMonth, filters, restrictMemberId } = config;
   const [registros, setRegistros] = useState<ComissaoRegistro[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +76,9 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
         query = query.gte(dateField, start).lte(dateField, end);
       }
 
+      // Restrição por colaborador (SDR/Closer só veem as próprias comissões)
+      if (restrictMemberId) query = query.eq('member_id', restrictMemberId);
+
       if (filters?.status && filters.status.length > 0) query = query.in('status_comissao', filters.status);
       if (filters?.vendedor && filters.vendedor.length > 0) query = query.in('member_name', filters.vendedor);
 
@@ -89,7 +95,7 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
     } finally {
       setIsLoading(false);
     }
-  }, [yearMonth, dateField, JSON.stringify(filters?.status), JSON.stringify(filters?.vendedor)]);
+  }, [yearMonth, dateField, restrictMemberId, JSON.stringify(filters?.status), JSON.stringify(filters?.vendedor)]);
 
   useEffect(() => { fetchRegistros(); }, [fetchRegistros]);
 
@@ -97,11 +103,12 @@ export function useComissoes(config: ComissoesConfig): UseComissoesResult {
   const rows = useMemo(() => {
     const search = (filters?.empresa || '').toLowerCase().trim();
     return registros.filter((r) => {
+      if (restrictMemberId && r.member_id !== restrictMemberId) return false;
       if (view === 'sdr' && r.role_comissao !== 'sdr') return false;
       if (search && !(r.empresa || '').toLowerCase().includes(search)) return false;
       return true;
     });
-  }, [registros, filters?.empresa, view]);
+  }, [registros, filters?.empresa, view, restrictMemberId]);
 
   const keyFn = useMemo(() => groupKeyForView(view), [view]);
   const aggFns = useMemo(() => ({
