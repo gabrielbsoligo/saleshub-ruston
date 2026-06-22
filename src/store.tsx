@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus } from './types';
+import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus, RoletaStatusRow } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
 import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
@@ -44,6 +44,13 @@ interface AppState {
   rescheduleReuniao: (existing: Reuniao, opts: { data_reuniao: string; closer_id?: string; lead_email?: string; participantes_extras?: string[] }) => Promise<void>;
   updateReuniao: (id: string, updates: Partial<Reuniao>) => Promise<void>;
 
+  // Roleta de reuniões (rodízio de closers)
+  roleta: RoletaStatusRow[];
+  fetchRoleta: () => Promise<void>;
+  roletaReset: () => Promise<void>;
+  roletaSetAtivo: (memberId: string, ativo: boolean) => Promise<void>;
+  updateRoletaOrdem: (memberId: string, ordem: number) => Promise<void>;
+
   fetchMetas: () => Promise<void>;
   saveMeta: (m: Partial<Meta>) => Promise<void>;
 
@@ -81,6 +88,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [reunioes, setReunioes] = useState<Reuniao[]>([]);
+  const [roleta, setRoleta] = useState<RoletaStatusRow[]>([]);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [comissoes, setComissoes] = useState<ComissaoConfig[]>([]);
   const [performanceSdr, setPerformanceSdr] = useState<PerformanceSdr[]>([]);
@@ -542,6 +550,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     toast.success('Reunião agendada!');
+    fetchRoleta(); // atualiza a fila do rodízio
   };
 
   // Reagenda uma reunião existente para um novo horário/closer (substituição).
@@ -571,6 +580,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const { error: upErr } = await supabase.from('reunioes').update(rowUpdates).eq('id', existing.id);
     if (upErr) { toast.error(upErr.message); return; }
     setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, ...rowUpdates } : r));
+    fetchRoleta(); // closer mudou → atualiza a fila do rodízio
 
     // 3. cria o evento novo no novo horário
     const sdrId = existing.sdr_id;
@@ -608,6 +618,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     toast.success('Reunião reagendada!');
+  };
+
+  // ===================== ROLETA DE REUNIÕES =====================
+  const fetchRoleta = useCallback(async () => {
+    const { data, error } = await supabase.rpc('get_roleta_status');
+    if (error) { console.error('fetchRoleta:', error.message); return; }
+    setRoleta((data || []) as RoletaStatusRow[]);
+  }, []);
+
+  const roletaReset = async () => {
+    const { error } = await supabase.rpc('roleta_reset');
+    if (error) { toast.error(error.message); return; }
+    toast.success('Rodízio zerado!');
+    fetchRoleta();
+  };
+
+  const roletaSetAtivo = async (memberId: string, ativo: boolean) => {
+    const { error } = await supabase.rpc('roleta_set_ativo', { p_member_id: memberId, p_ativo: ativo });
+    if (error) { toast.error(error.message); return; }
+    fetchRoleta();
+  };
+
+  const updateRoletaOrdem = async (memberId: string, ordem: number) => {
+    const { error } = await supabase.from('roleta_closers').update({ ordem, updated_at: new Date().toISOString() }).eq('member_id', memberId);
+    if (error) { toast.error(error.message); return; }
+    fetchRoleta();
   };
 
   // Lock para impedir dupla execução
@@ -914,8 +950,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchPerformanceCloser();
       fetchCustos();
       fetchLigacoes();
+      fetchRoleta();
     }
-  }, [currentUser, fetchMembers, fetchDeals, fetchLeads, fetchReunioes, fetchMetas, fetchComissoes, fetchPerformanceSdr, fetchPerformanceCloser, fetchCustos]);
+  }, [currentUser, fetchMembers, fetchDeals, fetchLeads, fetchReunioes, fetchMetas, fetchComissoes, fetchPerformanceSdr, fetchPerformanceCloser, fetchCustos, fetchRoleta]);
 
   return (
     <AppContext.Provider value={{
@@ -925,6 +962,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchLeads, addLead, updateLead, deleteLead,
       fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal,
       fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
+      roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem,
       fetchMetas, saveMeta,
       fetchPerformanceSdr, savePerformanceSdr,
       fetchPerformanceCloser, savePerformanceCloser,
