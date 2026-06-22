@@ -10,6 +10,9 @@ import { queryTeamAvailability, type TeamAvailability, type PersonAvailability, 
 
 const TZ = "America/Sao_Paulo";
 const PX_PER_HOUR = 48;
+const SLOT_MIN = 30;
+const SLOT_PX = PX_PER_HOUR * (SLOT_MIN / 60); // altura de um bloco de 30min
+const SLOTS_PER_DAY = (24 * 60) / SLOT_MIN; // 48
 const DAY_HEIGHT = 24 * PX_PER_HOUR;
 const COL_MIN_WIDTH = 150;
 const GUTTER_W = 52;
@@ -192,6 +195,8 @@ export const AgendasTimeView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TeamAvailability | null>(null);
   const [selected, setSelected] = useState<SelectedEvent | null>(null);
+  // bloco de 30min sob o cursor (destaque do que será selecionado ao clicar)
+  const [hoverSlot, setHoverSlot] = useState<{ email: string; slot: number } | null>(null);
 
   // agendamento ao clicar num espaço livre
   const [scheduling, setScheduling] = useState<{ date: string; time: string; closerId: string } | null>(null);
@@ -291,12 +296,16 @@ export const AgendasTimeView: React.FC = () => {
     [leads, leadSearch],
   );
 
+  // índice do bloco de 30min sob o cursor (0..47)
+  const slotFromEvent = (e: React.MouseEvent<HTMLDivElement>): number => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const slot = Math.floor((e.clientY - rect.top) / SLOT_PX);
+    return Math.max(0, Math.min(slot, SLOTS_PER_DAY - 1));
+  };
+
   // clique num espaço livre -> abre fluxo de agendamento com horário/closer pré-preenchidos
   const onSlotClick = (p: PersonAvailability, e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    let totalMin = Math.round(((y / PX_PER_HOUR) * 60) / 30) * 30; // snap 30min
-    totalMin = Math.max(0, Math.min(totalMin, 23 * 60 + 30));
+    const totalMin = slotFromEvent(e) * SLOT_MIN;
     const hh = String(Math.floor(totalMin / 60)).padStart(2, "0");
     const mm = String(totalMin % 60).padStart(2, "0");
     const m = p.member_id ? memberById.get(p.member_id) : undefined;
@@ -483,12 +492,26 @@ export const AgendasTimeView: React.FC = () => {
                     <div
                       key={p.email}
                       onClick={(e) => onSlotClick(p, e)}
+                      onMouseMove={(e) => setHoverSlot({ email: p.email, slot: slotFromEvent(e) })}
+                      onMouseLeave={() => setHoverSlot((h) => (h?.email === p.email ? null : h))}
                       title="Clique num espaço livre para agendar"
-                      className="flex-1 min-w-[150px] relative border-l border-[var(--color-v4-border)] cursor-pointer hover:bg-white/[0.02]"
+                      className="flex-1 min-w-[150px] relative border-l border-[var(--color-v4-border)] cursor-pointer"
                     >
                       {hours.map((h) => (
                         <div key={h} className="absolute left-0 right-0 border-t border-[var(--color-v4-border)]/30 pointer-events-none" style={{ top: h * PX_PER_HOUR }} />
                       ))}
+
+                      {/* destaque do bloco de 30min sob o cursor */}
+                      {hoverSlot?.email === p.email && (
+                        <div
+                          className="absolute left-0.5 right-0.5 rounded-sm bg-[var(--color-v4-red)]/20 border border-[var(--color-v4-red)]/50 pointer-events-none z-[5] flex items-start justify-end px-1"
+                          style={{ top: hoverSlot.slot * SLOT_PX, height: SLOT_PX }}
+                        >
+                          <span className="text-[8px] text-white/80 leading-tight mt-0.5">
+                            {String(Math.floor((hoverSlot.slot * SLOT_MIN) / 60)).padStart(2, "0")}:{String((hoverSlot.slot * SLOT_MIN) % 60).padStart(2, "0")}
+                          </span>
+                        </div>
+                      )}
 
                       {p.error ? (
                         <div className="absolute inset-x-0 top-1/3 flex items-center justify-center text-center px-1 pointer-events-none">
