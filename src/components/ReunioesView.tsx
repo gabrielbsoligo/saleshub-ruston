@@ -1,13 +1,14 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../store";
 import { CANAL_LABELS, LEAD_STATUS_LABELS, type Lead, type PostMeetingAutomation } from "../types";
-import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle, Edit2 } from "lucide-react";
+import { Plus, Check, X as XIcon, Calendar, Search, User, Video, ChevronDown, ChevronRight, AlertTriangle, RefreshCw, Sparkles, Loader2, CheckCircle2, XCircle, Edit2, Repeat, Settings2 } from "lucide-react";
 import { createCalendarEvent } from "../lib/googleCalendar";
 import toast from "react-hot-toast";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { FeedbackDrawer } from "./FeedbackDrawer";
 import { ReuniaoEditModal } from "./ReuniaoEditModal";
+import { RoletaConfigModal } from "./RoletaConfigModal";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { supabase } from "../lib/supabase";
 import type { Reuniao } from "../types";
@@ -109,7 +110,8 @@ function groupByDay(reunioes: Reuniao[]): { label: string; date: string; items: 
 }
 
 export const ReunioesView: React.FC = () => {
-  const { reunioes, leads, deals, addReuniao, rescheduleReuniao, updateReuniao, members, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
+  const { reunioes, leads, deals, addReuniao, rescheduleReuniao, updateReuniao, members, roleta, automations, startPostMeetingAutomation, getAutomationByReuniao } = useAppStore();
+  const [showRoleta, setShowRoleta] = useState(false);
   const [showLeadPicker, setShowLeadPicker] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [confirmar, setConfirmar] = useState<Reuniao | null>(null);
@@ -409,10 +411,43 @@ export const ReunioesView: React.FC = () => {
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-2xl font-display font-bold text-white">Reuniões</h2>
-        <button onClick={() => setShowLeadPicker(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm">
-          <Plus size={16} /> Agendar Reunião
-        </button>
+        <div className="flex items-center gap-2">
+          {currentUser?.role === 'gestor' && (
+            <button onClick={() => setShowRoleta(true)} title="Gerenciar rodízio de closers"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-sm">
+              <Settings2 size={14} /> Rodízio
+            </button>
+          )}
+          <button onClick={() => setShowLeadPicker(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm">
+            <Plus size={16} /> Agendar Reunião
+          </button>
+        </div>
       </div>
+
+      {/* Indicador do rodízio de closers */}
+      {roleta.length > 0 && (
+        <div className="mb-4 rounded-xl border border-[var(--color-v4-border)] bg-[var(--color-v4-card)] p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Repeat size={14} className="text-[var(--color-v4-red)]" />
+            <span className="text-xs font-semibold text-white">Rodízio de Closers</span>
+            <span className="text-[11px] text-[var(--color-v4-text-muted)]">— próximo a receber em destaque</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {roleta.map((r, i) => (
+              <span key={r.member_id}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
+                  i === 0
+                    ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-white"
+                    : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)]"
+                }`}>
+                {i === 0 && <span className="text-[9px] font-bold uppercase text-[var(--color-v4-red)]">próximo</span>}
+                <span className={i === 0 ? "text-white font-medium" : ""}>{r.name}</span>
+                <span className="text-[10px] opacity-70">{r.total}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex gap-3 mb-6">
@@ -571,6 +606,7 @@ export const ReunioesView: React.FC = () => {
       {selectedLead && !showReplace && <AgendarReuniaoModal lead={selectedLead} onConfirm={handleAgendarConfirm} onClose={() => setSelectedLead(null)} />}
       {confirmar && <ConfirmarReuniaoModal reuniao={confirmar} onConfirm={handleConfirm} onClose={() => setConfirmar(null)} />}
       <ReuniaoEditModal reuniao={editar} onClose={() => setEditar(null)} />
+      <RoletaConfigModal open={showRoleta} onClose={() => setShowRoleta(false)} />
       {feedbackDealId && (() => {
         const d = deals.find(dd => dd.id === feedbackDealId);
         return d ? <FeedbackDrawer deal={d} onClose={() => setFeedbackDealId(null)} /> : null;

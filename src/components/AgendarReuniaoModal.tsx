@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { X, Calendar, Check, Plus, Video } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { X, Calendar, Check, Plus, Video, Repeat } from "lucide-react";
 import { DateInput } from "./ui/DateInput";
 import type { Lead } from "../types";
 import { CANAL_LABELS } from "../types";
@@ -15,8 +15,10 @@ interface Props {
 }
 
 export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initialTime, initialCloserId, onConfirm, onClose }) => {
-  const { members } = useAppStore();
+  const { members, roleta } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
+  const roletaMap = useMemo(() => new Map(roleta.map(r => [r.member_id, r])), [roleta]);
+  const proximo = roleta[0]; // menor contagem = próximo do rodízio
   const [date, setDate] = useState(initialDate || '');
   const [time, setTime] = useState(initialTime || '');
   const [closerId, setCloserId] = useState(initialCloserId || '');
@@ -59,15 +61,30 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
             </p>
           </div>
 
+          {proximo && (
+            <div className="flex items-center gap-2 rounded-lg bg-[var(--color-v4-red)]/10 border border-[var(--color-v4-red)]/30 px-3 py-2">
+              <Repeat size={14} className="text-[var(--color-v4-red)] flex-shrink-0" />
+              <span className="text-xs text-white">
+                Próximo do rodízio: <strong>{proximo.name}</strong>
+                <span className="text-[var(--color-v4-text-muted)]"> ({proximo.total} reuniõe{proximo.total === 1 ? "" : "s"})</span>
+              </span>
+            </div>
+          )}
+
           <div>
             <label className={labelClass}>Closer que vai atender *</label>
             <select className={inputClass} value={closerId} onChange={e => setCloserId(e.target.value)}>
               <option value="">Selecionar closer</option>
-              {closers.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name} {c.google_calendar_connected ? '📅' : ''}
-                </option>
-              ))}
+              {closers.map(c => {
+                const r = roletaMap.get(c.id);
+                const isNext = proximo?.member_id === c.id;
+                return (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.google_calendar_connected ? ' 📅' : ''}
+                    {r ? ` · ${r.total}${isNext ? ' ◀ próximo' : ''}` : ''}
+                  </option>
+                );
+              })}
             </select>
             {closerId && !calendarConnected && (
               <p className="text-[10px] text-yellow-400 mt-1">⚠️ Closer não conectou Google Calendar. Evento não será criado automaticamente.</p>

@@ -225,6 +225,25 @@ export interface Meta {
   created_at: string;
 }
 
+// Roleta de reuniões (rodízio de closers)
+export interface RoletaCloser {
+  member_id: string;
+  ativo: boolean;
+  ordem: number;
+  base_count: number;
+  updated_at: string;
+}
+
+// Linha retornada por get_roleta_status() — 1ª linha = próximo
+export interface RoletaStatusRow {
+  member_id: string;
+  name: string;
+  ordem: number;
+  base_count: number;
+  recebidas: number;
+  total: number;
+}
+
 export interface CompromissoDia {
   id: string;
   member_id: string;
