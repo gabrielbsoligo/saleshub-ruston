@@ -37,7 +37,7 @@ interface Lead {
   id: string
   kommo_id: string
   empresa: string
-  nome_contato: string
+  nome_contato: string | null
   telefone: string | null
   email: string | null
 }
@@ -78,7 +78,8 @@ async function createKommoContact(lead: Lead, token: string) {
     })
   }
   const payloadContact = [{
-    first_name: lead.nome_contato,
+    // sem nome de pessoa, usa a empresa como nome do contato
+    first_name: lead.nome_contato || lead.empresa,
     custom_fields_values: customFields.length ? customFields : undefined,
   }]
 
@@ -143,15 +144,16 @@ Deno.serve(async (req) => {
     }
   } catch { /* sem body — segue cron mode */ }
 
-  // Pega candidatos
+  // Pega candidatos: lead com kommo_id, ainda sem contato sincronizado,
+  // e com ALGUM dado de contato (telefone OU e-mail). O nome não é exigido —
+  // sem pessoa, o contato é criado com o nome da empresa.
   let query = supabase
     .from('leads')
     .select('id, kommo_id, empresa, nome_contato, telefone, email')
     .not('kommo_id', 'is', null)
-    .not('nome_contato', 'is', null)
     .neq('kommo_id', '')
-    .neq('nome_contato', '')
     .is('kommo_contact_synced_at', null)
+    .or('telefone.not.is.null,email.not.is.null')
     .limit(BATCH_SIZE)
 
   if (manualIds) query = query.in('id', manualIds).limit(manualIds.length)
