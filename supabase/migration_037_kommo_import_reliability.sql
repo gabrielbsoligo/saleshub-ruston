@@ -223,11 +223,14 @@ BEGIN
                 -- Resposta não está mais disponível (GC do pg_net). Se já é antiga,
                 -- expira para não entupir a fila para sempre.
                 IF log_rec.attempted_at < now() - interval '30 minutes' THEN
+                    -- success é coluna gerada (2xx) — não setar; response_status fica NULL
                     UPDATE kommo_sync_log
                     SET completed_at = now(),
-                        success = false,
                         error_message = 'Resposta do Kommo expirada (pg_net GC) — status desconhecido'
                     WHERE id = log_rec.log_id;
+                    -- libera o lead para reenvio (sem kommo_id e sem request em voo)
+                    UPDATE leads SET kommo_request_id = NULL
+                    WHERE id = log_rec.lead_id AND log_rec.action = 'create_lead';
                 END IF;
                 CONTINUE;
             END IF;
@@ -239,7 +242,6 @@ BEGIN
                     ELSE resp_rec.content::jsonb
                 END,
                 completed_at = now(),
-                success = (resp_rec.status_code BETWEEN 200 AND 299),
                 error_message = CASE
                     WHEN resp_rec.status_code >= 400 THEN
                         'HTTP ' || resp_rec.status_code || ': ' || COALESCE(LEFT(resp_rec.content, 500), '(sem corpo)')
@@ -275,7 +277,6 @@ BEGIN
             -- Uma linha problemática não pode derrubar o lote inteiro.
             UPDATE kommo_sync_log
             SET completed_at = now(),
-                success = false,
                 error_message = 'Erro ao processar resposta: ' || LEFT(SQLERRM, 300)
             WHERE id = log_rec.log_id;
         END;
