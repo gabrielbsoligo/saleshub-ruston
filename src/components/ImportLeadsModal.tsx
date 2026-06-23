@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { X, UploadCloud, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight } from "lucide-react";
 import toast from "react-hot-toast";
@@ -36,6 +36,11 @@ const GUESSES: Record<string, string[]> = {
 const norm = (s: string) => (s || "").trim().toLowerCase();
 const digits = (s: string) => (s || "").replace(/\D/g, "");
 
+const SUPABASE_FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+interface KommoPipeline { pipeline_id: number; name: string; statuses: { id: number; name: string }[]; }
+
 type RowStatus =
   | { kind: "nova" }
   | { kind: "invalida"; motivo: string }
@@ -43,7 +48,8 @@ type RowStatus =
 
 export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const { leads, members, bulkImportLeads } = useAppStore();
-  const sdrs = useMemo(() => members.filter((m) => (m.role === "sdr" || m.role === "gestor") && m.active), [members]);
+  // Libera todos os usuários ativos como possível responsável
+  const responsaveis = useMemo(() => members.filter((m) => m.active), [members]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -54,11 +60,33 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const [mapping, setMapping] = useState<Record<string, number>>({});
   const [canal, setCanal] = useState<LeadCanal>("outbound");
   const [sdrId, setSdrId] = useState("");
+  const [pipelines, setPipelines] = useState<KommoPipeline[]>([]);
+  const [pipelineId, setPipelineId] = useState<number | "">("");
+  const [statusId, setStatusId] = useState<number | "">("");
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ inserted: number; failed: number } | null>(null);
 
   const inputClass = "w-full px-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
+
+  // Busca os funis/etapas reais do Kommo (silencioso: se falhar, cai no automático pelo canal)
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/kommo-pipelines`, {
+          headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        setPipelines(data.pipelines || []);
+      } catch { /* mantém vazio → usa mapeamento por canal */ }
+    })();
+  }, []);
+
+  const statusesOfPipeline = useMemo(
+    () => pipelines.find((p) => p.pipeline_id === pipelineId)?.statuses || [],
+    [pipelines, pipelineId],
+  );
 
   // ---------- Parse (CSV ou XLSX) ----------
   const ingest = (matrix: any[][]) => {
@@ -181,6 +209,10 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   );
 
   const handleImport = async () => {
+    // Funil/etapa escolhidos (se houver). Etapa vazia → 1ª etapa real do funil.
+    const chosenPipeline = pipelineId || null;
+    const chosenStatus = chosenPipeline ? (statusId || statusesOfPipeline[0]?.id || null) : null;
+
     const toCreate: Partial<Lead>[] = [];
     parsed.forEach((p, i) => {
       if (statuses[i].kind === "invalida" || !decisions[i]) return;
@@ -196,6 +228,8 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         canal,
         sdr_id: sdrId || undefined,
         status: "sem_contato",
+        kommo_pipeline_id: chosenPipeline ?? undefined,
+        kommo_status_id: chosenStatus ?? undefined,
       });
     });
     if (!toCreate.length) { toast.error("Nada selecionado para importar."); return; }
@@ -289,13 +323,35 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">SDR responsável (todo o lote)</label>
+                  <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">Responsável (todo o lote)</label>
                   <select className={inputClass} value={sdrId} onChange={(e) => setSdrId(e.target.value)}>
-                    <option value="">— sem SDR —</option>
-                    {sdrs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    <option value="">— sem responsável —</option>
+                    {responsaveis.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
               </div>
+
+              {/* Funil + etapa do Kommo (opcional; senão deriva do canal) */}
+              {pipelines.length > 0 && (
+                <div className="grid grid-cols-2 gap-3 border-t border-[var(--color-v4-border)] pt-4">
+                  <div>
+                    <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">Funil no Kommo</label>
+                    <select className={inputClass} value={pipelineId}
+                      onChange={(e) => { const v = e.target.value ? parseInt(e.target.value, 10) : ""; setPipelineId(v); setStatusId(""); }}>
+                      <option value="">— automático (pelo canal) —</option>
+                      {pipelines.map((p) => <option key={p.pipeline_id} value={p.pipeline_id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">Etapa</label>
+                    <select className={inputClass} value={statusId} disabled={!pipelineId}
+                      onChange={(e) => setStatusId(e.target.value ? parseInt(e.target.value, 10) : "")}>
+                      <option value="">{pipelineId ? "— 1ª etapa do funil —" : "—"}</option>
+                      {statusesOfPipeline.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
