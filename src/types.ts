@@ -117,6 +117,7 @@ export interface Lead {
   kommo_link?: string;
   kommo_pipeline_id?: number | null;
   kommo_status_id?: number | null;
+  kommo_tags?: string[] | null;
   mktlab_link?: string;
   mktlab_id?: string;
   status: LeadStatus;

@@ -44,7 +44,19 @@ Deno.serve(async (req) => {
         .map((s: any) => ({ id: s.id, name: s.name })),
     }))
 
-    return new Response(JSON.stringify({ pipelines }), {
+    // Tags existentes (até 250) para sugerir na importação
+    let tags: string[] = []
+    try {
+      const tagResp = await fetch(`${KOMMO_BASE}/api/v4/leads/tags?limit=250`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      })
+      if (tagResp.ok) {
+        const td = await tagResp.json()
+        tags = (td?._embedded?.tags || []).map((t: any) => t.name).filter(Boolean)
+      }
+    } catch { /* tags são opcionais */ }
+
+    return new Response(JSON.stringify({ pipelines, tags }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (e: any) {
