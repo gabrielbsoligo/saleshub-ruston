@@ -63,6 +63,8 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const [pipelines, setPipelines] = useState<KommoPipeline[]>([]);
   const [pipelineId, setPipelineId] = useState<number | "">("");
   const [statusId, setStatusId] = useState<number | "">("");
+  const [kommoTags, setKommoTags] = useState<string[]>([]);
+  const [tagsInput, setTagsInput] = useState("");
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ inserted: number; failed: number } | null>(null);
@@ -79,6 +81,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         if (!resp.ok) return;
         const data = await resp.json();
         setPipelines(data.pipelines || []);
+        setKommoTags(data.tags || []);
       } catch { /* mantém vazio → usa mapeamento por canal */ }
     })();
   }, []);
@@ -212,6 +215,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
     // Funil/etapa escolhidos (se houver). Etapa vazia → 1ª etapa real do funil.
     const chosenPipeline = pipelineId || null;
     const chosenStatus = chosenPipeline ? (statusId || statusesOfPipeline[0]?.id || null) : null;
+    const tags = tagsInput.split(",").map((t) => t.trim()).filter(Boolean);
 
     const toCreate: Partial<Lead>[] = [];
     parsed.forEach((p, i) => {
@@ -230,6 +234,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         status: "sem_contato",
         kommo_pipeline_id: chosenPipeline ?? undefined,
         kommo_status_id: chosenStatus ?? undefined,
+        kommo_tags: tags.length ? tags : undefined,
       });
     });
     if (!toCreate.length) { toast.error("Nada selecionado para importar."); return; }
@@ -329,6 +334,19 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
                     {responsaveis.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
+              </div>
+
+              {/* Tags do Kommo (aplicadas a todo o lote) */}
+              <div>
+                <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">Tags no Kommo (separadas por vírgula)</label>
+                <input className={inputClass} value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
+                  list="kommo-tags-list" placeholder="ex.: Importação Out/26, Lista Frio" />
+                <datalist id="kommo-tags-list">
+                  {kommoTags.map((t) => <option key={t} value={t} />)}
+                </datalist>
+                {kommoTags.length > 0 && (
+                  <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">{kommoTags.length} tags existentes sugeridas · tags novas são criadas no Kommo.</p>
+                )}
               </div>
 
               {/* Funil + etapa do Kommo (opcional; senão deriva do canal) */}
