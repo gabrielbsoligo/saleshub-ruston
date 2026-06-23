@@ -30,7 +30,7 @@ interface AppState {
 
   fetchLeads: () => Promise<void>;
   addLead: (l: Partial<Lead>) => Promise<Lead | null>;
-  bulkImportLeads: (rows: Partial<Lead>[]) => Promise<{ inserted: number; failed: number }>;
+  bulkImportLeads: (rows: Partial<Lead>[]) => Promise<{ inserted: number; failed: number; ids: string[] }>;
   updateLead: (id: string, updates: Partial<Lead>) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
 
@@ -290,26 +290,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return data;
   };
 
-  // Importação em massa: insere em lotes. O trigger sync_lead_to_kommo() roda por
-  // linha e cria os leads no Kommo automaticamente (kommo_id chega async via
-  // process_kommo_responses). A deduplicação é feita ANTES, na tela de import.
-  const bulkImportLeads = async (rows: Partial<Lead>[]): Promise<{ inserted: number; failed: number }> => {
-    if (!rows.length) return { inserted: 0, failed: 0 };
-    const chunkSize = 50;
-    let inserted = 0;
+  // Importação em massa: insere em lotes PEQUENOS com pausa entre eles. Cada INSERT
+  // dispara o trigger sync_lead_to_kommo() (1 post pro Kommo por lead) — inserir em
+  // chunks pequenos espaçados evita estourar o rate limit (~7 req/s) do Kommo (429).
+  // O kommo_id chega async via process_kommo_responses. Dedupe é feito ANTES na tela.
+  const bulkImportLeads = async (rows: Partial<Lead>[]): Promise<{ inserted: number; failed: number; ids: string[] }> => {
+    if (!rows.length) return { inserted: 0, failed: 0, ids: [] };
+    const chunkSize = 5;
+    const delayMs = 1200;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     let failed = 0;
+    const ids: string[] = [];
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize);
       const { data, error } = await supabase.from('leads').insert(chunk).select('id');
       if (error) {
         console.error('bulkImportLeads chunk falhou:', error.message);
         failed += chunk.length;
-      } else {
-        inserted += data?.length ?? chunk.length;
+      } else if (data) {
+        ids.push(...data.map((d: any) => d.id));
       }
+      if (i + chunkSize < rows.length) await sleep(delayMs);
     }
     await fetchLeads();
-    return { inserted, failed };
+    return { inserted: ids.length, failed, ids };
   };
 
   const updateLead = async (id: string, updates: Partial<Lead>) => {

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
-import { X, UploadCloud, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight } from "lucide-react";
+import { X, UploadCloud, FileSpreadsheet, Loader2, CheckCircle2, AlertTriangle, ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAppStore } from "../store";
 import { CANAL_LABELS, type LeadCanal, type Lead } from "../types";
@@ -40,6 +40,9 @@ const SUPABASE_FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 interface KommoPipeline { pipeline_id: number; name: string; statuses: { id: number; name: string }[]; }
+interface ImportProgress { total: number; created: number; failed: number; pending: number; errors: { empresa: string; status: number | null; msg: string }[]; }
+
+const POLL_MAX_MS = 180000; // 3 min
 
 type RowStatus =
   | { kind: "nova" }
@@ -67,7 +70,14 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const [tagsInput, setTagsInput] = useState("");
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
-  const [result, setResult] = useState<{ inserted: number; failed: number } | null>(null);
+  const [result, setResult] = useState<{ inserted: number; failed: number; ids: string[] } | null>(null);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
+  const [polling, setPolling] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const pollStopRef = useRef(false);
+  const startTimeRef = useRef(0);
+
+  useEffect(() => () => { pollStopRef.current = true; }, []);
 
   const inputClass = "w-full px-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
 
@@ -244,12 +254,58 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
       setResult(res);
       setStep(4);
       if (res.inserted) toast.success(`${res.inserted} lead(s) importado(s)!`);
+      if (res.ids.length) {
+        setProgress({ total: res.ids.length, created: 0, failed: 0, pending: res.ids.length, errors: [] });
+        startPolling(res.ids, false);
+      }
     } catch (e: any) {
       toast.error(e.message || "Falha ao importar");
     } finally {
       setImporting(false);
     }
   };
+
+  // Consulta o status de criação no Kommo (drena respostas; opcionalmente reenvia falhas)
+  const fetchStatus = async (ids: string[], retry: boolean): Promise<ImportProgress | null> => {
+    try {
+      const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/kommo-import-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        body: JSON.stringify({ leadIds: ids, retry }),
+      });
+      if (!resp.ok) return null;
+      const data = await resp.json();
+      if (data.error) return null;
+      return data as ImportProgress;
+    } catch { return null; }
+  };
+
+  // Loop de polling (retry=true reenvia os que falharam, 10 por ciclo = throttle)
+  const startPolling = (ids: string[], retry: boolean) => {
+    pollStopRef.current = false;
+    startTimeRef.current = Date.now();
+    setPolling(true);
+    if (retry) setRetrying(true);
+    const tick = async () => {
+      if (pollStopRef.current) return;
+      const data = await fetchStatus(ids, retry);
+      if (data) {
+        setProgress(data);
+        if (data.pending <= 0) { setPolling(false); setRetrying(false); return; }
+      }
+      if (Date.now() - startTimeRef.current > POLL_MAX_MS) { setPolling(false); setRetrying(false); return; }
+      setTimeout(tick, 3000);
+    };
+    tick();
+  };
+
+  const handleRetryFailed = () => {
+    if (!result?.ids.length) return;
+    pollStopRef.current = true; // encerra loop atual
+    setTimeout(() => startPolling(result.ids, true), 50);
+  };
+
+  const handleClose = () => { pollStopRef.current = true; onClose(); };
 
   const statusBadge = (s: RowStatus) => {
     if (s.kind === "nova") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">nova</span>;
@@ -259,7 +315,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={handleClose} />
       <div className="relative w-full max-w-3xl bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl shadow-2xl max-h-[88vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-v4-border)]">
@@ -268,11 +324,11 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
             <div>
               <h3 className="text-sm font-bold text-white">Importar lista de leads</h3>
               <p className="text-[11px] text-[var(--color-v4-text-muted)]">
-                Passo {step} de 4 · {step === 1 ? "Arquivo" : step === 2 ? "Mapear colunas" : step === 3 ? "Revisar duplicatas" : "Concluído"}
+                Passo {step} de 4 · {step === 1 ? "Arquivo" : step === 2 ? "Mapear colunas" : step === 3 ? "Revisar duplicatas" : "Criando no Kommo"}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
+          <button onClick={handleClose} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
         </div>
 
         <div className="p-5 overflow-y-auto flex-1">
@@ -423,16 +479,61 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
             </div>
           )}
 
-          {/* STEP 4 — Resultado */}
-          {step === 4 && result && (
-            <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
-              <CheckCircle2 size={40} className="text-emerald-400" />
-              <p className="text-white font-semibold">{result.inserted} lead(s) importado(s)!</p>
-              {result.failed > 0 && (
-                <p className="text-xs text-amber-400 flex items-center gap-1"><AlertTriangle size={12} /> {result.failed} falharam (veja o console).</p>
+          {/* STEP 4 — Progresso de criação no Kommo */}
+          {step === 4 && progress && (
+            <div className="space-y-4 py-2">
+              <div className="flex flex-col items-center gap-2 text-center">
+                {polling ? <Loader2 size={32} className="text-[var(--color-v4-red)] animate-spin" />
+                  : progress.failed > 0 ? <AlertTriangle size={32} className="text-amber-400" />
+                  : <CheckCircle2 size={32} className="text-emerald-400" />}
+                <p className="text-white font-semibold text-sm">
+                  {polling ? (retrying ? "Reenviando ao Kommo…" : "Criando no Kommo…")
+                    : progress.pending > 0 ? "Parou (alguns ainda pendentes)"
+                    : progress.failed > 0 ? "Concluído com falhas" : "Tudo criado no Kommo!"}
+                </p>
+              </div>
+
+              {/* Barra de progresso */}
+              <div className="space-y-1">
+                <div className="h-3 rounded-full bg-[var(--color-v4-bg)] overflow-hidden flex">
+                  <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(progress.created / progress.total) * 100}%` }} />
+                  <div className="h-full bg-red-500 transition-all" style={{ width: `${(progress.failed / progress.total) * 100}%` }} />
+                </div>
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-emerald-300">{progress.created} criados</span>
+                  <span className="text-red-300">{progress.failed} falharam</span>
+                  <span className="text-[var(--color-v4-text-muted)]">{progress.pending} pendentes</span>
+                  <span className="text-white">{progress.total} total</span>
+                </div>
+              </div>
+
+              {/* Falhas */}
+              {progress.errors.length > 0 && (
+                <div className="rounded-lg border border-[var(--color-v4-border)] max-h-40 overflow-auto">
+                  <table className="w-full text-[11px]">
+                    <tbody>
+                      {progress.errors.map((e, i) => (
+                        <tr key={i} className="border-b border-[var(--color-v4-border)] last:border-0">
+                          <td className="px-2 py-1 text-white whitespace-nowrap">{e.empresa}</td>
+                          <td className="px-2 py-1 text-[var(--color-v4-text-muted)]">
+                            {e.status === 429 ? "limite do Kommo (429)" : e.msg}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-              <p className="text-xs text-[var(--color-v4-text-muted)] max-w-md">
-                Os leads estão sendo criados no Kommo automaticamente (o link aparece em alguns minutos).
+
+              {!polling && progress.failed > 0 && (
+                <button onClick={handleRetryFailed}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-sm">
+                  <RefreshCw size={14} /> Reenviar os {progress.failed} que falharam
+                </button>
+              )}
+
+              <p className="text-[10px] text-[var(--color-v4-text-muted)] text-center">
+                Pode fechar — os leads continuam sendo criados no Kommo em segundo plano.
               </p>
             </div>
           )}
@@ -467,8 +568,9 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
               </button>
             )}
             {step === 4 && (
-              <button onClick={onClose} className="px-4 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-sm font-medium">
-                Concluir
+              <button onClick={handleClose}
+                className="px-4 py-2 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-sm font-medium">
+                {polling ? "Fechar (continua em 2º plano)" : "Concluir"}
               </button>
             )}
           </div>

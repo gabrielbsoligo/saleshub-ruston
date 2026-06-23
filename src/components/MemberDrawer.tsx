@@ -20,12 +20,31 @@ interface Props {
 
 const inputClass = "w-full px-3 py-2 rounded bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)] disabled:opacity-60";
 
+const SUPABASE_FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+interface KommoUser { id: number; name: string; email: string; }
+
 export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
   const { updateMember, currentUser } = useAppStore();
   const isGestor = currentUser?.role === 'gestor';
 
   const [form, setForm] = useState<Partial<TeamMember>>({});
   const [saving, setSaving] = useState(false);
+  const [kommoUsers, setKommoUsers] = useState<KommoUser[]>([]);
+
+  // Busca os usuários do Kommo para vincular (silencioso: se falhar, cai no input numérico)
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/kommo-users`, {
+          headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        setKommoUsers(data.users || []);
+      } catch { /* mantém input numérico */ }
+    })();
+  }, []);
 
   useEffect(() => {
     if (member) {
@@ -170,15 +189,32 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
             />
           </Field>
 
-          <Field label="Kommo User ID" hint="Numérico. Para mapeamento do Kommo (opcional).">
-            <input
-              type="number"
-              value={form.kommo_user_id || ''}
-              disabled={!isGestor}
-              placeholder="ex: 12345678"
-              onChange={(e) => setForm((p) => ({ ...p, kommo_user_id: e.target.value ? Number(e.target.value) : undefined }))}
-              className={inputClass}
-            />
+          <Field label="Usuário no Kommo" hint="Vincula este membro a um usuário do Kommo. Sem isso, leads criados para ele entram no Kommo sem responsável.">
+            {kommoUsers.length > 0 ? (
+              <select
+                value={form.kommo_user_id ?? ''}
+                disabled={!isGestor}
+                onChange={(e) => setForm((p) => ({ ...p, kommo_user_id: e.target.value ? Number(e.target.value) : undefined }))}
+                className={inputClass}
+              >
+                <option value="">— não vinculado —</option>
+                {kommoUsers.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}{u.email ? ` · ${u.email}` : ''}</option>
+                ))}
+                {form.kommo_user_id && !kommoUsers.some((u) => u.id === form.kommo_user_id) && (
+                  <option value={form.kommo_user_id}>ID {form.kommo_user_id} (não encontrado no Kommo)</option>
+                )}
+              </select>
+            ) : (
+              <input
+                type="number"
+                value={form.kommo_user_id || ''}
+                disabled={!isGestor}
+                placeholder="ex: 12345678"
+                onChange={(e) => setForm((p) => ({ ...p, kommo_user_id: e.target.value ? Number(e.target.value) : undefined }))}
+                className={inputClass}
+              />
+            )}
           </Field>
 
           <Field label="Meta de ligações por dia" hint="Default 100. Usado no dashboard pra calcular % e disparar marco quando bater.">
