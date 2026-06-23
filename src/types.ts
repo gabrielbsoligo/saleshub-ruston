@@ -115,6 +115,8 @@ export interface Lead {
   sdr?: TeamMember;
   kommo_id?: string;
   kommo_link?: string;
+  kommo_pipeline_id?: number | null;
+  kommo_status_id?: number | null;
   mktlab_link?: string;
   mktlab_id?: string;
   status: LeadStatus;
