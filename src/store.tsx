@@ -30,6 +30,7 @@ interface AppState {
 
   fetchLeads: () => Promise<void>;
   addLead: (l: Partial<Lead>) => Promise<Lead | null>;
+  bulkImportLeads: (rows: Partial<Lead>[]) => Promise<{ inserted: number; failed: number }>;
   updateLead: (id: string, updates: Partial<Lead>) => Promise<void>;
   deleteLead: (id: string) => Promise<void>;
 
@@ -287,6 +288,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     toast.success('Lead cadastrado!');
     return data;
+  };
+
+  // Importação em massa: insere em lotes. O trigger sync_lead_to_kommo() roda por
+  // linha e cria os leads no Kommo automaticamente (kommo_id chega async via
+  // process_kommo_responses). A deduplicação é feita ANTES, na tela de import.
+  const bulkImportLeads = async (rows: Partial<Lead>[]): Promise<{ inserted: number; failed: number }> => {
+    if (!rows.length) return { inserted: 0, failed: 0 };
+    const chunkSize = 50;
+    let inserted = 0;
+    let failed = 0;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const { data, error } = await supabase.from('leads').insert(chunk).select('id');
+      if (error) {
+        console.error('bulkImportLeads chunk falhou:', error.message);
+        failed += chunk.length;
+      } else {
+        inserted += data?.length ?? chunk.length;
+      }
+    }
+    await fetchLeads();
+    return { inserted, failed };
   };
 
   const updateLead = async (id: string, updates: Partial<Lead>) => {
@@ -959,7 +982,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       currentUser, isLoadingAuth, members, leads, deals, reunioes, metas, comissoes, performanceSdr, performanceCloser, custos,
       login, logout,
       fetchMembers, addMember, updateMember,
-      fetchLeads, addLead, updateLead, deleteLead,
+      fetchLeads, addLead, bulkImportLeads, updateLead, deleteLead,
       fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal,
       fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
       roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem,

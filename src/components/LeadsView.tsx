@@ -2,9 +2,10 @@ import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
 import { LEAD_STATUS_LABELS, CANAL_LABELS, type Lead, type LeadCanal, type LeadStatus } from "../types";
 import { cn } from "./Layout";
-import { Plus, Search, ExternalLink, Phone, Building2, Calendar, LayoutGrid, List, ChevronUp, ChevronDown } from "lucide-react";
+import { Plus, Search, ExternalLink, Phone, Building2, Calendar, LayoutGrid, List, ChevronUp, ChevronDown, FileSpreadsheet } from "lucide-react";
 import { LeadDrawer } from "./LeadDrawer";
 import { MktlabImporter } from "./MktlabImporter";
+import { ImportLeadsModal } from "./ImportLeadsModal";
 import { AgendarReuniaoModal } from "./AgendarReuniaoModal";
 import { ConfirmarReuniaoModal } from "./ConfirmarReuniaoModal";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
@@ -57,6 +58,7 @@ export const LeadsView: React.FC = () => {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showMktlab, setShowMktlab] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [agendarLead, setAgendarLead] = useState<Lead | null>(null);
   const [confirmarLead, setConfirmarLead] = useState<{ lead: Lead; reuniao: Reuniao } | null>(null);
   const [view, setView] = useState<'table' | 'kanban'>('kanban');
@@ -215,6 +217,7 @@ export const LeadsView: React.FC = () => {
             filtros={{ canal: filterCanal, status: filterStatus, sdr: filterSdr, search, datePreset, dateFrom, dateTo }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm disabled:opacity-50"
           />
+          <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white font-medium text-sm"><FileSpreadsheet size={16} /> Importar lista</button>
           <button onClick={() => setShowNew(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white font-medium text-sm"><Plus size={16} /> Novo Lead</button>
         </div>
       </div>
@@ -377,6 +380,7 @@ export const LeadsView: React.FC = () => {
 
       {(selectedLead || showNew) && <LeadDrawer lead={showNew ? null : selectedLead} onClose={() => { setSelectedLead(null); setShowNew(false); }} />}
       {showMktlab && <MktlabImporter onClose={() => setShowMktlab(false)} />}
+      {showImport && <ImportLeadsModal onClose={() => setShowImport(false)} />}
       {agendarLead && !showReplaceConfirm && <AgendarReuniaoModal lead={agendarLead} onConfirm={handleAgendarConfirm} onClose={() => { setAgendarLead(null); setPendingAgendar(null); }} />}
       {confirmarLead && <ConfirmarReuniaoModal reuniao={confirmarLead.reuniao} onConfirm={handleConfirmarReuniao} onClose={() => setConfirmarLead(null)} />}
 
