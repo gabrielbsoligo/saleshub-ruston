@@ -1,3 +1,4 @@
-# Outputs de análise contêm dados sensíveis (receita, performance individual).
-# Não versionar. Gere localmente com scripts/gerar_relatorio_funil.py.
-funil_h1_2026/
+# Outputs de análise contêm dados sensíveis (receita, performance individual, PII de leads).
+# Não versionar NENHUM relatório gerado — produza localmente com os scripts em scripts/.
+*
+!.gitignore
