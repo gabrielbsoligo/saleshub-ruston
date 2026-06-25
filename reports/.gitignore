@@ -1,0 +1,3 @@
+# Outputs de análise contêm dados sensíveis (receita, performance individual).
+# Não versionar. Gere localmente com scripts/gerar_relatorio_funil.py.
+funil_h1_2026/
