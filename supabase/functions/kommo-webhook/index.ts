@@ -55,10 +55,10 @@ Deno.serve(async (req) => {
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
-    const k = supabase.schema('kommo')
+    // schema `kommo` não é exposto no PostgREST -> chama os wrappers public.kommo_*
     const applied: string[] = []
     const rpc = async (fn: string, args: Record<string, unknown>) => {
-      const { error } = await k.rpc(fn, args)
+      const { error } = await supabase.rpc('kommo_' + fn, args)
       if (error) console.error(fn, error.message); else applied.push(fn)
     }
 
