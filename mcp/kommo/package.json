@@ -1,0 +1,23 @@
+{
+  "name": "kommo-saleshub-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Servidor MCP (Fase 1) de leitura sobre a réplica kommo no Postgres do SalesHub.",
+  "bin": { "kommo-saleshub-mcp": "dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "pg": "^8.11.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.5.0"
+  }
+}
