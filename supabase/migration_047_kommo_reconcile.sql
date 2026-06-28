@@ -64,7 +64,7 @@ BEGIN
   SELECT 'deals', deal_id, 'leads', matched, method,
     CASE WHEN method='email' THEN 'high' WHEN method='name' THEN 'medium' ELSE 'none' END,
     CASE WHEN method='email' THEN 'auto_applied'
-         WHEN method='name' THEN 'suggested'
+         WHEN method='name' THEN 'auto_applied'   -- nome exato 1-candidato: auto-aplica (decidido)
          WHEN method IN ('email_ambiguous','name_ambiguous') THEN 'ambiguous'
          ELSE 'none' END,
     to_jsonb(cands)
