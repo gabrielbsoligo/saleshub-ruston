@@ -13,13 +13,19 @@ RETURNS BIGINT LANGUAGE sql IMMUTABLE AS $$
   END
 $$;
 
--- Última atividade por lead do Kommo = MAX( última task, última nota, último toque/etapa ).
--- "toque/etapa" vem de kommo.events (chat/DM + lead_status_changed).
+-- DEFINIÇÃO FINAL DE ATIVIDADE (last_activity_at) = MAX de:
+--   * tarefa CRIADA ou CONCLUÍDA  (NÃO editada: editar tarefa não conta)
+--   * nota criada
+--   * toque de chat/WhatsApp/DM ou mudança de etapa (kommo.events)
+-- Não entra: data de vencimento da tarefa (complete_till), edição de tarefa aberta,
+-- sync automático, custom fields.
 CREATE OR REPLACE VIEW kommo.v_lead_last_activity AS
 WITH t AS (
-  -- "última task" = quando a tarefa foi criada/concluída/editada (kommo_updated_at),
-  -- NÃO a data de vencimento (complete_till futura não é atividade que aconteceu).
-  SELECT entity_id AS lead_id, MAX(kommo_updated_at) AS ts
+  -- tarefa conta por CRIAÇÃO (sempre) e por CONCLUSÃO (kommo_updated_at quando is_completed).
+  -- Edição de tarefa aberta NÃO conta (decisão final).
+  SELECT entity_id AS lead_id,
+         MAX(GREATEST(kommo_created_at,
+                      CASE WHEN is_completed THEN kommo_updated_at END)) AS ts
   FROM kommo.tasks WHERE entity_type = 'leads' GROUP BY entity_id
 ),
 n AS (
@@ -87,3 +93,16 @@ RETURNS TABLE (
     )
   ORDER BY v.valor_total DESC, v.dias_parado DESC;
 $$;
+
+-- Bucket "NÃO AVALIÁVEL": deals com proposta em aberto SEM kommo_id resolvido.
+-- Não dá p/ verificar atividade no Kommo -> NUNCA entram na contagem de frios.
+-- A reconciliação desses é a Fase 4.
+CREATE OR REPLACE VIEW kommo.v_deals_sem_vinculo AS
+SELECT d.id AS deal_id, d.empresa, d.produto,
+       (COALESCE(d.valor_ot,0) + COALESCE(d.valor_mrr,0)) AS valor_total,
+       d.status, d.kommo_id AS kommo_id_raw
+FROM public.deals d
+WHERE d.status IN ('negociacao','contrato_na_rua','follow_longo')
+  AND d.produto IS NOT NULL AND btrim(d.produto) NOT IN ('','-','nan','NULL')
+  AND (COALESCE(d.valor_ot,0) + COALESCE(d.valor_mrr,0)) > 0
+  AND kommo.norm_kommo_id(d.kommo_id) IS NULL;
