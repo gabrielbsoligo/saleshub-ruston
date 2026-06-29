@@ -17,6 +17,47 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, content-type, mcp-session-id, mcp-protocol-version',
 }
 
+// --- Lemit (consulta externa de CPF/CNPJ) — NÃO grava nada, sem preview/confirm ---
+const LEMIT_BASE = 'https://api.lemit.com.br/api/v1/consulta'
+// >>> TROCA P/ OUTRO TOKEN: secret LEMIT_API_TOKEN (setado do painel da Lemit). Sem hardcode. <<<
+const LEMIT_TOKEN_SECRET = 'LEMIT_API_TOKEN'
+class RateLimiter {
+  private q: number[] = []
+  constructor(private max: number, private win: number) {}
+  async acquire() {
+    for (;;) {
+      const now = Date.now(); this.q = this.q.filter((t) => now - t < this.win)
+      if (this.q.length < this.max) { this.q.push(now); return }
+      await new Promise((r) => setTimeout(r, this.win / this.max))
+    }
+  }
+}
+const lemitRL = new RateLimiter(10, 1000) // 10 consultas/segundo (limite da Lemit)
+async function lemitConsultar(a: any) {
+  const token = Deno.env.get(LEMIT_TOKEN_SECRET)
+  if (!token) throw new Error('LEMIT_API_TOKEN ausente (defina o secret no Supabase)')
+  const input = a.documentos ?? a.documento
+  const list = Array.isArray(input) ? input : [input]
+  const resultados: any[] = []
+  for (const raw of list) {
+    const doc = String(raw ?? '').replace(/\D/g, '')
+    if (doc.length !== 11 && doc.length !== 14) { resultados.push({ documento: doc, tipo: null, status: 'erro', dados: { erro: 'documento invalido (11 digitos=CPF, 14=CNPJ)' } }); continue }
+    const tipo = doc.length === 11 ? 'cpf' : 'cnpj'
+    const path = doc.length === 11 ? '/pessoa' : '/empresa'
+    await lemitRL.acquire()
+    try {
+      const r = await fetch(LEMIT_BASE + path, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: `documento=${doc}` })
+      const txt = await r.text(); let dados: any; try { dados = JSON.parse(txt) } catch { dados = txt }
+      let status: string
+      if (r.status === 200) status = (dados && typeof dados === 'object' && Object.keys(dados).length) ? 'achou' : 'nao_achou'
+      else if (r.status === 404) status = 'nao_achou'
+      else status = 'erro'
+      resultados.push({ documento: doc, tipo, status, dados: status === 'erro' ? { http: r.status, body: dados } : dados })
+    } catch (e) { resultados.push({ documento: doc, tipo, status: 'erro', dados: { erro: String(e) } }) }
+  }
+  return { total: resultados.length, resultados }
+}
+
 const TOOLS = [
   { name: 'find_stale_deals', description: 'Deals com proposta parados há >= dias (atividade real no Kommo: tarefa criada/concluída, nota, chat/WhatsApp/etapa). Corte parametrizável; somente_com_vinculo=true por default (sem vínculo fica fora).',
     inputSchema: { type: 'object', properties: { valor_min: { type: 'number' }, dias: { type: 'integer' }, somente_com_vinculo: { type: 'boolean' } } } },
@@ -34,6 +75,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { de: { type: 'string' }, ate: { type: 'string' }, canal: { type: 'string' } }, required: ['de', 'ate'] } },
   { name: 'stale_ranking_by_owner', description: 'Ranking de quem está com mais deal parado (definição de stale travada, 15d).',
     inputSchema: { type: 'object', properties: {} } },
+  { name: 'lemit_consultar', description: 'Consulta CPF/CNPJ na Lemit (externa — NAO grava nada, nao toca a replica). Auto-detecta CPF (11 dig)/CNPJ (14 dig), limpa mascara. Aceita um documento ou lista (respeita 10/s). Retorna array keyed por documento: {documento, tipo, status, dados}, status = achou|nao_achou|erro.',
+    inputSchema: { type: 'object', properties: { documento: { type: 'string' }, documentos: { type: 'array', items: { type: 'string' } } } } },
   // ---- WRITE (preview->confirm) ----
   { name: 'move_lead', description: 'ESCRITA (preview→confirm). Move lead(s) de etapa. Sem confirm=true só mostra o diff. lead_id OU lead_ids[].',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, etapa_destino: { type: 'string' }, confirm: { type: 'boolean' }, confirm_bulk: { type: 'boolean' } }, required: ['etapa_destino'] } },
@@ -132,7 +175,7 @@ async function handle(msg: any, sb: any): Promise<any | null> {
   if (method === 'tools/call') {
     const name = params?.name, a = params?.arguments ?? {}
     try {
-      const out = WRITE.has(name) ? await writeTool(sb, name, a) : await readTool(sb, name, a)
+      const out = name === 'lemit_consultar' ? await lemitConsultar(a) : WRITE.has(name) ? await writeTool(sb, name, a) : await readTool(sb, name, a)
       return jrpc(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] })
     } catch (e) { return jrpc(id, { content: [{ type: 'text', text: `Erro: ${String(e)}` }], isError: true }) }
   }
