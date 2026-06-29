@@ -36,9 +36,9 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} } },
   // ---- WRITE (preview->confirm) ----
   { name: 'move_lead', description: 'ESCRITA (preview→confirm). Move lead(s) de etapa. Sem confirm=true só mostra o diff. lead_id OU lead_ids[].',
-    inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, etapa_destino: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['etapa_destino'] } },
+    inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, etapa_destino: { type: 'string' }, confirm: { type: 'boolean' }, confirm_bulk: { type: 'boolean' } }, required: ['etapa_destino'] } },
   { name: 'update_lead_value', description: 'ESCRITA (preview→confirm). Corrige valor (price) de lead(s), inclusive em lote. lead_id OU lead_ids[].',
-    inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, valor: { type: 'number' }, confirm: { type: 'boolean' } }, required: ['valor'] } },
+    inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, valor: { type: 'number' }, confirm: { type: 'boolean' }, confirm_bulk: { type: 'boolean' } }, required: ['valor'] } },
   { name: 'update_lead_field', description: 'ESCRITA (preview→confirm). Atualiza um campo padrão do lead (ex.: name, price). lead_id obrigatório.',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, campo: { type: 'string' }, valor: {}, confirm: { type: 'boolean' } }, required: ['lead_id', 'campo', 'valor'] } },
   { name: 'add_note', description: 'ESCRITA (preview→confirm). Adiciona nota comum ao lead.',
@@ -47,6 +47,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, texto: { type: 'string' }, prazo: { type: 'string' }, confirm: { type: 'boolean' } }, required: ['lead_id', 'texto', 'prazo'] } },
 ]
 const WRITE = new Set(['move_lead', 'update_lead_value', 'update_lead_field', 'add_note', 'create_task'])
+const BULK_LIMIT = 10  // confirm que afeta > N registros exige confirm_bulk=true (trava anti-massa)
 
 function jrpc(id: any, result?: any, error?: any) { return error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result } }
 
@@ -88,6 +89,7 @@ async function writeTool(sb: any, name: string, a: any) {
     const cur = await rpc(sb, 'kommo_lead_current', { p_ids: ids })
     const mudancas = (cur ?? []).map((c: any) => ({ lead_id: c.lead_id, nome: c.nome, de: c.etapa, para: target.stage_name }))
     if (!confirm) return { preview: true, acao: 'move_lead', destino: target, total: ids.length, mudancas, nota: 'preview — passe confirm=true para aplicar' }
+    if (ids.length > BULK_LIMIT && a.confirm_bulk !== true) return { blocked: true, acao: 'move_lead', total: ids.length, nota: `aplicação em massa: afeta ${ids.length} registros (> ${BULK_LIMIT}). Reenvie com confirm=true E confirm_bulk=true para aplicar.` }
     const results = []
     for (const id of ids) results.push({ lead_id: id, ...(await kommoWrite('PATCH', `/leads/${id}`, { status_id: target.status_id, pipeline_id: target.pipeline_id })) })
     return { applied: true, total: ids.length, etapa: target.stage_name, results }
@@ -97,6 +99,7 @@ async function writeTool(sb: any, name: string, a: any) {
     const cur = await rpc(sb, 'kommo_lead_current', { p_ids: ids })
     const mudancas = (cur ?? []).map((c: any) => ({ lead_id: c.lead_id, nome: c.nome, de: c.valor, para: a.valor }))
     if (!confirm) return { preview: true, acao: 'update_lead_value', valor: a.valor, total: ids.length, mudancas, nota: 'preview — passe confirm=true para aplicar' }
+    if (ids.length > BULK_LIMIT && a.confirm_bulk !== true) return { blocked: true, acao: 'update_lead_value', total: ids.length, nota: `aplicação em massa: afeta ${ids.length} registros (> ${BULK_LIMIT}). Reenvie com confirm=true E confirm_bulk=true para aplicar.` }
     const results = []
     for (const id of ids) results.push({ lead_id: id, ...(await kommoWrite('PATCH', `/leads/${id}`, { price: Number(a.valor) })) })
     return { applied: true, total: ids.length, results }
