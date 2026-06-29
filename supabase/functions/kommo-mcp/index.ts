@@ -79,6 +79,10 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} } },
   { name: 'lemit_consultar', description: 'Consulta CPF/CNPJ na Lemit (externa — NAO grava nada, nao toca a replica). Auto-detecta CPF (11 dig)/CNPJ (14 dig), limpa mascara. Aceita um documento ou lista (respeita 10/s). Retorna array keyed por documento: {documento, tipo, status, dados}, status = achou|nao_achou|erro.',
     inputSchema: { type: 'object', properties: { documento: { type: 'string' }, documentos: { type: 'array', items: { type: 'string' } } } } },
+  { name: 'query_deals', description: 'Consulta GENERICA de deals (somente leitura, sai do Postgres, nao bate na API). Filtros combinaveis + group_by + metricas + order + limit. SEM group_by retorna lista detalhada; COM group_by retorna agregado. Chame {"describe":true} para ver filtros/group_by/metricas disponiveis. Ex.: {"filtros":{"data_base":"fechamento","data_de":"2026-05-01","data_ate":"2026-05-31"},"group_by":["responsavel"],"metricas":["count","sum_valor"]}.',
+    inputSchema: { type: 'object', properties: { filtros: { type: 'object' }, group_by: { type: 'array', items: { type: 'string' } }, metricas: { type: 'array', items: { type: 'string' } }, order: { type: 'string', enum: ['asc','desc'] }, limit: { type: 'integer' }, describe: { type: 'boolean' } } } },
+  { name: 'query_leads', description: 'Consulta GENERICA de leads do SalesHub (somente leitura). Filtros + group_by + metricas + order + limit. SEM group_by = lista; COM = agregado. {"describe":true} lista os campos. Ex.: {"filtros":{"data_de":"2026-05-01","data_ate":"2026-05-31"},"group_by":["responsavel","canal"],"metricas":["count"]}.',
+    inputSchema: { type: 'object', properties: { filtros: { type: 'object' }, group_by: { type: 'array', items: { type: 'string' } }, metricas: { type: 'array', items: { type: 'string' } }, order: { type: 'string', enum: ['asc','desc'] }, limit: { type: 'integer' }, describe: { type: 'boolean' } } } },
   // ---- WRITE (preview->confirm) ----
   { name: 'move_lead', description: 'ESCRITA (preview→confirm). Move lead(s) de etapa. Sem confirm=true só mostra o diff. lead_id OU lead_ids[].',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, etapa_destino: { type: 'string' }, confirm: { type: 'boolean' }, confirm_bulk: { type: 'boolean' } }, required: ['etapa_destino'] } },
@@ -119,6 +123,8 @@ async function readTool(sb: any, name: string, a: any) {
     case 'deals_without_next_task': return { deals: await rpc(sb, 'kommo_deals_without_next_task', { p_valor_min: a.valor_min ?? 0, p_somente_com_vinculo: a.somente_com_vinculo ?? true }) }
     case 'new_leads': return { por_canal: await rpc(sb, 'kommo_new_leads', { p_from: a.de, p_to: a.ate, p_canal: a.canal ?? null }) }
     case 'stale_ranking_by_owner': return { ranking: await rpc(sb, 'kommo_stale_ranking', {}) }
+    case 'query_deals': return await rpc(sb, 'kommo_query_deals', { p_spec: a })
+    case 'query_leads': return await rpc(sb, 'kommo_query_leads', { p_spec: a })
   }
   throw new Error('read tool desconhecida: ' + name)
 }
