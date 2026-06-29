@@ -69,6 +69,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const [kommoTags, setKommoTags] = useState<string[]>([]);
   const [tagsInput, setTagsInput] = useState("");
   const [segmento, setSegmento] = useState("");
+  const [enriquecerLemit, setEnriquecerLemit] = useState(false);
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ inserted: number; failed: number; ids: string[] } | null>(null);
@@ -247,6 +248,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         kommo_status_id: chosenStatus ?? undefined,
         kommo_tags: tags.length ? tags : undefined,
         segmento_disparos: segmento.trim() || undefined,
+        enriquecer_lemit: enriquecerLemit || undefined,
       });
     });
     if (!toCreate.length) { toast.error("Nada selecionado para importar."); return; }
@@ -400,6 +402,18 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
                 <input className={inputClass} value={segmento} onChange={(e) => setSegmento(e.target.value)}
                   placeholder="ex.: E-commerce, Clínicas, SaaS" />
               </div>
+
+              {/* Enriquecer com Lemit (sócios -> contatos WhatsApp). Requer CNPJ mapeado. */}
+              <label className="flex items-start gap-2 text-[12px] text-[var(--color-v4-text)] cursor-pointer select-none">
+                <input type="checkbox" className="mt-0.5" checked={enriquecerLemit}
+                  disabled={(mapping["cnpj"] ?? -1) < 0}
+                  onChange={(e) => setEnriquecerLemit(e.target.checked)} />
+                <span>
+                  Enriquecer com Lemit <span className="text-[var(--color-v4-text-muted)]">(consulta cada CNPJ, traz os sócios e cria um contato no Kommo por sócio com os WhatsApp e e-mails)</span>
+                  {(mapping["cnpj"] ?? -1) < 0 && <span className="text-[var(--color-v4-red)]"> — mapeie a coluna CNPJ para habilitar</span>}
+                  {enriquecerLemit && <span className="block text-[10px] text-[var(--color-v4-text-muted)] mt-0.5">Roda em segundo plano após a importação · consome créditos Lemit (1 consulta por CNPJ + 1 por sócio).</span>}
+                </span>
+              </label>
 
               {/* Tags do Kommo (aplicadas a todo o lote) */}
               <div>

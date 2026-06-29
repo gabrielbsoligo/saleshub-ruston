@@ -130,6 +130,8 @@ export interface Lead {
   coletado_por_closer_nome?: string;
   // Segmento da lista (disparos) — repassado pro Kommo no campo "Segmento Disparos" (1041897)
   segmento_disparos?: string;
+  // Marca o lead p/ enriquecimento Lemit (sócios -> contatos no Kommo) — assíncrono
+  enriquecer_lemit?: boolean;
   created_at: string;
   updated_at: string;
 }
