@@ -49,8 +49,10 @@ async function lemitConsultar(a: any) {
       const r = await fetch(LEMIT_BASE + path, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: `documento=${doc}` })
       const txt = await r.text(); let dados: any; try { dados = JSON.parse(txt) } catch { dados = txt }
       let status: string
-      if (r.status === 200) status = (dados && typeof dados === 'object' && Object.keys(dados).length) ? 'achou' : 'nao_achou'
-      else if (r.status === 404) status = 'nao_achou'
+      if (r.status === 200 && dados && typeof dados === 'object') {
+        const payload = tipo === 'cpf' ? dados.pessoa : dados.empresa  // envelope da Lemit
+        status = (payload && typeof payload === 'object' && Object.keys(payload).length) ? 'achou' : 'nao_achou'
+      } else if (r.status === 404) status = 'nao_achou'
       else status = 'erro'
       resultados.push({ documento: doc, tipo, status, dados: status === 'erro' ? { http: r.status, body: dados } : dados })
     } catch (e) { resultados.push({ documento: doc, tipo, status: 'erro', dados: { erro: String(e) } }) }
