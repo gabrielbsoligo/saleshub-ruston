@@ -128,6 +128,8 @@ export interface Lead {
   // repassado pro Kommo pelos campos "Quem Recomendou" + "Closer que coletou")
   recomendado_por?: string;
   coletado_por_closer_nome?: string;
+  // Segmento da lista (disparos) — repassado pro Kommo no campo "Segmento Disparos" (1041897)
+  segmento_disparos?: string;
   created_at: string;
   updated_at: string;
 }

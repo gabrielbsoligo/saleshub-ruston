@@ -68,6 +68,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
   const [statusId, setStatusId] = useState<number | "">("");
   const [kommoTags, setKommoTags] = useState<string[]>([]);
   const [tagsInput, setTagsInput] = useState("");
+  const [segmento, setSegmento] = useState("");
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ inserted: number; failed: number; ids: string[] } | null>(null);
@@ -245,6 +246,7 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         kommo_pipeline_id: chosenPipeline ?? undefined,
         kommo_status_id: chosenStatus ?? undefined,
         kommo_tags: tags.length ? tags : undefined,
+        segmento_disparos: segmento.trim() || undefined,
       });
     });
     if (!toCreate.length) { toast.error("Nada selecionado para importar."); return; }
@@ -390,6 +392,13 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
                     {responsaveis.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
+              </div>
+
+              {/* Segmento (disparos) — campo aberto, aplicado a todo o lote -> Kommo "Segmento Disparos" */}
+              <div>
+                <label className="block text-[11px] text-[var(--color-v4-text-muted)] mb-1">Segmento (disparos)</label>
+                <input className={inputClass} value={segmento} onChange={(e) => setSegmento(e.target.value)}
+                  placeholder="ex.: E-commerce, Clínicas, SaaS" />
               </div>
 
               {/* Tags do Kommo (aplicadas a todo o lote) */}
