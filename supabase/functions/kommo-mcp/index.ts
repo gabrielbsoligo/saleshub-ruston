@@ -83,6 +83,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { filtros: { type: 'object' }, group_by: { type: 'array', items: { type: 'string' } }, metricas: { type: 'array', items: { type: 'string' } }, order: { type: 'string', enum: ['asc','desc'] }, limit: { type: 'integer' }, describe: { type: 'boolean' } } } },
   { name: 'query_leads', description: 'Consulta GENERICA de leads do SalesHub (somente leitura). Filtros + group_by + metricas + order + limit. SEM group_by = lista; COM = agregado. {"describe":true} lista os campos. Ex.: {"filtros":{"data_de":"2026-05-01","data_ate":"2026-05-31"},"group_by":["responsavel","canal"],"metricas":["count"]}.',
     inputSchema: { type: 'object', properties: { filtros: { type: 'object' }, group_by: { type: 'array', items: { type: 'string' } }, metricas: { type: 'array', items: { type: 'string' } }, order: { type: 'string', enum: ['asc','desc'] }, limit: { type: 'integer' }, describe: { type: 'boolean' } } } },
+  { name: 'deal_stage_history', description: 'Historico de ETAPAS DO SALESHUB de um deal (deal_status_log). ATENCAO: status do SalesHub (negociacao, contrato_na_rua, contrato_assinado, perdido, ...), NAO etapa do funil Kommo — sao funis diferentes. Somente leitura. Dois modos: (A) timeline de 1 deal -> passe {"deal_id":"<uuid SalesHub ou kommo_id>"} ou {"empresa":"..."}/{"nome":"..."} (resolve; se ambiguo retorna candidatos). (B) transicoes por periodo -> {"data_de":"YYYY-MM-DD","data_ate":"YYYY-MM-DD"} + opcionais "responsavel" e "status_novo". NOTA: historico intermediario confiavel a partir de ~2026-05-06 (trigger); deals fechados antes disso vem so com criacao + transicao final estimada pelo backfill.',
+    inputSchema: { type: 'object', properties: { deal_id: { type: 'string' }, empresa: { type: 'string' }, nome: { type: 'string' }, data_de: { type: 'string' }, data_ate: { type: 'string' }, responsavel: { type: 'string' }, status_novo: { type: 'string' } } } },
   // ---- WRITE (preview->confirm) ----
   { name: 'move_lead', description: 'ESCRITA (preview→confirm). Move lead(s) de etapa. Sem confirm=true só mostra o diff. lead_id OU lead_ids[].',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' }, lead_ids: { type: 'array', items: { type: 'integer' } }, etapa_destino: { type: 'string' }, confirm: { type: 'boolean' }, confirm_bulk: { type: 'boolean' } }, required: ['etapa_destino'] } },
@@ -125,6 +127,7 @@ async function readTool(sb: any, name: string, a: any) {
     case 'stale_ranking_by_owner': return { ranking: await rpc(sb, 'kommo_stale_ranking', {}) }
     case 'query_deals': return await rpc(sb, 'kommo_query_deals', { p_spec: a })
     case 'query_leads': return await rpc(sb, 'kommo_query_leads', { p_spec: a })
+    case 'deal_stage_history': return await rpc(sb, 'kommo_deal_stage_history', { p_spec: a })
   }
   throw new Error('read tool desconhecida: ' + name)
 }
