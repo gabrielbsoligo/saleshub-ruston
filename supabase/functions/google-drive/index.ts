@@ -508,29 +508,11 @@ async function applyActionsServerSide(
     }
   }
 
-  // 3) Proxima reuniao
-  if (analysis.proxima_reuniao?.data && analysis.proxima_reuniao?.hora) {
-    const dataReuniaoISO = `${analysis.proxima_reuniao.data}T${analysis.proxima_reuniao.hora}:00-03:00`
-    const newReuniao = {
-      lead_id: reuniao.lead_id || null,
-      closer_id: reuniao.closer_confirmado_id || reuniao.closer_id || null,
-      sdr_id: reuniao.sdr_id || null,
-      empresa: reuniao.empresa,
-      nome_contato: reuniao.nome_contato,
-      canal: reuniao.canal,
-      data_agendamento: new Date().toISOString().split('T')[0],
-      data_reuniao: dataReuniaoISO,
-      realizada: false,
-    }
-    const { data: nova, error } = await supabase.from('reunioes').insert(newReuniao).select('id').single()
-    if (!error && nova) {
-      actions.meeting_scheduled = true
-      actions.next_reuniao_id = nova.id
-      if (reuniao.lead_id) {
-        await supabase.from('leads').update({ status: 'reuniao_marcada' }).eq('id', reuniao.lead_id)
-      }
-    }
-  }
+  // 3) Proxima reuniao — DESATIVADO.
+  // A IA NAO cria mais reuniao de retorno automaticamente (gerava duplicatas sem vinculo
+  // Kommo/Calendar, que apareciam como 1a call que ninguem agendou). A data sugerida pela
+  // IA (analysis.proxima_reuniao) continua disponivel no resultado e so preenche data_retorno
+  // no drawer, sem criar reuniao. meeting_scheduled fica sempre false.
 
   return actions
 }

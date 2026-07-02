@@ -17,7 +17,7 @@ import toast from "react-hot-toast";
 type AIStatus = 'idle' | 'fetching' | 'paste' | 'analyzing' | 'done' | 'error';
 
 export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ deal, onClose }) => {
-  const { updateDeal, members, reunioes, addReuniao, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
+  const { updateDeal, members, reunioes, fetchDeals, fetchLeads, fetchReunioes, leads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
 
   // Buscar reuniao associada a este deal.
@@ -60,7 +60,6 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     proximo_passo: '' as DealStatus | '',
     motivo_perda: '',
     data_retorno: '',
-    agendar_reuniao: false,
     resumo_call: deal.observacoes || '',
     tier: (deal.tier || '') as DealTier | '',
     produtos_ot: deal.produtos_ot || [] as string[],
@@ -107,13 +106,12 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     if (transcriptUrl) { set('link_transcricao', transcriptUrl); filled.add('link_transcricao'); }
     if (recordingUrl) { set('link_call_vendas', recordingUrl); filled.add('link_call_vendas'); }
 
-    // Próxima reunião → data_retorno + agendar
+    // Próxima reunião → só preenche data_retorno (NÃO agenda reunião: retorno foi removido)
     if (result.proxima_reuniao?.data) {
       const dateStr = result.proxima_reuniao.hora
         ? `${result.proxima_reuniao.data}T${result.proxima_reuniao.hora}:00`
         : result.proxima_reuniao.data;
       set('data_retorno', dateStr);
-      set('agendar_reuniao', true);
       filled.add('data_retorno');
     }
 
@@ -263,31 +261,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         toast.success(`${savedRecs} recomendação(ões) salva(s) como lead!`, { icon: '🎯' });
       }
 
-      // Agendar reunião de retorno se marcado
-      if (form.agendar_reuniao && form.data_retorno) {
-        try {
-          const dataRetornoISO = form.data_retorno.includes('T')
-            ? `${form.data_retorno}:00-03:00`
-            : `${form.data_retorno}T10:00:00-03:00`;
-          const lead = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
-          await addReuniao({
-            tipo: 'retorno',
-            deal_id: deal.id,
-            lead_id: deal.lead_id || undefined,
-            closer_id: form.closer_id || deal.closer_id || undefined,
-            sdr_id: deal.sdr_id || undefined,
-            empresa: deal.empresa,
-            nome_contato: deal.nome_contato,
-            canal: deal.canal,
-            data_agendamento: new Date().toISOString().split('T')[0],
-            data_reuniao: dataRetornoISO,
-            lead_email: lead?.email || undefined,
-          } as any);
-          toast.success('Reunião de retorno agendada!', { icon: '📅' });
-        } catch (e: any) {
-          toast.error('Erro ao agendar reunião: ' + e.message);
-        }
-      }
+      // Reunião de retorno REMOVIDA: data_retorno é gravada no deal (acima), mas não cria mais reunião.
 
       // Record automation if AI was used
       if (aiFilledFields.size > 0 && reuniaoAssociada) {
@@ -298,7 +272,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
           actions_taken: {
             deal_updated: true,
             leads_created: savedRecs,
-            meeting_scheduled: form.agendar_reuniao,
+            meeting_scheduled: false,
             ai_filled_fields: [...aiFilledFields],
           },
           completed_at: new Date().toISOString(),
@@ -470,29 +444,13 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
 
             {(form.proximo_passo === 'follow_longo' || form.proximo_passo === 'negociacao' || form.proximo_passo === 'contrato_na_rua') && (
               <div className={`bg-[var(--color-v4-surface)] rounded-xl p-4 ${aiHighlight('data_retorno')}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={14} className="text-yellow-400" />
-                    <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={form.agendar_reuniao} onChange={e => set('agendar_reuniao', e.target.checked)}
-                      className="rounded border-[var(--color-v4-border)]" />
-                    <span className="text-xs text-[var(--color-v4-text-muted)]">Agendar reunião</span>
-                  </label>
+                <div className="flex items-center gap-2 mb-3">
+                  <Calendar size={14} className="text-yellow-400" />
+                  <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
                 </div>
-                <div className="flex gap-3">
-                  <input type="date" value={form.data_retorno?.split('T')[0] || ''} onChange={e => {
-                    const time = form.data_retorno?.includes('T') ? form.data_retorno.split('T')[1] : '10:00';
-                    set('data_retorno', e.target.value ? `${e.target.value}T${time}` : '');
-                  }} className={`flex-1 ${inputClass}`} />
-                  {form.agendar_reuniao && (
-                    <input type="time" value={form.data_retorno?.includes('T') ? form.data_retorno.split('T')[1]?.slice(0, 5) : '10:00'} onChange={e => {
-                      const date = form.data_retorno?.split('T')[0] || '';
-                      if (date) set('data_retorno', `${date}T${e.target.value}`);
-                    }} className={`w-28 ${inputClass}`} />
-                  )}
-                </div>
+                <input type="date" value={form.data_retorno?.split('T')[0] || ''} onChange={e => {
+                  set('data_retorno', e.target.value || '');
+                }} className={inputClass} />
               </div>
             )}
 

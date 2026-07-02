@@ -12,7 +12,7 @@ import { useRecomendacoesDraft } from "../hooks/useRecomendacoesDraft";
 import toast from "react-hot-toast";
 
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
-  const { addDeal, updateDeal, deleteDeal, members, addReuniao, leads, fetchDeals, fetchLeads } = useAppStore();
+  const { addDeal, updateDeal, deleteDeal, members, leads, fetchDeals, fetchLeads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
 
@@ -34,7 +34,6 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const [form, setForm] = useState({
     empresa: '', kommo_id: '', kommo_link: '', closer_id: '', sdr_id: '',
     data_call: '', data_fechamento: '', data_retorno: '',
-    agendar_reuniao: false,
     status: 'negociacao' as DealStatus, origem: '',
     temperatura: '' as Temperatura | '', bant: 0, motivo_perda: '',
     produtos_ot: [] as string[], produtos_mrr: [] as string[],
@@ -52,7 +51,6 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
         closer_id: deal.closer_id || '', sdr_id: deal.sdr_id || '',
         data_call: deal.data_call || '', data_fechamento: deal.data_fechamento || '',
         data_retorno: deal.data_retorno || '',
-        agendar_reuniao: false,
         status: deal.status, origem: deal.origem || '',
         temperatura: (deal.temperatura || '') as Temperatura | '', bant: deal.bant || 0,
         motivo_perda: deal.motivo_perda || '',
@@ -81,7 +79,6 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
       }
 
       const payload: any = { ...form, valor_mrr: form.valor_recorrente, valor_ot: form.valor_escopo };
-      delete payload.agendar_reuniao;
       if (!payload.closer_id) delete payload.closer_id;
       if (!payload.sdr_id) delete payload.sdr_id;
       if (!payload.temperatura) delete payload.temperatura;
@@ -111,29 +108,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
         }
       }
 
-      // Agendar reuniao de retorno
-      if (deal && form.agendar_reuniao && form.data_retorno) {
-        try {
-          const dataRetornoISO = `${form.data_retorno}T10:00:00-03:00`;
-          const lead = deal.lead_id ? leads.find(l => l.id === deal.lead_id) : null;
-          await addReuniao({
-            tipo: 'retorno',
-            deal_id: deal.id,
-            lead_id: deal.lead_id || undefined,
-            closer_id: form.closer_id || deal.closer_id || undefined,
-            sdr_id: deal.sdr_id || undefined,
-            empresa: deal.empresa,
-            nome_contato: deal.nome_contato,
-            canal: deal.canal,
-            data_agendamento: new Date().toISOString().split('T')[0],
-            data_reuniao: dataRetornoISO,
-            lead_email: lead?.email || undefined,
-          } as any);
-          toast.success('Reuniao de retorno agendada!', { icon: '\uD83D\uDCC5' });
-        } catch (e: any) {
-          toast.error('Erro ao agendar reuniao: ' + e.message);
-        }
-      }
+      // Reuni\u00E3o de retorno REMOVIDA: data_retorno \u00E9 gravada no deal, mas n\u00E3o cria mais reuni\u00E3o.
 
       fetchDeals();
       onClose();
@@ -259,18 +234,9 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             {/* Data Retorno + Agendar Reuniao */}
             {(form.status === 'follow_longo' || form.status === 'negociacao' || form.status === 'contrato_na_rua') && (
               <div className="bg-[var(--color-v4-surface)] rounded-xl p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={14} className="text-yellow-400" />
-                    <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
-                  </div>
-                  {deal && (
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={form.agendar_reuniao} onChange={e => set('agendar_reuniao', e.target.checked)}
-                        className="rounded border-[var(--color-v4-border)]" />
-                      <span className="text-xs text-[var(--color-v4-text-muted)]">Agendar reuniao</span>
-                    </label>
-                  )}
+                <div className="flex items-center gap-2 mb-3">
+                  <Calendar size={14} className="text-yellow-400" />
+                  <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
                 </div>
                 <input type="date" value={form.data_retorno || ''} onChange={e => set('data_retorno', e.target.value)} className={inputClass} />
               </div>
