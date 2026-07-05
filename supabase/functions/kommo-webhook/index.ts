@@ -34,6 +34,22 @@ function parseNested(body: string): any {
 const list = (obj: any) => (obj && typeof obj === 'object' ? Object.values(obj) : [])
 const num = (v: any) => (v === undefined || v === null || v === '' ? null : Number(v))
 
+// Normaliza custom_fields do webhook ({id,name,values:[{value,enum}]}) p/ o
+// formato custom_fields_values da réplica ({field_id,field_name,values:[{value,enum_id}]}).
+const normCF = (cf: any) => {
+  const arr = list(cf).map((f: any) => {
+    const vals = list(f?.values).map((v: any) => {
+      const o: any = {}
+      if (v?.value !== undefined && v?.value !== '') o.value = v.value
+      if (v?.enum_id !== undefined) o.enum_id = num(v.enum_id)
+      else if (v?.enum !== undefined) o.enum_id = num(v.enum)
+      return o
+    }).filter((v: any) => Object.keys(v).length)
+    return { field_id: num(f?.id), field_name: f?.name ?? null, values: vals }
+  }).filter((f: any) => f.field_id && f.values.length)
+  return arr.length ? arr : null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok')
   try {
@@ -70,6 +86,7 @@ Deno.serve(async (req) => {
           p_id: num(l.id), p_name: l.name ?? null, p_pipeline: num(l.pipeline_id),
           p_status: num(l.status_id), p_resp: num(l.responsible_user_id),
           p_price: num(l.price), p_updated: num(l.updated_at) ?? Math.floor(Date.now() / 1000),
+          p_cf: normCF(l.custom_fields),   // custom fields do webhook -> réplica na hora
         })
       }
     }
