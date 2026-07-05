@@ -1,11 +1,10 @@
 /**
  * Ruston Notify — widget privado do Kommo (Web SDK).
- * Pop-up persistente de tarefa/evento: fica na tela até o SDR fechar,
- * reaparece ao navegar, empilha, toca som e dispara Notification do browser.
+ * Pop-up persistente de tarefa: fica na tela até o SDR fechar, reaparece ao
+ * navegar, empilha, toca som e dispara Notification do browser.
  *
  * GATILHO: polling leve da API de Tarefas do Kommo (/api/v4/tasks) — front
- * puro, SEM backend. Ver README pro porquê e pro caminho opcional via
- * digital_pipeline + webhook.
+ * puro, SEM backend.
  *
  * Namespace: classes/estado com prefixo "rnw-" / "rnw_" pra não colidir.
  */
@@ -15,7 +14,7 @@ define(['jquery'], function ($) {
 
     // ---- namespace / defaults ----
     var NS = 'rnw';
-    var DEFAULTS = { position: 'bottom-right', sound: 'Y', poll_seconds: 45, lookahead_min: 15 };
+    var DEFAULTS = { position: 'top-right', sound: 'Y', poll_seconds: 45, lookahead_min: 5 };
     var POS_WHITELIST = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
 
     var state = {
@@ -25,6 +24,7 @@ define(['jquery'], function ($) {
       uid: null,         // id do usuário logado
       sub: 'acc',        // subdomínio (namespacing do storage)
       booted: false,
+      minimized: false,  // recolhido? (estado em memória, não persiste)
       active: [],        // notificações na tela [{tid,title,body,etype,eid,due}]
       seen: {},          // ids de tarefa já exibidas (não re-popar)
     };
@@ -51,17 +51,33 @@ define(['jquery'], function ($) {
     function saveState() {
       try { localStorage.setItem(keyActive(), JSON.stringify(state.active)); } catch (e) {}
       try {
-        // poda o "seen" pra não crescer pra sempre (mantém últimos 500)
         var ids = Object.keys(state.seen);
         if (ids.length > 500) { var keep = {}; ids.slice(-500).forEach(function (k) { keep[k] = 1; }); state.seen = keep; }
         localStorage.setItem(keySeen(), JSON.stringify(state.seen));
       } catch (e) {}
     }
 
-    function detailUrl(etype, eid) {
-      var map = { leads: 'leads', contacts: 'contacts', companies: 'companies', customers: 'customers' };
-      var seg = map[etype] || 'leads';
-      return location.origin + '/' + seg + '/detail/' + eid;
+    // ---------- navegação (mesma aba) ----------
+    function segFor(etype) {
+      var m = { leads: 'leads', contacts: 'contacts', companies: 'companies', customers: 'customers' };
+      return m[etype] || 'leads';
+    }
+    function detailPath(etype, eid) { return '/' + segFor(etype) + '/detail/' + eid; }
+    function detailUrl(etype, eid) { return location.origin + detailPath(etype, eid); }
+    // Abre a entidade na MESMA aba: tenta navegação interna do SPA do Kommo;
+    // se não houver, cai pro window.location. Os cards persistem via localStorage.
+    function openEntity(etype, eid) {
+      var path = detailPath(etype, eid);
+      try {
+        if (window.AMOCRM && AMOCRM.Router && typeof AMOCRM.Router.navigate === 'function') {
+          AMOCRM.Router.navigate(path, { trigger: true });
+          return;
+        }
+      } catch (e) {}
+      try {
+        if (window.AMOCRM && typeof AMOCRM.redirect === 'function') { AMOCRM.redirect(path); return; }
+      } catch (e) {}
+      window.location.href = location.origin + path;
     }
 
     function fmtDue(unix) {
@@ -96,8 +112,6 @@ define(['jquery'], function ($) {
       if (!cfg().sound || !state.audio) return;
       try { state.audio.currentTime = 0; var p = state.audio.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {}
     }
-
-    // Autoplay/permite som após 1º gesto; pede permissão de Notification 1x.
     function primeOnGesture() {
       var handler = function () {
         try { if (state.audio) { state.audio.muted = true; state.audio.play().then(function () { state.audio.pause(); state.audio.currentTime = 0; state.audio.muted = false; }).catch(function () { state.audio.muted = false; }); } } catch (e) {}
@@ -118,7 +132,7 @@ define(['jquery'], function ($) {
         if (window.Notification && Notification.permission === 'granted') {
           var icon = state.base ? state.base + '/images/icon.png' : undefined;
           var no = new Notification(n.title, { body: n.body, icon: icon, tag: NS + '-' + n.tid, renotify: true });
-          no.onclick = function () { window.focus(); window.open(detailUrl(n.etype, n.eid), '_blank'); no.close(); };
+          no.onclick = function () { window.focus(); openEntity(n.etype, n.eid); no.close(); };
         }
       } catch (e) {}
     }
@@ -131,31 +145,51 @@ define(['jquery'], function ($) {
         c.id = NS + '-root';
         document.body.appendChild(c);
       }
-      c.className = NS + '-root ' + NS + '-' + cfg().position;
+      c.className = NS + '-root ' + NS + '-' + cfg().position + (state.minimized ? ' ' + NS + '-min' : '');
       return c;
+    }
+
+    function cardHtml(n) {
+      var kind = n.etype === 'contacts' ? 'contato' : n.etype === 'companies' ? 'empresa' : 'lead';
+      return '' +
+        '<div class="' + NS + '-card" data-tid="' + esc(n.tid) + '">' +
+          '<div class="' + NS + '-head">' +
+            '<span class="' + NS + '-badge">🔔 Tarefa</span>' +
+            '<button class="' + NS + '-close" data-tid="' + esc(n.tid) + '" title="Fechar" aria-label="Fechar">×</button>' +
+          '</div>' +
+          '<div class="' + NS + '-title">' + esc(n.title) + '</div>' +
+          (n.body ? '<div class="' + NS + '-body">' + esc(n.body) + '</div>' : '') +
+          (n.due ? '<div class="' + NS + '-due">⏰ ' + esc(fmtDue(n.due)) + '</div>' : '') +
+          '<div class="' + NS + '-actions">' +
+            '<a class="' + NS + '-open" href="' + esc(detailUrl(n.etype, n.eid)) + '" ' +
+               'data-etype="' + esc(n.etype) + '" data-eid="' + esc(n.eid) + '">Abrir ' + kind + ' →</a>' +
+          '</div>' +
+        '</div>';
     }
 
     function render() {
       var c = ensureContainer();
       if (!state.active.length) { c.innerHTML = ''; return; }
-      var html = '';
-      for (var i = 0; i < state.active.length; i++) {
-        var n = state.active[i];
-        html +=
-          '<div class="' + NS + '-card" data-tid="' + esc(n.tid) + '">' +
-            '<div class="' + NS + '-head">' +
-              '<span class="' + NS + '-badge">🔔 Tarefa</span>' +
-              '<button class="' + NS + '-close" data-tid="' + esc(n.tid) + '" title="Fechar" aria-label="Fechar">×</button>' +
-            '</div>' +
-            '<div class="' + NS + '-title">' + esc(n.title) + '</div>' +
-            (n.body ? '<div class="' + NS + '-body">' + esc(n.body) + '</div>' : '') +
-            (n.due ? '<div class="' + NS + '-due">⏰ ' + esc(fmtDue(n.due)) + '</div>' : '') +
-            '<div class="' + NS + '-actions">' +
-              '<a class="' + NS + '-open" href="' + esc(detailUrl(n.etype, n.eid)) + '" target="_blank" rel="noopener">Abrir ' +
-                (n.etype === 'contacts' ? 'contato' : n.etype === 'companies' ? 'empresa' : 'lead') + ' ↗</a>' +
-            '</div>' +
-          '</div>';
+
+      // Recolhido: só o badge com o sino + contador.
+      if (state.minimized) {
+        c.innerHTML =
+          '<button class="' + NS + '-launcher" title="Abrir notificações" aria-label="Abrir notificações">' +
+            '<span class="' + NS + '-launcher-bell">🔔</span>' +
+            '<span class="' + NS + '-launcher-count">' + state.active.length + '</span>' +
+          '</button>';
+        return;
       }
+
+      // Expandido: barra (contador + recolher) + lista rolável de cards.
+      var html =
+        '<div class="' + NS + '-bar">' +
+          '<span class="' + NS + '-bar-title">🔔 Tarefas <b>' + state.active.length + '</b></span>' +
+          '<button class="' + NS + '-min" title="Recolher" aria-label="Recolher">–</button>' +
+        '</div>' +
+        '<div class="' + NS + '-list">';
+      for (var i = 0; i < state.active.length; i++) html += cardHtml(state.active[i]);
+      html += '</div>';
       c.innerHTML = html;
     }
 
@@ -163,21 +197,29 @@ define(['jquery'], function ($) {
       var c = document.getElementById(NS + '-root');
       if (!c || c.getAttribute('data-bound')) return;
       c.setAttribute('data-bound', '1');
-      // delegação: sobrevive a re-render
-      $(c).on('click', '.' + NS + '-close', function () {
+      var $c = $(c);
+      // fechar card
+      $c.on('click', '.' + NS + '-close', function () {
         var tid = String($(this).attr('data-tid'));
         state.active = state.active.filter(function (n) { return String(n.tid) !== tid; });
         saveState(); render();
+      });
+      // recolher / expandir (estado em memória)
+      $c.on('click', '.' + NS + '-min', function () { state.minimized = true; render(); });
+      $c.on('click', '.' + NS + '-launcher', function () { state.minimized = false; render(); });
+      // abrir entidade na MESMA aba
+      $c.on('click', '.' + NS + '-open', function (e) {
+        e.preventDefault();
+        openEntity($(this).attr('data-etype'), $(this).attr('data-eid'));
       });
     }
 
     function addNotif(n) {
       if (state.seen[n.tid]) return false;
       state.seen[n.tid] = 1;
-      // já está na tela? (defensivo)
       if (state.active.some(function (x) { return String(x.tid) === String(n.tid); })) return false;
       state.active.unshift(n);
-      if (state.active.length > 12) state.active = state.active.slice(0, 12);
+      if (state.active.length > 20) state.active = state.active.slice(0, 20);
       return true;
     }
 
@@ -189,14 +231,13 @@ define(['jquery'], function ($) {
                 '&filter[is_completed]=0&order[complete_till]=asc&limit=100';
       $.ajax({ url: url, method: 'GET', dataType: 'json' })
         .done(function (data, textStatus, xhr) {
-          if (xhr && xhr.status === 204) return;            // sem tarefas
+          if (xhr && xhr.status === 204) return;
           var tasks = (data && data._embedded && data._embedded.tasks) || [];
           var now = Math.floor(Date.now() / 1000);
           var horizon = now + c.lookahead * 60;
           var fired = false;
           for (var i = 0; i < tasks.length; i++) {
             var t = tasks[i];
-            // "importante" = vence dentro da janela (ou já atrasada)
             if (t.complete_till && t.complete_till <= horizon) {
               var n = {
                 tid: t.id,
@@ -212,7 +253,7 @@ define(['jquery'], function ($) {
           if (fired) { playSound(); saveState(); }
           render();
         })
-        .fail(function () { /* silencioso: rede/permissão — tenta no próximo tick */ });
+        .fail(function () { /* silencioso: tenta no próximo tick */ });
     }
 
     function startLoop() {
@@ -239,8 +280,8 @@ define(['jquery'], function ($) {
       askNotifyPermission();
       ensureContainer();
       bindOverlay();
-      render();       // re-exibe as que ficaram de sessões anteriores
-      poll();         // primeira checagem imediata
+      render();       // re-exibe as que ficaram (persistência após navegar)
+      poll();         // checagem imediata
       startLoop();
     }
 
@@ -254,7 +295,6 @@ define(['jquery'], function ($) {
       bind_actions: function () { return true; },
       settings: function () { return true; },
       onSave: function () { return true; },
-      dpSettings: function () { return true; },
       destroy: function () {
         try { if (state.timer) clearInterval(state.timer); } catch (e) {}
         var c = document.getElementById(NS + '-root'); if (c) c.parentNode.removeChild(c);

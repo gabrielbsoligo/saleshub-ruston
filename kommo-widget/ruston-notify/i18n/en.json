@@ -5,12 +5,9 @@
     "short_description": "Persistent task notification (sound + browser push)."
   },
   "settings": {
-    "position": "Pop-up position: bottom-right, bottom-left, top-right or top-left (default bottom-right)",
+    "position": "Pop-up position: top-right (default), top-left, bottom-right or bottom-left",
     "sound": "Play sound on alert? Y or N (default Y)",
     "poll_seconds": "Check interval in seconds (min 15, default 45)",
-    "lookahead_min": "Alert tasks due within the next X minutes (default 15; overdue always alert)"
-  },
-  "dp": {
-    "message": "Alert message (used only if you enable the Digital Pipeline + webhook trigger)"
+    "lookahead_min": "Alert tasks due within the next X minutes (default 5; overdue always alert)"
   }
 }

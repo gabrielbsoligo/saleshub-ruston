@@ -4,26 +4,59 @@
   z-index: 2147483000;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   width: 340px;
   max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  pointer-events: none; /* só os cards capturam clique */
+  pointer-events: none;               /* só os filhos capturam clique */
 }
-.rnw-root > .rnw-card { pointer-events: auto; }
+.rnw-root > * { pointer-events: auto; }
 
 /* posições */
-.rnw-bottom-right { right: 16px; bottom: 16px; flex-direction: column-reverse; }
-.rnw-bottom-left  { left: 16px;  bottom: 16px; flex-direction: column-reverse; }
-.rnw-top-right    { right: 16px; top: 64px; }
-.rnw-top-left     { left: 16px;  top: 64px; }
+.rnw-top-right    { right: 16px; top: 64px;  align-items: flex-end; }
+.rnw-top-left     { left: 16px;  top: 64px;  align-items: flex-start; }
+.rnw-bottom-right { right: 16px; bottom: 16px; align-items: flex-end; }
+.rnw-bottom-left  { left: 16px;  bottom: 16px; align-items: flex-start; }
+
+/* barra (contador + recolher) */
+.rnw-bar {
+  width: 100%;
+  display: flex; align-items: center; justify-content: space-between;
+  background: #1a2942; color: #fff;
+  border-radius: 10px; padding: 6px 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  box-shadow: 0 8px 22px -10px rgba(15, 20, 40, 0.45);
+}
+.rnw-bar-title { font-size: 12px; font-weight: 600; letter-spacing: 0.01em; }
+.rnw-bar-title b { font-weight: 800; }
+.rnw-min {
+  border: none; background: rgba(255,255,255,0.16); color: #fff; cursor: pointer;
+  width: 22px; height: 22px; border-radius: 6px; font-size: 18px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; transition: background 0.12s;
+}
+.rnw-min:hover { background: rgba(255,255,255,0.3); }
+
+/* lista rolável de cards */
+.rnw-list {
+  width: 100%;
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  padding: 2px;                        /* respiro pro box-shadow não cortar */
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120,130,150,0.35) transparent;
+}
+/* WebKit: barra fina e discreta */
+.rnw-list::-webkit-scrollbar { width: 6px; }
+.rnw-list::-webkit-scrollbar-track { background: transparent; }
+.rnw-list::-webkit-scrollbar-thumb { background: rgba(120,130,150,0.35); border-radius: 8px; }
+.rnw-list::-webkit-scrollbar-thumb:hover { background: rgba(120,130,150,0.6); }
 
 /* card */
 .rnw-card {
   background: #ffffff;
   border: 1px solid #e6e8ee;
-  border-left: 4px solid #e63946;
+  border-left: 4px solid #e24b4a;
   border-radius: 12px;
   box-shadow: 0 12px 32px -8px rgba(15, 20, 40, 0.28), 0 2px 6px rgba(15, 20, 40, 0.10);
   padding: 12px 14px;
@@ -37,13 +70,11 @@
 .rnw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .rnw-badge {
   font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
-  color: #b3132200; color: #c02231;
-  background: #e6394618; border-radius: 6px; padding: 2px 8px;
+  color: #c02231; background: #e24b4a18; border-radius: 6px; padding: 2px 8px;
 }
 .rnw-close {
   border: none; background: transparent; cursor: pointer;
-  font-size: 20px; line-height: 1; color: #9aa2b3; padding: 0 2px;
-  transition: color 0.12s;
+  font-size: 20px; line-height: 1; color: #9aa2b3; padding: 0 2px; transition: color 0.12s;
 }
 .rnw-close:hover { color: #1c2333; }
 
@@ -53,14 +84,32 @@
 
 .rnw-actions { display: flex; }
 .rnw-open {
-  display: inline-flex; align-items: center; gap: 4px;
-  background: #e63946; color: #fff !important; text-decoration: none;
-  font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 7px 12px;
-  transition: filter 0.12s;
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  background: #e24b4a; color: #fff !important; text-decoration: none;
+  font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 7px 12px; transition: filter 0.12s;
 }
 .rnw-open:hover { filter: brightness(1.08); }
 
-/* modo escuro do SO — mantém legível se o Kommo/So estiver dark */
+/* launcher (recolhido): sino + contador */
+.rnw-launcher {
+  position: relative; cursor: pointer; border: none;
+  width: 48px; height: 48px; border-radius: 50%;
+  background: #1a2942; color: #fff; font-size: 22px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 26px -8px rgba(15, 20, 40, 0.5);
+  transition: transform 0.12s, filter 0.12s;
+}
+.rnw-launcher:hover { transform: translateY(-2px); filter: brightness(1.08); }
+.rnw-launcher-bell { pointer-events: none; }
+.rnw-launcher-count {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box;
+  background: #e24b4a; color: #fff; border: 2px solid #fff; border-radius: 999px;
+  font-size: 11px; font-weight: 800; line-height: 16px; text-align: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* modo escuro do SO */
 @media (prefers-color-scheme: dark) {
   .rnw-card { background: #1e2230; border-color: #2c3242; color: #f2f4f8; }
   .rnw-body { color: #aab2c5; }

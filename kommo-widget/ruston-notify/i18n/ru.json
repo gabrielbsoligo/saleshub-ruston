@@ -5,12 +5,9 @@
     "short_description": "Постоянное уведомление о задаче (звук + push браузера)."
   },
   "settings": {
-    "position": "Позиция окна: bottom-right, bottom-left, top-right или top-left (по умолчанию bottom-right)",
+    "position": "Позиция окна: top-right (по умолчанию), top-left, bottom-right или bottom-left",
     "sound": "Звук при уведомлении? Y или N (по умолчанию Y)",
     "poll_seconds": "Интервал проверки в секундах (мин. 15, по умолчанию 45)",
-    "lookahead_min": "Уведомлять о задачах на ближайшие X минут (по умолчанию 15; просроченные всегда)"
-  },
-  "dp": {
-    "message": "Текст уведомления (только при включении триггера через Digital Pipeline + webhook)"
+    "lookahead_min": "Уведомлять о задачах на ближайшие X минут (по умолчанию 5; просроченные всегда)"
   }
 }

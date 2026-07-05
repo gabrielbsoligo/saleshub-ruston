@@ -3,8 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "code": "rn_19a1462411",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "interface_version": 2,
     "init_once": true,
     "locale": ["pt", "en", "es", "ru"],
@@ -14,45 +13,11 @@
       "email": "bianchini@rustonassessoria.com"
     }
   },
-  "locations": [
-    "settings",
-    "digital_pipeline",
-    "lcard-1",
-    "ccard-1",
-    "clist-0",
-    "llist-0"
-  ],
+  "locations": ["settings", "lcard-0", "ccard-0", "llist-0", "clist-0"],
   "settings": {
-    "position": {
-      "name": "settings.position",
-      "type": "text",
-      "required": false
-    },
-    "sound": {
-      "name": "settings.sound",
-      "type": "text",
-      "required": false
-    },
-    "poll_seconds": {
-      "name": "settings.poll_seconds",
-      "type": "numeric",
-      "required": false
-    },
-    "lookahead_min": {
-      "name": "settings.lookahead_min",
-      "type": "numeric",
-      "required": false
-    }
-  },
-  "dp": {
-    "settings": {
-      "message": {
-        "name": "dp.message",
-        "type": "text",
-        "required": true
-      }
-    },
-    "action_multiple": false,
-    "webhook_url": "https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/kommo-notify"
+    "position": { "name": "settings.position", "type": "text", "required": false },
+    "sound": { "name": "settings.sound", "type": "text", "required": false },
+    "poll_seconds": { "name": "settings.poll_seconds", "type": "text", "required": false },
+    "lookahead_min": { "name": "settings.lookahead_min", "type": "text", "required": false }
   }
 }
