@@ -1,0 +1,16 @@
+{
+  "widget": {
+    "name": "Ruston Notify",
+    "description": "Pop-up persistente de tarefas dentro do Kommo: fica na tela até você fechar, reaparece ao navegar, com som e notificação do navegador. Avisa de tarefas que vencem ou estão atrasadas.",
+    "short_description": "Notificação de tarefa persistente (som + push do navegador)."
+  },
+  "settings": {
+    "position": "Posição do pop-up: bottom-right, bottom-left, top-right ou top-left (padrão bottom-right)",
+    "sound": "Tocar som ao avisar? Y ou N (padrão Y)",
+    "poll_seconds": "Intervalo de checagem em segundos (mínimo 15, padrão 45)",
+    "lookahead_min": "Avisar tarefas que vencem nos próximos X minutos (padrão 15; atrasadas sempre avisam)"
+  },
+  "dp": {
+    "message": "Mensagem do aviso (usado só se você ligar o gatilho via Digital Pipeline + webhook)"
+  }
+}

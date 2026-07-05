@@ -15,9 +15,10 @@ export const TARGET_PIPELINE_ID = 14062096; // Novo-Pré Vendas
 export const TARGET_STATUS_ID = 108545100; // Conexão Realizada
 export const KOMMO_BASE = 'https://financeirorustonengenhariacombr.kommo.com';
 
-// Trava de segurança: enquanto false, a tela NUNCA grava no Kommo —
-// só mostra o payload que enviaria (dry-run).
-export const WRITEBACK_ENABLED = false;
+// Trava de segurança: quando false, a tela NUNCA grava no Kommo — só
+// mostra o payload que enviaria (dry-run). true = escrita real via
+// kommo-3c-move → kommo-writeback.
+export const WRITEBACK_ENABLED = true;
 
 export const kommoLeadUrl = (id: number | string) => `${KOMMO_BASE}/leads/detail/${id}`;
 

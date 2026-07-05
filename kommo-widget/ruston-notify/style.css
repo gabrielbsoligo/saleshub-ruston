@@ -1,0 +1,70 @@
+/* Ruston Notify — estilos do widget. Prefixo rnw- pra não colidir com o Kommo. */
+.rnw-root {
+  position: fixed;
+  z-index: 2147483000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  pointer-events: none; /* só os cards capturam clique */
+}
+.rnw-root > .rnw-card { pointer-events: auto; }
+
+/* posições */
+.rnw-bottom-right { right: 16px; bottom: 16px; flex-direction: column-reverse; }
+.rnw-bottom-left  { left: 16px;  bottom: 16px; flex-direction: column-reverse; }
+.rnw-top-right    { right: 16px; top: 64px; }
+.rnw-top-left     { left: 16px;  top: 64px; }
+
+/* card */
+.rnw-card {
+  background: #ffffff;
+  border: 1px solid #e6e8ee;
+  border-left: 4px solid #e63946;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px -8px rgba(15, 20, 40, 0.28), 0 2px 6px rgba(15, 20, 40, 0.10);
+  padding: 12px 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #1c2333;
+  animation: rnw-in 0.22s ease;
+}
+@keyframes rnw-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rnw-card { animation: none; } }
+
+.rnw-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rnw-badge {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+  color: #b3132200; color: #c02231;
+  background: #e6394618; border-radius: 6px; padding: 2px 8px;
+}
+.rnw-close {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 20px; line-height: 1; color: #9aa2b3; padding: 0 2px;
+  transition: color 0.12s;
+}
+.rnw-close:hover { color: #1c2333; }
+
+.rnw-title { font-size: 14px; font-weight: 700; line-height: 1.35; margin-bottom: 3px; word-break: break-word; }
+.rnw-body { font-size: 12.5px; color: #5b6478; margin-bottom: 4px; }
+.rnw-due  { font-size: 12px; color: #9aa2b3; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
+
+.rnw-actions { display: flex; }
+.rnw-open {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #e63946; color: #fff !important; text-decoration: none;
+  font-size: 12.5px; font-weight: 600; border-radius: 8px; padding: 7px 12px;
+  transition: filter 0.12s;
+}
+.rnw-open:hover { filter: brightness(1.08); }
+
+/* modo escuro do SO — mantém legível se o Kommo/So estiver dark */
+@media (prefers-color-scheme: dark) {
+  .rnw-card { background: #1e2230; border-color: #2c3242; color: #f2f4f8; }
+  .rnw-body { color: #aab2c5; }
+  .rnw-due { color: #7d879c; }
+  .rnw-close { color: #7d879c; }
+  .rnw-close:hover { color: #f2f4f8; }
+}

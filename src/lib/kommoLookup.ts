@@ -51,6 +51,32 @@ export async function lookupQuery(query: string): Promise<KommoLeadState[]> {
   return data.byQuery || [];
 }
 
+export interface MoveResult {
+  ok: boolean;
+  kommo_id: string;
+  patch: { pipeline_id: number; status_id: number; responsible_user_id: number };
+  kommo_status?: number;
+  kommo_body?: any;
+  bridge_status?: number;
+  error?: string;
+}
+
+// Move o lead pra Conexão Realizada + atribui o usuário escolhido.
+// Chama kommo-3c-move (JWT), que repassa pra kommo-writeback server-side.
+export async function moveToConexaoRealizada(input: { kommo_id: string; responsible_user_id: number }): Promise<MoveResult> {
+  const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/kommo-3c-move`, {
+    method: 'POST',
+    headers: fnHeaders(),
+    body: JSON.stringify(input),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data?.ok) {
+    const detail = data?.error || data?.kommo_body || `kommo-3c-move respondeu ${resp.status}`;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return data as MoveResult;
+}
+
 // Lista TODOS os usuários do Kommo (pra escolher o responsável).
 export async function fetchKommoUsers(): Promise<KommoUser[]> {
   const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/kommo-users`, {
