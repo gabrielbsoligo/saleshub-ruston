@@ -52,7 +52,9 @@ BEGIN
   RETURN NEW;
 END $$;
 
--- TRIGGER (comentado — criar só após teste real OK):
--- CREATE TRIGGER trg_reuniao_to_kommo
---   AFTER INSERT OR UPDATE OF realizada, show ON public.reunioes
---   FOR EACH ROW EXECUTE FUNCTION public.fn_push_reuniao_to_kommo();
+-- TRIGGER (ativo — validado por teste real de ciclo completo via trigger em 2026-07-05:
+--   UPDATE realizada+show numa reunião real disparou o push sozinho; lead moveu p/ Closer
+--   por GET; revertido em seguida sem footprint):
+CREATE TRIGGER trg_reuniao_to_kommo
+  AFTER INSERT OR UPDATE OF realizada, show ON public.reunioes
+  FOR EACH ROW EXECUTE FUNCTION public.fn_push_reuniao_to_kommo();
