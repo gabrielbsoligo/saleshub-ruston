@@ -16,6 +16,7 @@ import {
   Sparkles,
   FileText,
   CalendarClock,
+  Phone,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -25,7 +26,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall";
+export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -44,6 +45,7 @@ export const Layout: React.FC<{
     { id: "reunioes" as const, label: "Reuniões", icon: Calendar },
     { id: "agendas_time" as const, label: "Agendas", icon: CalendarClock },
     { id: "prepcall" as const, label: "Prep Call", icon: Sparkles },
+    { id: "3c_manual" as const, label: "3C Manual", icon: Phone, badge: "temp", allowedRoles: ['sdr', 'closer', 'gestor'] as TeamRole[] },
     { id: "performance" as const, label: "Performance", icon: BarChart3 },
     { id: "metas" as const, label: "Metas", icon: Target },
     { id: "comissoes" as const, label: "Comissões", icon: DollarSign },
@@ -52,7 +54,7 @@ export const Layout: React.FC<{
     { id: "leadbroker" as const, label: "LeadBroker", icon: Box },
     { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "equipe" as const, label: "Equipe", icon: Users },
-  ] as Array<{ id: View; label: string; icon: any; allowedRoles?: TeamRole[] }>;
+  ] as Array<{ id: View; label: string; icon: any; allowedRoles?: TeamRole[]; badge?: string }>;
 
   const navItems = allNavItems.filter(item => {
     // Se item explicita roles permitidas, so' esses podem ver
@@ -104,7 +106,12 @@ export const Layout: React.FC<{
                 )}
               >
                 <Icon size={18} />
-                {item.label}
+                <span className="flex-1 text-left">{item.label}</span>
+                {item.badge && (
+                  <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
