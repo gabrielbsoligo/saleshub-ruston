@@ -22,3 +22,7 @@ instagram.json
 site.json
 errors.json
 scraped_data.json
+
+# Saídas com dados sensíveis (PII de leads/clientes) — geradas em runtime, não versionar
+outputs/
+reports/
