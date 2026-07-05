@@ -14,6 +14,7 @@ import {
   lookupCall as realLookupCall,
   lookupQuery as realLookupQuery,
   fetchKommoUsers as realFetchUsers,
+  moveToConexaoRealizada as realMove,
 } from "../lib/kommoLookup";
 
 // Injeção opcional pra testes/preview — em produção usa os clientes reais.
@@ -21,6 +22,7 @@ interface Props {
   lookupCallFn?: typeof realLookupCall;
   lookupQueryFn?: typeof realLookupQuery;
   fetchUsersFn?: typeof realFetchUsers;
+  moveFn?: typeof realMove;
   writebackEnabled?: boolean;
 }
 
@@ -178,6 +180,7 @@ export const ThreeCManualView: React.FC<Props> = ({
   lookupCallFn = realLookupCall,
   lookupQueryFn = realLookupQuery,
   fetchUsersFn = realFetchUsers,
+  moveFn = realMove,
   writebackEnabled = WRITEBACK_ENABLED,
 }) => {
   const [phase, setPhase] = useState<Phase>("input");
@@ -197,8 +200,10 @@ export const ThreeCManualView: React.FC<Props> = ({
   const [usersError, setUsersError] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
 
-  // dry-run / resultado da gravação
-  const [dryRun, setDryRun] = useState<{ endpoint: string; payload: any; lead: KommoLeadState; user: KommoUser } | null>(null);
+  // resultado da gravação (dry-run ou escrita real)
+  const [doneInfo, setDoneInfo] = useState<{ mode: "dryrun" | "real"; endpoint: string; payload: any; lead: KommoLeadState; user: KommoUser; kommoStatus?: number } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [moveError, setMoveError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -250,24 +255,41 @@ export const ThreeCManualView: React.FC<Props> = ({
     }
   };
 
-  const confirmMove = () => {
+  const confirmMove = async () => {
     if (!selected || selectedUserId === "") return;
     const user = users.find((u) => u.id === selectedUserId);
     if (!user) return;
     const payload = buildWritebackPayload(user.id);
+    setMoveError("");
+
     if (!writebackEnabled) {
       // DRY-RUN: monta e mostra o payload, NÃO grava.
-      setDryRun({ endpoint: writebackEndpoint(selected.id), payload, lead: selected, user });
+      setDoneInfo({ mode: "dryrun", endpoint: writebackEndpoint(selected.id), payload, lead: selected, user });
       setPhase("done");
       return;
     }
-    // (futuro) quando WRITEBACK_ENABLED: chamar a ponte kommo-writeback aqui.
-    toast.error("Writeback ainda não está ligado.");
+
+    // ESCRITA REAL via kommo-3c-move → kommo-writeback.
+    setSubmitting(true);
+    try {
+      const res = await moveFn({ kommo_id: String(selected.id), responsible_user_id: user.id });
+      setDoneInfo({ mode: "real", endpoint: writebackEndpoint(selected.id), payload, lead: selected, user, kommoStatus: res.kommo_status });
+      setPhase("done");
+      toast.success("Movido para Conexão Realizada!");
+      window.open(kommoLeadUrl(selected.id), "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      const msg = e?.message || "Erro ao gravar no Kommo";
+      setMoveError(msg);
+      toast.error(msg);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const reset = () => {
-    setInputs(EMPTY); setResult(null); setSelected(null); setDryRun(null);
+    setInputs(EMPTY); setResult(null); setSelected(null); setDoneInfo(null);
     setManualQuery(""); setManualResults(null); setSelectedUserId(""); setError("");
+    setMoveError(""); setSubmitting(false);
     setPhase("input");
   };
 
@@ -477,15 +499,21 @@ export const ThreeCManualView: React.FC<Props> = ({
             {usersError && <p className="text-xs text-red-400 mt-2">{usersError}</p>}
             <button
               onClick={confirmMove}
-              disabled={selectedUserId === ""}
+              disabled={selectedUserId === "" || submitting}
               className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm"
             >
-              <ArrowRight size={16} /> Mover p/ Conexão Realizada + atribuir
+              {submitting ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+              {submitting ? "Gravando no Kommo…" : "Mover p/ Conexão Realizada + atribuir"}
             </button>
+            {moveError && (
+              <p className="text-xs text-red-400 mt-2 flex items-start gap-1.5">
+                <AlertTriangle size={13} className="flex-none mt-0.5" /> {moveError}
+              </p>
+            )}
             {!writebackEnabled && (
               <p className="text-[11px] text-amber-300/90 mt-2 flex items-start gap-1.5">
                 <AlertTriangle size={12} className="flex-none mt-0.5" />
-                Dry-run: mostra o payload exato que seria enviado, <b className="font-semibold">sem gravar</b>. Liga quando a ponte kommo-writeback subir.
+                Dry-run: mostra o payload exato que seria enviado, <b className="font-semibold">sem gravar</b>.
               </p>
             )}
           </div>
@@ -494,19 +522,22 @@ export const ThreeCManualView: React.FC<Props> = ({
     );
   }
 
-  // ---------- Fase 4: feito (dry-run) ----------
+  // ---------- Fase 4: feito (escrita real ou dry-run) ----------
   function renderDone() {
-    if (!dryRun) return null;
-    const url = kommoLeadUrl(dryRun.lead.id);
+    if (!doneInfo) return null;
+    const url = kommoLeadUrl(doneInfo.lead.id);
+    const isReal = doneInfo.mode === "real";
     return (
       <div className="space-y-4">
         <div className={`${cardCls} p-6 text-center`}>
-          <div className="w-12 h-12 rounded-full bg-amber-500/15 text-amber-300 flex items-center justify-center mx-auto mb-3">
-            <AlertTriangle size={24} />
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3 ${isReal ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/15 text-amber-300"}`}>
+            {isReal ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}
           </div>
-          <p className="text-white font-semibold text-[15px]">Dry-run — nada foi gravado no Kommo</p>
+          <p className="text-white font-semibold text-[15px]">
+            {isReal ? "Movido para Conexão Realizada" : "Dry-run — nada foi gravado no Kommo"}
+          </p>
           <p className="text-sm text-[var(--color-v4-text-muted)] mt-1">
-            {dryRun.lead.name} → Conexão Realizada · atribuído a {dryRun.user.name}
+            {doneInfo.lead.name} → Conexão Realizada · atribuído a {doneInfo.user.name}
           </p>
           <div className="inline-flex items-center gap-2 mt-4 bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-lg pl-3 pr-2 py-1.5">
             <span className="font-mono text-xs text-blue-300 truncate max-w-[280px]">{url}</span>
@@ -515,13 +546,16 @@ export const ThreeCManualView: React.FC<Props> = ({
               Abrir no Kommo <ExternalLink size={13} />
             </a>
           </div>
+          {isReal && <p className="text-[11px] text-emerald-300/80 mt-3">Kommo respondeu {doneInfo.kommoStatus} · aba aberta automaticamente.</p>}
         </div>
 
         <div className={`${cardCls} p-4`}>
-          <p className="text-[11px] uppercase tracking-wider text-[var(--color-v4-text-muted)] font-bold mb-2">Payload que seria enviado</p>
+          <p className="text-[11px] uppercase tracking-wider text-[var(--color-v4-text-muted)] font-bold mb-2">
+            {isReal ? "Payload enviado" : "Payload que seria enviado"}
+          </p>
           <pre className="bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-lg p-3 overflow-x-auto text-xs font-mono text-slate-300 leading-relaxed">
-{`${dryRun.endpoint}
-${JSON.stringify(dryRun.payload, null, 2)}`}
+{`${doneInfo.endpoint}
+${JSON.stringify(doneInfo.payload, null, 2)}`}
           </pre>
           <p className="text-[11px] text-[var(--color-v4-text-muted)] mt-2">
             Destino fixo: pipeline <span className="font-mono">{TARGET_PIPELINE_ID}</span> · status <span className="font-mono">{TARGET_STATUS_ID}</span>.
