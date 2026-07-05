@@ -38,6 +38,7 @@ Deno.serve(async (req) => {
     const pipelines = (data?._embedded?.pipelines || []).map((p: any) => ({
       pipeline_id: p.id,
       name: p.name,
+      is_archive: !!p.is_archive,   // p/ o front esconder funis arquivados
       // type 1 = "Etapa de leads de entrada" (incoming); 142/143 = ganho/perdido
       statuses: (p?._embedded?.statuses || [])
         .filter((s: any) => s.type !== 1 && s.id !== 142 && s.id !== 143)

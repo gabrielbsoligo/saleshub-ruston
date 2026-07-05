@@ -39,7 +39,8 @@ const digits = (s: string) => (s || "").replace(/\D/g, "");
 const SUPABASE_FUNCTIONS_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-interface KommoPipeline { pipeline_id: number; name: string; statuses: { id: number; name: string }[]; }
+interface KommoPipeline { pipeline_id: number; name: string; is_archive?: boolean; statuses: { id: number; name: string }[]; }
+const NOVO_PRE_VENDAS_PIPELINE = 14062096; // default do importador (funil novo)
 interface ImportProgress { total: number; created: number; failed: number; pending: number; errors: { empresa: string; status: number | null; msg: string }[]; }
 
 const POLL_MAX_MS = 180000; // 3 min
@@ -92,7 +93,13 @@ export const ImportLeadsModal: React.FC<Props> = ({ onClose }) => {
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        setPipelines(data.pipelines || []);
+        // só funis ATIVOS (exclui arquivados) — evita nascer lead em funil velho
+        const ativos = (data.pipelines || []).filter((p: KommoPipeline) => !p.is_archive);
+        setPipelines(ativos);
+        // default: Novo-Pré Vendas (se presente); senão deixa "automático"
+        if (ativos.some((p: KommoPipeline) => p.pipeline_id === NOVO_PRE_VENDAS_PIPELINE)) {
+          setPipelineId(NOVO_PRE_VENDAS_PIPELINE);
+        }
         setKommoTags(data.tags || []);
       } catch { /* mantém vazio → usa mapeamento por canal */ }
     })();

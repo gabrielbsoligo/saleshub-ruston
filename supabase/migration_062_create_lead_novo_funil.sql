@@ -1,0 +1,133 @@
+-- migration_062_create_lead_novo_funil.sql
+-- CREATE path (kommo_post_create_lead): lead INBOUND (blackbox/leadbroker) passa
+-- a nascer no funil NOVO — Novo-Pré Vendas 14062096 / ENTRADA 108545092 — em vez
+-- do PV-Inbound velho arquivado (10897863/83673167).
+--
+-- ⚠️ NÃO altera o ramo ELSE (canal não-inbound: recovery/outbound/recomendacao/
+--    indicacao), que segue em 13250384/102173864 — destino a decidir depois.
+-- Não mexe na lógica de sdr_id/responsible (Roleta 1 intacta): pipeline/status
+-- é independente de responsible_user_id.
+
+CREATE OR REPLACE FUNCTION public.kommo_post_create_lead(p leads)
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+    access_token TEXT;
+    pipeline_id INTEGER;
+    status_id INTEGER;
+    origem_enum_id INTEGER;
+    v_kommo_user_id INTEGER;
+    custom_fields JSONB;
+    contact_custom_fields JSONB;
+    lead_obj JSONB;
+    lead_payload JSONB;
+    request_id BIGINT;
+    v_embedded JSONB;
+    v_tags JSONB;
+BEGIN
+    IF p.kommo_id IS NOT NULL AND p.kommo_id != '' THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT value INTO access_token FROM integracao_config WHERE key = 'kommo_access_token';
+    IF access_token IS NULL THEN
+        INSERT INTO kommo_sync_log (lead_id, action, error_message)
+        VALUES (p.id, 'create_lead', 'Sem access_token configurado em integracao_config');
+        RETURN NULL;
+    END IF;
+
+    IF p.kommo_pipeline_id IS NOT NULL THEN
+        pipeline_id := p.kommo_pipeline_id;
+        status_id := p.kommo_status_id;
+    ELSIF p.canal IN ('blackbox', 'leadbroker') THEN
+        pipeline_id := 14062096; status_id := 108545092;   -- Novo-Pré Vendas / ENTRADA (era 10897863/83673167 velho)
+    ELSE
+        pipeline_id := 13250384; status_id := 102173864;   -- ELSE (não-inbound): PV-Outbound velho — destino a decidir
+    END IF;
+
+    origem_enum_id := CASE p.canal
+        WHEN 'blackbox' THEN 863643
+        WHEN 'leadbroker' THEN 823308
+        WHEN 'outbound' THEN 823306
+        WHEN 'recomendacao' THEN 823304
+        WHEN 'indicacao' THEN 823330
+        WHEN 'recovery' THEN 863727
+        ELSE NULL END;
+
+    IF p.sdr_id IS NOT NULL THEN
+        SELECT tm.kommo_user_id INTO v_kommo_user_id FROM team_members tm WHERE tm.id = p.sdr_id;
+    END IF;
+
+    custom_fields := '[]'::JSONB;
+    IF p.cnpj IS NOT NULL AND p.cnpj != '' THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 508460, 'values', jsonb_build_array(jsonb_build_object('value', p.cnpj))));
+    END IF;
+    IF p.faturamento IS NOT NULL AND p.faturamento != '' THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 508510, 'values', jsonb_build_array(jsonb_build_object('value', p.faturamento))));
+    END IF;
+    IF origem_enum_id IS NOT NULL THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 975168, 'values', jsonb_build_array(jsonb_build_object('enum_id', origem_enum_id))));
+    END IF;
+    IF p.recomendado_por IS NOT NULL AND p.recomendado_por != '' THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 1037645, 'values', jsonb_build_array(jsonb_build_object('value', p.recomendado_por))));
+    END IF;
+    IF p.coletado_por_closer_nome IS NOT NULL AND p.coletado_por_closer_nome != '' THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 1037643, 'values', jsonb_build_array(jsonb_build_object('value', p.coletado_por_closer_nome))));
+    END IF;
+    -- Segmento Disparos (field_id 1041897, texto) — preenchido na importação
+    IF p.segmento_disparos IS NOT NULL AND p.segmento_disparos != '' THEN
+        custom_fields := custom_fields || jsonb_build_array(jsonb_build_object('field_id', 1041897, 'values', jsonb_build_array(jsonb_build_object('value', p.segmento_disparos))));
+    END IF;
+
+    lead_obj := jsonb_build_object('name', p.empresa, 'pipeline_id', pipeline_id, 'status_id', status_id);
+    IF v_kommo_user_id IS NOT NULL THEN
+        lead_obj := lead_obj || jsonb_build_object('responsible_user_id', v_kommo_user_id);
+    END IF;
+    IF jsonb_array_length(custom_fields) > 0 THEN
+        lead_obj := lead_obj || jsonb_build_object('custom_fields_values', custom_fields);
+    END IF;
+
+    v_embedded := '{}'::JSONB;
+    IF p.kommo_tags IS NOT NULL AND array_length(p.kommo_tags, 1) > 0 THEN
+        SELECT jsonb_agg(jsonb_build_object('name', btrim(t)))
+          INTO v_tags FROM unnest(p.kommo_tags) AS t WHERE t IS NOT NULL AND btrim(t) <> '';
+        IF v_tags IS NOT NULL THEN
+            v_embedded := v_embedded || jsonb_build_object('tags', v_tags);
+        END IF;
+    END IF;
+
+    IF p.nome_contato IS NOT NULL AND p.nome_contato != '' THEN
+        contact_custom_fields := '[]'::JSONB;
+        IF p.telefone IS NOT NULL AND p.telefone != '' THEN
+            contact_custom_fields := contact_custom_fields || jsonb_build_array(
+                jsonb_build_object('field_id', 399272, 'values', jsonb_build_array(jsonb_build_object('value', p.telefone, 'enum_code', 'WORK'))));
+        END IF;
+        IF p.email IS NOT NULL AND p.email != '' THEN
+            contact_custom_fields := contact_custom_fields || jsonb_build_array(
+                jsonb_build_object('field_id', 399274, 'values', jsonb_build_array(jsonb_build_object('value', p.email, 'enum_code', 'WORK'))));
+        END IF;
+        v_embedded := v_embedded || jsonb_build_object(
+            'contacts', jsonb_build_array(jsonb_build_object('first_name', p.nome_contato, 'custom_fields_values', contact_custom_fields)));
+    END IF;
+
+    IF v_embedded <> '{}'::JSONB THEN
+        lead_obj := lead_obj || jsonb_build_object('_embedded', v_embedded);
+    END IF;
+
+    lead_payload := jsonb_build_array(lead_obj);
+
+    SELECT net.http_post(
+        url := 'https://financeirorustonengenhariacombr.kommo.com/api/v4/leads/complex',
+        headers := jsonb_build_object('Authorization', 'Bearer ' || access_token, 'Content-Type', 'application/json'),
+        body := lead_payload
+    ) INTO request_id;
+
+    UPDATE leads SET kommo_request_id = request_id WHERE id = p.id;
+    INSERT INTO kommo_sync_log (lead_id, action, request_id, request_payload)
+    VALUES (p.id, 'create_lead', request_id, lead_payload);
+
+    RETURN request_id;
+END;
+$function$;
