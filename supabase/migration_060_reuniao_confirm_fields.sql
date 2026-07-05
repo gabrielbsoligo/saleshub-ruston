@@ -6,8 +6,9 @@
 --
 -- Campos Kommo (criados via API):
 --   1042421 Data da Reunião (date_time)   = data_reuniao
---   1042423 Disparo Confirmação (date_time) = 7h/11h/14h do dia por bloco; só se ainda no futuro
---   1042425 Lembrete 5min (date_time)     = data_reuniao - 5min
+--   1042423 Disparo Confirmação (date_time) = (7h/11h/14h do bloco) − 1h; só se ainda no futuro
+--   1042425 Lembrete 5min (date_time)     = data_reuniao − 5min − 1h
+--   (o −1h compensa o Salesbot, que dispara "1h depois" do campo; offset 0 não existe no Kommo)
 --   1042427 Link da Call (url)            = SÓ O CÓDIGO da sala do Meet (var {{1}} do botão), só se não vazio
 --   1042429 Reunião (texto)               = "hoje às 15h" / "10/07 às 15h" (var {{2}} template)
 
@@ -34,7 +35,8 @@ DECLARE
   v_local      TIMESTAMP;      -- wall-clock local (SP)
   v_hour       INT;
   v_bloco      INT;
-  v_alvo_ts    TIMESTAMPTZ;    -- instante absoluto do disparo de confirmação
+  v_alvo_ts    TIMESTAMPTZ;    -- instante do bloco (7/11/14h) — alvo lógico
+  v_disparo_ts TIMESTAMPTZ;    -- valor GRAVADO no campo = alvo − 1h (Salesbot soma +1h)
   v_cfv        JSONB;
   v_hora_txt   TEXT;           -- "9h" / "15h30"
   v_texto      TEXT;           -- "hoje às 15h" / "10/07 às 15h" (var {{2}} do template)
@@ -93,6 +95,8 @@ BEGIN
     v_hour  := EXTRACT(hour FROM v_local)::int;
     v_bloco := CASE WHEN v_hour <= 11 THEN 7 WHEN v_hour <= 17 THEN 11 ELSE 14 END;
     v_alvo_ts := (date_trunc('day', v_local) + make_interval(hours => v_bloco)) AT TIME ZONE 'America/Sao_Paulo';
+    -- Salesbot dispara "1h depois" do campo -> grava alvo − 1h pra compensar.
+    v_disparo_ts := v_alvo_ts - interval '1 hour';
 
     -- texto legível pro cliente (var {{2}} do template). Fuso local -03.
     v_hora_txt := to_char(v_local,'FMHH24') || 'h'
@@ -108,16 +112,16 @@ BEGIN
       jsonb_build_object('field_id',1042421,'values',
         jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM r.data_reuniao)::bigint))),
       jsonb_build_object('field_id',1042425,'values',
-        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM (r.data_reuniao - interval '5 min'))::bigint))),
+        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM (r.data_reuniao - interval '5 min' - interval '1 hour'))::bigint))),
       jsonb_build_object('field_id',1042429,'values',
         jsonb_build_array(jsonb_build_object('value', v_texto)))
     );
-    -- Disparo Confirmação: grava se o alvo ainda está no futuro; se já passou,
-    -- LIMPA o campo (values:[]) — cobre reschedule que joga o alvo pro passado.
-    IF v_alvo_ts >= now() THEN
+    -- Disparo Confirmação: grava (alvo − 1h). Guarda de futuro sobre o VALOR
+    -- GRAVADO (v_disparo_ts), não sobre o alvo; se já passou, LIMPA (values:null).
+    IF v_disparo_ts >= now() THEN
       v_cfv := v_cfv || jsonb_build_array(
         jsonb_build_object('field_id',1042423,'values',
-          jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM v_alvo_ts)::bigint))));
+          jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM v_disparo_ts)::bigint))));
     ELSE
       -- Kommo limpa campo com "values": null (nem [] nem [{value:null}] são aceitos)
       v_cfv := v_cfv || jsonb_build_array(
@@ -144,7 +148,7 @@ BEGIN
     'kommo_id', v_kommo_id, 'resolvido_via', v_via,
     'pipeline_atual', v_cur_pipe, 'status_atual', v_cur_status,
     'closer_reatribuido', v_uid,
-    'disparo_confirmacao_ts', v_alvo_ts,
+    'disparo_bloco_ts', v_alvo_ts, 'disparo_gravado_ts', v_disparo_ts,
     'endpoint', '/api/v4/leads/'||v_kommo_id, 'metodo','PATCH',
     'body', v_body);
 END $function$;
