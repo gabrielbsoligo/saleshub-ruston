@@ -20,6 +20,8 @@ SB_TOKEN = os.environ["SB_TOKEN"]
 KOMMO_TOKEN = os.environ["KOMMO_API_TOKEN"]
 KOMMO_BASE = f"https://{os.environ['KOMMO_SUBDOMAIN']}.kommo.com"
 APPLY = "--apply" in sys.argv
+# --limit N: aplica só os primeiros N (lote-piloto). Sem limite = todos.
+LIMIT = next((int(a.split("=")[1]) for a in sys.argv if a.startswith("--limit=")), None)
 
 PV, DISP, NUT = 14062096, 14062116, 14062120
 N = {'ENTRADA':108545092,'SPEED':108545096,'F1':108545216,'F2':108545220,'F3':108545224,
@@ -51,6 +53,7 @@ M = {
   # OUTBOUND DISPARO (13815136)
   108282324:(NUT,N['NUT_BASE']),107908780:(DISP,N['RESPONDEU']),
   106594544:(DISP,N['RESPONDEU']),106594560:(DISP,N['OPTOUT']),
+  106594548:(PV,N['REUNIAO']),          # "Agendado" -> Pre Vendas/REUNIÃO MARCADA
   # OUTBOUND HUNTER (14004600)
   108089864:(DISP,N['RESPONDEU']),108089872:(PV,N['NOSHOW']),
   # Aquecimento (14024288)
@@ -88,18 +91,26 @@ def main():
         np, ns = M[sid]
         payload.append({"id": int(r['id']), "pipeline_id": np, "status_id": ns})
 
-    print(f"{'APPLY' if APPLY else 'DRY-RUN'} | mover={len(payload)} | pulados={skipped}")
+    print(f"{'APPLY' if APPLY else 'DRY-RUN'} | elegíveis={len(payload)} | pulados={skipped}")
+    if LIMIT is not None:
+        payload = payload[:LIMIT]
+        print(f"LOTE-PILOTO: limitado aos primeiros {len(payload)}")
     if not APPLY:
         print("dry-run: nada enviado. Rode com --apply para executar.")
         return
-    CH = 250; ok = 0
+    CH = 250; ok = 0; moved_ids = []
     for i in range(0, len(payload), CH):
         batch = payload[i:i+CH]
         good, info = kommo_bulk_patch(batch)
-        ok += len(batch) if good else 0
+        if good:
+            ok += len(batch); moved_ids += [b["id"] for b in batch]
         print(f"  lote {i//CH+1}: {len(batch)} -> {'OK' if good else 'ERRO '+str(info)}")
         time.sleep(0.5)   # folga no rate limit (~2 req/s << limite)
     print(f"TOTAL movido: {ok}/{len(payload)}")
+    if moved_ids:
+        print("SAMPLE_IDS:", json.dumps(moved_ids[:5]))
+        exp = {b["id"]: (b["pipeline_id"], b["status_id"]) for b in payload}
+        print("EXPECTED:", json.dumps({str(i): exp[i] for i in moved_ids[:5]}))
 
 if __name__ == "__main__":
     main()
