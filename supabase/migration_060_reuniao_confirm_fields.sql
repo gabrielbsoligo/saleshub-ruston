@@ -9,6 +9,7 @@
 --   1042423 Disparo Confirmação (date_time) = 7h/11h/14h do dia por bloco; só se ainda no futuro
 --   1042425 Lembrete 5min (date_time)     = data_reuniao - 5min
 --   1042427 Link da Call (url)            = meet_link, só se não vazio
+--   1042429 Reunião (texto)               = "hoje às 15h" / "10/07 às 15h" (var {{2}} template)
 
 -- ------------------------------------------------------------------
 -- (1) plan_reuniao_push: anexa custom_fields_values quando reuniao_marcada
@@ -35,6 +36,8 @@ DECLARE
   v_bloco      INT;
   v_alvo_ts    TIMESTAMPTZ;    -- instante absoluto do disparo de confirmação
   v_cfv        JSONB;
+  v_hora_txt   TEXT;           -- "9h" / "15h30"
+  v_texto      TEXT;           -- "hoje às 15h" / "10/07 às 15h" (var {{2}} do template)
 BEGIN
   SELECT * INTO r FROM public.reunioes WHERE id = p_reuniao_id;
   IF NOT FOUND THEN RETURN jsonb_build_object('erro','reuniao_inexistente'); END IF;
@@ -90,12 +93,23 @@ BEGIN
     v_bloco := CASE WHEN v_hour <= 11 THEN 7 WHEN v_hour <= 17 THEN 11 ELSE 14 END;
     v_alvo_ts := (date_trunc('day', v_local) + make_interval(hours => v_bloco)) AT TIME ZONE 'America/Sao_Paulo';
 
-    -- Data da Reunião + Lembrete 5min (sempre)
+    -- texto legível pro cliente (var {{2}} do template). Fuso local -03.
+    v_hora_txt := to_char(v_local,'FMHH24') || 'h'
+                  || CASE WHEN to_char(v_local,'MI')='00' THEN '' ELSE to_char(v_local,'MI') END;
+    v_texto := CASE
+                 WHEN v_local::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+                   THEN 'hoje às ' || v_hora_txt
+                 ELSE to_char(v_local,'DD/MM') || ' às ' || v_hora_txt
+               END;
+
+    -- Data da Reunião + Lembrete 5min + Reunião (texto) (sempre)
     v_cfv := jsonb_build_array(
       jsonb_build_object('field_id',1042421,'values',
         jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM r.data_reuniao)::bigint))),
       jsonb_build_object('field_id',1042425,'values',
-        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM (r.data_reuniao - interval '5 min'))::bigint)))
+        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM (r.data_reuniao - interval '5 min'))::bigint))),
+      jsonb_build_object('field_id',1042429,'values',
+        jsonb_build_array(jsonb_build_object('value', v_texto)))
     );
     -- Disparo Confirmação: grava se o alvo ainda está no futuro; se já passou,
     -- LIMPA o campo (values:[]) — cobre reschedule que joga o alvo pro passado.
