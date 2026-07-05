@@ -9,7 +9,7 @@
 --   1042423 Disparo Confirmação (date_time) = (7h/11h/14h do bloco) − 1h; só se ainda no futuro
 --   1042425 Lembrete 5min (date_time)     = data_reuniao − 5min − 1h
 --   (o −1h compensa o Salesbot, que dispara "1h depois" do campo; offset 0 não existe no Kommo)
---   1042427 Link da Call (url)            = SÓ O CÓDIGO da sala do Meet (var {{1}} do botão), só se não vazio
+--   1042427 Link da Call (url)            = URL COMPLETA da sala (https://meet.google.com/CODE); var {{1}} = URL inteira
 --   1042429 Reunião (texto)               = "hoje às 15h" / "10/07 às 15h" (var {{2}} template)
 
 -- ------------------------------------------------------------------
@@ -40,7 +40,7 @@ DECLARE
   v_cfv        JSONB;
   v_hora_txt   TEXT;           -- "9h" / "15h30"
   v_texto      TEXT;           -- "hoje às 15h" / "10/07 às 15h" (var {{2}} do template)
-  v_meet_code  TEXT;           -- só o código da sala do Meet (var {{1}} do botão URL)
+  v_meet_url   TEXT;           -- URL COMPLETA da sala (var {{1}} do template; campo url não prefixa https)
 BEGIN
   SELECT * INTO r FROM public.reunioes WHERE id = p_reuniao_id;
   IF NOT FOUND THEN RETURN jsonb_build_object('erro','reuniao_inexistente'); END IF;
@@ -127,17 +127,19 @@ BEGIN
       v_cfv := v_cfv || jsonb_build_array(
         jsonb_build_object('field_id',1042423,'values', NULL::jsonb));
     END IF;
-    -- Link da Call: grava SÓ O CÓDIGO da sala (var {{1}} do botão do template).
-    -- Extrai o que vem depois da última "/" (tira query string e barra final);
-    -- se meet_link já for só o código, mantém. Base é 100% Google Meet.
+    -- Link da Call: grava a URL COMPLETA da sala (var {{1}} do template).
+    -- Campo é tipo url e prefixa http:// em texto solto -> por isso guardamos a
+    -- URL inteira (Kommo mantém https válido limpo). Tira query string e barra
+    -- final; se meet_link vier só como código, monta a URL do Meet.
     IF COALESCE(r.meet_link,'') <> '' THEN
-      v_meet_code := regexp_replace(
-                       regexp_replace(rtrim(split_part(r.meet_link,'?',1),'/'), '^.*/', ''),
-                       '\s','','g');
-      IF v_meet_code <> '' THEN
+      v_meet_url := rtrim(split_part(r.meet_link,'?',1),'/');
+      IF v_meet_url !~* '^https?://' THEN
+        v_meet_url := 'https://meet.google.com/' || regexp_replace(v_meet_url, '^.*/', '');
+      END IF;
+      IF v_meet_url <> '' THEN
         v_cfv := v_cfv || jsonb_build_array(
           jsonb_build_object('field_id',1042427,'values',
-            jsonb_build_array(jsonb_build_object('value', v_meet_code))));
+            jsonb_build_array(jsonb_build_object('value', v_meet_url))));
       END IF;
     END IF;
     v_body := v_body || jsonb_build_object('custom_fields_values', v_cfv);
