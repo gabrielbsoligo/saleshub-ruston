@@ -8,7 +8,7 @@
 --   1042421 Data da Reunião (date_time)   = data_reuniao
 --   1042423 Disparo Confirmação (date_time) = 7h/11h/14h do dia por bloco; só se ainda no futuro
 --   1042425 Lembrete 5min (date_time)     = data_reuniao - 5min
---   1042427 Link da Call (url)            = meet_link, só se não vazio
+--   1042427 Link da Call (url)            = SÓ O CÓDIGO da sala do Meet (var {{1}} do botão), só se não vazio
 --   1042429 Reunião (texto)               = "hoje às 15h" / "10/07 às 15h" (var {{2}} template)
 
 -- ------------------------------------------------------------------
@@ -38,6 +38,7 @@ DECLARE
   v_cfv        JSONB;
   v_hora_txt   TEXT;           -- "9h" / "15h30"
   v_texto      TEXT;           -- "hoje às 15h" / "10/07 às 15h" (var {{2}} do template)
+  v_meet_code  TEXT;           -- só o código da sala do Meet (var {{1}} do botão URL)
 BEGIN
   SELECT * INTO r FROM public.reunioes WHERE id = p_reuniao_id;
   IF NOT FOUND THEN RETURN jsonb_build_object('erro','reuniao_inexistente'); END IF;
@@ -122,11 +123,18 @@ BEGIN
       v_cfv := v_cfv || jsonb_build_array(
         jsonb_build_object('field_id',1042423,'values', NULL::jsonb));
     END IF;
-    -- Link da Call: só se meet_link não vazio
+    -- Link da Call: grava SÓ O CÓDIGO da sala (var {{1}} do botão do template).
+    -- Extrai o que vem depois da última "/" (tira query string e barra final);
+    -- se meet_link já for só o código, mantém. Base é 100% Google Meet.
     IF COALESCE(r.meet_link,'') <> '' THEN
-      v_cfv := v_cfv || jsonb_build_array(
-        jsonb_build_object('field_id',1042427,'values',
-          jsonb_build_array(jsonb_build_object('value', r.meet_link))));
+      v_meet_code := regexp_replace(
+                       regexp_replace(rtrim(split_part(r.meet_link,'?',1),'/'), '^.*/', ''),
+                       '\s','','g');
+      IF v_meet_code <> '' THEN
+        v_cfv := v_cfv || jsonb_build_array(
+          jsonb_build_object('field_id',1042427,'values',
+            jsonb_build_array(jsonb_build_object('value', v_meet_code))));
+      END IF;
     END IF;
     v_body := v_body || jsonb_build_object('custom_fields_values', v_cfv);
   END IF;
