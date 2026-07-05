@@ -19,6 +19,8 @@ import { PrepCallView } from "./components/PrepCallView";
 import { AuditPanel } from "./components/AuditPanel";
 import { BriefingApresentacao } from "./components/BriefingApresentacao";
 import { TVMode } from "./components/TVMode";
+import { RoletaAssignModal } from "./components/RoletaAssignModal";
+import type { Lead } from "./types";
 import { supabase } from "./lib/supabase";
 import { parseBRL } from "./lib/parseBRL";
 import { Toaster } from "react-hot-toast";
@@ -122,6 +124,8 @@ const MainApp: React.FC = () => {
     currentUser?.role === 'financeiro' ? 'comissoes' : 'dashboard'
   );
   const [importProcessed, setImportProcessed] = useState(false);
+  // Roleta INBOUND: lead recém-criado aguardando atribuição no modal (flag-gated).
+  const [roletaLead, setRoletaLead] = useState<Lead | null>(null);
 
   // Listener: SendToAuditoriaButton dispara este evento ao criar sessao.
   useEffect(() => {
@@ -191,16 +195,26 @@ const MainApp: React.FC = () => {
       payload.canal = payload.canal || 'leadbroker';
       payload.status = 'sem_contato';
 
-      // Create lead
-      addLead(payload).then((lead) => {
+      // Roleta INBOUND (flag-gated): se ligada e canal ∈ (leadbroker, blackbox),
+      // cria o lead SEM dono e abre o modal de atribuição (sugere próximo da fila).
+      // Senão, mantém o comportamento atual (dono = quem clicou no bookmarklet).
+      (async () => {
+        const { data: cfg } = await supabase
+          .from('integracao_config').select('value').eq('key', 'roleta_inbound_ativa').maybeSingle();
+        const roletaOn = cfg?.value === 'true';
+        const viaRoleta = roletaOn && ['leadbroker', 'blackbox'].includes(payload.canal);
+
+        if (viaRoleta) delete payload.sdr_id;   // fica pendente até o modal atribuir
+
+        const lead = await addLead(payload);
         if (lead) {
           toast.success(`Lead "${payload.empresa}" importado do MKTLAB!`, { duration: 5000, icon: '⚡' });
-          setCurrentView('leads');
+          if (viaRoleta) setRoletaLead(lead);    // abre o modal de atribuição
+          else setCurrentView('leads');
         }
-      });
-
-      // Clean URL
-      window.history.replaceState({}, '', window.location.pathname);
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+      })();
     } catch (e) {
       console.error('Failed to import from mktlab:', e);
       toast.error('Erro ao importar do MKTLAB');
@@ -245,6 +259,12 @@ const MainApp: React.FC = () => {
   return (
     <Layout currentView={currentView} onViewChange={setCurrentView}>
       {renderView()}
+      {roletaLead && (
+        <RoletaAssignModal
+          lead={roletaLead}
+          onClose={() => { setRoletaLead(null); setCurrentView('leads'); }}
+        />
+      )}
     </Layout>
   );
 };
