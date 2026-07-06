@@ -1,0 +1,137 @@
+{
+  "meta": {
+    "acao": "APPLY roleta SDR inbound",
+    "base_preview_commit": "870a888",
+    "ts": "2026-07-06T03:31:20.250559+00:00",
+    "base_count_source": "Kommo (origem 975168 in {leadbroker 823308, blackbox 863643}, created_at jul/2026, por responsible_user_id, excluindo os 5 do set)",
+    "kommo_writeback": "PATCH direto /api/v4/leads/{id} com KOMMO_API_TOKEN (mesmo token do kommo-writeback; a edge exige KOMMO_SYNC_SECRET server-side que não está no shell). Cada move confirmado por GET.",
+    "cross_check_preview_saleshub": "Kommo 1-2 acima do SalesHub por SDR (undercount do SalesHub); usado Kommo como fonte única, como pedido."
+  },
+  "base_count_settled": [
+    {
+      "sdr": "Bianca",
+      "base_count": 2,
+      "http": 200
+    },
+    {
+      "sdr": "Edric",
+      "base_count": 3,
+      "http": 200
+    },
+    {
+      "sdr": "Guilherme",
+      "base_count": 0,
+      "http": 200
+    },
+    {
+      "sdr": "Lary",
+      "base_count": 3,
+      "http": 200
+    }
+  ],
+  "distribuicao_final": [
+    {
+      "empresa": "FrigoFoods",
+      "kommo_id": 24455723,
+      "sdr_final": "Guilherme",
+      "novo_responsible": 14941987,
+      "esperado": 14941987,
+      "patch_http": 200,
+      "ok": true
+    },
+    {
+      "empresa": "Surfland Brasil",
+      "kommo_id": 24456685,
+      "sdr_final": "Guilherme",
+      "novo_responsible": 14941987,
+      "esperado": 14941987,
+      "patch_http": 200,
+      "ok": true
+    },
+    {
+      "empresa": "Alumi souza",
+      "kommo_id": 24460281,
+      "sdr_final": "Bianca",
+      "novo_responsible": 15458912,
+      "esperado": 15458912,
+      "patch_http": 200,
+      "ok": true
+    },
+    {
+      "empresa": "Sky energia",
+      "kommo_id": 24462599,
+      "sdr_final": "Guilherme",
+      "novo_responsible": 14941987,
+      "esperado": 14941987,
+      "patch_http": 200,
+      "ok": true
+    },
+    {
+      "empresa": "Colégio Dom Bosco",
+      "kommo_id": 24474031,
+      "sdr_final": "Bianca",
+      "novo_responsible": 15458912,
+      "esperado": 15458912,
+      "patch_http": 200,
+      "ok": true
+    }
+  ],
+  "flip_flag": {
+    "http": 200,
+    "resp": [
+      {
+        "key": "roleta_inbound_ativa",
+        "value": "true",
+        "updated_at": "2026-07-05T03:43:56.762297+00:00"
+      }
+    ]
+  },
+  "verificacao": {
+    "get_roleta_status_sdr": [
+      {
+        "member_id": "b2e5ffbc-6644-4d05-88fc-ac9c1d650851",
+        "name": "Edric",
+        "ordem": 2,
+        "base_count": 3,
+        "recebidas": 0,
+        "total": 3
+      },
+      {
+        "member_id": "599be4d0-6523-4860-a3e9-72d5383362c0",
+        "name": "Guilherme",
+        "ordem": 3,
+        "base_count": 0,
+        "recebidas": 3,
+        "total": 3
+      },
+      {
+        "member_id": "135ccd9e-6d70-4ece-9d39-4b1cd9403ead",
+        "name": "Lary",
+        "ordem": 4,
+        "base_count": 3,
+        "recebidas": 0,
+        "total": 3
+      },
+      {
+        "member_id": "3eb9606d-12a5-40ae-aa06-0a0ff1f7a494",
+        "name": "Bianca",
+        "ordem": 1,
+        "base_count": 2,
+        "recebidas": 2,
+        "total": 4
+      }
+    ],
+    "flag": [
+      {
+        "key": "roleta_inbound_ativa",
+        "value": "true"
+      }
+    ],
+    "balanco": {
+      "Edric": 3,
+      "Guilherme": 3,
+      "Lary": 3,
+      "Bianca": 4
+    }
+  }
+}
