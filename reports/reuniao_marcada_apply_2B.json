@@ -1,0 +1,81 @@
+{
+ "deletado_confirmado": {
+  "kommo_id": 24210715,
+  "get_http": 204,
+  "nota": "204 = excluído/lixeira, não retorna dados"
+ },
+ "movidos_7": [
+  {
+   "kommo_id": 21693735,
+   "nome": "RT transformadores",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 14960708,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 23756997,
+   "nome": "Kingdom Ads",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 14960708,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 21693637,
+   "nome": "Top Localiza",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 15329676,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 7236158,
+   "nome": "TECNOFORT",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 15444836,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 21114744,
+   "nome": "RIBAS",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 14559996,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 16885731,
+   "nome": "Dgw",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 14960708,
+   "responsible_mantido": true
+  },
+  {
+   "kommo_id": 13400444,
+   "nome": "sos gas",
+   "acao": "movido",
+   "patch": 200,
+   "pipeline": 14062096,
+   "status": 108545100,
+   "responsible_user_id": 15444836,
+   "responsible_mantido": true
+  }
+ ],
+ "reuniao_marcada_count_final": 9,
+ "tarefa_automatica_detectada": true
+}
