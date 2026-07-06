@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "flag_roleta_inbound_ativa": "false (NÃO alterado)",
+    "escopo": "inbound",
+    "roleta_reset_ts": "2026-07-05T03:43:56Z",
+    "mes_corrente": "2026-07",
+    "gerado": "preview read-only",
+    "obs": [
+      "base_count = SalesHub leads (canal in leadbroker/blackbox, created_at>=2026-07-01), por sdr_id. 17 no total; só 4 vão pra roster.",
+      "13 dos 17 inbound de julho foram pra fora da roleta (gestor/closers) — não entram no balanço nem no base_count do roster.",
+      "set de redistribuição = Kommo pipeline 14062096, etapa ENTRADA (status 108545092), todos FRESCO (0 tarefa/0 nota real). Bate 1:1 com a visão do Gabriel.",
+      "AMBIGUIDADE p/ confirmar: 4 dos 5 frescos já pertencem a SDRs do roster (Sky/Lary, Alumi+FrigoFoods/Edric, Surfland/Bianca). O base_count (SalesHub) e o dono atual (Kommo) NÃO batem 1:1 (ex.: Edric tem 2 frescos no Kommo mas base_count=1 no SalesHub) — mapeamento SalesHub<->Kommo é imperfeito. Definir se o fresco redistribuído deve ser descontado do base_count do dono atual antes de rodar.",
+      "Colégio Dom Bosco está com Erick (closer, fora do roster) — vai ser puxado pra um SDR do roster."
+    ]
+  },
+  "roster": [
+    {
+      "name": "Bianca",
+      "member_id": "3eb9606d-12a5-40ae-aa06-0a0ff1f7a494",
+      "kommo_user_id": 15458912,
+      "ordem": 1,
+      "ativo": true,
+      "escopo": "inbound"
+    },
+    {
+      "name": "Edric",
+      "member_id": "b2e5ffbc-6644-4d05-88fc-ac9c1d650851",
+      "kommo_user_id": 15444836,
+      "ordem": 2,
+      "ativo": true,
+      "escopo": "inbound"
+    },
+    {
+      "name": "Guilherme",
+      "member_id": "599be4d0-6523-4860-a3e9-72d5383362c0",
+      "kommo_user_id": 14941987,
+      "ordem": 3,
+      "ativo": true,
+      "escopo": "inbound"
+    },
+    {
+      "name": "Lary",
+      "member_id": "135ccd9e-6d70-4ece-9d39-4b1cd9403ead",
+      "kommo_user_id": 14559996,
+      "ordem": 4,
+      "ativo": true,
+      "escopo": "inbound"
+    }
+  ],
+  "base_count_roster": {
+    "Edric": 1,
+    "Lary": 2,
+    "Bianca": 1,
+    "Guilherme": 0
+  },
+  "base_count_fora_do_roster": [
+    {
+      "quem": "Gabriel Soligo(gestor)",
+      "sdr_id": "931179ed-9585-499f-b271-032f2f256601",
+      "inbound_jul": 6
+    },
+    {
+      "quem": "Erick(closer)",
+      "sdr_id": "26888625-9734-4e2d-89c8-59e90ee77a78",
+      "inbound_jul": 5
+    },
+    {
+      "quem": "Sandro(closer)",
+      "sdr_id": "22b46ff4-348b-45bd-aee0-67ae011137e1",
+      "inbound_jul": 1
+    },
+    {
+      "quem": "Yuri(closer)",
+      "sdr_id": "3259a765-b5de-4623-94ae-70c0c3ba3e93",
+      "inbound_jul": 1
+    }
+  ],
+  "candidatos_redistribuicao": [
+    {
+      "kommo_id": 24455723,
+      "empresa": "FrigoFoods",
+      "dono_atual": "Edric (SDR)",
+      "owner_uid": 15444836,
+      "etapa": "ENTRADA",
+      "created": 1783180984,
+      "atividade": "0 tarefas / 0 notas reais",
+      "classificacao": "FRESCO"
+    },
+    {
+      "kommo_id": 24456685,
+      "empresa": "Surfland Brasil",
+      "dono_atual": "Bianca (SDR)",
+      "owner_uid": 15458912,
+      "etapa": "ENTRADA",
+      "created": 1783185546,
+      "atividade": "0 tarefas / 0 notas reais",
+      "classificacao": "FRESCO"
+    },
+    {
+      "kommo_id": 24460281,
+      "empresa": "Alumi souza",
+      "dono_atual": "Edric (SDR)",
+      "owner_uid": 15444836,
+      "etapa": "ENTRADA",
+      "created": 1783203915,
+      "atividade": "0 tarefas / 0 notas reais",
+      "classificacao": "FRESCO"
+    },
+    {
+      "kommo_id": 24462599,
+      "empresa": "Sky energia",
+      "dono_atual": "Lary (SDR)",
+      "owner_uid": 14559996,
+      "etapa": "ENTRADA",
+      "created": 1783215163,
+      "atividade": "0 tarefas / 0 notas reais",
+      "classificacao": "FRESCO"
+    },
+    {
+      "kommo_id": 24474031,
+      "empresa": "Colégio Dom Bosco",
+      "dono_atual": "Erick (closer)",
+      "owner_uid": 15329676,
+      "etapa": "ENTRADA",
+      "created": 1783299707,
+      "atividade": "0 tarefas / 0 notas reais",
+      "classificacao": "FRESCO"
+    }
+  ],
+  "distribuicao_proposta": [
+    {
+      "empresa": "FrigoFoods",
+      "kommo_id": 24455723,
+      "dono_atual": "Edric (SDR)",
+      "sdr_proposto": "Guilherme"
+    },
+    {
+      "empresa": "Surfland Brasil",
+      "kommo_id": 24456685,
+      "dono_atual": "Bianca (SDR)",
+      "sdr_proposto": "Bianca"
+    },
+    {
+      "empresa": "Alumi souza",
+      "kommo_id": 24460281,
+      "dono_atual": "Edric (SDR)",
+      "sdr_proposto": "Edric"
+    },
+    {
+      "empresa": "Sky energia",
+      "kommo_id": 24462599,
+      "dono_atual": "Lary (SDR)",
+      "sdr_proposto": "Guilherme"
+    },
+    {
+      "empresa": "Colégio Dom Bosco",
+      "kommo_id": 24474031,
+      "dono_atual": "Erick (closer)",
+      "sdr_proposto": "Bianca"
+    }
+  ],
+  "balanco_resultante": {
+    "Bianca": 3,
+    "Edric": 2,
+    "Guilherme": 2,
+    "Lary": 2
+  }
+}
