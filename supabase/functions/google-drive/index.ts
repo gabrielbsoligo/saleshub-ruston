@@ -413,6 +413,21 @@ Pessoas/empresas que o lead INDICOU. Inclua telefone se mencionado.
 Procure "amanha as Xh", "quinta-feira", etc. Calcule a data a partir de ${meetingDate}.
 SEMPRE inclua hora HH:MM. Se nao foi mencionada, retorne null.
 
+### Perfil de Cadencia (perfil_cadencia)
+Extraia o retrato do lead para personalizar o follow-up do closer:
+- nome: nome do contato/decisor; segmento: setor/nicho da empresa
+- dores[]: principais dores/problemas ditos (mais forte primeiro)
+- deadline: prazo/urgencia mencionado (texto livre) ou null
+- plano: plano/pacote discutido ou null; preco: valor proposto (number) ou null; desconto: desconto falado ou null
+- metas[]: metas/objetivos do lead; objecoes[]: objecoes levantadas; decisor: quem decide (texto) ou null
+Preencha so o que foi dito; use null/[] quando nao houver.
+
+### Plano de Cadencia (plano_cadencia)
+Monte o follow-up personalizado do closer com base no que foi ACORDADO na call:
+- datas_acordadas[]: datas/horarios ABSOLUTOS combinados para retomar (ISO "YYYY-MM-DDTHH:MM:SS", fuso America/Sao_Paulo). Use as datas ACORDADAS na call; se so houve "semana que vem"/"depois do feriado", converta para uma data concreta a partir de ${meetingDate} e empurre para dia util (evite sabado/domingo).
+- tarefas_especificas[]: compromissos pontuais explicitos (ex: "mandar proposta ate sexta") -> {"quando": ISO absoluto, "o_que": texto do que fazer}
+A quantidade/tipo base de toques vem do balde (stage) no SalesHub; aqui voce SO informa as datas acordadas e tarefas pontuais. Se nada foi acordado, retorne datas_acordadas:[] e tarefas_especificas:[].
+
 ## Formato JSON
 {
   "temperatura": "quente"|"morno"|"frio",
@@ -422,7 +437,9 @@ SEMPRE inclua hora HH:MM. Se nao foi mencionada, retorne null.
   "bant": number, "tier": "tiny"|"small"|"medium"|"large"|"enterprise",
   "resumo_executivo": "string max 200 palavras pt-br",
   "indicacoes": [{"nome": string, "empresa": string, "telefone": string|null}],
-  "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"}|null
+  "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"}|null,
+  "perfil_cadencia": {"nome": string|null, "segmento": string|null, "dores": [string], "deadline": string|null, "plano": string|null, "preco": number|null, "desconto": string|null, "metas": [string], "objecoes": [string], "decisor": string|null},
+  "plano_cadencia": {"datas_acordadas": [string], "tarefas_especificas": [{"quando": string, "o_que": string}]}
 }
 
 ## Data da Reuniao: ${meetingDate}
@@ -481,6 +498,12 @@ async function applyActionsServerSide(
     if (analysis.resumo_executivo) { upd.observacoes = analysis.resumo_executivo; fields.push('observacoes') }
     if (recording_url) { upd.link_call_vendas = recording_url; fields.push('link_call_vendas') }
     if (transcript_url) { upd.link_transcricao = transcript_url; fields.push('link_transcricao') }
+    // Cadencia do closer: perfil + plano personalizado (usados pelo kommo.plan_closer atras da flag)
+    if (analysis.perfil_cadencia && typeof analysis.perfil_cadencia === 'object') { upd.cadencia_perfil = analysis.perfil_cadencia; fields.push('cadencia_perfil') }
+    if (analysis.plano_cadencia && typeof analysis.plano_cadencia === 'object'
+        && (Array.isArray(analysis.plano_cadencia.datas_acordadas) || Array.isArray(analysis.plano_cadencia.tarefas_especificas))) {
+      upd.cadencia_closer_plan = analysis.plano_cadencia; fields.push('cadencia_closer_plan')
+    }
     if (fields.length) {
       const { error } = await supabase.from('deals').update(upd).eq('id', dealId)
       if (!error) { actions.deal_updated = true; actions.deal_fields = fields }

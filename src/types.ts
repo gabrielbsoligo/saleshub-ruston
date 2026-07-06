@@ -529,6 +529,28 @@ export interface CallAnalysisResult {
   resumo_executivo: string;
   indicacoes: Array<{ nome: string; empresa: string; telefone?: string }>;
   proxima_reuniao: { data: string; hora: string } | null;
+  perfil_cadencia?: PerfilCadencia | null;
+  plano_cadencia?: PlanoCadencia | null;
+}
+
+// Perfil do lead extraido da call para personalizar a cadencia do closer
+export interface PerfilCadencia {
+  nome?: string | null;
+  segmento?: string | null;
+  dores?: string[];
+  deadline?: string | null;
+  plano?: string | null;
+  preco?: number | null;
+  desconto?: string | null;
+  metas?: string[];
+  objecoes?: string[];
+  decisor?: string | null;
+}
+
+// Plano personalizado de follow-up do closer (datas absolutas acordadas na call)
+export interface PlanoCadencia {
+  datas_acordadas?: string[];
+  tarefas_especificas?: Array<{ quando: string; o_que: string }>;
 }
 
 // =============================================

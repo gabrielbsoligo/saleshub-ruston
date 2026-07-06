@@ -74,6 +74,20 @@ Extraia a data e horario da proxima reuniao combinada. Preste MUITA ATENCAO a es
 - Se nao foi mencionada NENHUMA proxima reuniao, retorne null
 - Se mencionou data mas nao horario, use "10:00" como padrao
 
+### Perfil de Cadencia (perfil_cadencia)
+Retrato do lead para personalizar o follow-up do closer: nome, segmento, dores[], deadline,
+plano/pacote, preco (number), desconto, metas[], objecoes[], decisor. Preencha so o que foi dito
+(null/[] quando nao houver).
+
+### Plano de Cadencia (plano_cadencia)
+Follow-up personalizado com base no que foi ACORDADO na call:
+- datas_acordadas[]: datas/horarios ABSOLUTOS combinados para retomar (ISO "YYYY-MM-DDTHH:MM:SS",
+  fuso America/Sao_Paulo). Converta "semana que vem"/"depois do feriado" em data concreta a partir
+  de ${meetingDate} e empurre para dia util.
+- tarefas_especificas[]: compromissos pontuais {"quando": ISO absoluto, "o_que": texto}.
+A quantidade/tipo base de toques vem do balde (stage) no SalesHub; aqui informe SO as datas
+acordadas e tarefas pontuais. Se nada foi acordado, retorne listas vazias.
+
 ## Formato do JSON de resposta
 {
   "temperatura": "quente" | "morno" | "frio",
@@ -86,7 +100,9 @@ Extraia a data e horario da proxima reuniao combinada. Preste MUITA ATENCAO a es
   "tier": "tiny" | "small" | "medium" | "large" | "enterprise",
   "resumo_executivo": "string max 200 palavras em pt-br",
   "indicacoes": [{"nome": "string", "empresa": "string", "telefone": "string ou null"}],
-  "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"} | null
+  "proxima_reuniao": {"data": "YYYY-MM-DD", "hora": "HH:MM"} | null,
+  "perfil_cadencia": {"nome": string|null, "segmento": string|null, "dores": [string], "deadline": string|null, "plano": string|null, "preco": number|null, "desconto": string|null, "metas": [string], "objecoes": [string], "decisor": string|null},
+  "plano_cadencia": {"datas_acordadas": [string], "tarefas_especificas": [{"quando": string, "o_que": string}]}
 }
 
 ## Data da Reuniao
