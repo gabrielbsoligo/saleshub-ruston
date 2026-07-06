@@ -1,0 +1,127 @@
+{
+  "applied": 20,
+  "failed": 0,
+  "change": "[Primeiro Nome] -> {{contact.first_name}}",
+  "templates": [
+    {
+      "id": 60913,
+      "name": "D0 · Abertura",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60915,
+      "name": "D0 · Videocase",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60917,
+      "name": "D0 · Abordagem direta",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60919,
+      "name": "D0 · Empatia",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60921,
+      "name": "D0 · E-mail agendamento",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60923,
+      "name": "Broker · Dia 2 · Gargalo de aquisição",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60925,
+      "name": "Broker · Dia 3 · Dependência de indicações",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60927,
+      "name": "Broker · Dia 5 · Escassez de agenda",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60929,
+      "name": "Broker · Dia 7 · Biblioteca zerada",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60931,
+      "name": "Broker · Dia 9 · Sócio entra",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60933,
+      "name": "Broker · Dia 11 · Concorrente forte",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60935,
+      "name": "Conexão · Qualificação",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60937,
+      "name": "Conexão · Agendar (decisor único)",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60939,
+      "name": "Conexão · Agendar (com sócios)",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60941,
+      "name": "Conexão · Confirmação",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60943,
+      "name": "Objeção · Apertei errado",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60947,
+      "name": "Objeção · Sem interesse",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60953,
+      "name": "No-show · +30min",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60955,
+      "name": "No-show · +1h",
+      "status": 200,
+      "result": "ok"
+    },
+    {
+      "id": 60957,
+      "name": "No-show · D+1 Sócio",
+      "status": 200,
+      "result": "ok"
+    }
+  ]
+}
