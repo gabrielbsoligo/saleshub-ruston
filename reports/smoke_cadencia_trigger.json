@@ -1,0 +1,137 @@
+{
+  "reuniao_id": "ed9f13d8-4b73-407c-b480-1e8c63776ff1",
+  "kommo_id": 22796607,
+  "steps": [
+    {
+      "step": "1_marcada_D+6_via_trigger",
+      "trigger_fired_edge_populated": true,
+      "map": {
+        "T1": 3525663,
+        "T2": 3525665,
+        "T3": 3525667,
+        "T4": 3525669,
+        "T5": 3525671,
+        "T6": 3525673
+      },
+      "ancora": "2026-07-12 18:00:00+00",
+      "net": [
+        {
+          "status_code": 200,
+          "body": "{\"ok\":true,\"mode\":\"reconcile\",\"open_target\":6,\"new_map\":{\"T1\":3525663,\"T2\":3525665,\"T3\":3525667,\"T4\":3525669,\"T5\":3525671,\"T6\":3525673}}",
+          "created": "2026-07-06 03:14:46.628983+00"
+        }
+      ],
+      "tasks": [
+        {
+          "slot": "T1",
+          "id": 3525663,
+          "get": 200,
+          "type": 1,
+          "owner": 14559996,
+          "when": "2026-07-08 16:00",
+          "is_completed": false
+        },
+        {
+          "slot": "T2",
+          "id": 3525665,
+          "get": 200,
+          "type": 1,
+          "owner": 14559996,
+          "when": "2026-07-09 16:00",
+          "is_completed": false
+        },
+        {
+          "slot": "T3",
+          "id": 3525667,
+          "get": 200,
+          "type": 3732759,
+          "owner": 14559996,
+          "when": "2026-07-11 18:00",
+          "is_completed": false
+        },
+        {
+          "slot": "T4",
+          "id": 3525669,
+          "get": 200,
+          "type": 3732759,
+          "owner": 15475300,
+          "when": "2026-07-12 08:30",
+          "is_completed": false
+        },
+        {
+          "slot": "T5",
+          "id": 3525671,
+          "get": 200,
+          "type": 3732751,
+          "owner": 14559996,
+          "when": "2026-07-12 14:45",
+          "is_completed": false
+        },
+        {
+          "slot": "T6",
+          "id": 3525673,
+          "get": 200,
+          "type": 3732751,
+          "owner": 14559996,
+          "when": "2026-07-12 15:05",
+          "is_completed": false
+        }
+      ]
+    },
+    {
+      "step": "2_reschedule_D+10_via_trigger",
+      "trigger_fired": true,
+      "ancora": "2026-07-16 18:00:00+00",
+      "map": {
+        "T1": 3525663,
+        "T2": 3525665,
+        "T3": 3525667,
+        "T4": 3525669,
+        "T5": 3525671,
+        "T6": 3525673
+      },
+      "mesmas_ids_reuso": true,
+      "cresceu": false
+    },
+    {
+      "step": "3_resolucao_via_trigger",
+      "trigger_fired_map_vazio": true,
+      "map": {},
+      "todas_tasks_concluidas": true,
+      "tasks": [
+        {
+          "id": 3525665,
+          "is_completed": true,
+          "get": 200
+        },
+        {
+          "id": 3525667,
+          "is_completed": true,
+          "get": 200
+        },
+        {
+          "id": 3525669,
+          "is_completed": true,
+          "get": 200
+        },
+        {
+          "id": 3525671,
+          "is_completed": true,
+          "get": 200
+        },
+        {
+          "id": 3525673,
+          "is_completed": true,
+          "get": 200
+        },
+        {
+          "id": 3525663,
+          "is_completed": true,
+          "get": 200
+        }
+      ]
+    }
+  ],
+  "cleanup": {},
+  "smoke_pass": true
+}
