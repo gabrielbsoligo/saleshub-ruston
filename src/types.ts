@@ -251,6 +251,28 @@ export interface RoletaStatusRow {
   total: number;
 }
 
+// Roleta SDR — visão granular (read-only via RPC)
+export interface RoletaSdrLead {
+  log_id: number;
+  member_id: string;
+  member_name: string;
+  lead_id: string | null;
+  empresa: string | null;
+  nome_contato: string | null;
+  tipo_atribuicao: 'roleta' | 'manual';
+  kommo_id: number | null;
+  created_at: string;
+}
+
+export interface RoletaSdrCiclo {
+  mes: string;          // date (primeiro dia do mês)
+  total_roleta: number;
+  total_manual: number;
+  primeira: string;
+  ultima: string;
+  is_atual: boolean;
+}
+
 export interface CompromissoDia {
   id: string;
   member_id: string;

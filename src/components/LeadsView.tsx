@@ -13,6 +13,7 @@ import { DateFilter, filterByDate, type DatePreset } from "./ui/DateFilter";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import type { Reuniao } from "../types";
 import { SendToAuditoriaButton } from "./SendToAuditoriaButton";
+import { RoletaPanelSdr } from "./RoletaPanelSdr";
 
 const STATUS_COLORS: Record<string, string> = {
   sem_contato: 'bg-gray-500/20 text-gray-400',
@@ -256,6 +257,9 @@ export const LeadsView: React.FC = () => {
           </button>
         )}
       </div>
+
+      {/* Rodízio de SDRs (inbound) — cabeçalho sobre o kanban */}
+      <RoletaPanelSdr />
 
       {/* KANBAN VIEW */}
       {view === 'kanban' && (

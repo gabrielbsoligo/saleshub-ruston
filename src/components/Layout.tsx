@@ -17,6 +17,7 @@ import {
   FileText,
   CalendarClock,
   Phone,
+  Repeat,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -26,7 +27,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual";
+export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -53,6 +54,7 @@ export const Layout: React.FC<{
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
     { id: "leadbroker" as const, label: "LeadBroker", icon: Box },
     { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, allowedRoles: ['gestor'] as TeamRole[] },
+    { id: "roleta_historico" as const, label: "Roleta SDR", icon: Repeat, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "equipe" as const, label: "Equipe", icon: Users },
   ] as Array<{ id: View; label: string; icon: any; allowedRoles?: TeamRole[]; badge?: string }>;
 
