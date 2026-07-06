@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Playbook de Pré-Vendas — V4 Company</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAF9F7; --card:#FFFFFF; --ink:#141312; --mut:#75726B; --line:#E4E1D9;
+    --v4:#E4002B; --v4d:#9E0020; --v4bg:#FCE9EC;
+    --chip:#F0EEE8; --chipink:#4A4843;
+    --r:14px;
+    --disp:"Space Grotesk",-apple-system,BlinkMacSystemFont,sans-serif;
+    --body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:var(--body);
+    line-height:1.6;-webkit-font-smoothing:antialiased;padding:0 16px 80px}
+  .wrap{max-width:900px;margin:0 auto}
+
+  /* ---------- HERO ---------- */
+  header.hero{padding:56px 0 32px;border-bottom:4px solid var(--v4);margin-bottom:8px}
+  .brand{font-family:var(--disp);font-weight:600;font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--v4)}
+  h1.title{font-family:var(--disp);font-weight:700;font-size:clamp(34px,6vw,60px);
+    line-height:1.02;letter-spacing:-.03em;margin:12px 0 14px}
+  h1.title span{color:var(--v4)}
+  .lede{color:var(--mut);font-size:16px;max-width:640px}
+  .metaline{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+  .metaline .pill{font-family:var(--disp);font-size:11px;font-weight:600;letter-spacing:.05em;
+    text-transform:uppercase;background:var(--ink);color:#fff;padding:5px 12px;border-radius:999px}
+
+  /* ---------- TOC ---------- */
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+    padding:20px 22px;margin:28px 0 40px}
+  nav.toc h4{font-family:var(--disp);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--mut);margin-bottom:14px}
+  nav.toc ol{list-style:none;display:grid;grid-template-columns:1fr;gap:2px}
+  @media(min-width:640px){nav.toc ol{grid-template-columns:1fr 1fr}}
+  nav.toc a{display:flex;gap:12px;align-items:baseline;text-decoration:none;color:var(--ink);
+    padding:7px 8px;border-radius:8px;font-size:14px;transition:background .15s}
+  nav.toc a:hover{background:var(--v4bg)}
+  nav.toc a .n{font-family:var(--disp);font-weight:700;color:var(--v4);font-size:13px;
+    min-width:22px}
+
+  /* ---------- SECTIONS ---------- */
+  section{margin:0 0 52px;scroll-margin-top:20px}
+  .sechead{display:flex;gap:16px;align-items:flex-start;margin-bottom:20px}
+  .sechead .num{font-family:var(--disp);font-weight:700;font-size:15px;color:#fff;
+    background:var(--v4);min-width:38px;height:38px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;margin-top:2px}
+  .sechead h2{font-family:var(--disp);font-weight:600;font-size:clamp(22px,3.4vw,30px);
+    line-height:1.12;letter-spacing:-.02em}
+  .sechead .sub{color:var(--mut);font-size:14px;margin-top:3px}
+
+  /* channel chips */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 6px}
+  .chip{font-size:13px;font-weight:500;background:var(--chip);color:var(--chipink);
+    padding:7px 14px;border-radius:999px;border:1px solid var(--line)}
+  .chip.red{background:var(--v4bg);color:var(--v4d);border-color:#F3C9D1}
+  .chip.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* generic card */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+    padding:20px 22px;margin-bottom:14px}
+  .card h3{font-family:var(--disp);font-weight:600;font-size:17px;margin-bottom:4px;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .card .desc{color:var(--mut);font-size:13.5px;margin-bottom:12px}
+  .card p{font-size:14.5px}
+  .card p + p{margin-top:10px}
+
+  /* timing tag */
+  .ttag{font-family:var(--disp);font-weight:600;font-size:11px;letter-spacing:.04em;
+    text-transform:uppercase;color:var(--v4d);background:var(--v4bg);
+    padding:4px 10px;border-radius:6px;white-space:nowrap}
+  .tag{font-family:var(--disp);font-size:10px;font-weight:600;letter-spacing:.05em;
+    text-transform:uppercase;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .tag.auto{background:var(--chip);color:var(--chipink)}
+  .tag.man{background:var(--v4bg);color:var(--v4d)}
+  .tag.who{background:transparent;color:var(--mut);border:1px solid var(--line)}
+
+  /* copy / script bubble */
+  .copy{background:var(--v4bg);border-left:3px solid var(--v4);border-radius:0 10px 10px 0;
+    padding:12px 15px;margin:8px 0;font-size:14px;color:#2b2b2b;white-space:pre-line}
+  .copy .obj{display:block;font-family:var(--disp);font-size:11px;font-weight:600;
+    letter-spacing:.06em;text-transform:uppercase;color:var(--v4d);margin-bottom:6px}
+  .script{background:#F6F5F1;border:1px solid var(--line);border-radius:10px;
+    padding:12px 15px;margin:8px 0;font-size:14px;white-space:pre-line}
+  .note{background:var(--ink);color:#EDEBE7;border-radius:10px;padding:12px 16px;
+    font-size:13px;margin:10px 0;letter-spacing:.01em}
+  .note b{color:#fff}
+
+  /* timeline rows */
+  .row{display:flex;gap:14px;padding:12px 0;border-top:1px dashed var(--line)}
+  .row:first-of-type{border-top:none}
+  .row .when{flex:0 0 108px}
+  .row .body{flex:1;font-size:14.5px}
+  .row .body .lbl{color:var(--mut);font-size:12px;margin-top:2px}
+
+  /* two-col */
+  .grid2{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:680px){.grid2{grid-template-columns:1fr 1fr}}
+
+  ul.clean{list-style:none;margin-top:6px}
+  ul.clean li{font-size:14px;padding:6px 0 6px 20px;position:relative;border-top:1px dashed var(--line)}
+  ul.clean li:first-child{border-top:none}
+  ul.clean li::before{content:"";position:absolute;left:2px;top:14px;width:7px;height:7px;
+    background:var(--v4);border-radius:50%}
+
+  /* print placeholder */
+  .vid-group{margin:18px 0}
+  .vid-group > .glabel{font-family:var(--disp);font-weight:600;font-size:14px;
+    display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .vid-group > .glabel::before{content:"";width:9px;height:9px;background:var(--v4);border-radius:50%}
+  .vid-grid{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:680px){.vid-grid.two{grid-template-columns:1fr 1fr}}
+  .player{position:relative;display:block;aspect-ratio:16/9;border-radius:12px;overflow:hidden;
+    border:1px solid var(--line);text-decoration:none;background:#111 center/cover no-repeat}
+  .player::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.05),rgba(0,0,0,.45))}
+  .player .play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2;
+    width:62px;height:62px;border-radius:50%;background:var(--v4);
+    display:flex;align-items:center;justify-content:center;box-shadow:0 6px 20px rgba(0,0,0,.35);
+    transition:transform .18s ease,background .18s ease}
+  .player .play::before{content:"";border-style:solid;border-width:11px 0 11px 19px;
+    border-color:transparent transparent transparent #fff;margin-left:4px}
+  .player:hover .play{transform:translate(-50%,-50%) scale(1.08);background:var(--v4d)}
+  .player .plabel{position:absolute;left:12px;bottom:11px;z-index:2;color:#fff;
+    font-family:var(--disp);font-weight:600;font-size:13px;letter-spacing:.02em;
+    text-shadow:0 1px 4px rgba(0,0,0,.5)}
+  .player .yt{position:absolute;right:11px;top:11px;z-index:2;font-family:var(--disp);
+    font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    background:rgba(0,0,0,.55);color:#fff;padding:4px 9px;border-radius:6px}
+  .player:focus-visible{outline:3px solid var(--v4);outline-offset:2px}
+
+  .divider{height:1px;background:var(--line);margin:6px 0 2px}
+  .foot{text-align:center;color:var(--mut);font-size:12px;margin-top:56px;
+    padding-top:24px;border-top:1px solid var(--line)}
+
+  /* didactic text guide */
+  .guide{margin-top:6px}
+  .guide .glabel2{font-family:var(--disp);font-weight:600;font-size:15px;
+    display:flex;align-items:center;gap:9px;margin:18px 0 10px}
+  .guide .glabel2 .k{font-family:var(--disp);font-size:10px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;background:var(--v4bg);color:var(--v4d);padding:3px 9px;border-radius:6px}
+  .steps{counter-reset:st;list-style:none}
+  .steps li{position:relative;padding:10px 0 10px 42px;border-top:1px dashed var(--line);font-size:14.5px}
+  .steps li:first-child{border-top:none}
+  .steps li::before{counter-increment:st;content:counter(st);position:absolute;left:0;top:9px;
+    width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;
+    font-family:var(--disp);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .steps li b{font-weight:600}
+  .watch{font-size:13px;color:var(--mut);margin:8px 0 0}
+  .watch b{color:var(--v4d);font-family:var(--disp)}
+  .lookfor{background:#F6F5F1;border:1px solid var(--line);border-radius:10px;padding:12px 15px;margin-top:12px}
+  .lookfor .h{font-family:var(--disp);font-weight:600;font-size:12px;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--v4d);margin-bottom:7px}
+  .lookfor ul{list-style:none}
+  .lookfor li{font-size:13.5px;padding:4px 0 4px 18px;position:relative}
+  .lookfor li::before{content:"→";position:absolute;left:0;color:var(--v4)}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .card,nav.toc{box-shadow:none;break-inside:avoid}
+    section{break-inside:auto}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="brand">V4 Company · Pré-Vendas</div>
+  <h1 class="title">Playbook de <span>Pré-Vendas</span><br>SDR / BDR</h1>
+  <p class="lede">Manual operacional do time. Do primeiro toque ao agendamento: canais, cadências, scripts e regras. Funil único, roleta distribui o lead na chegada, horários ancorados no 1º contato — sempre dentro da janela comercial.</p>
+  <div class="metaline">
+    <span class="pill">Documento interno</span>
+    <span class="pill">Base de treinamento</span>
+    <span class="pill">v1</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h4>Índice</h4>
+  <ol>
+    <li><a href="#s1"><span class="n">01</span> Canais de ativação e gestão</a></li>
+    <li><a href="#s2"><span class="n">02</span> Canais de aquisição (origem)</a></li>
+    <li><a href="#s3"><span class="n">03</span> Pesquisa e investigação</a></li>
+    <li><a href="#s4"><span class="n">04</span> Atendimento Leadbroker — D0</a></li>
+    <li><a href="#s5"><span class="n">05</span> Cadência Broker (6 toques / 11 dias)</a></li>
+    <li><a href="#s6"><span class="n">06</span> Conexões realizadas — scripts</a></li>
+    <li><a href="#s7"><span class="n">07</span> Reuniões marcadas — anti no-show</a></li>
+    <li><a href="#s8"><span class="n">08</span> Processo de no-show</a></li>
+    <li><a href="#s9"><span class="n">09</span> Outbound + Recovery — cadência</a></li>
+    <li><a href="#s10"><span class="n">10</span> Nutrição infinita (3C Plus)</a></li>
+  </ol>
+</nav>
+
+<!-- 01 -->
+<section id="s1">
+  <div class="sechead">
+    <div class="num">01</div>
+    <div>
+      <h2>Canais de ativação e gestão do cliente</h2>
+      <div class="sub">Onde o lead é operado, atualizado e acompanhado ao longo do funil.</div>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip red">Kommo CRM</span>
+    <span class="chip red">SalesHub</span>
+    <span class="chip red">CRM V4</span>
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="s2">
+  <div class="sechead">
+    <div class="num">02</div>
+    <div>
+      <h2>Canais de aquisição — de onde vêm os leads</h2>
+      <div class="sub">Origem de todo lead que entra no funil, independente da cadência aplicada.</div>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip">Leadbroker</span>
+    <span class="chip">Disparos</span>
+    <span class="chip">3C Plus</span>
+    <span class="chip">Indicações</span>
+    <span class="chip">Recomendações internas</span>
+    <span class="chip">E-mail</span>
+    <span class="chip">Eventos</span>
+    <span class="chip">Recovery Matriz</span>
+    <span class="chip">Recovery In House</span>
+  </div>
+</section>
+
+<!-- 03 -->
+<section id="s3">
+  <div class="sechead">
+    <div class="num">03</div>
+    <div>
+      <h2>Canais de pesquisa e investigação</h2>
+      <div class="sub">Ferramentas para levantar contatos extras e enriquecer o lead antes do contato.</div>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip dark">Lemit</span>
+    <span class="chip dark">Data Stone</span>
+  </div>
+
+  <div class="card">
+    <h3>Como acessar e usar — vídeos</h3>
+    <div class="desc">Clique no player para assistir no YouTube. Use essas ferramentas para achar telefones extras do decisor e enriquecer o lead antes de ligar.</div>
+
+    <div class="vid-group">
+      <div class="glabel">Data Stone</div>
+      <div class="vid-grid two">
+        <a class="player" href="https://www.youtube.com/watch?v=xbwVPw_tL7g" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/xbwVPw_tL7g/hqdefault.jpg')">
+          <span class="yt">YouTube</span><span class="play"></span><span class="plabel">Vídeo 01</span>
+        </a>
+        <a class="player" href="https://www.youtube.com/watch?v=BPY9vB4qtwo" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/BPY9vB4qtwo/hqdefault.jpg')">
+          <span class="yt">YouTube</span><span class="play"></span><span class="plabel">Vídeo 02</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="vid-group">
+      <div class="glabel">Lemit</div>
+      <div class="note">Espaço reservado para os vídeos do Lemit. Assim que você me mandar os links, coloco os players aqui igual aos do Data Stone.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Como acessar e usar — guia em texto</h3>
+    <div class="desc">Mesmo conteúdo em passo a passo escrito. As duas ferramentas fazem consulta e enriquecimento de dados (CPF/CNPJ → telefones, e-mails, sócios, endereço) para você chegar no decisor certo.</div>
+
+    <div class="guide">
+      <div class="glabel2"><span class="k">01</span> Lemit — achar telefones extras do lead</div>
+      <p class="watch">Uso no funil: quando o lead do Broker/Inbound não atende no número cadastrado, o Lemit levanta telefones e vínculos adicionais para você insistir no contato certo.</p>
+      <ol class="steps">
+        <li>Acesse <b>lemitti.com</b> e faça login com o acesso da equipe (a conta é paga, por consulta ou por plano).</li>
+        <li>Escolha o tipo de consulta: <b>individual por CPF</b> (pessoa) ou <b>por CNPJ</b> (empresa). Para o decisor, comece pelo CPF; para mapear a empresa, use o CNPJ.</li>
+        <li>Digite o documento e rode a consulta. Em segundos aparece a ficha com <b>dados gerais, telefones, endereços e vínculos societários</b> (de quais empresas a pessoa é sócia).</li>
+        <li>Copie os <b>telefones adicionais</b> e os nomes de sócios ligados ao CNPJ — muitas vezes o decisor real é um sócio que não estava no cadastro original.</li>
+        <li>Antes de ligar, cheque o aviso de <b>"não perturbe"</b>: números nessa lista não devem ser acionados. Respeite sempre.</li>
+        <li>Leve os novos números para a discadora (3C) ou para a ligação manual (API4COM) e registre a tentativa em Conexões Realizadas.</li>
+      </ol>
+      <div class="lookfor">
+        <div class="h">O que extrair</div>
+        <ul>
+          <li>Telefones alternativos quando o principal não atende</li>
+          <li>Quem é o(s) sócio(s) — o decisor de verdade</li>
+          <li>Vínculos entre CPF e CNPJ para confirmar que é a pessoa certa</li>
+          <li>Sinais de cadastro desatualizado (endereço/telefone antigos)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="guide">
+      <div class="glabel2"><span class="k">02</span> Data Stone — enriquecer e qualificar o lead</div>
+      <p class="watch">Uso no funil: enriquecer o lead com dados frescos (porte, faturamento, cargos de decisão) e validar/achar contatos, além de montar listas segmentadas para outbound.</p>
+      <ol class="steps">
+        <li>Acesse <b>datastone.com.br</b> e entre com o login da equipe.</li>
+        <li>Para um lead específico, faça a <b>consulta por CPF, CNPJ, e-mail ou telefone</b> e veja a ficha com telefones, e-mails e cargo/decisor validados.</li>
+        <li>Para enriquecer em volume, suba a <b>lista/planilha</b> (higienização): a plataforma remove duplicidades, atualiza contatos defasados e completa campos como faturamento, sócios e cargo.</li>
+        <li>Para prospecção nova, use a <b>geração de listas segmentadas</b> com filtros por porte, faturamento, segmento, tecnologia e localização — isso alimenta o Outbound com leads no perfil ideal (ICP).</li>
+        <li>Confira o <b>saldo/consultas</b> do plano antes de rodar lotes grandes, para não estourar o limite.</li>
+        <li>Exporte os contatos validados e jogue no Kommo (para a roleta dos SDRs) ou na cadência de Outbound.</li>
+      </ol>
+      <div class="lookfor">
+        <div class="h">O que extrair</div>
+        <ul>
+          <li>Contato do decisor validado (telefone/e-mail que realmente funciona)</li>
+          <li>Porte e faturamento para qualificar se o lead tem fit</li>
+          <li>Listas segmentadas por ICP para abastecer o Outbound</li>
+          <li>Base higienizada, sem número morto queimando tempo da discadora</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note">Compliance (LGPD): use esses dados apenas para contato comercial legítimo, respeite quem está no <b>"não perturbe"</b> e não repasse informação pessoal para fora da operação.</div>
+  </div>
+</section>
+
+<!-- 04 -->
+<section id="s4">
+  <div class="sechead">
+    <div class="num">04</div>
+    <div>
+      <h2>Atendimento Leadbroker — sequência do 1º dia (D0)</h2>
+      <div class="sub">Lead entrou pelo Leadbroker: ataque no mesmo minuto. Offsets relativos ao 1º contato.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Na hora</span> Copy 1 — Abertura</h3>
+    <div class="copy">Boa noite [Nome do Cliente], tudo certo? Aqui é o Erick da V4 Company, recebi seu cadastro aqui com interesse em nosso projeto para estruturar e alavancar suas vendas.
+[Nome do Cliente], é você quem toma as decisões de contratação na empresa ou tem mais alguém?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">+2h30</span> Copy 2 — Videocase de sucesso</h3>
+    <div class="desc">Follow-up de autoridade. Quebrar objeções, gerar prova social e reativar lead que esfriou ou pediu mais informações.</div>
+    <div class="copy">Fala, [Nome do Cliente]! Tudo certo?
+Lembrei de você hoje. Separei um videocase rápido de um parceiro nosso, o [Nome da Empresa do Case], que estava com um desafio de vendas bem parecido com o que vejo no seu mercado.
+Dá uma olhada em como ajudamos eles a multiplicarem o faturamento em [X] meses: 🔗 [Link do Vídeo]
+Faz sentido batermos um papo rápido de 10 minutos para eu te mostrar como podemos estruturar uma máquina de aquisição parecida para você?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">+6h</span> Copy 3 — Abordagem direta</h3>
+    <div class="desc">Mensagem curtíssima para forçar resposta rápida (sim/não). Ideal quando a taxa de resposta do 1º contato está baixa.</div>
+    <div class="copy"><span class="obj">Opção A — bem direta</span>Olá! Tudo bem? Eu falo com o [Nome do Cliente]?</div>
+    <div class="copy"><span class="obj">Opção B — com contexto</span>Opa, tudo bem? Aqui é o [Seu Nome] da V4 Company. Falo com o [Nome do Cliente]?</div>
+    <div class="note">Só envie o restante da apresentação depois que o cliente responder com <b>"Sim"</b> ou <b>"Sou eu"</b>.</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">+9h</span> Copy 4 — Empatia com a rotina</h3>
+    <div class="desc">Cobrar retorno sem ser chato, demonstrando que entende o lado do gestor. Tática da escolha dupla.</div>
+    <div class="copy">Fala, [Nome do Cliente]! Imagino que a correria por aí esteja grande (vida de quem toca negócio não é fácil, rs).
+Como o meu objetivo é te ajudar a destravar o crescimento da sua empresa, não quero tomar muito do seu tempo. Fica melhor para você fazermos uma ligação rápida hoje no final do dia ou amanhã de manhã?
+Me diz qual horário se encaixa melhor na sua agenda!</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Final do dia</span> Copy 5 — E-mail de boas-vindas e agendamento</h3>
+    <div class="desc">Formalizar o contato, reforçar o diferencial (assessoria vs. agência tradicional) e direcionar para a agenda.</div>
+    <div class="copy"><span class="obj">Assunto: Seu cadastro na V4 Company / Bora escalar as vendas? 🚀</span>Olá, [Nome do Cliente], tudo bem?
+Vi que você demonstrou interesse em conhecer mais sobre a V4 Company e como podemos te ajudar a vender mais através da internet.
+Diferente das agências tradicionais que focam apenas em curtidas e métricas de vaidade, nosso foco aqui é um só: vender o seu produto, para mais pessoas, mais vezes e pelo maior valor possível.
+Para entender se o seu negócio tem fit com a nossa metodologia de Growth, o próximo passo é um bate-papo rápido de diagnóstico (sem compromisso).
+🗓️ [Link da sua agenda/Calendly] ← Escolha aqui o melhor horário na minha agenda para conversarmos.
+Se preferir, pode me responder este e-mail ou me chamar diretamente no WhatsApp: [Seu Link de WhatsApp].
+Um abraço e vamos pra cima!
+[Seu Nome] — Executivo(a) de Vendas | V4 Company</div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section id="s5">
+  <div class="sechead">
+    <div class="num">05</div>
+    <div>
+      <h2>Cadência Broker — 6 toques em 11 dias</h2>
+      <div class="sub">Copys personalizadas. Toques nos dias 2 · 3 · 5 · 7 · 9 · 11.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 2</span> Cadência 1 — Gargalo de aquisição</h3>
+    <div class="copy">Olá, [Nome do Cliente]! Aqui é o [Seu Nome] da V4 Company.
+Estava analisando o mercado de [Nicho de mercado do cliente] na sua região e notei que vocês estão com um gargalo forte na aquisição de novos clientes. O custo de anunciar está subindo muito rápido e quem não estruturar um funil de vendas eficiente agora, vai pagar o triplo em poucos meses.
+Você tem 10 minutos hoje para eu te mostrar como estancar essa perda de dinheiro e previsibilidade?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 3</span> Cadência 2 — Dependência de indicações</h3>
+    <div class="copy">Fala, [Nome do Cliente]. Sabe qual é o maior risco que vejo nas empresas do seu setor hoje? A dependência de indicações ou de ações pontuais para vender. Se a indicação para, o caixa da empresa sente na hora.
+Na V4, nós não fazemos 'postzinho'. Nós construímos uma máquina de vendas que traz clientes qualificados todos os dias, sem depender de sorte.
+Como está a previsibilidade de caixa e de novos clientes da [Nome da Empresa] para este próximo trimestre?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 5</span> Cadência 3 — Escassez de agenda <span class="tag who">Troca de SDR no D5</span></h3>
+    <div class="copy">[Nome do Cliente], estou fechando a nossa agenda de diagnósticos estratégicos gratuitos desta semana e me sobrou apenas um único horário focado no setor de [Nicho do Cliente].
+Como trabalhamos com muita profundidade nas análises, não consigo abrir novos espaços nos próximos dias. Quero te entregar um plano de ação para escalar suas vendas.
+Podemos cravar esse horário amanhã às [X horas] ou às [Y horas]?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 7</span> Cadência 4 — Biblioteca de anúncios zerada</h3>
+    <div class="copy">[Nome do Cliente], fiz uma varredura técnica na sua presença digital. Dá uma olhada nesse print da sua Biblioteca de Anúncios no Meta.
+Ela está zerada (ou: rodando apenas [X] anúncios institucionais). Isso significa que você não está comprando dados e não está aparecendo ativamente para quem quer comprar o seu produto. Enquanto você não é visto, a atenção (e o dinheiro) do seu cliente está indo para outro lugar.
+Faz sentido batermos um papo rápido para eu te mostrar que tipo de campanha de conversão faria sentido rodar aí hoje?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 9</span> Cadência 5 — Sócio entra (dono para dono)</h3>
+    <div class="copy">Olá, [Nome do Cliente], tudo bem? Aqui é o [Nome do Sócio], sócio-diretor da V4 Company aqui da [Nome da sua unidade/região].
+O [Nome do seu vendedor anterior] estava analisando a [Nome da Empresa] e me trouxe o seu caso. Decidi te chamar pessoalmente porque conheço muito bem o modelo de negócios de vocês e vi um potencial gigante de escala que não está sendo aproveitado.
+Sei que sua agenda é corrida, mas você teria 15 minutos amanhã para um papo direto, de dono para dono? Quero te passar a minha visão estratégica sobre a sua empresa.</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Dia 11</span> Cadência 6 — Concorrente rodando forte</h3>
+    <div class="copy">[Nome do Cliente], lembra que te falei sobre perder espaço de mercado? Olha esse print da estratégia de anúncios do [Nome do Concorrente], rodando forte aí na sua região.
+Eles estão com [X] criativos ativos, estruturados para engolir a demanda de quem pesquisa por [Produto/Serviço do lead]. O cliente que deveria estar comprando de você, está caindo no funil deles.
+Nós sabemos exatamente como neutralizar essa estratégia e puxar essa demanda para a sua empresa. Vamos montar um plano de ataque para reverter isso?</div>
+  </div>
+</section>
+
+<!-- 06 -->
+<section id="s6">
+  <div class="sechead">
+    <div class="num">06</div>
+    <div>
+      <h2>Conexões realizadas — scripts de qualificação e agendamento</h2>
+      <div class="sub">Lead respondeu ou atendeu. Objetivo: qualificar o decisor e cravar a reunião.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Cliente disse "sim" / tem interesse — Decisor único</h3>
+    <div class="script">Perfeito [Nome do Cliente], o que mais te motivou ou qual é a sua expectativa fechando a parceria com a V4 Company, [Nome do Cliente]?</div>
+    <div class="row">
+      <div class="when"><span class="tag man">Cliente: Sim</span></div>
+      <div class="body">
+        <div class="script">Vai ser uma honra te ajudar, [Nome do Cliente]... Nosso bate-papo pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?</div>
+        <div class="body lbl">Esperar ele escolher do dia pro dia. Senão, sugerir 2 horários disponíveis do dia seguinte do closer.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Cliente disse "sim" — Com sócios</h3>
+    <div class="script">Perfeito [Nome do Cliente], o que mais te motivou ou qual é a sua expectativa fechando a parceria com a V4 Company, [Nome do Cliente]?</div>
+    <div class="body lbl" style="margin:8px 0 4px">Esperar o cliente responder e depois soltar outra mensagem:</div>
+    <div class="script">Vai ser uma honra ajudar vocês, [Nome do Cliente]... Seria muito interessante ter vocês dois na reunião, assim meu especialista consegue desbloquear uma condição especial maior. Com vocês dois pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?</div>
+    <div class="note">Se ele quiser vir sozinho, segue o fluxo normal — mas <b>force para que venham os dois</b>.</div>
+  </div>
+
+  <div class="card">
+    <h3>Mensagem de agendamento <span class="tag who">Ambos os fluxos</span></h3>
+    <div class="script">Perfeito [Nome do Cliente], já estou lhe enviando o convite aqui para o nosso bate-papo no dia x-feira às x:xx. Minutos antes do nosso bate-papo vou lhe enviar o link para facilitar seu acesso. Bora para cima!</div>
+  </div>
+
+  <div class="card">
+    <h3>Cliente deixou para depois</h3>
+    <div class="note"><b>Automação</b> pega o próximo ponto de contato na ligação e cria a tarefa.</div>
+    <div class="desc" style="margin-top:12px">Ações programadas manualmente:</div>
+    <ul class="clean">
+      <li>Ligações pela API + WhatsApp</li>
+      <li>Áudio mudo</li>
+      <li>Vídeo bolinha</li>
+      <li>Análise da Biblioteca de Anúncios do Meta</li>
+      <li>Potencial do concorrente — análise no SimilarWeb</li>
+      <li>Análise na Central do Google Ads</li>
+      <li>Case de sucesso do nicho (não achou do nicho → manda geral)</li>
+      <li>Convite para Evento Matriz / Mentoria Flávio Augusto / Treinamento de Vendas</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Objeção: "Ah, não sei, apertei errado…"</h3>
+    <div class="desc">Abordagem de reconquista — buscar convencimento e interesse em conhecer o projeto.</div>
+    <div class="script">Entendi, [Nome do Cliente]. Eu até vi aqui que você tem uma empresa. Nosso papel aqui é ajudar as empresas nessa estrutura e alavancagem de vendas com nosso Growth Marketing. Mas se você pudesse escolher entre vender mais ou quebrar, qual das duas você escolheria?</div>
+    <div class="row">
+      <div class="when"><span class="tag man">"Vender mais"</span></div>
+      <div class="body"><div class="script">Show! Então estamos disponibilizando uma consultoria gratuita de 45 minutinhos com nosso especialista. Pode ser hoje às x:xx, x:xx ou x:xx? Qual fica melhor para você?</div><div class="body lbl">Se sim → segue o fluxo de agendamento anterior.</div></div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="tag who">"Sem interesse"</span></div>
+      <div class="body"><div class="script">Certo, [Nome do Cliente]. Posso então só compartilhar com você um case de sucesso no WhatsApp? E quando você tiver interesse pode me procurar, que será uma honra te ajudar…</div><div class="body lbl">Se não → próximo follow em 20 dias.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 07 -->
+<section id="s7">
+  <div class="sechead">
+    <div class="num">07</div>
+    <div>
+      <h2>Reuniões marcadas — anti no-show e geração de valor</h2>
+      <div class="sub">A cadência começa em função da distância da reunião. Sempre gerando valor com análises reais.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Como buscar e enviar as análises — vídeos</h3>
+    <div class="desc">Clique no player para assistir no YouTube. Tutoriais de como acessar cada ferramenta e o que enviar via WhatsApp para gerar valor no anti no-show.</div>
+
+    <div class="vid-group">
+      <div class="glabel">SimilarWeb — analisar site / página do cliente</div>
+      <div class="vid-grid">
+        <a class="player" href="https://www.youtube.com/watch?v=ZwCqQ0J2WaU" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/ZwCqQ0J2WaU/hqdefault.jpg')">
+          <span class="yt">YouTube</span><span class="play"></span><span class="plabel">Passo a passo completo</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="vid-group">
+      <div class="glabel">Biblioteca de Anúncios — Meta</div>
+      <div class="vid-grid two">
+        <a class="player" href="https://www.youtube.com/shorts/hiB6j9H80lI" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/hiB6j9H80lI/hqdefault.jpg')">
+          <span class="yt">Short</span><span class="play"></span><span class="plabel">Vídeo 01</span>
+        </a>
+        <a class="player" href="https://www.youtube.com/shorts/jTe_4-yCxhM" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/jTe_4-yCxhM/hqdefault.jpg')">
+          <span class="yt">Short</span><span class="play"></span><span class="plabel">Vídeo 02</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="vid-group">
+      <div class="glabel">Biblioteca de Anúncios — Google</div>
+      <div class="vid-grid two">
+        <a class="player" href="https://www.youtube.com/watch?v=b0dStObCu48" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/b0dStObCu48/hqdefault.jpg')">
+          <span class="yt">YouTube</span><span class="play"></span><span class="plabel">Vídeo 01</span>
+        </a>
+        <a class="player" href="https://www.youtube.com/watch?v=lywbZj1khxU" target="_blank" rel="noopener"
+           style="background-image:url('https://img.youtube.com/vi/lywbZj1khxU/hqdefault.jpg')">
+          <span class="yt">YouTube</span><span class="play"></span><span class="plabel">Vídeo 02</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Como buscar e enviar as análises — guia em texto</h3>
+    <div class="desc">Mesmo conteúdo dos vídeos, em passo a passo escrito. Duas formas de aprender: assista OU leia. Todas as ferramentas são gratuitas e não exigem cadastro para o básico.</div>
+
+    <div class="guide">
+      <div class="glabel2"><span class="k">01</span> SimilarWeb — raio-x do site do cliente</div>
+      <p class="watch">Objetivo: mostrar ao cliente de onde vem (ou não vem) o tráfego dele, e provar que existe demanda sendo perdida.</p>
+      <ol class="steps">
+        <li>Acesse <b>similarweb.com</b> e digite o domínio do cliente na barra de busca (ex.: <b>empresadocliente.com.br</b>) — sem "www" e sem "https".</li>
+        <li>Veja o painel de <b>visão geral</b>: total de visitas no mês, tendência dos últimos meses e o ranking do site (global, do país e da categoria).</li>
+        <li>Olhe o bloco de <b>engajamento</b>: duração média da visita, páginas por visita e taxa de rejeição. Site com pouquíssima visita e alta rejeição = operação digital fraca.</li>
+        <li>Abra <b>canais de tráfego (Marketing Channels)</b>: quanto vem de Direto, Busca (orgânico/pago), Social, Referência, E-mail e Display. Se "Pago" está zerado, o cliente não está comprando demanda.</li>
+        <li>Confira <b>palavras-chave</b> e <b>concorrentes/sites similares</b> para mostrar quem está capturando a atenção que deveria ser dele.</li>
+        <li>Tire print da visão geral + dos canais de tráfego e monte a mensagem de valor para o WhatsApp.</li>
+      </ol>
+      <div class="lookfor">
+        <div class="h">O que apontar para o cliente</div>
+        <ul>
+          <li>Volume de visitas baixo ou caindo mês a mês</li>
+          <li>Zero tráfego pago = não está anunciando ativamente</li>
+          <li>Dependência total de tráfego direto (só quem já conhece a marca chega)</li>
+          <li>Concorrentes com muito mais tráfego na mesma região/nicho</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="guide">
+      <div class="glabel2"><span class="k">02</span> Biblioteca de Anúncios da Meta (Facebook / Instagram)</div>
+      <p class="watch">Objetivo: mostrar se o cliente anuncia — e o quanto o concorrente dele está anunciando. Ferramenta pública, <b>não precisa de login</b>.</p>
+      <ol class="steps">
+        <li>Acesse a <b>Biblioteca de Anúncios da Meta</b> (Meta Ad Library / facebook.com/ads/library).</li>
+        <li>Em <b>País</b>, selecione <b>Brasil</b>. Em <b>Categoria do anúncio</b>, escolha <b>Todos os anúncios</b>.</li>
+        <li>Na barra de busca, digite o <b>nome da página do cliente</b> e selecione o perfil. Você verá todos os anúncios ativos naquele momento — ou a tela vazia, se ele não anuncia.</li>
+        <li>Repita a busca com o <b>nome de um concorrente</b> forte da região, ou use uma <b>palavra-chave do nicho</b> para descobrir quem está competindo pela mesma audiência.</li>
+        <li>Conte quantos <b>criativos ativos</b> o concorrente tem e observe a <b>data de início</b> de cada um. Anúncio no ar há semanas/meses = provavelmente está convertendo.</li>
+        <li>Use <b>Filtros</b> (canto superior direito) para refinar por plataforma (Instagram, Facebook), tipo de mídia (imagem, vídeo, carrossel) e data.</li>
+        <li>Tire print da biblioteca zerada do cliente ao lado da biblioteca cheia do concorrente — esse contraste é o argumento da Cadência 4 e 6.</li>
+      </ol>
+      <div class="lookfor">
+        <div class="h">O que apontar para o cliente</div>
+        <ul>
+          <li>Biblioteca do cliente zerada ou só com institucional</li>
+          <li>Concorrente com 5+ (testando) ou 40+ (investindo pesado) anúncios ativos</li>
+          <li>Formatos que se repetem no concorrente = o que está funcionando no nicho</li>
+          <li>Anúncios antigos ainda no ar = campanhas vencedoras</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="guide">
+      <div class="glabel2"><span class="k">03</span> Central de Transparência de Anúncios do Google</div>
+      <p class="watch">Objetivo: ver o que cliente e concorrentes rodam na Pesquisa, no YouTube e na rede de Display do Google. Também é <b>pública e gratuita</b>.</p>
+      <ol class="steps">
+        <li>Acesse a <b>Central de Transparência de Anúncios do Google</b> (Google Ads Transparency Center).</li>
+        <li>Na busca, digite o <b>nome da empresa</b> ou cole a <b>URL do site</b> do cliente ou do concorrente e selecione o anunciante.</li>
+        <li>Ajuste a <b>Região</b> para Brasil e escolha o período que quer analisar.</li>
+        <li>Use os <b>filtros de formato</b> para ver separadamente anúncios de <b>Texto</b> (Pesquisa), <b>Imagem</b> (Display) e <b>Vídeo</b> (YouTube).</li>
+        <li>Clique em cada anúncio para ler os <b>títulos, descrições e CTAs</b> que o concorrente usa — e por quanto tempo estão rodando.</li>
+        <li>Tire print dos anúncios de Pesquisa do concorrente para mostrar que, quando alguém busca pelo produto, é o concorrente que aparece — não o cliente.</li>
+      </ol>
+      <div class="lookfor">
+        <div class="h">O que apontar para o cliente</div>
+        <ul>
+          <li>Cliente sem nenhum anúncio = invisível para quem busca com intenção de compra</li>
+          <li>Concorrente com anúncios de Pesquisa ativos capturando a demanda quente</li>
+          <li>Gatilhos e ofertas usados nos títulos e CTAs do concorrente</li>
+          <li>Presença em vídeo (YouTube) indicando operação de mídia estruturada</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note">Regra de ouro do anti no-show: toda análise vira uma <b>mensagem de valor no WhatsApp</b> mostrando um problema concreto + a oportunidade. Não é sobre técnica, é sobre fazer o cliente enxergar dinheiro sendo deixado na mesa.</div>
+  </div>
+
+  <div class="card">
+    <h3>Cadência pré-reunião</h3>
+    <div class="row">
+      <div class="when"><span class="ttag">4 dias antes</span></div>
+      <div class="body">Reunião agendada para o dia seguinte ou para D+4 começa aqui. Mandar análise: Biblioteca de Anúncios do Meta + Potencial do concorrente + SimilarWeb + Central do Google.</div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">3 dias antes</span></div>
+      <div class="body">Reunião agendada para D+3 começa aqui. Mandar um case de sucesso do nicho (não achou do nicho → manda um institucional / geral).</div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">Véspera 18h</span></div>
+      <div class="body">Reunião para o dia seguinte ou D+2 começa aqui. SDR manda vídeo bolinha para o cliente um dia antes.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>No dia da reunião — período da manhã</h3>
+    <div class="row">
+      <div class="when"><span class="ttag">08h30</span></div>
+      <div class="body">Se a reunião for pela manhã: o Closer manda vídeo bolinha se apresentando e mostrando a análise.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>No dia da reunião — período da tarde</h3>
+    <div class="row">
+      <div class="when"><span class="ttag">3h antes</span></div>
+      <div class="body"><div class="script">Msg do SDR: "Tá tudo certo pra reunião às xxh?"</div></div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">15 min antes</span></div>
+      <div class="body">Se ainda não confirmou: ligar 3x pela API + ligar pelo WhatsApp.</div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">5 min antes</span></div>
+      <div class="body">Mandar o link da call.</div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">Passou 5 min</span></div>
+      <div class="body">Não entrou: ligar 3x API + ligar WhatsApp + <div class="script">"Meu especialista está na sala, vai conseguir participar?"</div></div>
+    </div>
+    <div class="note">Reunião aconteceu → marcar como <b>Realizada</b> no SalesHub. Não aconteceu → marcar como <b>No-Show</b> no SalesHub.</div>
+  </div>
+</section>
+
+<!-- 08 -->
+<section id="s8">
+  <div class="sechead">
+    <div class="num">08</div>
+    <div>
+      <h2>Processo de no-show</h2>
+      <div class="sub">Reunião não aconteceu. Cadência de resgate com escalada até o sócio.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="when"><span class="ttag">+30 min</span></div>
+      <div class="body"><div class="script">Áudio mudo de 14 segundos + mensagem: "O que acha, [Nome do Cliente]?"</div></div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">+1h</span></div>
+      <div class="body">Ligar 3x API + ligar WhatsApp:
+        <div class="script">Nossa, [Nome do Cliente], só agora que fui olhar a conversa e vi que aquele áudio que te mandei foi totalmente sem som kkk
+Mas o que eu estava te falando ali era sobre o diagnóstico que tínhamos marcado hoje mais cedo. Como você não conseguiu entrar, imaginei que tivesse rolado algum imprevisto de última hora por aí.
+Está muito corrida a sua tarde ou conseguimos reagendar essa análise rápida para amanhã?</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">D+1</span></div>
+      <div class="body">Ligar de novo + WhatsApp + geração de valor + análise do Closer. <b>Sócio puxa (contato 1)</b> — entra na ligação + WhatsApp:
+        <div class="script">Boa noite [Nome do Cliente], tudo certo? Aqui é [Nome do Sócio]. Vi que você tem uma agenda com a gente hoje (ou tinha ontem) com meus especialistas. Como está sua agenda para hoje às x:xx ou amanhã x:xx ou x:xx?</div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="when"><span class="ttag">D+2 / D+3</span></div>
+      <div class="body">Troca de SDR. 3 dias de tentativa pelo novo SDR. Não atendeu → nutrição infinita.</div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Regra geral:</b> todos os clientes que não engajarem mais, derem no-show, sumirem, não atenderem ou ficarem sem resposta vão para a <b>Nutrição Infinita</b> do banco de dados do 3C Plus. E todas as tentativas de ligação ou conexão vão para <b>Conexões Realizadas</b>.
+  </div>
+</section>
+
+<!-- 09 -->
+<section id="s9">
+  <div class="sechead">
+    <div class="num">09</div>
+    <div>
+      <h2>Outbound + Recovery — cadência</h2>
+      <div class="sub">2x/semana de WhatsApp, janela de 3 semanas (~21 dias), 6 toques, fica na discadora.</div>
+    </div>
+  </div>
+  <div class="note">Disparo via Kommo para o WhatsApp dos clientes com copys e criativos personalizados. As ligações no 3C ficam <b>online das 9h às 18h</b>.</div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 1</span> Máquina de aquisição</h3>
+    <div class="copy">Sabe por que a maioria dos negócios não cresce de verdade hoje? Porque dependem de ações pontuais ou de agências tradicionais que só entregam 'postzinho' no Instagram.
+Aqui na V4 Company, nós construímos Máquinas de Aquisição. Imagine ter previsibilidade real: saber exatamente quanto investir hoje para ter clientes qualificados batendo no seu WhatsApp amanhã.
+Você tem essa previsibilidade de caixa hoje na sua empresa?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 2</span> O gargalo comum</h3>
+    <div class="copy">Opa, tudo bem?
+Notei que muitas empresas estão presas no mesmo gargalo ultimamente: têm um bom produto, investem energia, mas as vendas simplesmente estagnaram e dependem quase 100% de indicações.
+A sua operação atual está blindada contra isso ou o seu time comercial poderia estar fechando muito mais negócios se os leads certos chegassem todos os dias?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 3</span> Prova de resultado</h3>
+    <div class="copy">Para visualizar na prática: recentemente implantamos nosso método de Growth em parceiros que estavam com as vendas travadas.
+O resultado? Eles multiplicaram a margem de lucro em poucos meses, apenas parando de focar em curtidas e olhando 100% para conversão e ROI. Ter um time focado em trazer dinheiro novo para o caixa vira o jogo.
+Você quer ter esse nível de controle e escala sobre as suas vendas também?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 4</span> Chamada para ação direta</h3>
+    <div class="copy">Vamos parar de deixar dinheiro na mesa.
+Abri alguns horários na minha agenda esta semana exclusivamente para fazer um Diagnóstico de Vendas estratégico de novas operações. Vou mapear o funil, ver o que os concorrentes estão fazendo e entregar um plano de ação tático.
+Responde com um 'BORA'. Vamos pra cima!</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 5</span> Velocidade de adaptação</h3>
+    <div class="copy">A grande diferença entre os negócios que escalam e os que estagnam é a velocidade de adaptação.
+Enquanto alguns gestores estão brigando por métricas de vaidade ou tentando aprender tráfego sozinhos na tentativa e erro… nossos parceiros estão focados apenas no que importa: bater meta e expandir.
+Você prefere ter o mapa pronto de quem já investiu milhões em Growth no mercado, ou vai continuar tentando descobrir o caminho sozinho?</div>
+  </div>
+
+  <div class="card">
+    <h3><span class="ttag">Disparo 6</span> Sobrevivência básica</h3>
+    <div class="copy">Sendo muito direto: o mercado não perdoa amadorismo.
+Se uma empresa não aparece de forma agressiva e intencional para quem quer comprar hoje, o concorrente está levando esse cliente de graça. Estruturar a presença digital para conversão já não é mais um diferencial, é sobrevivência básica.
+Quero te ajudar a liderar o seu mercado. Quando podemos ter uma conversa franca, de dono para dono, sobre estruturar as suas vendas?</div>
+  </div>
+
+  <div class="note">Cliente que responder ao disparo de WhatsApp <b>cai na roleta entre os SDRs no Kommo CRM</b>.</div>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <div class="sechead">
+    <div class="num">10</div>
+    <div>
+      <h2>Nutrição infinita (3C Plus)</h2>
+      <div class="sub">Disparo de WhatsApp a cada 15 dias. 3C online depois que terminarem as ligações prioritárias.</div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3><span class="tag man">Primeiros 15 dias</span> Disparo 1</h3>
+      <div class="copy">Opa, tudo bem?
+Analisando os dados de aquisição do mercado nas últimas semanas, um padrão ficou muito claro: o custo para anunciar e atrair clientes está subindo rápido.
+As empresas que continuam fazendo o 'básico' no digital estão vendo a margem de lucro derreter, enquanto quem estruturou uma máquina de vendas real está comprando os melhores clientes da região por um custo muito menor.
+A sua operação está preparada para essa alta nos custos de aquisição ou vocês ainda estão dependendo das mesmas estratégias do ano passado?</div>
+    </div>
+    <div class="card">
+      <h3><span class="tag man">Primeiros 15 dias</span> Disparo 2</h3>
+      <div class="copy">Sabe qual é o maior risco oculto que vejo nas empresas hoje? A ilusão de que um bom produto se vende sozinho.
+Não adianta ter a melhor entrega se o seu cliente ideal não te encontra quando está com o cartão de crédito na mão para comprar. Ficar dependendo de indicações ou de vendas passivas é entregar o controle do seu caixa para a sorte.
+Aqui na V4, nosso único foco é previsibilidade de vendas. Vamos agendar 10 minutinhos para eu te mostrar como assumir o controle do seu faturamento?</div>
+    </div>
+    <div class="card">
+      <h3><span class="tag who">Últimos 15 dias</span> Disparo 1</h3>
+      <div class="copy">Tudo certo por aí?
+Nesses últimos 15 dias, enquanto muita gente continuou reclamando do mercado, nossos parceiros fecharam dezenas de novos contratos usando nosso método de Growth.
+O maior erro do empresário é achar que 'não fazer nada' custa zero. A inércia custa caro. Cada dia sem campanhas de vendas ativas e um funil rodando, é demanda reprimida indo direto para o bolso do seu concorrente.
+Quanto dinheiro você acha que a sua empresa deixou na mesa só nesta última quinzena?</div>
+    </div>
+    <div class="card">
+      <h3><span class="tag who">Últimos 15 dias</span> Disparo 2</h3>
+      <div class="copy">Para a gente ir direto ao ponto: o meu objetivo é te ajudar a escalar as vendas e colocar dinheiro novo no caixa da sua empresa. Mas para isso, preciso que você dê o primeiro passo.
+Abri minha agenda para fazer um Diagnóstico de Vendas focado na sua operação. Sem compromisso, mas com muita estratégia aplicável.
+Bora parar de adiar o crescimento do seu negócio?</div>
+    </div>
+  </div>
+
+  <div class="note">Lead que ficar <b>3 meses sem interação</b> vai para a lixeira.</div>
+</section>
+
+<div class="foot">V4 Company · Playbook de Pré-Vendas · Material interno · Base para treinamento de SDR/BDR</div>
+
+</div>
+</body>
+</html>
