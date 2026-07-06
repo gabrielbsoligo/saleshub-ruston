@@ -1,0 +1,77 @@
+{
+  "mes": "2026-07",
+  "por_sdr": {
+    "Bianca": {
+      "total": 2,
+      "roleta": 1,
+      "manual": 0,
+      "pre_roleta": 1
+    },
+    "Edric": {
+      "total": 2,
+      "roleta": 1,
+      "manual": 0,
+      "pre_roleta": 1
+    },
+    "Erick": {
+      "total": 2,
+      "roleta": 1,
+      "manual": 0,
+      "pre_roleta": 1
+    },
+    "Gabriel Soligo": {
+      "total": 6,
+      "roleta": 1,
+      "manual": 0,
+      "pre_roleta": 5
+    },
+    "Lary": {
+      "total": 3,
+      "roleta": 1,
+      "manual": 0,
+      "pre_roleta": 2
+    },
+    "Sandro": {
+      "total": 1,
+      "roleta": 0,
+      "manual": 0,
+      "pre_roleta": 1
+    },
+    "Yuri": {
+      "total": 1,
+      "roleta": 0,
+      "manual": 0,
+      "pre_roleta": 1
+    }
+  },
+  "divergencias_sh_kommo": [
+    {
+      "empresa": "Imenco",
+      "kommo_id": "24426547",
+      "sh_sdr": "Bianca",
+      "sh_kuid": 15458912,
+      "kommo_owner_kuid": 15475300,
+      "kommo_owner_nome": "(fora do roster)"
+    },
+    {
+      "empresa": "UTIMOVEIS",
+      "kommo_id": "24419551",
+      "sh_sdr": "Lary",
+      "sh_kuid": 14559996,
+      "kommo_owner_kuid": 14960708,
+      "kommo_owner_nome": "(fora do roster)"
+    }
+  ],
+  "roleta_fora_do_roster": [
+    {
+      "empresa": "Alumi souza",
+      "kommo_id": "24460281",
+      "dono_sh": "Erick"
+    },
+    {
+      "empresa": "Col\u00e9gio Dom Bosco",
+      "kommo_id": "24474031",
+      "dono_sh": "Gabriel Soligo"
+    }
+  ]
+}

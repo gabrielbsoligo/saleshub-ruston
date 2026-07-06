@@ -253,22 +253,27 @@ export interface RoletaStatusRow {
 }
 
 // Roleta SDR — visão granular (read-only via RPC)
-export interface RoletaSdrLead {
-  log_id: number;
+export type RoletaOrigem = 'roleta' | 'manual' | 'pre_roleta';
+
+// balanço lead-level (get_roleta_sdr_balanco): 1 linha por lead, contador = tamanho da lista
+export interface RoletaSdrBalancoLead {
   member_id: string;
   member_name: string;
   lead_id: string | null;
   empresa: string | null;
   nome_contato: string | null;
-  tipo_atribuicao: 'roleta' | 'manual';
-  kommo_id: number | null;
+  kommo_id: string | null;
+  canal: string | null;
   created_at: string;
+  origem: RoletaOrigem;
 }
 
 export interface RoletaSdrCiclo {
   mes: string;          // date (primeiro dia do mês)
+  total: number;
   total_roleta: number;
   total_manual: number;
+  total_pre: number;
   primeira: string;
   ultima: string;
   is_atual: boolean;
