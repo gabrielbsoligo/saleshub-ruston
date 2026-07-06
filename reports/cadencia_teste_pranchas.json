@@ -1,0 +1,76 @@
+{
+ "lead": 22796607,
+ "reuniao_id": "ed9f13d8-4b73-407c-b480-1e8c63776ff1",
+ "data_reuniao_sp": "2026-07-10 15:00",
+ "sdr": "Lary",
+ "sdr_kuid": 14559996,
+ "closer": "Sandro",
+ "closer_kuid": 15475300,
+ "task_type_acompanhar": "Follow-up(1) fallback",
+ "tarefas": [
+  {
+   "toque": "T1",
+   "tipo": 1,
+   "texto": "REUNIÃO · 4 dias antes — gerar valor. WhatsApp: análise (Biblioteca Meta + concorrente + SimilarWeb + Google).",
+   "complete_till_sp": "2026-07-06 16:00",
+   "dono": "SDR",
+   "dono_kuid": 14559996,
+   "kommo_task_id": 3525311
+  },
+  {
+   "toque": "T2",
+   "tipo": 1,
+   "texto": "REUNIÃO · 3 dias antes — gerar valor. WhatsApp: case de sucesso do nicho (não achou → case geral).",
+   "complete_till_sp": "2026-07-07 16:00",
+   "dono": "SDR",
+   "dono_kuid": 14559996,
+   "kommo_task_id": 3525313
+  },
+  {
+   "toque": "T3",
+   "tipo": 3732759,
+   "texto": "REUNIÃO · véspera 18h. WhatsApp: mandar o vídeo bolinha.",
+   "complete_till_sp": "2026-07-09 18:00",
+   "dono": "SDR",
+   "dono_kuid": 14559996,
+   "kommo_task_id": 3525315
+  },
+  {
+   "toque": "T4",
+   "tipo": 3732759,
+   "texto": "REUNIÃO · dia 08h30. CLOSER: WhatsApp com vídeo bolinha + mostra a análise.",
+   "complete_till_sp": "2026-07-10 08:30",
+   "dono": "CLOSER",
+   "dono_kuid": 15475300,
+   "kommo_task_id": 3525317
+  },
+  {
+   "toque": "T5",
+   "tipo": 3732751,
+   "texto": "REUNIÃO · 15min antes. Não confirmou? Ligar 3x (API4COM) + WhatsApp.",
+   "complete_till_sp": "2026-07-10 14:45",
+   "dono": "SDR",
+   "dono_kuid": 14559996,
+   "kommo_task_id": 3525319
+  },
+  {
+   "toque": "T6",
+   "tipo": 3732751,
+   "texto": "REUNIÃO · passou 5min. Não entrou? Ligar 3x (API4COM) + WhatsApp. Depois: modelo 'Reunião · Especialista na sala'. Aconteceu→Realizada no SalesHub; não→No-Show.",
+   "complete_till_sp": "2026-07-10 15:05",
+   "dono": "SDR",
+   "dono_kuid": 14559996,
+   "kommo_task_id": 3525321
+  }
+ ],
+ "skipped": [],
+ "cadencia_task_ids": [
+  3525311,
+  3525313,
+  3525315,
+  3525317,
+  3525319,
+  3525321
+ ],
+ "link": "https://financeirorustonengenhariacombr.kommo.com/leads/detail/22796607"
+}
