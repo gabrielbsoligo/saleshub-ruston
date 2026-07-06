@@ -41,10 +41,13 @@ export const RoletaHistoricoView: React.FC = () => {
 
   const byMember = new Map<string, { name: string; leads: RoletaSdrBalancoLead[] }>();
   for (const l of leads) {
-    const e = byMember.get(l.member_id) || { name: l.member_name, leads: [] };
-    e.leads.push(l); byMember.set(l.member_id, e);
+    const key = l.member_id || "__sem_sdr__";
+    const e = byMember.get(key) || { name: l.member_name || "SEM SDR", leads: [] };
+    e.leads.push(l); byMember.set(key, e);
   }
-  const members = [...byMember.entries()].sort((a, b) => b[1].leads.length - a[1].leads.length);
+  // SEM SDR sempre por último; demais por volume
+  const members = [...byMember.entries()].sort((a, b) =>
+    (a[0] === "__sem_sdr__" ? 1 : 0) - (b[0] === "__sem_sdr__" ? 1 : 0) || b[1].leads.length - a[1].leads.length);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-6">
@@ -107,6 +110,7 @@ export const RoletaHistoricoView: React.FC = () => {
                                 : <span className="text-white">{nome}</span>}
                               {" "}
                               <span className={`text-[9px] uppercase ${ORIGEM_COLOR[l.origem]}`}>{ORIGEM_LABEL[l.origem]}</span>
+                              {l.no_closer && <span className="text-[9px] uppercase text-purple-400"> → closer</span>}
                               <span className="opacity-60"> · {fmtTime(l.created_at)}</span>
                             </div>
                           );

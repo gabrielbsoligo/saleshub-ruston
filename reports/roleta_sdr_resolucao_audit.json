@@ -1,0 +1,148 @@
+{
+  "mes": "2026-07",
+  "balanco": [
+    {
+      "member_name": "Bianca",
+      "total": 6,
+      "roleta": 3,
+      "manual": 0,
+      "pre": 3,
+      "no_closer": 1,
+      "sinais": "kommo_atual,log,reuniao"
+    },
+    {
+      "member_name": "Lary",
+      "total": 5,
+      "roleta": 1,
+      "manual": 0,
+      "pre": 4,
+      "no_closer": 1,
+      "sinais": "kommo_atual,log,reuniao"
+    },
+    {
+      "member_name": "Edric",
+      "total": 4,
+      "roleta": 1,
+      "manual": 0,
+      "pre": 3,
+      "no_closer": 0,
+      "sinais": "kommo_atual,log,reuniao"
+    }
+  ],
+  "drift_leads_sdr_vs_resolvido": [
+    {
+      "empresa": "Alumi souza",
+      "kommo_id": "24460281",
+      "resolvido": "Bianca",
+      "sinal": "log",
+      "no_closer": false,
+      "leads_sdr_id": "Erick"
+    },
+    {
+      "empresa": "Col\u00e9gio Dom Bosco",
+      "kommo_id": "24474031",
+      "resolvido": "Bianca",
+      "sinal": "log",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "Pet\u00ed",
+      "kommo_id": "24431977",
+      "resolvido": "Bianca",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "Redemac Madesul",
+      "kommo_id": "24419639",
+      "resolvido": "Bianca",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Erick"
+    },
+    {
+      "empresa": "AMD Brasil",
+      "kommo_id": "24403307",
+      "resolvido": "Edric",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "Giancar",
+      "kommo_id": "24403325",
+      "resolvido": "Edric",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "casacris",
+      "kommo_id": "24419547",
+      "resolvido": "Lary",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "Centro Educacional Rui Barbosa",
+      "kommo_id": "24403331",
+      "resolvido": "Lary",
+      "sinal": "kommo_atual",
+      "no_closer": false,
+      "leads_sdr_id": "Gabriel Soligo"
+    },
+    {
+      "empresa": "Della & Delle",
+      "kommo_id": "24403321",
+      "resolvido": null,
+      "sinal": "sem_sdr",
+      "no_closer": true,
+      "leads_sdr_id": "Yuri"
+    },
+    {
+      "empresa": "FORT DIESEL CENTRO AUTOMOTIVO EIRELI",
+      "kommo_id": "24403319",
+      "resolvido": null,
+      "sinal": "sem_sdr",
+      "no_closer": true,
+      "leads_sdr_id": "Sandro"
+    }
+  ],
+  "sem_sdr": [
+    {
+      "empresa": "Della & Delle",
+      "kommo_id": "24403321",
+      "resolvido": null,
+      "sinal": "sem_sdr",
+      "no_closer": true,
+      "leads_sdr_id": "Yuri"
+    },
+    {
+      "empresa": "FORT DIESEL CENTRO AUTOMOTIVO EIRELI",
+      "kommo_id": "24403319",
+      "resolvido": null,
+      "sinal": "sem_sdr",
+      "no_closer": true,
+      "leads_sdr_id": "Sandro"
+    }
+  ],
+  "prioridade3_kommo_history_para_sem_sdr": [
+    {
+      "empresa": "Della & Delle",
+      "kommo_id": "24403321",
+      "events_status": 200,
+      "owners_hist": [],
+      "roster_sdr_no_historico": []
+    },
+    {
+      "empresa": "FORT DIESEL CENTRO AUTOMOTIVO EIRELI",
+      "kommo_id": "24403319",
+      "events_status": 200,
+      "owners_hist": [],
+      "roster_sdr_no_historico": []
+    }
+  ]
+}

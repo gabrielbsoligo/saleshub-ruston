@@ -2,13 +2,14 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Repeat, ChevronDown, ChevronRight, PauseCircle, Power } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAppStore } from "../store";
-import type { RoletaStatusRow, RoletaSdrBalancoLead, RoletaOrigem } from "../types";
+import type { RoletaStatusRow, RoletaSdrBalancoLead, RoletaOrigem, RoletaSinal } from "../types";
 
 const KOMMO_BASE = "https://financeirorustonengenhariacombr.kommo.com";
 const ORIGEM_LABEL: Record<RoletaOrigem, string> = { roleta: "roleta", manual: "manual", pre_roleta: "pré-roleta" };
 const ORIGEM_COLOR: Record<RoletaOrigem, string> = {
   roleta: "text-emerald-400", manual: "text-amber-400", pre_roleta: "text-sky-400",
 };
+const SINAL_LABEL: Record<RoletaSinal, string> = { log: "log", reuniao: "reunião", kommo_atual: "dono atual", sem_sdr: "—" };
 
 // Cabeçalho do rodízio de SDRs (inbound), espelho do "Rodízio de Closers".
 // Contador AUDITÁVEL: total do pill = nº de leads REAIS do ciclo (mês) atribuídos ao SDR
@@ -47,6 +48,7 @@ export const RoletaPanelSdr: React.FC = () => {
   if (roster.length === 0) return null;
 
   const leadsOf = (mid: string) => balanco.filter(l => l.member_id === mid);
+  const semSdr = balanco.filter(l => !l.member_id);
   const proximoIdx = roster.findIndex(r => r.ativo !== false);
   const fmtTime = (iso: string) => new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
@@ -122,6 +124,8 @@ export const RoletaPanelSdr: React.FC = () => {
                           : <span className="text-white">{nome}</span>}
                         {" "}
                         <span className={`text-[9px] uppercase ${ORIGEM_COLOR[l.origem]}`}>{ORIGEM_LABEL[l.origem]}</span>
+                        {l.no_closer && <span className="text-[9px] uppercase text-purple-400"> → closer</span>}
+                        <span className="opacity-50" title={`resolvido por: ${SINAL_LABEL[l.sinal]}`}> · {SINAL_LABEL[l.sinal]}</span>
                         <span className="opacity-60"> · {fmtTime(l.created_at)}</span>
                       </div>
                     );
@@ -130,8 +134,27 @@ export const RoletaPanelSdr: React.FC = () => {
               );
             })}
           </div>
+          {semSdr.length > 0 && (
+            <div className="mt-3 border-t border-dashed border-[var(--color-v4-border)] pt-2">
+              <div className="text-[11px] font-semibold text-amber-400/90 mb-1">SEM SDR do roster · {semSdr.length}
+                <span className="text-[var(--color-v4-text-muted)] font-normal"> (só passou por closer/não-SDR — revisar)</span>
+              </div>
+              {semSdr.map(l => {
+                const nome = l.empresa || l.nome_contato || "(sem nome)";
+                return (
+                  <div key={l.lead_id} className="text-[11px] text-[var(--color-v4-text-muted)] truncate py-0.5">
+                    {l.kommo_id
+                      ? <a href={`${KOMMO_BASE}/leads/detail/${l.kommo_id}`} target="_blank" rel="noreferrer" className="text-white hover:text-[var(--color-v4-red)] no-underline">{nome}</a>
+                      : <span className="text-white">{nome}</span>}
+                    {" "}<span className={`text-[9px] uppercase ${ORIGEM_COLOR[l.origem]}`}>{ORIGEM_LABEL[l.origem]}</span>
+                    <span className="opacity-60"> · {fmtTime(l.created_at)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">
-            Conta todos os leads inbound do ciclo (<span className="text-emerald-400">roleta</span> / <span className="text-amber-400">manual</span> / <span className="text-sky-400">pré-roleta</span>). Total do pill = nº de leads listados.
+            Conta todos os leads inbound do ciclo (<span className="text-emerald-400">roleta</span> / <span className="text-amber-400">manual</span> / <span className="text-sky-400">pré-roleta</span>), atribuídos ao <span className="text-white">SDR que passou</span> (log &gt; reunião &gt; dono atual). <span className="text-purple-400">→ closer</span> = já está no closer, conta pro SDR. Total do pill = nº de leads listados.
           </div>
         </div>
       )}

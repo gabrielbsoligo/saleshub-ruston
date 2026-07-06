@@ -255,10 +255,13 @@ export interface RoletaStatusRow {
 // Roleta SDR — visão granular (read-only via RPC)
 export type RoletaOrigem = 'roleta' | 'manual' | 'pre_roleta';
 
-// balanço lead-level (get_roleta_sdr_balanco): 1 linha por lead, contador = tamanho da lista
+export type RoletaSinal = 'log' | 'reuniao' | 'kommo_atual' | 'sem_sdr';
+
+// balanço lead-level (get_roleta_sdr_balanco): 1 linha por lead. member_id = SDR-que-passou
+// (log > reunião > responsável-atual-se-SDR); null = SEM SDR. Contador = tamanho da lista.
 export interface RoletaSdrBalancoLead {
-  member_id: string;
-  member_name: string;
+  member_id: string | null;
+  member_name: string | null;
   lead_id: string | null;
   empresa: string | null;
   nome_contato: string | null;
@@ -266,6 +269,8 @@ export interface RoletaSdrBalancoLead {
   canal: string | null;
   created_at: string;
   origem: RoletaOrigem;
+  sinal: RoletaSinal;      // qual sinal resolveu o SDR
+  no_closer: boolean;      // dono atual no Kommo é closer (conta pro SDR mesmo assim)
 }
 
 export interface RoletaSdrCiclo {
