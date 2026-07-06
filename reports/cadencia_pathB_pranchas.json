@@ -1,0 +1,617 @@
+{
+  "reuniao_id": "ed9f13d8-4b73-407c-b480-1e8c63776ff1",
+  "kommo_id": 22796607,
+  "lead_link": "https://financeirorustonengenhariacombr.kommo.com/leads/detail/22796607",
+  "transicoes": [
+    {
+      "label": "R1 marcada D+5",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "data_reuniao": "'2026-07-11 15:00:00-03'",
+      "open_target": 6,
+      "open_after_map": 6,
+      "new_map": {
+        "T1": 3525371,
+        "T2": 3525373,
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      },
+      "open_created_on_lead": 6,
+      "open_created_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "actions_ops": [
+        {
+          "slot": "T1",
+          "op": "post"
+        },
+        {
+          "slot": "T2",
+          "op": "post"
+        },
+        {
+          "slot": "T3",
+          "op": "post"
+        },
+        {
+          "slot": "T4",
+          "op": "post"
+        },
+        {
+          "slot": "T5",
+          "op": "post"
+        },
+        {
+          "slot": "T6",
+          "op": "post"
+        }
+      ],
+      "posted_slots": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6"
+      ],
+      "patched": [],
+      "completed": [],
+      "touched_ids": [],
+      "cur_ids": [],
+      "only_map_touched": true
+    },
+    {
+      "label": "R2 reschedule D+9",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "data_reuniao": "'2026-07-15 15:00:00-03'",
+      "open_target": 6,
+      "open_after_map": 6,
+      "new_map": {
+        "T1": 3525371,
+        "T2": 3525373,
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      },
+      "open_created_on_lead": 6,
+      "open_created_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "actions_ops": [
+        {
+          "slot": "T1",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T2",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T3",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T4",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T5",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T6",
+          "op": "patch_move"
+        }
+      ],
+      "posted_slots": [],
+      "patched": [
+        [
+          "T1",
+          3525371,
+          200
+        ],
+        [
+          "T2",
+          3525373,
+          200
+        ],
+        [
+          "T3",
+          3525375,
+          200
+        ],
+        [
+          "T4",
+          3525377,
+          200
+        ],
+        [
+          "T5",
+          3525379,
+          200
+        ],
+        [
+          "T6",
+          3525381,
+          200
+        ]
+      ],
+      "completed": [],
+      "touched_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "cur_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "only_map_touched": true
+    },
+    {
+      "label": "R3 reschedule D+2",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "data_reuniao": "'2026-07-08 15:00:00-03'",
+      "open_target": 4,
+      "open_after_map": 4,
+      "new_map": {
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      },
+      "open_created_on_lead": 4,
+      "open_created_ids": [
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "actions_ops": [
+        {
+          "slot": "T1",
+          "op": "complete"
+        },
+        {
+          "slot": "T2",
+          "op": "complete"
+        },
+        {
+          "slot": "T3",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T4",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T5",
+          "op": "patch_move"
+        },
+        {
+          "slot": "T6",
+          "op": "patch_move"
+        }
+      ],
+      "posted_slots": [],
+      "patched": [
+        [
+          "T3",
+          3525375,
+          200
+        ],
+        [
+          "T4",
+          3525377,
+          200
+        ],
+        [
+          "T5",
+          3525379,
+          200
+        ],
+        [
+          "T6",
+          3525381,
+          200
+        ]
+      ],
+      "completed": [
+        [
+          "T1",
+          3525371,
+          200
+        ],
+        [
+          "T2",
+          3525373,
+          200
+        ]
+      ],
+      "touched_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "cur_ids": [
+        3525371,
+        3525373,
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "only_map_touched": true
+    },
+    {
+      "label": "R4 realizada",
+      "mode": "resolve",
+      "estado": "realizada",
+      "data_reuniao": "'2026-07-08 15:00:00-03'",
+      "open_target": 0,
+      "open_after_map": 0,
+      "new_map": {},
+      "open_created_on_lead": 0,
+      "open_created_ids": [],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "actions_ops": [
+        {
+          "slot": "T3",
+          "op": "complete"
+        },
+        {
+          "slot": "T4",
+          "op": "complete"
+        },
+        {
+          "slot": "T5",
+          "op": "complete"
+        },
+        {
+          "slot": "T6",
+          "op": "complete"
+        }
+      ],
+      "posted_slots": [],
+      "patched": [],
+      "completed": [
+        [
+          "T3",
+          3525375,
+          200
+        ],
+        [
+          "T4",
+          3525377,
+          200
+        ],
+        [
+          "T5",
+          3525379,
+          200
+        ],
+        [
+          "T6",
+          3525381,
+          200
+        ]
+      ],
+      "touched_ids": [
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "cur_ids": [
+        3525375,
+        3525377,
+        3525379,
+        3525381
+      ],
+      "only_map_touched": true
+    }
+  ],
+  "assertions": {
+    "a_zero_acumulo": {
+      "pass": true,
+      "por_round": [
+        {
+          "round": "R1 marcada D+5",
+          "open_target": 6,
+          "open_created_on_lead": 6,
+          "ok": true
+        },
+        {
+          "round": "R2 reschedule D+9",
+          "open_target": 6,
+          "open_created_on_lead": 6,
+          "ok": true
+        },
+        {
+          "round": "R3 reschedule D+2",
+          "open_target": 4,
+          "open_created_on_lead": 4,
+          "ok": true
+        },
+        {
+          "round": "R4 realizada",
+          "open_target": 0,
+          "open_created_on_lead": 0,
+          "ok": true
+        }
+      ]
+    },
+    "b_so_ids_do_mapa": {
+      "pass": true,
+      "por_round": [
+        {
+          "round": "R1 marcada D+5",
+          "only_map_touched": true,
+          "touched_ids": []
+        },
+        {
+          "round": "R2 reschedule D+9",
+          "only_map_touched": true,
+          "touched_ids": [
+            3525371,
+            3525373,
+            3525375,
+            3525377,
+            3525379,
+            3525381
+          ]
+        },
+        {
+          "round": "R3 reschedule D+2",
+          "only_map_touched": true,
+          "touched_ids": [
+            3525371,
+            3525373,
+            3525375,
+            3525377,
+            3525379,
+            3525381
+          ]
+        },
+        {
+          "round": "R4 realizada",
+          "only_map_touched": true,
+          "touched_ids": [
+            3525375,
+            3525377,
+            3525379,
+            3525381
+          ]
+        }
+      ],
+      "R2_reuso_sem_post_novo": true,
+      "R2_posted_slots": []
+    },
+    "c_tipos_donos_horarios": {
+      "pass": true,
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "live_apos_R3": [
+        {
+          "slot": "T3",
+          "task_id": 3525375,
+          "get": 200,
+          "type": 3732759,
+          "owner": 14559996,
+          "when": "2026-07-07 18:00",
+          "exp_type": 3732759,
+          "exp_owner": 14559996,
+          "exp_when": "2026-07-07 18:00",
+          "type_ok": true,
+          "owner_ok": true,
+          "time_ok": true
+        },
+        {
+          "slot": "T4",
+          "task_id": 3525377,
+          "get": 200,
+          "type": 3732759,
+          "owner": 15475300,
+          "when": "2026-07-08 08:30",
+          "exp_type": 3732759,
+          "exp_owner": 15475300,
+          "exp_when": "2026-07-08 08:30",
+          "type_ok": true,
+          "owner_ok": true,
+          "time_ok": true
+        },
+        {
+          "slot": "T5",
+          "task_id": 3525379,
+          "get": 200,
+          "type": 3732751,
+          "owner": 14559996,
+          "when": "2026-07-08 14:45",
+          "exp_type": 3732751,
+          "exp_owner": 14559996,
+          "exp_when": "2026-07-08 14:45",
+          "type_ok": true,
+          "owner_ok": true,
+          "time_ok": true
+        },
+        {
+          "slot": "T6",
+          "task_id": 3525381,
+          "get": 200,
+          "type": 3732751,
+          "owner": 14559996,
+          "when": "2026-07-08 15:05",
+          "exp_type": 3732751,
+          "exp_owner": 14559996,
+          "exp_when": "2026-07-08 15:05",
+          "type_ok": true,
+          "owner_ok": true,
+          "time_ok": true
+        }
+      ]
+    },
+    "d_pos_resolucao_zero_aberta": {
+      "pass": true,
+      "open_created_on_lead": 0,
+      "open_ids": [],
+      "map_final": {}
+    },
+    "skip_past_borda": {
+      "pass": true,
+      "R3_completed_slots": [
+        "T1",
+        "T2"
+      ]
+    }
+  },
+  "preclean": {
+    "3525311": 200,
+    "3525313": 200,
+    "3525315": 200,
+    "3525317": 200,
+    "3525319": 200,
+    "3525321": 200,
+    "3525331": 200,
+    "3525333": 200,
+    "3525335": 200,
+    "3525337": 200,
+    "3525339": 200,
+    "3525341": 200,
+    "3525343": 200,
+    "3525345": 200,
+    "3525347": 200,
+    "3525349": 200,
+    "3525351": 200,
+    "3525353": 200,
+    "3525355": "already_done_or_missing",
+    "3525357": 200,
+    "3525359": 200,
+    "3525361": 200
+  },
+  "all_pass": true,
+  "tabela_por_transicao": [
+    {
+      "transicao": "R1 marcada D+5",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "open_target": 6,
+      "open_no_lead": 6,
+      "posted": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6"
+      ],
+      "patch_move": [],
+      "completed": [],
+      "mapa": {
+        "T1": 3525371,
+        "T2": 3525373,
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      }
+    },
+    {
+      "transicao": "R2 reschedule D+9",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "open_target": 6,
+      "open_no_lead": 6,
+      "posted": [],
+      "patch_move": [
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6"
+      ],
+      "completed": [],
+      "mapa": {
+        "T1": 3525371,
+        "T2": 3525373,
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      }
+    },
+    {
+      "transicao": "R3 reschedule D+2",
+      "mode": "reconcile",
+      "estado": "marcada",
+      "open_target": 4,
+      "open_no_lead": 4,
+      "posted": [],
+      "patch_move": [
+        "T3",
+        "T4",
+        "T5",
+        "T6"
+      ],
+      "completed": [
+        "T1",
+        "T2"
+      ],
+      "mapa": {
+        "T3": 3525375,
+        "T4": 3525377,
+        "T5": 3525379,
+        "T6": 3525381
+      }
+    },
+    {
+      "transicao": "R4 realizada",
+      "mode": "resolve",
+      "estado": "realizada",
+      "open_target": 0,
+      "open_no_lead": 0,
+      "posted": [],
+      "patch_move": [],
+      "completed": [
+        "T3",
+        "T4",
+        "T5",
+        "T6"
+      ],
+      "mapa": {}
+    }
+  ],
+  "conclusao": "Path B validado no Pranchas: reschedule MOVE (PATCH complete_till reusa as mesmas ids, ZERO ac\u00famulo, teto 6/reuni\u00e3o), skip-past/borda CONCLUEM em vez de deletar, resolu\u00e7\u00e3o fecha tudo. DELETE nunca usado. Produ\u00e7\u00e3o OFF (WIRE_PROD default). migration_066 + edge kommo-cadencia staged."
+}
