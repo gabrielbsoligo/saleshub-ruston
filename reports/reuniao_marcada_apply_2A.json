@@ -1,0 +1,398 @@
+{
+ "fase": "2A",
+ "base_commit": "fb691ae",
+ "apply_2A1_valida_futura": [
+  {
+   "kommo_id": 24422421,
+   "nome": "MCK Advogados",
+   "reuniao_id": "ec514944-7a9e-48f8-ba97-b6ef6612c79f",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-06 15:00",
+    "1042425": "2026-07-06 13:55",
+    "1042429": "06/07 às 15h",
+    "1042431": "vcs-xkcr-rvr",
+    "1042423": "2026-07-06 10:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-06 15:00",
+    "1042423": "2026-07-06 10:00",
+    "1042425": "2026-07-06 13:55",
+    "1042429": "06/07 às 15h",
+    "1042431": "vcs-xkcr-rvr"
+   }
+  },
+  {
+   "kommo_id": 24403317,
+   "nome": "Plasnan industria",
+   "reuniao_id": "1408c828-b531-4f06-8cd2-ceff35c83c1e",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-08 10:00",
+    "1042425": "2026-07-08 08:55",
+    "1042429": "08/07 às 10h",
+    "1042431": "joj-giux-ecg",
+    "1042423": "2026-07-08 06:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-08 10:00",
+    "1042423": "2026-07-08 06:00",
+    "1042425": "2026-07-08 08:55",
+    "1042429": "08/07 às 10h",
+    "1042431": "joj-giux-ecg"
+   }
+  },
+  {
+   "kommo_id": 23209651,
+   "nome": "Itapneus",
+   "reuniao_id": "daa3e97f-6c2e-48fc-9e1e-15d0a8517427",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-06 16:00",
+    "1042425": "2026-07-06 14:55",
+    "1042429": "06/07 às 16h",
+    "1042431": "qjj-kqap-wmw",
+    "1042423": "2026-07-06 10:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-06 16:00",
+    "1042423": "2026-07-06 10:00",
+    "1042425": "2026-07-06 14:55",
+    "1042429": "06/07 às 16h",
+    "1042431": "qjj-kqap-wmw"
+   }
+  },
+  {
+   "kommo_id": 24433253,
+   "nome": "KG design.",
+   "reuniao_id": "6d340395-6102-4c47-97b0-4cedbbcd318c",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-06 19:00",
+    "1042425": "2026-07-06 17:55",
+    "1042429": "06/07 às 19h",
+    "1042431": "pxh-qywu-oqh",
+    "1042423": "2026-07-06 13:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-06 19:00",
+    "1042423": "2026-07-06 13:00",
+    "1042425": "2026-07-06 17:55",
+    "1042429": "06/07 às 19h",
+    "1042431": "pxh-qywu-oqh"
+   }
+  },
+  {
+   "kommo_id": 23209565,
+   "nome": "Bonifácio Transporte de Carga",
+   "reuniao_id": "4bdcfa5e-8933-49bf-ae02-c57b7ff9484c",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-06 19:00",
+    "1042425": "2026-07-06 17:55",
+    "1042429": "06/07 às 19h",
+    "1042431": "ccp-afuc-zzw",
+    "1042423": "2026-07-06 13:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-06 19:00",
+    "1042423": "2026-07-06 13:00",
+    "1042425": "2026-07-06 17:55",
+    "1042429": "06/07 às 19h",
+    "1042431": "ccp-afuc-zzw"
+   }
+  },
+  {
+   "kommo_id": 24156555,
+   "nome": "Gomidias",
+   "reuniao_id": "44baf89a-4e51-4770-ad42-da7122288584",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-07 16:00",
+    "1042425": "2026-07-07 14:55",
+    "1042429": "07/07 às 16h",
+    "1042431": "bgb-nwmp-qdj",
+    "1042423": "2026-07-07 10:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-07 16:00",
+    "1042423": "2026-07-07 10:00",
+    "1042425": "2026-07-07 14:55",
+    "1042429": "07/07 às 16h",
+    "1042431": "bgb-nwmp-qdj"
+   }
+  },
+  {
+   "kommo_id": 24419639,
+   "nome": "Redemac Madesul",
+   "reuniao_id": "9703cc36-6c03-44e5-985b-d9b17013e1c1",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-06 10:00",
+    "1042425": "2026-07-06 08:55",
+    "1042429": "06/07 às 10h",
+    "1042431": "piy-kjkw-odh",
+    "1042423": "2026-07-06 06:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-06 10:00",
+    "1042423": "2026-07-06 06:00",
+    "1042425": "2026-07-06 08:55",
+    "1042429": "06/07 às 10h",
+    "1042431": "piy-kjkw-odh"
+   }
+  },
+  {
+   "kommo_id": 24156301,
+   "nome": "Nobile",
+   "reuniao_id": "06636592-a0d3-4ab2-9f32-7de80fbc55f7",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-07 16:00",
+    "1042425": "2026-07-07 14:55",
+    "1042429": "07/07 às 16h",
+    "1042431": "ifq-xqqb-qyg",
+    "1042423": "2026-07-07 10:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-07 16:00",
+    "1042423": "2026-07-07 10:00",
+    "1042425": "2026-07-07 14:55",
+    "1042429": "07/07 às 16h",
+    "1042431": "ifq-xqqb-qyg"
+   }
+  },
+  {
+   "kommo_id": 23924341,
+   "nome": "Proenergy Fitness Center",
+   "reuniao_id": "b5dfb11e-f2e8-445c-8864-afd9e86c7cc0",
+   "segurou_disparo": false,
+   "sem_link": false,
+   "campos": {
+    "1042421": "2026-07-07 08:00",
+    "1042425": "2026-07-07 06:55",
+    "1042429": "07/07 às 8h",
+    "1042431": "jus-czgj-vdz",
+    "1042423": "2026-07-07 06:00"
+   },
+   "patch_status": 200,
+   "pos_get": {
+    "pipeline": 14062096,
+    "status": 108545240,
+    "1042421": "2026-07-07 08:00",
+    "1042423": "2026-07-07 06:00",
+    "1042425": "2026-07-07 06:55",
+    "1042429": "07/07 às 8h",
+    "1042431": "jus-czgj-vdz"
+   }
+  }
+ ],
+ "readonly_2A2_realizada_orfa": [
+  {
+   "kommo_id": 24289373,
+   "nome": "Curso Trade",
+   "pipeline": 11010459,
+   "status": 84456095,
+   "pipeline_nome": "Closer",
+   "status_nome": "CONTRATO",
+   "ainda_em_108545240": false,
+   "esperado": "Curso Trade→Closer"
+  },
+  {
+   "kommo_id": 10636556,
+   "nome": "ROSSATTO CONSTRUTORA E INCORPORADORA LTDA",
+   "pipeline": 14062096,
+   "status": 108545100,
+   "pipeline_nome": "Pre Vendas",
+   "status_nome": "CONEXÃO REALIZADA",
+   "ainda_em_108545240": false,
+   "esperado": "ROSSATTO→Conexão Realizada"
+  },
+  {
+   "kommo_id": 22642917,
+   "nome": "Farmácia mais amigos",
+   "pipeline": 14062116,
+   "status": 108545252,
+   "pipeline_nome": "Outbound Disparo",
+   "status_nome": "BASE",
+   "ainda_em_108545240": false,
+   "esperado": "Farmácia→base disparo"
+  },
+  {
+   "kommo_id": 22801985,
+   "nome": "Ns ambiental",
+   "pipeline": 14062096,
+   "status": 108545244,
+   "pipeline_nome": "Pre Vendas",
+   "status_nome": "NOSHOW",
+   "ainda_em_108545240": false,
+   "esperado": "Ns ambiental→NOSHOW"
+  },
+  {
+   "kommo_id": 22238457,
+   "nome": "Top Fritas Comércio de Produtos Alimentícios Ltda EPP",
+   "pipeline": 11010459,
+   "status": 102174776,
+   "pipeline_nome": "Closer",
+   "status_nome": "BAIXa PRIORIDADE(+30d)",
+   "ainda_em_108545240": false,
+   "esperado": "Top Fritas→Closer"
+  }
+ ],
+ "prep_2B_sem_match": [
+  {
+   "kommo_id": 21693735,
+   "nome": "RT transformadores",
+   "responsavel": "Yuri",
+   "role": "closer",
+   "created": "2026-03-04",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:35",
+   "tarefas": "0ab/0venc (prox 2026-05-14 23:59)",
+   "nota_data_reuniao": false,
+   "traco_agendado": false,
+   "origem": "Recovery",
+   "tags": [
+    "IMPORTADO",
+    "CRM V4"
+   ]
+  },
+  {
+   "kommo_id": 23756997,
+   "nome": "Kingdom Ads",
+   "responsavel": "Yuri",
+   "role": "closer",
+   "created": "2026-05-27",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:37",
+   "tarefas": "0ab/0venc (prox 2026-05-28 23:59)",
+   "nota_data_reuniao": false,
+   "traco_agendado": false,
+   "origem": "Networking",
+   "tags": []
+  },
+  {
+   "kommo_id": 21693637,
+   "nome": "Top Localiza",
+   "responsavel": "Erick",
+   "role": "closer",
+   "created": "2026-03-04",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:37",
+   "tarefas": "0ab/0venc (prox -)",
+   "nota_data_reuniao": true,
+   "traco_agendado": false,
+   "origem": "Recovery",
+   "tags": [
+    "IMPORTADO",
+    "CRM V4",
+    "lemit:enriquecido",
+    "origem:recovery"
+   ]
+  },
+  {
+   "kommo_id": 7236158,
+   "nome": "TECNOFORT CONSTRUTORA E INCORPORADORA LTDA.",
+   "responsavel": "Edric",
+   "role": "sdr",
+   "created": "2025-04-22",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:28",
+   "tarefas": "1ab/1venc (prox 2026-07-02 18:05)",
+   "nota_data_reuniao": true,
+   "traco_agendado": true,
+   "origem": "Outbound",
+   "tags": [
+    "lemit:enriquecido",
+    "segmento:construtora"
+   ]
+  },
+  {
+   "kommo_id": 21114744,
+   "nome": "RIBAS CONSULTORIA EMPRESARIAL E TREINAMENTOS LTDA - FRANQUEADO RODRIGO RIBAS",
+   "responsavel": "Lary",
+   "role": "sdr",
+   "created": "2026-02-11",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:36",
+   "tarefas": "0ab/0venc (prox 2026-03-06 23:59)",
+   "nota_data_reuniao": true,
+   "traco_agendado": false,
+   "origem": "Thunderbolt",
+   "tags": []
+  },
+  {
+   "kommo_id": 16885731,
+   "nome": "Dgw acessórios para polimento Ltd",
+   "responsavel": "Yuri",
+   "role": "closer",
+   "created": "2025-10-10",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:37",
+   "tarefas": "1ab/1venc (prox 2026-07-04 23:59)",
+   "nota_data_reuniao": true,
+   "traco_agendado": false,
+   "origem": "Leadbroker",
+   "tags": []
+  },
+  {
+   "kommo_id": 24210715,
+   "nome": "Lead #24210715",
+   "responsavel": "Lary",
+   "role": "sdr",
+   "created": "2026-06-18",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:36",
+   "tarefas": "1ab/1venc (prox 2026-07-03 23:59)",
+   "nota_data_reuniao": true,
+   "traco_agendado": false,
+   "origem": "Leadbroker",
+   "tags": []
+  },
+  {
+   "kommo_id": 13400444,
+   "nome": "sos gas",
+   "responsavel": "Edric",
+   "role": "sdr",
+   "created": "2025-07-07",
+   "ult_atividade": "lead_status_changed 2026-07-05 01:37",
+   "tarefas": "0ab/0venc (prox 2026-07-03 17:12)",
+   "nota_data_reuniao": true,
+   "traco_agendado": false,
+   "origem": "Leadbroker",
+   "tags": [
+    "LeadBroker"
+   ]
+  }
+ ],
+ "notas": [
+  "2A.1: 9 VALIDA_FUTURA backfilled via PATCH direto custom_fields_values; pipeline/status/responsible intocados (14062096/108545240). Nenhum disparo <= now+90min (nenhum segurado); nenhum SEM_LINK.",
+  "2A.2: 5 REALIZADA_ORFA já saíram de 108545240 (Gabriel moveu na mão) — só GET read-only, nada tocado.",
+  "2B: 8 SEM_MATCH — prep read-only, nada escrito. ult_atividade=lead_status_changed é ruído da migração; sinal real = nota/tarefa."
+ ]
+}
