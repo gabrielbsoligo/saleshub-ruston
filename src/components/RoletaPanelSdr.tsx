@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Repeat, ChevronDown, ChevronRight, PauseCircle } from "lucide-react";
+import { Repeat, ChevronDown, ChevronRight, PauseCircle, Power } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { useAppStore } from "../store";
 import type { RoletaStatusRow, RoletaSdrLead } from "../types";
 
 // Cabeçalho do rodízio de SDRs (inbound), espelho do "Rodízio de Closers"
@@ -8,15 +9,19 @@ import type { RoletaStatusRow, RoletaSdrLead } from "../types";
 // nominal dos leads que cada SDR pegou no ciclo atual (desde reset_ts).
 // 100% read-only: só chama get_roleta_status_sdr / get_roleta_sdr_leads.
 export const RoletaPanelSdr: React.FC = () => {
+  const { currentUser } = useAppStore();
+  const isGestor = currentUser?.role === "gestor";
   const [rows, setRows] = useState<RoletaStatusRow[]>([]);
   const [ativa, setAtiva] = useState<boolean>(true);
   const [expanded, setExpanded] = useState(false);
   const [leads, setLeads] = useState<RoletaSdrLead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  const [toggling, setToggling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [{ data: status }, { data: cfg }] = await Promise.all([
-      supabase.rpc("get_roleta_status_sdr", { p_escopo: "inbound" }),
+      // inclui inativos: membro OFF aparece cinza (não some), nunca vira "próximo"
+      supabase.rpc("get_roleta_status_sdr", { p_escopo: "inbound", p_incluir_inativos: true }),
       supabase.from("integracao_config").select("value").eq("key", "roleta_inbound_ativa").maybeSingle(),
     ]);
     setRows((status || []) as RoletaStatusRow[]);
@@ -24,6 +29,17 @@ export const RoletaPanelSdr: React.FC = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const toggleAtivo = async (memberId: string, novoAtivo: boolean) => {
+    setToggling(memberId);
+    const { error } = await supabase.rpc("roleta_sdr_set_ativo", { p_member_id: memberId, p_escopo: "inbound", p_ativo: novoAtivo });
+    if (error) console.error("roleta_sdr_set_ativo:", error.message);
+    await load();
+    setToggling(null);
+  };
+
+  // índice da 1ª pill ATIVA = próximo (o RPC ordena ativos primeiro)
+  const proximoIdx = rows.findIndex(r => r.ativo !== false);
 
   const toggleExpand = async () => {
     const next = !expanded;
@@ -60,18 +76,34 @@ export const RoletaPanelSdr: React.FC = () => {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {rows.map((r, i) => (
-          <span key={r.member_id}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
-              i === 0 && ativa
-                ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-white"
-                : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)]"
-            }`}>
-            {i === 0 && ativa && <span className="text-[9px] font-bold uppercase text-[var(--color-v4-red)]">próximo</span>}
-            <span className={i === 0 && ativa ? "text-white font-medium" : ""}>{r.name}</span>
-            <span className="text-[10px] opacity-70" title={`base ${r.base_count} + ciclo ${r.recebidas}`}>{r.total}</span>
-          </span>
-        ))}
+        {rows.map((r, i) => {
+          const off = r.ativo === false;
+          const isProximo = i === proximoIdx && ativa && !off;
+          return (
+            <span key={r.member_id}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${
+                off
+                  ? "bg-transparent border-dashed border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] opacity-50"
+                  : isProximo
+                    ? "bg-[var(--color-v4-red)]/15 border-[var(--color-v4-red)]/40 text-white"
+                    : "bg-[var(--color-v4-surface)] border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)]"
+              }`}>
+              {isProximo && <span className="text-[9px] font-bold uppercase text-[var(--color-v4-red)]">próximo</span>}
+              <span className={isProximo ? "text-white font-medium" : ""}>{r.name}</span>
+              <span className="text-[10px] opacity-70" title={`base ${r.base_count} + ciclo ${r.recebidas}`}>{r.total}</span>
+              {off && <span className="text-[9px] font-bold uppercase text-amber-400/80">off</span>}
+              {isGestor && (
+                <button
+                  disabled={toggling === r.member_id}
+                  onClick={() => toggleAtivo(r.member_id, off)}
+                  title={off ? "Fora do rodízio (clique para incluir)" : "No rodízio (clique para tirar)"}
+                  className={`ml-0.5 -mr-1 p-0.5 rounded-full hover:bg-white/10 disabled:opacity-40 ${off ? "text-amber-400" : "text-emerald-400"}`}>
+                  <Power size={11} />
+                </button>
+              )}
+            </span>
+          );
+        })}
       </div>
 
       {expanded && (

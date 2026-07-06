@@ -1,0 +1,77 @@
+{
+  "guard": "ok",
+  "plano": [
+    {
+      "kommo_id": 24455723,
+      "empresa": "FrigoFoods",
+      "para": "Edric"
+    },
+    {
+      "kommo_id": 24456685,
+      "empresa": "Surfland Brasil",
+      "para": "Lary"
+    },
+    {
+      "kommo_id": 24462599,
+      "empresa": "Sky energia",
+      "para": "Bianca"
+    }
+  ],
+  "balanco_esperado": {
+    "Bianca": 5,
+    "Edric": 4,
+    "Lary": 4
+  },
+  "aplicacao": [
+    {
+      "kommo_id": 24455723,
+      "empresa": "FrigoFoods",
+      "novo_sdr": "Edric",
+      "kuid": 15444836,
+      "patch_status": 200,
+      "get_owner": 15444836,
+      "owner_ok": true
+    },
+    {
+      "kommo_id": 24456685,
+      "empresa": "Surfland Brasil",
+      "novo_sdr": "Lary",
+      "kuid": 14559996,
+      "patch_status": 200,
+      "get_owner": 14559996,
+      "owner_ok": true
+    },
+    {
+      "kommo_id": 24462599,
+      "empresa": "Sky energia",
+      "novo_sdr": "Bianca",
+      "kuid": 15458912,
+      "patch_status": 200,
+      "get_owner": 15458912,
+      "owner_ok": true
+    }
+  ],
+  "status_final": [
+    {
+      "name": "Edric",
+      "total": 4,
+      "ativo": true
+    },
+    {
+      "name": "Lary",
+      "total": 4,
+      "ativo": true
+    },
+    {
+      "name": "Bianca",
+      "total": 5,
+      "ativo": true
+    },
+    {
+      "name": "Guilherme",
+      "total": 0,
+      "ativo": false
+    }
+  ],
+  "all_owner_ok": true
+}

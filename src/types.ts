@@ -249,6 +249,7 @@ export interface RoletaStatusRow {
   base_count: number;
   recebidas: number;
   total: number;
+  ativo?: boolean;   // roleta SDR: membro disponível on/off (get_roleta_status_sdr)
 }
 
 // Roleta SDR — visão granular (read-only via RPC)
