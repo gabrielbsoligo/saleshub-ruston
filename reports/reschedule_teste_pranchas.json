@@ -1,0 +1,388 @@
+{
+  "reuniao_id": "ed9f13d8-4b73-407c-b480-1e8c63776ff1",
+  "kommo_id": 22796607,
+  "lead_link": "https://financeirorustonengenhariacombr.kommo.com/leads/detail/22796607",
+  "rounds": [
+    {
+      "label": "R1 create D+5",
+      "mode": "create",
+      "data_reuniao": "'2026-07-11 15:00:00-03'",
+      "delete_ids": [],
+      "delete_result": {},
+      "created": [
+        {
+          "toque": "T1",
+          "task_id": 3525331,
+          "task_type_id": 1,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783450800
+        },
+        {
+          "toque": "T2",
+          "task_id": 3525333,
+          "task_type_id": 1,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783537200
+        },
+        {
+          "toque": "T3",
+          "task_id": 3525335,
+          "task_type_id": 3732759,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783717200
+        },
+        {
+          "toque": "T4",
+          "task_id": 3525337,
+          "task_type_id": 3732759,
+          "responsible_user_id": 15475300,
+          "complete_till": 1783769400
+        },
+        {
+          "toque": "T5",
+          "task_id": 3525339,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783791900
+        },
+        {
+          "toque": "T6",
+          "task_id": 3525341,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783793100
+        }
+      ],
+      "skipped_toques": [],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300
+    },
+    {
+      "label": "R2 reschedule D+9",
+      "mode": "reschedule",
+      "data_reuniao": "'2026-07-15 15:00:00-03'",
+      "delete_ids": [
+        3525331,
+        3525333,
+        3525335,
+        3525337,
+        3525339,
+        3525341
+      ],
+      "delete_result": {
+        "3525331": 403,
+        "3525333": 403,
+        "3525335": 403,
+        "3525337": 403,
+        "3525339": 403,
+        "3525341": 403
+      },
+      "created": [
+        {
+          "toque": "T1",
+          "task_id": 3525343,
+          "task_type_id": 1,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783796400
+        },
+        {
+          "toque": "T2",
+          "task_id": 3525345,
+          "task_type_id": 1,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783882800
+        },
+        {
+          "toque": "T3",
+          "task_id": 3525347,
+          "task_type_id": 3732759,
+          "responsible_user_id": 14559996,
+          "complete_till": 1784062800
+        },
+        {
+          "toque": "T4",
+          "task_id": 3525349,
+          "task_type_id": 3732759,
+          "responsible_user_id": 15475300,
+          "complete_till": 1784115000
+        },
+        {
+          "toque": "T5",
+          "task_id": 3525351,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1784137500
+        },
+        {
+          "toque": "T6",
+          "task_id": 3525353,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1784138700
+        }
+      ],
+      "skipped_toques": [],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300
+    },
+    {
+      "label": "R3 reschedule D+2",
+      "mode": "reschedule",
+      "data_reuniao": "'2026-07-08 15:00:00-03'",
+      "delete_ids": [
+        3525343,
+        3525345,
+        3525347,
+        3525349,
+        3525351,
+        3525353
+      ],
+      "delete_result": {
+        "3525343": 403,
+        "3525345": 403,
+        "3525347": 403,
+        "3525349": 403,
+        "3525351": 403,
+        "3525353": 403
+      },
+      "created": [
+        {
+          "toque": "T3",
+          "task_id": 3525355,
+          "task_type_id": 3732759,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783458000
+        },
+        {
+          "toque": "T4",
+          "task_id": 3525357,
+          "task_type_id": 3732759,
+          "responsible_user_id": 15475300,
+          "complete_till": 1783510200
+        },
+        {
+          "toque": "T5",
+          "task_id": 3525359,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783532700
+        },
+        {
+          "toque": "T6",
+          "task_id": 3525361,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783533900
+        }
+      ],
+      "skipped_toques": [
+        "T1",
+        "T2"
+      ],
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300
+    }
+  ],
+  "assertions": {
+    "a_no_old_id_survived": {
+      "pass": false,
+      "old_ids_checked": [
+        3525331,
+        3525333,
+        3525335,
+        3525337,
+        3525339,
+        3525341,
+        3525343,
+        3525345,
+        3525347,
+        3525349,
+        3525351,
+        3525353
+      ],
+      "survivors": [
+        3525331,
+        3525333,
+        3525335,
+        3525337,
+        3525339,
+        3525341,
+        3525343,
+        3525345,
+        3525347,
+        3525349,
+        3525351,
+        3525353
+      ]
+    },
+    "b_only_cadencia_ids_touched": {
+      "pass": true,
+      "detail": {
+        "R2_delete_ids": [
+          3525331,
+          3525333,
+          3525335,
+          3525337,
+          3525339,
+          3525341
+        ],
+        "R3_delete_ids": [
+          3525343,
+          3525345,
+          3525347,
+          3525349,
+          3525351,
+          3525353
+        ]
+      },
+      "R1_ids": [
+        3525331,
+        3525333,
+        3525335,
+        3525337,
+        3525339,
+        3525341
+      ],
+      "R2_ids": [
+        3525343,
+        3525345,
+        3525347,
+        3525349,
+        3525351,
+        3525353
+      ]
+    },
+    "c_types_owners_times_correct": {
+      "pass": true,
+      "sdr_kuid": 14559996,
+      "closer_kuid": 15475300,
+      "live_tasks": [
+        {
+          "toque": "T3",
+          "task_id": 3525355,
+          "get_status": 200,
+          "task_type_id": 3732759,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783458000,
+          "expected_type": 3732759,
+          "expected_owner": 14559996,
+          "type_ok": true,
+          "owner_ok": true,
+          "complete_till_local": "2026-07-07 18:00 -03"
+        },
+        {
+          "toque": "T4",
+          "task_id": 3525357,
+          "get_status": 200,
+          "task_type_id": 3732759,
+          "responsible_user_id": 15475300,
+          "complete_till": 1783510200,
+          "expected_type": 3732759,
+          "expected_owner": 15475300,
+          "type_ok": true,
+          "owner_ok": true,
+          "complete_till_local": "2026-07-08 08:30 -03"
+        },
+        {
+          "toque": "T5",
+          "task_id": 3525359,
+          "get_status": 200,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783532700,
+          "expected_type": 3732751,
+          "expected_owner": 14559996,
+          "type_ok": true,
+          "owner_ok": true,
+          "complete_till_local": "2026-07-08 14:45 -03"
+        },
+        {
+          "toque": "T6",
+          "task_id": 3525361,
+          "get_status": 200,
+          "task_type_id": 3732751,
+          "responsible_user_id": 14559996,
+          "complete_till": 1783533900,
+          "expected_type": 3732751,
+          "expected_owner": 14559996,
+          "type_ok": true,
+          "owner_ok": true,
+          "complete_till_local": "2026-07-08 15:05 -03"
+        }
+      ]
+    },
+    "skip_past_T1_T2": {
+      "pass": true,
+      "skipped": [
+        "T1",
+        "T2"
+      ]
+    }
+  },
+  "preclean": {
+    "deleted_prior_test_tasks": {
+      "3525311": 403,
+      "3525313": 403,
+      "3525315": 403,
+      "3525317": 403,
+      "3525319": 403,
+      "3525321": 403
+    }
+  },
+  "all_pass": false,
+  "delete_diagnosis": {
+    "endpoint_per_id": "DELETE /api/v4/tasks/{id}",
+    "endpoint_bulk": "DELETE /api/v4/tasks  body=[{id}]",
+    "both_return": "403 {\"title\":\"Forbidden\",\"detail\":\"Invalid scope\"}",
+    "meaning": "O token da integra\u00e7\u00e3o Kommo N\u00c3O tem escopo para deletar tarefas. Kommo API v4 n\u00e3o exp\u00f5e task-delete para esta integra\u00e7\u00e3o. Confirmado deletando tarefa que N\u00d3S criamos (n\u00e3o \u00e9 foreign id) \u2014 tamb\u00e9m 403."
+  },
+  "blocker": "RESCHEDULE por dele\u00e7\u00e3o \u00e9 IMPOSS\u00cdVEL com o token atual: Kommo recusa DELETE de tarefas com 403 Invalid scope. As tarefas antigas de cada reschedule N\u00c3O puderam ser removidas, ent\u00e3o elas sobreviveram (assertion 'a' falhou).",
+  "test_lead_pollution": {
+    "note": "Como o DELETE falhou, o lead Pranchas acumulou tarefas de teste que n\u00e3o pude limpar via API. Limpeza precisa ser na UI do Kommo (ou concedendo escopo de delete).",
+    "tarefas_orfas_no_lead": {
+      "prior_test": [
+        3525311,
+        3525313,
+        3525315,
+        3525317,
+        3525319,
+        3525321
+      ],
+      "R1": [
+        3525331,
+        3525333,
+        3525335,
+        3525337,
+        3525339,
+        3525341
+      ],
+      "R2": [
+        3525343,
+        3525345,
+        3525347,
+        3525349,
+        3525351,
+        3525353
+      ],
+      "R3_atuais_corretas": [
+        3525355,
+        3525357,
+        3525359,
+        3525361
+      ]
+    }
+  },
+  "what_worked": {
+    "CREATE (POST /tasks)": "OK \u2014 6 toques criados com tipo/dono/hor\u00e1rio corretos.",
+    "skip_past": "OK \u2014 em D+2, T1(-4d) e T2(-3d) corretamente PULADOS; s\u00f3 T3..T6 criados.",
+    "owner_attribution": "OK \u2014 T4=CLOSER (kuid 15475300, Sandro), demais=SDR (kuid 14559996).",
+    "task_types": "OK \u2014 T3/T4=WhatsApp(3732759), T5/T6=Liga\u00e7\u00e3o(3732751).",
+    "T4_0830": "OK \u2014 T4 complete_till 2026-07-08 08:30 -03 (08:30 dia da reuni\u00e3o).",
+    "DELETE (reschedule cleanup)": "FALHOU \u2014 403 Invalid scope."
+  },
+  "recomendacoes": [
+    "A) Conceder ao app/integra\u00e7\u00e3o Kommo o escopo de exclus\u00e3o de tarefas (a\u00e7\u00e3o de admin no Kommo) \u2014 se o plano permitir.",
+    "B) Redesenhar reschedule SEM delete: em vez de apagar+recriar, dar PATCH em complete_till das MESMAS task ids p/ os novos hor\u00e1rios; toques que viram passado -> marcar is_completed=true; toques novos -> POST. Mant\u00e9m hist\u00f3rico e n\u00e3o polui.",
+    "C) Marcar as antigas como conclu\u00eddas (PATCH is_completed) em vez de deletar (paliativo)."
+  ]
+}
