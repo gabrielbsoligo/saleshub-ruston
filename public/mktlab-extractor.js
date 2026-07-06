@@ -117,18 +117,50 @@
   };
 
   // Guard: as secoes da pagina do MKTLAB sao accordions (Radix) e secao
-  // FECHADA e' desmontada do DOM — se "Informações do Leadbroker" estiver
-  // fechada, o valor nao existe pra ser extraido. Avisa em vez de importar
-  // calado sem valor (causa raiz dos leads com valor_lead null em jun/2026).
-  if (!payload.valor_lead) {
-    var prosseguir = confirm(
-      '⚠ VALOR DO LEAD NAO ENCONTRADO na pagina.\n\n' +
-      'Provavel causa: a secao "Informações do Leadbroker" esta fechada.\n' +
-      'Clique nela pra expandir e clique no bookmarklet de novo.\n\n' +
-      'OK = importar mesmo assim (sem valor)\n' +
-      'Cancelar = abortar pra tentar de novo'
+  // FECHADA e' desmontada do DOM. Nome/telefone/e-mail vem da secao
+  // "Informações do Lead" — o que MAIS importa pro SDR. Com ela fechada esses
+  // campos nao existem pra extrair, entao EXIGIMOS ela aberta. O VALOR (secao
+  // "Informações do Leadbroker") passou a ser OPCIONAL: captura se estiver no
+  // DOM, senao importa sem valor (nao bloqueia, nao avisa).
+  function rnLabelExists(texts) {
+    var labels = document.querySelectorAll('label');
+    for (var i = 0; i < labels.length; i++) {
+      var c = labels[i].textContent.replace(/\*/g, '').replace(/ⓘ/g, '').trim();
+      if (texts.indexOf(c) >= 0) return true;
+    }
+    return false;
+  }
+  function rnAccordionOpen(labelText) {
+    // Case-insensitive + fronteira de palavra: "Informações do Lead" NAO pode
+    // casar com "Informações do Leadbroker" (a secao de VALOR) por substring.
+    var target = labelText.toLowerCase();
+    var nodes = document.querySelectorAll('[data-state], [aria-expanded]');
+    for (var i = 0; i < nodes.length; i++) {
+      var open = nodes[i].getAttribute('data-state') === 'open' ||
+                 nodes[i].getAttribute('aria-expanded') === 'true';
+      if (!open) continue;
+      var t = (nodes[i].textContent || '').toLowerCase();
+      var idx = t.indexOf(target);
+      if (idx < 0) continue;
+      var after = t.charAt(idx + target.length);
+      if (after === '' || !/[a-zà-ÿ]/.test(after)) return true; // barra "leadbroker"
+    }
+    return false;
+  }
+  // "Informações do Lead" aberta = seus campos renderizados no DOM (labels de
+  // nome/telefone/e-mail presentes) OU o accordion marcado como aberto.
+  // Deteccao por rotulo/estado, nao por indice de posicao (fragil).
+  var infoAberta =
+    rnLabelExists(['Nome completo', 'Contato Principal', 'Celular', 'Telefone', 'Email']) ||
+    rnAccordionOpen('Informações do Lead');
+  if (!infoAberta) {
+    alert(
+      '⚠ Abra a seção "Informações do Lead" antes de importar.\n\n' +
+      'É dela que vêm nome, telefone e e-mail do lead. As seções do MKTLAB são ' +
+      'accordion: com ela fechada esses campos não existem na página pra capturar.\n\n' +
+      'Clique em "Informações do Lead" pra expandir e clique no bookmarklet de novo.'
     );
-    if (!prosseguir) return;
+    return;
   }
 
   var url = SALESHUB_URL + '?mktlab_import=' + encodeURIComponent(JSON.stringify(payload));

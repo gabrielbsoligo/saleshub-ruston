@@ -16,6 +16,7 @@ import { ComissoesView } from "./components/ComissoesView";
 import { ContratosView } from "./components/ContratosView";
 import { AuditoriaView } from "./components/AuditoriaView";
 import { PrepCallView } from "./components/PrepCallView";
+import { ThreeCManualView } from "./components/ThreeCManualView";
 import { AuditPanel } from "./components/AuditPanel";
 import { BriefingApresentacao } from "./components/BriefingApresentacao";
 import { TVMode } from "./components/TVMode";
@@ -251,6 +252,7 @@ const MainApp: React.FC = () => {
       case "leadbroker": return <LeadBrokerView />;
       case "auditoria": return <AuditoriaView />;
       case "prepcall": return <PrepCallView />;
+      case "3c_manual": return <ThreeCManualView />;
       case "equipe": return <EquipeView />;
       default: return <DashboardView />;
     }
