@@ -33,8 +33,17 @@ function fromLocalDateTimeInput(local: string): string | null {
   return new Date(local).toISOString();
 }
 
+// URL do lead no mktlab pra "converter em oportunidade".
+// Se o lead tem link/id salvo -> abre direto no lead; senão cai na lista geral
+// (hook: quando o id do mktlab passar a ser capturado, abre direto sem mudar nada).
+function mktlabUrl(lead?: { mktlab_link?: string; mktlab_id?: string } | null): string {
+  if (lead?.mktlab_link) return lead.mktlab_link;
+  if (lead?.mktlab_id) return `https://mktlab.app/crm/leads/${lead.mktlab_id}`;
+  return 'https://mktlab.app/crm/leads';
+}
+
 export const ReuniaoEditModal: React.FC<Props> = ({ reuniao, onClose }) => {
-  const { members, updateReuniao, currentUser } = useAppStore();
+  const { members, leads, updateReuniao, currentUser } = useAppStore();
   const isGestor = currentUser?.role === 'gestor';
 
   const [form, setForm] = useState<Partial<Reuniao>>({});
@@ -83,9 +92,40 @@ export const ReuniaoEditModal: React.FC<Props> = ({ reuniao, onClose }) => {
       if (!payload.sdr_confirmado_id) (payload as any).sdr_confirmado_id = null;
       if (!payload.closer_confirmado_id) (payload as any).closer_confirmado_id = null;
 
+      // reunião passou a REALIZADA agora? (transição) -> avisa pra converter no mktlab
+      const becameRealizada = !!payload.realizada && !reuniao.realizada;
+
       await updateReuniao(reuniao.id, payload);
       toast.success('Reunião atualizada');
       onClose();
+
+      if (becameRealizada) {
+        const lead = reuniao.lead_id ? leads.find((l) => l.id === reuniao.lead_id) : null;
+        const url = mktlabUrl(lead);
+        // Aviso com botão — NÃO abre sozinho (evita pop-up bloqueado); o clique abre.
+        toast(
+          (t) => (
+            <div className="flex flex-col gap-2">
+              <div className="text-sm font-medium">
+                Reunião realizada — converta o lead em <b>oportunidade no mktlab</b>.
+                {lead?.mktlab_link || lead?.mktlab_id ? '' : ' (abre a lista geral — lead sem link mktlab salvo)'}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { window.open(url, '_blank', 'noopener,noreferrer'); toast.dismiss(t.id); }}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] text-white text-xs font-medium"
+                >
+                  Abrir mktlab ↗
+                </button>
+                <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1.5 rounded-lg text-xs text-[var(--color-v4-text-muted)] hover:text-white">
+                  Depois
+                </button>
+              </div>
+            </div>
+          ),
+          { duration: 15000, icon: '🎯' },
+        );
+      }
     } catch (e: any) {
       toast.error(e.message || 'Erro ao salvar');
     } finally {
