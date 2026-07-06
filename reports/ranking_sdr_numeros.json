@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "periodo": "2026-07 (mês corrente)",
+    "parametrizavel": "sim — datas literais nas queries (data_reuniao p/ reuniões, updated_at p/ tarefas, data_fechamento p/ caixa)",
+    "fontes": {
+      "reunioes_realizadas": "public.reunioes realizada=true AND show=true, data_reuniao em jul/2026",
+      "bant4": "deals.bant==4 ligados via deals.reuniao_id às reuniões realizadas de jul (reunioes.deal_id está vazio -> usei deals.reuniao_id). BANT = score 0-4 em deals.bant (qualificação máxima=4).",
+      "tarefas_concluidas": "Kommo /api/v4/tasks is_completed=1, updated_at em jul, por responsible_user_id (só SDRs ativos com kommo_user_id).",
+      "caixa_proxy": "deals status=contrato_assinado, data_fechamento em jul, creditado por deals.sdr_id, valor=valor_escopo+valor_recorrente."
+    },
+    "limitacoes": [
+      "BANT 4: 0 em julho — nenhum dos 13 deals ligados às reuniões de jul tem bant=4 (distribuição 3:9,2:2,1:1,none:1). BANT=4 existe amplamente (343 deals no histórico), mas nenhum atrelado a reunião realizada de jul.",
+      "CAIXA é PROXY FRACO: só 1 contrato assinado com data_fechamento em jul (R$30.348), creditado a Gabriel Soligo (gestor) via deals.sdr_id — nenhum dos SDRs inbound tem venda fechada em jul. Além disso é VALOR DE CONTRATO, não caixa recebido (recebimentos ficam noutra tabela).",
+      "Tarefas só existem p/ SDRs ativos com kommo_user_id (Bianca/Edric/Guilherme/Lary); SDRs inativos = N/A."
+    ]
+  },
+  "tabela": [
+    {
+      "sdr": "Lary",
+      "sdr_id": "135ccd9e-6d70-4ece-9d39-4b1cd9403ead",
+      "reunioes_realizadas": 5,
+      "bant4": 0,
+      "tarefas_concluidas": 91,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": true
+    },
+    {
+      "sdr": "Bianca",
+      "sdr_id": "3eb9606d-12a5-40ae-aa06-0a0ff1f7a494",
+      "reunioes_realizadas": 2,
+      "bant4": 0,
+      "tarefas_concluidas": 158,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": true
+    },
+    {
+      "sdr": "Edric",
+      "sdr_id": "b2e5ffbc-6644-4d05-88fc-ac9c1d650851",
+      "reunioes_realizadas": 2,
+      "bant4": 0,
+      "tarefas_concluidas": 149,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": true
+    },
+    {
+      "sdr": "Sandro",
+      "sdr_id": "22b46ff4-348b-45bd-aee0-67ae011137e1",
+      "reunioes_realizadas": 2,
+      "bant4": 0,
+      "tarefas_concluidas": null,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": false
+    },
+    {
+      "sdr": "Yuri",
+      "sdr_id": "3259a765-b5de-4623-94ae-70c0c3ba3e93",
+      "reunioes_realizadas": 2,
+      "bant4": 0,
+      "tarefas_concluidas": null,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": false
+    },
+    {
+      "sdr": "Erick",
+      "sdr_id": "26888625-9734-4e2d-89c8-59e90ee77a78",
+      "reunioes_realizadas": 1,
+      "bant4": 0,
+      "tarefas_concluidas": null,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": false
+    },
+    {
+      "sdr": "Gabriel Soligo",
+      "sdr_id": "931179ed-9585-499f-b271-032f2f256601",
+      "reunioes_realizadas": 0,
+      "bant4": 0,
+      "tarefas_concluidas": null,
+      "caixa_proxy_rs": 30348,
+      "inbound_ativo": false
+    },
+    {
+      "sdr": "Guilherme",
+      "sdr_id": "599be4d0-6523-4860-a3e9-72d5383362c0",
+      "reunioes_realizadas": 0,
+      "bant4": 0,
+      "tarefas_concluidas": 3,
+      "caixa_proxy_rs": 0,
+      "inbound_ativo": true
+    }
+  ]
+}
