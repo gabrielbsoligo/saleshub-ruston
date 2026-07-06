@@ -1,0 +1,622 @@
+{
+ "gerado": "2026-07-05 21:41",
+ "pipeline": 14062096,
+ "stage": 108545240,
+ "total": 22,
+ "leads": [
+  {
+   "kommo_id": 24422421,
+   "nome": "MCK Advogados",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1783003092,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "ec514944-7a9e-48f8-ba97-b6ef6612c79f",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-06 15:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/vcs-xkcr-rvr",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-06 15:00",
+    "Disparo_1042423": "2026-07-06 10:00",
+    "Lembrete_1042425": "2026-07-06 13:55",
+    "ReuniaoTexto_1042429": "06/07 às 15h",
+    "LinkCodigo_1042431": "vcs-xkcr-rvr"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 21693735,
+   "nome": "RT transformadores",
+   "responsavel_uid": 14960708,
+   "responsavel": "Yuri",
+   "responsavel_role": "closer",
+   "created_at": 1772661146,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:35"
+     }
+    ],
+    "notas": {
+     "n": 0,
+     "ult": null
+    },
+    "tarefas": {
+     "n": 2,
+     "abertas": 0,
+     "vencidas": 0,
+     "prox": "2026-05-14 23:59"
+    }
+   }
+  },
+  {
+   "kommo_id": 24403317,
+   "nome": "Plasnan industria",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1782905673,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "1408c828-b531-4f06-8cd2-ceff35c83c1e",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-08 10:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/joj-giux-ecg",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-08 10:00",
+    "Disparo_1042423": "2026-07-08 06:00",
+    "Lembrete_1042425": "2026-07-08 08:55",
+    "ReuniaoTexto_1042429": "08/07 às 10h",
+    "LinkCodigo_1042431": "joj-giux-ecg"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 23209651,
+   "nome": "Itapneus",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1778001366,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "daa3e97f-6c2e-48fc-9e1e-15d0a8517427",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-06 16:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/qjj-kqap-wmw",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-06 16:00",
+    "Disparo_1042423": "2026-07-06 10:00",
+    "Lembrete_1042425": "2026-07-06 14:55",
+    "ReuniaoTexto_1042429": "06/07 às 16h",
+    "LinkCodigo_1042431": "qjj-kqap-wmw"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 24433253,
+   "nome": "KG design.",
+   "responsavel_uid": 15444836,
+   "responsavel": "Edric",
+   "responsavel_role": "sdr",
+   "created_at": 1783044074,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "6d340395-6102-4c47-97b0-4cedbbcd318c",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-06 19:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/pxh-qywu-oqh",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-06 19:00",
+    "Disparo_1042423": "2026-07-06 13:00",
+    "Lembrete_1042425": "2026-07-06 17:55",
+    "ReuniaoTexto_1042429": "06/07 às 19h",
+    "LinkCodigo_1042431": "pxh-qywu-oqh"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 23209565,
+   "nome": "Bonifácio Transporte de Carga",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1778001343,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "4bdcfa5e-8933-49bf-ae02-c57b7ff9484c",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-06 19:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/ccp-afuc-zzw",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-06 19:00",
+    "Disparo_1042423": "2026-07-06 13:00",
+    "Lembrete_1042425": "2026-07-06 17:55",
+    "ReuniaoTexto_1042429": "06/07 às 19h",
+    "LinkCodigo_1042431": "ccp-afuc-zzw"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 24289373,
+   "nome": "Curso Trade",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1782231733,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "a2d8d655-2695-41b9-afff-80d123172fe3",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-06-23 16:00",
+   "realizada": true,
+   "show": true,
+   "meet_link": "https://meet.google.com/zee-cier-egb",
+   "sem_link": false,
+   "bucket": "REALIZADA_ORFA",
+   "closer": {
+    "closer_id": "22b46ff4-348b-45bd-aee0-67ae011137e1",
+    "closer_confirmado_id": "22b46ff4-348b-45bd-aee0-67ae011137e1",
+    "kommo_user_id": 15475300
+   }
+  },
+  {
+   "kommo_id": 23756997,
+   "nome": "Kingdom Ads",
+   "responsavel_uid": 14960708,
+   "responsavel": "Yuri",
+   "responsavel_role": "closer",
+   "created_at": 1779907464,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:37"
+     }
+    ],
+    "notas": {
+     "n": 0,
+     "ult": null
+    },
+    "tarefas": {
+     "n": 1,
+     "abertas": 0,
+     "vencidas": 0,
+     "prox": "2026-05-28 23:59"
+    }
+   }
+  },
+  {
+   "kommo_id": 21693637,
+   "nome": "Top Localiza",
+   "responsavel_uid": 15329676,
+   "responsavel": "Erick",
+   "responsavel_role": "closer",
+   "created_at": 1772661141,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:37"
+     }
+    ],
+    "notas": {
+     "n": 2,
+     "ult": "2026-06-22 15:32"
+    },
+    "tarefas": {
+     "n": 0,
+     "abertas": 0,
+     "vencidas": 0,
+     "prox": null
+    }
+   }
+  },
+  {
+   "kommo_id": 24156555,
+   "nome": "Gomidias",
+   "responsavel_uid": 15444836,
+   "responsavel": "Edric",
+   "responsavel_role": "sdr",
+   "created_at": 1781532913,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "44baf89a-4e51-4770-ad42-da7122288584",
+    "outras_reunioes": [
+     "c57020da-cfaf-44d6-8f22-a98477e38c5f"
+    ]
+   },
+   "data_reuniao": "2026-07-07 16:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/bgb-nwmp-qdj",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-07 16:00",
+    "Disparo_1042423": "2026-07-07 10:00",
+    "Lembrete_1042425": "2026-07-07 14:55",
+    "ReuniaoTexto_1042429": "07/07 às 16h",
+    "LinkCodigo_1042431": "bgb-nwmp-qdj"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 7236158,
+   "nome": "TECNOFORT CONSTRUTORA E INCORPORADORA LTDA.",
+   "responsavel_uid": 15444836,
+   "responsavel": "Edric",
+   "responsavel_role": "sdr",
+   "created_at": 1745344054,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:28"
+     },
+     {
+      "type": "outgoing_chat_message",
+      "ult": "2026-07-01 17:05"
+     }
+    ],
+    "notas": {
+     "n": 1,
+     "ult": "2026-05-25 12:30"
+    },
+    "tarefas": {
+     "n": 1,
+     "abertas": 1,
+     "vencidas": 1,
+     "prox": "2026-07-02 18:05"
+    }
+   }
+  },
+  {
+   "kommo_id": 24419639,
+   "nome": "Redemac Madesul",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1782991747,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "9703cc36-6c03-44e5-985b-d9b17013e1c1",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-06 10:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/piy-kjkw-odh",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-06 10:00",
+    "Disparo_1042423": "2026-07-06 06:00",
+    "Lembrete_1042425": "2026-07-06 08:55",
+    "ReuniaoTexto_1042429": "06/07 às 10h",
+    "LinkCodigo_1042431": "piy-kjkw-odh"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 10636556,
+   "nome": "ROSSATTO CONSTRUTORA E INCORPORADORA LTDA",
+   "responsavel_uid": 15329676,
+   "responsavel": "Erick",
+   "responsavel_role": "closer",
+   "created_at": 1748963580,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "d382355d-c635-43a0-87db-59a2308bc339",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-06-08 14:00",
+   "realizada": true,
+   "show": true,
+   "meet_link": null,
+   "sem_link": true,
+   "bucket": "REALIZADA_ORFA",
+   "closer": {
+    "closer_id": "26888625-9734-4e2d-89c8-59e90ee77a78",
+    "closer_confirmado_id": "26888625-9734-4e2d-89c8-59e90ee77a78",
+    "kommo_user_id": 15329676
+   }
+  },
+  {
+   "kommo_id": 21114744,
+   "nome": "RIBAS CONSULTORIA EMPRESARIAL E TREINAMENTOS LTDA - FRANQUEADO RODRIGO RIBAS",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1770828733,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:36"
+     }
+    ],
+    "notas": {
+     "n": 5,
+     "ult": "2026-03-09 14:22"
+    },
+    "tarefas": {
+     "n": 21,
+     "abertas": 0,
+     "vencidas": 0,
+     "prox": "2026-03-06 23:59"
+    }
+   }
+  },
+  {
+   "kommo_id": 24156301,
+   "nome": "Nobile",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1781532801,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "06636592-a0d3-4ab2-9f32-7de80fbc55f7",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-07 16:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/ifq-xqqb-qyg",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-07 16:00",
+    "Disparo_1042423": "2026-07-07 10:00",
+    "Lembrete_1042425": "2026-07-07 14:55",
+    "ReuniaoTexto_1042429": "07/07 às 16h",
+    "LinkCodigo_1042431": "ifq-xqqb-qyg"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 16885731,
+   "nome": "Dgw acessórios para polimento Ltd",
+   "responsavel_uid": 14960708,
+   "responsavel": "Yuri",
+   "responsavel_role": "closer",
+   "created_at": 1760092998,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:37"
+     }
+    ],
+    "notas": {
+     "n": 20,
+     "ult": "2026-06-19 10:56"
+    },
+    "tarefas": {
+     "n": 55,
+     "abertas": 1,
+     "vencidas": 1,
+     "prox": "2026-07-04 23:59"
+    }
+   }
+  },
+  {
+   "kommo_id": 22642917,
+   "nome": "Farmácia mais amigos",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1775675984,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "bd0bcbd0-6e85-4acf-bda8-090779c67102",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-04-23 18:00",
+   "realizada": true,
+   "show": true,
+   "meet_link": "https://meet.google.com/xfx-fddd-gth",
+   "sem_link": false,
+   "bucket": "REALIZADA_ORFA",
+   "closer": {
+    "closer_id": "6ad3f9ff-7b25-4dec-a9ea-16334d36aaf2",
+    "closer_confirmado_id": "6ad3f9ff-7b25-4dec-a9ea-16334d36aaf2",
+    "kommo_user_id": 14123163
+   }
+  },
+  {
+   "kommo_id": 23924341,
+   "nome": "Proenergy Fitness Center",
+   "responsavel_uid": 15458912,
+   "responsavel": "Bianca",
+   "responsavel_role": "sdr",
+   "created_at": 1780495258,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "b5dfb11e-f2e8-445c-8864-afd9e86c7cc0",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-07-07 08:00",
+   "realizada": false,
+   "show": null,
+   "meet_link": "https://meet.google.com/jus-czgj-vdz",
+   "sem_link": false,
+   "bucket": "VALIDA_FUTURA",
+   "dry_run_5campos": {
+    "Data_1042421": "2026-07-07 08:00",
+    "Disparo_1042423": "2026-07-07 06:00",
+    "Lembrete_1042425": "2026-07-07 06:55",
+    "ReuniaoTexto_1042429": "07/07 às 8h",
+    "LinkCodigo_1042431": "jus-czgj-vdz"
+   },
+   "zap_iminente": false
+  },
+  {
+   "kommo_id": 24210715,
+   "nome": "Lead #24210715",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1781783334,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:36"
+     },
+     {
+      "type": "outgoing_chat_message",
+      "ult": "2026-06-29 11:10"
+     }
+    ],
+    "notas": {
+     "n": 3,
+     "ult": "2026-07-03 13:07"
+    },
+    "tarefas": {
+     "n": 9,
+     "abertas": 1,
+     "vencidas": 1,
+     "prox": "2026-07-03 23:59"
+    }
+   }
+  },
+  {
+   "kommo_id": 13400444,
+   "nome": "sos gas",
+   "responsavel_uid": 15444836,
+   "responsavel": "Edric",
+   "responsavel_role": "sdr",
+   "created_at": 1751886327,
+   "bucket": "SEM_MATCH",
+   "join": null,
+   "sinais": {
+    "eventos": [
+     {
+      "type": "lead_status_changed",
+      "ult": "2026-07-05 01:37"
+     }
+    ],
+    "notas": {
+     "n": 61,
+     "ult": "2025-10-21 14:20"
+    },
+    "tarefas": {
+     "n": 66,
+     "abertas": 0,
+     "vencidas": 0,
+     "prox": "2026-07-03 17:12"
+    }
+   }
+  },
+  {
+   "kommo_id": 22801985,
+   "nome": "Ns ambiental",
+   "responsavel_uid": 14559996,
+   "responsavel": "Lary",
+   "responsavel_role": "sdr",
+   "created_at": 1776341747,
+   "join": {
+    "metodo": "lead_id",
+    "confianca": "alta",
+    "reuniao_id": "c5527c13-5f14-4657-abbf-eb161b484348",
+    "outras_reunioes": [
+     "00a51faa-59c7-441e-a25c-8675eb70edb2",
+     "e8b2969e-dcbd-47d4-a9e6-b6b702c735ae"
+    ]
+   },
+   "data_reuniao": "2026-06-11 11:00",
+   "realizada": true,
+   "show": true,
+   "meet_link": "https://meet.google.com/fac-duze-tst",
+   "sem_link": false,
+   "bucket": "REALIZADA_ORFA",
+   "closer": {
+    "closer_id": "3259a765-b5de-4623-94ae-70c0c3ba3e93",
+    "closer_confirmado_id": "3259a765-b5de-4623-94ae-70c0c3ba3e93",
+    "kommo_user_id": 14960708
+   }
+  },
+  {
+   "kommo_id": 22238457,
+   "nome": "Top Fritas Comércio de Produtos Alimentícios Ltda EPP",
+   "responsavel_uid": 14960708,
+   "responsavel": "Yuri",
+   "responsavel_role": "closer",
+   "created_at": 1774357747,
+   "join": {
+    "metodo": "reunioes.kommo_id",
+    "confianca": "alta",
+    "reuniao_id": "7cd09dc0-1923-4b85-b37e-8c8277227e74",
+    "outras_reunioes": []
+   },
+   "data_reuniao": "2026-03-23 21:00",
+   "realizada": true,
+   "show": true,
+   "meet_link": null,
+   "sem_link": true,
+   "bucket": "REALIZADA_ORFA",
+   "closer": {
+    "closer_id": null,
+    "closer_confirmado_id": null,
+    "kommo_user_id": null
+   }
+  }
+ ]
+}
