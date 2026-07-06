@@ -1,0 +1,122 @@
+[
+  {
+    "id": 60913,
+    "name": "D0 · Abertura",
+    "before": "Olá [Primeiro Nome], tudo certo? Aqui é o [Seu Nome] da V4 Company, recebi seu cadastro aqui com interesse em nosso projeto para estruturar e alavancar suas vendas.\n[Primeiro Nome], é você quem toma as decisões de contratação na empresa ou tem mais alguém?",
+    "after": "Olá {{contact.first_name}}, tudo certo? Aqui é o [Seu Nome] da V4 Company, recebi seu cadastro aqui com interesse em nosso projeto para estruturar e alavancar suas vendas.\n{{contact.first_name}}, é você quem toma as decisões de contratação na empresa ou tem mais alguém?"
+  },
+  {
+    "id": 60915,
+    "name": "D0 · Videocase",
+    "before": "Fala, [Primeiro Nome]! Tudo certo?\nLembrei de você hoje. Separei um videocase rápido de um parceiro nosso, o [Empresa do Case], que estava com um desafio de vendas bem parecido com o que vejo no seu mercado.\nDá uma olhada em como ajudamos eles a multiplicarem o faturamento em [X] meses: 🔗 [Link do Vídeo]\nFaz sentido batermos um papo rápido de 10 minutos para eu te mostrar como podemos estruturar uma máquina de aquisição parecida para você?",
+    "after": "Fala, {{contact.first_name}}! Tudo certo?\nLembrei de você hoje. Separei um videocase rápido de um parceiro nosso, o [Empresa do Case], que estava com um desafio de vendas bem parecido com o que vejo no seu mercado.\nDá uma olhada em como ajudamos eles a multiplicarem o faturamento em [X] meses: 🔗 [Link do Vídeo]\nFaz sentido batermos um papo rápido de 10 minutos para eu te mostrar como podemos estruturar uma máquina de aquisição parecida para você?"
+  },
+  {
+    "id": 60917,
+    "name": "D0 · Abordagem direta",
+    "before": "Opção A (bem direta):\nOlá! Tudo bem? Eu falo com o [Primeiro Nome]?\n\nOpção B (com contexto):\nOpa, tudo bem? Aqui é o [Seu Nome] da V4 Company. Falo com o [Primeiro Nome]?",
+    "after": "Opção A (bem direta):\nOlá! Tudo bem? Eu falo com o {{contact.first_name}}?\n\nOpção B (com contexto):\nOpa, tudo bem? Aqui é o [Seu Nome] da V4 Company. Falo com o {{contact.first_name}}?"
+  },
+  {
+    "id": 60919,
+    "name": "D0 · Empatia",
+    "before": "Fala, [Primeiro Nome]! Imagino que a correria por aí esteja grande (vida de quem toca negócio não é fácil, rs).\nComo o meu objetivo é te ajudar a destravar o crescimento da sua empresa, não quero tomar muito do seu tempo. Fica melhor para você fazermos uma ligação rápida hoje no final do dia ou amanhã de manhã?\nMe diz qual horário se encaixa melhor na sua agenda!",
+    "after": "Fala, {{contact.first_name}}! Imagino que a correria por aí esteja grande (vida de quem toca negócio não é fácil, rs).\nComo o meu objetivo é te ajudar a destravar o crescimento da sua empresa, não quero tomar muito do seu tempo. Fica melhor para você fazermos uma ligação rápida hoje no final do dia ou amanhã de manhã?\nMe diz qual horário se encaixa melhor na sua agenda!"
+  },
+  {
+    "id": 60921,
+    "name": "D0 · E-mail agendamento",
+    "before": "Assunto: Seu cadastro na V4 Company / Bora escalar as vendas? 🚀\n\nOlá, [Primeiro Nome], tudo bem?\nVi que você demonstrou interesse em conhecer mais sobre a V4 Company e como podemos te ajudar a vender mais através da internet.\nDiferente das agências tradicionais que focam apenas em curtidas e métricas de vaidade, nosso foco aqui é um só: vender o seu produto, para mais pessoas, mais vezes e pelo maior valor possível.\nPara entender se o seu negócio tem fit com a nossa metodologia de Growth, o próximo passo é um bate-papo rápido de diagnóstico (sem compromisso).\n🗓️ [Link da Agenda] <- Escolha aqui o melhor horário na minha agenda para conversarmos.\nSe preferir, pode me responder este e-mail ou me chamar diretamente no WhatsApp: [Link WhatsApp].\nUm abraço e vamos pra cima!\n[Seu Nome] — Executivo(a) de Vendas | V4 Company",
+    "after": "Assunto: Seu cadastro na V4 Company / Bora escalar as vendas? 🚀\n\nOlá, {{contact.first_name}}, tudo bem?\nVi que você demonstrou interesse em conhecer mais sobre a V4 Company e como podemos te ajudar a vender mais através da internet.\nDiferente das agências tradicionais que focam apenas em curtidas e métricas de vaidade, nosso foco aqui é um só: vender o seu produto, para mais pessoas, mais vezes e pelo maior valor possível.\nPara entender se o seu negócio tem fit com a nossa metodologia de Growth, o próximo passo é um bate-papo rápido de diagnóstico (sem compromisso).\n🗓️ [Link da Agenda] <- Escolha aqui o melhor horário na minha agenda para conversarmos.\nSe preferir, pode me responder este e-mail ou me chamar diretamente no WhatsApp: [Link WhatsApp].\nUm abraço e vamos pra cima!\n[Seu Nome] — Executivo(a) de Vendas | V4 Company"
+  },
+  {
+    "id": 60923,
+    "name": "Broker · Dia 2 · Gargalo de aquisição",
+    "before": "Olá, [Primeiro Nome]! Aqui é o [Seu Nome] da V4 Company.\nEstava analisando o mercado de [Nicho] na sua região e notei que vocês estão com um gargalo forte na aquisição de novos clientes. O custo de anunciar está subindo muito rápido e quem não estruturar um funil de vendas eficiente agora, vai pagar o triplo em poucos meses.\nVocê tem 10 minutos hoje para eu te mostrar como estancar essa perda de dinheiro e previsibilidade?",
+    "after": "Olá, {{contact.first_name}}! Aqui é o [Seu Nome] da V4 Company.\nEstava analisando o mercado de [Nicho] na sua região e notei que vocês estão com um gargalo forte na aquisição de novos clientes. O custo de anunciar está subindo muito rápido e quem não estruturar um funil de vendas eficiente agora, vai pagar o triplo em poucos meses.\nVocê tem 10 minutos hoje para eu te mostrar como estancar essa perda de dinheiro e previsibilidade?"
+  },
+  {
+    "id": 60925,
+    "name": "Broker · Dia 3 · Dependência de indicações",
+    "before": "Fala, [Primeiro Nome]. Sabe qual é o maior risco que vejo nas empresas do seu setor hoje? A dependência de indicações ou de ações pontuais para vender. Se a indicação para, o caixa da empresa sente na hora.\nNa V4, nós não fazemos 'postzinho'. Nós construímos uma máquina de vendas que traz clientes qualificados todos os dias, sem depender de sorte.\nComo está a previsibilidade de caixa e de novos clientes da [Empresa] para este próximo trimestre?",
+    "after": "Fala, {{contact.first_name}}. Sabe qual é o maior risco que vejo nas empresas do seu setor hoje? A dependência de indicações ou de ações pontuais para vender. Se a indicação para, o caixa da empresa sente na hora.\nNa V4, nós não fazemos 'postzinho'. Nós construímos uma máquina de vendas que traz clientes qualificados todos os dias, sem depender de sorte.\nComo está a previsibilidade de caixa e de novos clientes da [Empresa] para este próximo trimestre?"
+  },
+  {
+    "id": 60927,
+    "name": "Broker · Dia 5 · Escassez de agenda",
+    "before": "[Primeiro Nome], estou fechando a nossa agenda de diagnósticos estratégicos gratuitos desta semana e me sobrou apenas um único horário focado no setor de [Nicho].\nComo trabalhamos com muita profundidade nas análises, não consigo abrir novos espaços nos próximos dias. Quero te entregar um plano de ação para escalar suas vendas.\nPodemos cravar esse horário amanhã às [X horas] ou às [Y horas]?",
+    "after": "{{contact.first_name}}, estou fechando a nossa agenda de diagnósticos estratégicos gratuitos desta semana e me sobrou apenas um único horário focado no setor de [Nicho].\nComo trabalhamos com muita profundidade nas análises, não consigo abrir novos espaços nos próximos dias. Quero te entregar um plano de ação para escalar suas vendas.\nPodemos cravar esse horário amanhã às [X horas] ou às [Y horas]?"
+  },
+  {
+    "id": 60929,
+    "name": "Broker · Dia 7 · Biblioteca zerada",
+    "before": "[Primeiro Nome], fiz uma varredura técnica na sua presença digital. Dá uma olhada nesse print da sua Biblioteca de Anúncios no Meta.\nEla está zerada (ou: rodando apenas [X] anúncios institucionais). Isso significa que você não está comprando dados e não está aparecendo ativamente para quem quer comprar o seu produto. Enquanto você não é visto, a atenção (e o dinheiro) do seu cliente está indo para outro lugar.\nFaz sentido batermos um papo rápido para eu te mostrar que tipo de campanha de conversão faria sentido rodar aí hoje?",
+    "after": "{{contact.first_name}}, fiz uma varredura técnica na sua presença digital. Dá uma olhada nesse print da sua Biblioteca de Anúncios no Meta.\nEla está zerada (ou: rodando apenas [X] anúncios institucionais). Isso significa que você não está comprando dados e não está aparecendo ativamente para quem quer comprar o seu produto. Enquanto você não é visto, a atenção (e o dinheiro) do seu cliente está indo para outro lugar.\nFaz sentido batermos um papo rápido para eu te mostrar que tipo de campanha de conversão faria sentido rodar aí hoje?"
+  },
+  {
+    "id": 60931,
+    "name": "Broker · Dia 9 · Sócio entra",
+    "before": "Olá, [Primeiro Nome], tudo bem? Aqui é o [Nome do Sócio], sócio-diretor da V4 Company aqui da [Unidade].\nO [SDR anterior] estava analisando a [Empresa] e me trouxe o seu caso. Decidi te chamar pessoalmente porque conheço muito bem o modelo de negócios de vocês e vi um potencial gigante de escala que não está sendo aproveitado.\nSei que sua agenda é corrida, mas você teria 15 minutos amanhã para um papo direto, de dono para dono? Quero te passar a minha visão estratégica sobre a sua empresa.",
+    "after": "Olá, {{contact.first_name}}, tudo bem? Aqui é o [Nome do Sócio], sócio-diretor da V4 Company aqui da [Unidade].\nO [SDR anterior] estava analisando a [Empresa] e me trouxe o seu caso. Decidi te chamar pessoalmente porque conheço muito bem o modelo de negócios de vocês e vi um potencial gigante de escala que não está sendo aproveitado.\nSei que sua agenda é corrida, mas você teria 15 minutos amanhã para um papo direto, de dono para dono? Quero te passar a minha visão estratégica sobre a sua empresa."
+  },
+  {
+    "id": 60933,
+    "name": "Broker · Dia 11 · Concorrente forte",
+    "before": "[Primeiro Nome], lembra que te falei sobre perder espaço de mercado? Olha esse print da estratégia de anúncios do [Concorrente], rodando forte aí na sua região.\nEles estão com [X] criativos ativos, estruturados para engolir a demanda de quem pesquisa por [Produto/Serviço]. O cliente que deveria estar comprando de você, está caindo no funil deles.\nNós sabemos exatamente como neutralizar essa estratégia e puxar essa demanda para a sua empresa. Vamos montar um plano de ataque para reverter isso?",
+    "after": "{{contact.first_name}}, lembra que te falei sobre perder espaço de mercado? Olha esse print da estratégia de anúncios do [Concorrente], rodando forte aí na sua região.\nEles estão com [X] criativos ativos, estruturados para engolir a demanda de quem pesquisa por [Produto/Serviço]. O cliente que deveria estar comprando de você, está caindo no funil deles.\nNós sabemos exatamente como neutralizar essa estratégia e puxar essa demanda para a sua empresa. Vamos montar um plano de ataque para reverter isso?"
+  },
+  {
+    "id": 60935,
+    "name": "Conexão · Qualificação",
+    "before": "Perfeito [Primeiro Nome], o que mais te motivou ou qual é a sua expectativa fechando a parceria com a V4 Company, [Primeiro Nome]?",
+    "after": "Perfeito {{contact.first_name}}, o que mais te motivou ou qual é a sua expectativa fechando a parceria com a V4 Company, {{contact.first_name}}?"
+  },
+  {
+    "id": 60937,
+    "name": "Conexão · Agendar (decisor único)",
+    "before": "Vai ser uma honra te ajudar, [Primeiro Nome]... Nosso bate-papo pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?",
+    "after": "Vai ser uma honra te ajudar, {{contact.first_name}}... Nosso bate-papo pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?"
+  },
+  {
+    "id": 60939,
+    "name": "Conexão · Agendar (com sócios)",
+    "before": "Vai ser uma honra ajudar vocês, [Primeiro Nome]... Seria muito interessante ter vocês dois na reunião, assim meu especialista consegue desbloquear uma condição especial maior. Com vocês dois pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?",
+    "after": "Vai ser uma honra ajudar vocês, {{contact.first_name}}... Seria muito interessante ter vocês dois na reunião, assim meu especialista consegue desbloquear uma condição especial maior. Com vocês dois pode ser hoje às x:xx ou x:xx? Qual fica melhor para você?"
+  },
+  {
+    "id": 60941,
+    "name": "Conexão · Confirmação",
+    "before": "Perfeito [Primeiro Nome], já estou lhe enviando o convite aqui para o nosso bate-papo no dia x-feira às x:xx. Minutos antes do nosso bate-papo vou lhe enviar o link para facilitar seu acesso. Bora para cima!",
+    "after": "Perfeito {{contact.first_name}}, já estou lhe enviando o convite aqui para o nosso bate-papo no dia x-feira às x:xx. Minutos antes do nosso bate-papo vou lhe enviar o link para facilitar seu acesso. Bora para cima!"
+  },
+  {
+    "id": 60943,
+    "name": "Objeção · Apertei errado",
+    "before": "Entendi, [Primeiro Nome]. Eu até vi aqui que você tem uma empresa. Nosso papel aqui é ajudar as empresas nessa estrutura e alavancagem de vendas com nosso Growth Marketing. Mas se você pudesse escolher entre vender mais ou quebrar, qual das duas você escolheria?",
+    "after": "Entendi, {{contact.first_name}}. Eu até vi aqui que você tem uma empresa. Nosso papel aqui é ajudar as empresas nessa estrutura e alavancagem de vendas com nosso Growth Marketing. Mas se você pudesse escolher entre vender mais ou quebrar, qual das duas você escolheria?"
+  },
+  {
+    "id": 60947,
+    "name": "Objeção · Sem interesse",
+    "before": "Certo, [Primeiro Nome]. Posso então só compartilhar com você um case de sucesso no WhatsApp? E quando você tiver interesse pode me procurar, que será uma honra te ajudar…",
+    "after": "Certo, {{contact.first_name}}. Posso então só compartilhar com você um case de sucesso no WhatsApp? E quando você tiver interesse pode me procurar, que será uma honra te ajudar…"
+  },
+  {
+    "id": 60953,
+    "name": "No-show · +30min",
+    "before": "O que acha, [Primeiro Nome]?",
+    "after": "O que acha, {{contact.first_name}}?"
+  },
+  {
+    "id": 60955,
+    "name": "No-show · +1h",
+    "before": "Nossa, [Primeiro Nome], só agora que fui olhar a conversa e vi que aquele áudio que te mandei foi totalmente sem som kkk\nMas o que eu estava te falando ali era sobre o diagnóstico que tínhamos marcado hoje mais cedo. Como você não conseguiu entrar, imaginei que tivesse rolado algum imprevisto de última hora por aí.\nEstá muito corrida a sua tarde ou conseguimos reagendar essa análise rápida para amanhã?",
+    "after": "Nossa, {{contact.first_name}}, só agora que fui olhar a conversa e vi que aquele áudio que te mandei foi totalmente sem som kkk\nMas o que eu estava te falando ali era sobre o diagnóstico que tínhamos marcado hoje mais cedo. Como você não conseguiu entrar, imaginei que tivesse rolado algum imprevisto de última hora por aí.\nEstá muito corrida a sua tarde ou conseguimos reagendar essa análise rápida para amanhã?"
+  },
+  {
+    "id": 60957,
+    "name": "No-show · D+1 Sócio",
+    "before": "Boa noite [Primeiro Nome], tudo certo? Aqui é [Nome do Sócio]. Vi que você tem uma agenda com a gente hoje (ou tinha ontem) com meus especialistas. Como está sua agenda para hoje às x:xx ou amanhã x:xx ou x:xx?",
+    "after": "Boa noite {{contact.first_name}}, tudo certo? Aqui é [Nome do Sócio]. Vi que você tem uma agenda com a gente hoje (ou tinha ontem) com meus especialistas. Como está sua agenda para hoje às x:xx ou amanhã x:xx ou x:xx?"
+  }
+]
