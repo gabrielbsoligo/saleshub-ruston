@@ -88,7 +88,7 @@ export const PerfSdrView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto p-6">
+    <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center gap-2 mb-4">
         <Users size={20} className="text-[var(--color-v4-red)]" />
         <h2 className="text-2xl font-display font-bold text-white">Performance dos SDRs</h2>
@@ -132,7 +132,8 @@ export const PerfSdrView: React.FC = () => {
 
       {/* § FUNIL por canal × SDR */}
       <h3 className="text-sm font-semibold text-white mb-2">Funil por canal × SDR</h3>
-      <div className={`${card} mb-6 overflow-x-auto`}>
+      <div className={`${card} mb-6`}>
+        <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[720px]">
           <thead><tr className="text-[11px] text-[var(--color-v4-text-muted)] text-left">
             <th className="px-2 py-1">SDR</th><th className="px-2 py-1">Canal</th><th className="px-2 py-1 text-right">Leads trab.</th>
@@ -155,6 +156,7 @@ export const PerfSdrView: React.FC = () => {
             {fun.length === 0 && <tr><td colSpan={8} className="px-2 py-4 text-center text-[var(--color-v4-text-muted)]">Sem dados no período.</td></tr>}
           </tbody>
         </table>
+        </div>
         <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">Conexão real por período liga quando o <code>lead_stage_log</code> encher (go-forward); hoje o funil usa reuniões realizadas como base.</div>
       </div>
 
