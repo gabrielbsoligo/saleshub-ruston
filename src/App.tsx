@@ -20,6 +20,7 @@ import { ThreeCManualView } from "./components/ThreeCManualView";
 import { PlaybookView } from "./components/PlaybookView";
 import { RoletaHistoricoView } from "./components/RoletaHistoricoView";
 import { PerfSdrView } from "./components/PerfSdrView";
+import { CallQualityView } from "./components/CallQualityView";
 import { AuditPanel } from "./components/AuditPanel";
 import { BriefingApresentacao } from "./components/BriefingApresentacao";
 import { TVMode } from "./components/TVMode";
@@ -259,6 +260,7 @@ const MainApp: React.FC = () => {
       case "playbook": return <PlaybookView />;
       case "roleta_historico": return <RoletaHistoricoView />;
       case "perf_sdr": return <PerfSdrView />;
+      case "call_quality": return <CallQualityView />;
       case "equipe": return <EquipeView />;
       default: return <DashboardView />;
     }
