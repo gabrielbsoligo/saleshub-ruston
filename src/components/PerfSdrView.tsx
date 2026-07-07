@@ -79,7 +79,7 @@ export const PerfSdrView: React.FC = () => {
   // ranking: medalha por dimensão
   const rankRows = Object.entries(bySdr).map(([id, v]) => {
     const t = tar.find(x => x.member_id === id);
-    return { id, name: v.name, realizadas: v.realizadas, bant4: v.bant4, tarefas: t?.feitas || 0, caixa: null as number | null };
+    return { id, name: v.name, realizadas: v.realizadas, bant4: v.bant4, tarefas: t?.feitas_humano || 0, caixa: null as number | null };
   });
   const medal = (rows: any[], key: string, id: string) => {
     const sorted = [...rows].filter(r => r[key] > 0).sort((a, b) => b[key] - a[key]);
@@ -163,23 +163,37 @@ export const PerfSdrView: React.FC = () => {
       {/* § TAREFAS */}
       <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5"><ClipboardList size={14} className="text-[var(--color-v4-red)]" /> Tarefas</h3>
       <div className={`${card} mb-6`}>
-        <table className="w-full text-sm">
-          <thead><tr className="text-[11px] text-[var(--color-v4-text-muted)] text-left">
-            <th className="px-2 py-1">SDR</th><th className="px-2 py-1 text-right">Feitas (período)</th>
-            <th className="px-2 py-1 text-right">Pendentes</th><th className="px-2 py-1 text-right">Atrasadas</th><th className="px-2 py-1 text-right">% em dia</th>
-          </tr></thead>
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[620px]">
+          <thead>
+            <tr className="text-[11px] text-[var(--color-v4-text-muted)] text-left">
+              <th className="px-2 py-1" rowSpan={2}>SDR</th>
+              <th className="px-2 py-1 text-center border-l border-[var(--color-v4-border)]" colSpan={3}>Feitas</th>
+              <th className="px-2 py-1 text-center border-l border-[var(--color-v4-border)]" colSpan={3}>Atrasadas</th>
+              <th className="px-2 py-1 text-right border-l border-[var(--color-v4-border)]" rowSpan={2}>% em dia</th>
+            </tr>
+            <tr className="text-[10px] text-[var(--color-v4-text-muted)] text-right">
+              <th className="px-2 py-1 text-right border-l border-[var(--color-v4-border)] text-emerald-400">Humano</th><th className="px-2 py-1 text-right">Auto</th><th className="px-2 py-1 text-right">Total</th>
+              <th className="px-2 py-1 text-right border-l border-[var(--color-v4-border)] text-emerald-400">Humano</th><th className="px-2 py-1 text-right">Auto</th><th className="px-2 py-1 text-right">Total</th>
+            </tr>
+          </thead>
           <tbody>
             {tar.map(t => (
               <tr key={t.member_id} className="border-t border-[var(--color-v4-border)] text-white">
                 <td className="px-2 py-1.5">{t.name}</td>
-                <td className="px-2 py-1.5 text-right">{t.feitas}</td>
-                <td className="px-2 py-1.5 text-right">{t.pendentes}</td>
-                <td className="px-2 py-1.5 text-right font-semibold text-red-400">{t.atrasadas}</td>
-                <td className="px-2 py-1.5 text-right">{t.pct_em_dia ?? 0}%</td>
+                <td className="px-2 py-1.5 text-right font-semibold border-l border-[var(--color-v4-border)]">{t.feitas_humano}</td>
+                <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{t.feitas_auto}</td>
+                <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{t.feitas_humano + t.feitas_auto}</td>
+                <td className="px-2 py-1.5 text-right font-semibold text-red-400 border-l border-[var(--color-v4-border)]">{t.atras_humano}</td>
+                <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{t.atras_auto}</td>
+                <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{t.atras_humano + t.atras_auto}</td>
+                <td className="px-2 py-1.5 text-right border-l border-[var(--color-v4-border)]">{t.pct_em_dia ?? 0}%</td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
+        <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">Tarefas contadas <span className="text-white">a partir de 06/07</span> (base anterior descartada por limpeza da migração). <span className="text-emerald-400">Humano</span> = esforço real (rankeável); <span className="text-[var(--color-v4-text-muted)]">Auto</span> = tarefa de cadência/salesbot.</div>
       </div>
 
       {/* § RANKING DA CAMPANHA */}
@@ -189,7 +203,7 @@ export const PerfSdrView: React.FC = () => {
           {[
             { key: "realizadas", label: "Reuniões realizadas" },
             { key: "bant4", label: "BANT 4" },
-            { key: "tarefas", label: "Tarefas feitas" },
+            { key: "tarefas", label: "Tarefas (humano)" },
             { key: "caixa", label: "Caixa" },
           ].map(dim => (
             <div key={dim.key}>
