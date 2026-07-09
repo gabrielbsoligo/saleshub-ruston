@@ -21,6 +21,7 @@ import {
   BookOpen,
   UserRoundCheck,
   Headphones,
+  Activity,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -30,7 +31,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico" | "playbook" | "perf_sdr" | "call_quality";
+export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico" | "playbook" | "perf_sdr" | "call_quality" | "geral";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -44,6 +45,7 @@ export const Layout: React.FC<{
 
   const allNavItems = [
     { id: "dashboard" as const, label: "Dashboard", icon: LayoutDashboard },
+    { id: "geral" as const, label: "Geral", icon: Activity, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "pipeline" as const, label: "Pipeline", icon: Briefcase },
     { id: "leads" as const, label: "Leads", icon: Target },
     { id: "reunioes" as const, label: "Reuniões", icon: Calendar },

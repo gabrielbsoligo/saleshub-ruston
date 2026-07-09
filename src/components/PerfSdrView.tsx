@@ -3,7 +3,7 @@ import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { HourlyCallsChart, colorForMember } from "./HourlyCallsChart";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
 import { Phone, PhoneCall, Link2, Users, ClipboardList, Trophy, Wallet, AlertTriangle } from "lucide-react";
 
 const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "recomendacao", "indicacao", "sem origem"];
@@ -36,19 +36,21 @@ export const PerfSdrView: React.FC = () => {
   const [tar, setTar] = useState<any[]>([]);
   const [con, setCon] = useState<any[]>([]);
   const [fun, setFun] = useState<any[]>([]);
+  const [evo, setEvo] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     const p_sdrs = selSdrs.length ? selSdrs : sdrIds;      // nunca null -> só SDRs
     const p_canais = selCanais.length ? selCanais : null;
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c, d, e] = await Promise.all([
       supabase.rpc("get_perf_ligacoes", { p_from: from, p_to: to, p_sdrs }),
       supabase.rpc("get_perf_tarefas", { p_from: from, p_to: to, p_sdrs }),
       supabase.rpc("get_perf_conexoes", { p_from: from, p_to: to, p_sdrs }),
       supabase.rpc("get_perf_funil", { p_from: from, p_to: to, p_sdrs, p_canais }),
+      supabase.rpc("get_perf_evolucao", { p_from: from, p_to: to, p_sdrs }),
     ]);
-    setLig(a.data || []); setTar(b.data || []); setCon(c.data || []); setFun(d.data || []);
+    setLig(a.data || []); setTar(b.data || []); setCon(c.data || []); setFun(d.data || []); setEvo(e.data || []);
     setLoading(false);
   }, [from, to, selSdrs, selCanais, sdrIds]);
 
@@ -116,6 +118,63 @@ export const PerfSdrView: React.FC = () => {
         <MultiSelectFilter options={canalOpts} selected={selCanais} onChange={setSelCanais} placeholder="Todos os canais" />
         {loading && <span className="text-xs text-[var(--color-v4-text-muted)]">carregando…</span>}
       </div>
+
+      {/* CARDS GRANDES + FUNIL TOFU + EVOLUÇÃO */}
+      {(() => {
+        const sf = (k: string) => fun.reduce((a, f) => a + (Number(f[k]) || 0), 0);
+        const big = [
+          { l: "Ligações", v: tot(lig, "feitas"), c: "#3b82f6" },
+          { l: "Conectados", v: tot(lig, "atendidas"), c: "#06b6d4" },
+          { l: "Agendados", v: sf("agendadas"), c: "#8b5cf6" },
+          { l: "Realizados", v: sf("realizadas"), c: "#a855f7" },
+          { l: "No-show", v: sf("noshow"), c: "#ef4444" },
+          { l: "BANT 4", v: sf("bant4"), c: "#10b981" },
+        ];
+        const tofu = [big[0], big[1], big[2], big[3]];
+        const maxT = Math.max(1, ...tofu.map(t => t.v));
+        return (
+          <>
+            <div className="grid grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+              {big.map(b => (
+                <div key={b.l} className={card}>
+                  <div className="text-[11px] text-[var(--color-v4-text-muted)]">{b.l}</div>
+                  <div className="text-3xl font-bold" style={{ color: b.c }}>{b.v}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+              <div className={card}>
+                <div className="text-[11px] text-[var(--color-v4-text-muted)] mb-2">Funil (topo → fundo)</div>
+                <div className="space-y-1.5">
+                  {tofu.map((t, i) => (
+                    <div key={t.l} className="flex items-center gap-2">
+                      <span className="w-20 text-[11px] text-[var(--color-v4-text-muted)] text-right">{t.l}</span>
+                      <div className="flex-1 h-6 rounded bg-[var(--color-v4-surface)] overflow-hidden">
+                        <div className="h-full rounded flex items-center px-2 text-[11px] text-white font-medium" style={{ width: `${Math.max(6, 100 * t.v / maxT)}%`, background: t.c }}>{t.v}</div>
+                      </div>
+                      <span className="w-12 text-[10px] text-[var(--color-v4-text-muted)]">{i > 0 && tofu[i - 1].v ? `${Math.round(100 * t.v / tofu[i - 1].v)}%` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className={card}>
+                <div className="text-[11px] text-[var(--color-v4-text-muted)] mb-1">Evolução no período — agendados vs realizados</div>
+                <ResponsiveContainer width="100%" height={170}>
+                  <LineChart data={evo.map(e => ({ ...e, dia: e.dia?.slice(5) }))} margin={{ left: -20, right: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--color-v4-border)" />
+                    <XAxis dataKey="dia" tick={{ fontSize: 10, fill: "var(--color-v4-text-muted)" }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--color-v4-text-muted)" }} />
+                    <Tooltip contentStyle={{ background: "var(--color-v4-card)", border: "1px solid var(--color-v4-border)", fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Line type="monotone" dataKey="agendados" name="Agendados" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="realizados" name="Realizados" stroke="#10b981" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       {/* § ESFORÇO */}
       <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5"><PhoneCall size={14} className="text-[var(--color-v4-red)]" /> Esforço</h3>
