@@ -4,7 +4,22 @@ import { supabase } from "../lib/supabase";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { HourlyCallsChart, colorForMember } from "./HourlyCallsChart";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from "recharts";
-import { Phone, PhoneCall, Link2, Users, ClipboardList, Trophy, Wallet, AlertTriangle } from "lucide-react";
+import { Phone, PhoneCall, Link2, Users, ClipboardList, Trophy, Wallet, AlertTriangle, Target, CalendarDays, Flame } from "lucide-react";
+
+// dias úteis (seg-sex) de um mês / decorridos até uma data
+const bizDaysInMonth = (y: number, m: number) => {
+  let n = 0; const days = new Date(y, m + 1, 0).getDate();
+  for (let d = 1; d <= days; d++) { const wd = new Date(y, m, d).getDay(); if (wd >= 1 && wd <= 5) n++; }
+  return n;
+};
+const bizDaysElapsedMonth = (ref: Date) => {
+  let n = 0; for (let d = 1; d <= ref.getDate(); d++) { const wd = new Date(ref.getFullYear(), ref.getMonth(), d).getDay(); if (wd >= 1 && wd <= 5) n++; }
+  return n;
+};
+const bizDaysElapsedWeek = (ref: Date) => {
+  const wd = ref.getDay();            // 0=dom..6=sab
+  return wd === 0 ? 5 : Math.min(wd, 5);   // dom conta semana cheia (5); seg=1..sex=5
+};
 
 const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "recomendacao", "indicacao", "sem origem"];
 type Preset = "hoje" | "7d" | "30d" | "custom";
@@ -14,7 +29,7 @@ const iso = (d: Date) => d.toISOString().slice(0, 10);
 
 // Dashboard de performance/esforço dos SDRs (gestor). Fontes: get_perf_* (read-only).
 export const PerfSdrView: React.FC = () => {
-  const { members, ligacoes } = useAppStore();
+  const { members, ligacoes, metas } = useAppStore();
   const sdrs = useMemo(() => members.filter(m => m.role === "sdr" && m.active), [members]);
   const sdrIds = useMemo(() => sdrs.map(s => s.id), [sdrs]);
 
@@ -55,6 +70,94 @@ export const PerfSdrView: React.FC = () => {
   }, [from, to, selSdrs, selCanais, sdrIds]);
 
   useEffect(() => { if (sdrIds.length) load(); }, [load, sdrIds.length]);
+
+  // ---- METAS: atingimento (janela Diária/Semanal/Mensal) ----
+  type MetaWin = "dia" | "semana" | "mes";
+  const [metaWin, setMetaWin] = useState<MetaWin>("dia");
+  const [metaLig, setMetaLig] = useState<any[]>([]);   // get_perf_ligacoes na janela da meta
+  const [metaFun, setMetaFun] = useState<any[]>([]);   // get_perf_funil na janela da meta
+
+  const [mFrom, mMult] = useMemo(() => {
+    const now = new Date();
+    if (metaWin === "dia") return [iso(now), 1];
+    if (metaWin === "semana") {
+      const wd = now.getDay(); const back = wd === 0 ? 6 : wd - 1;   // volta até segunda
+      return [iso(new Date(Date.now() - back * 864e5)), 5];
+    }
+    return [iso(new Date(now.getFullYear(), now.getMonth(), 1)), bizDaysInMonth(now.getFullYear(), now.getMonth())];
+  }, [metaWin]);
+
+  const loadMeta = useCallback(async () => {
+    const p_sdrs = selSdrs.length ? selSdrs : sdrIds;
+    const today = iso(new Date());
+    const [a, b] = await Promise.all([
+      supabase.rpc("get_perf_ligacoes", { p_from: mFrom, p_to: today, p_sdrs }),
+      supabase.rpc("get_perf_funil", { p_from: mFrom, p_to: today, p_sdrs, p_canais: null }),
+    ]);
+    setMetaLig(a.data || []); setMetaFun(b.data || []);
+  }, [mFrom, selSdrs, sdrIds]);
+  useEffect(() => { if (sdrIds.length) loadMeta(); }, [loadMeta, sdrIds.length]);
+
+  // ---- PERFORMANCE DO DIA (seletor de data próprio) ----
+  const [diaSel, setDiaSel] = useState(iso(new Date()));
+  const [diaLig, setDiaLig] = useState<any[]>([]);
+  const [diaFun, setDiaFun] = useState<any[]>([]);
+  const loadDia = useCallback(async () => {
+    const p_sdrs = selSdrs.length ? selSdrs : sdrIds;
+    const [a, b] = await Promise.all([
+      supabase.rpc("get_perf_ligacoes", { p_from: diaSel, p_to: diaSel, p_sdrs }),
+      supabase.rpc("get_perf_funil", { p_from: diaSel, p_to: diaSel, p_sdrs, p_canais: null }),
+    ]);
+    setDiaLig(a.data || []); setDiaFun(b.data || []);
+  }, [diaSel, selSdrs, sdrIds]);
+  useEffect(() => { if (sdrIds.length) loadDia(); }, [loadDia, sdrIds.length]);
+
+  // atingimento por indicador na janela da meta
+  const metaRows = useMemo(() => {
+    const now = new Date();
+    const mesAtual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const selForMeta = selSdrs.length ? selSdrs : sdrIds;
+    const metasMes = metas.filter(m => selForMeta.includes(m.member_id) && (m.mes || "").slice(0, 10) === mesAtual);
+    const elapsed = metaWin === "dia" ? 1 : metaWin === "semana" ? bizDaysElapsedWeek(now) : bizDaysElapsedMonth(now);
+    const sumF = (arr: any[], k: string) => arr.reduce((a, x) => a + (Number(x[k]) || 0), 0);
+    const baseSum = (col: string) => metasMes.reduce((a, m: any) => a + (Number(m[col]) || 0), 0);
+    const INDS = [
+      { k: "ligacoes", label: "Ligações", col: "meta_ligacoes_dia", real: sumF(metaLig, "feitas"), color: "#3b82f6", disp: true },
+      { k: "conexoes", label: "Conexões", col: "meta_conexoes_dia", real: sumF(metaLig, "atendidas"), color: "#06b6d4", disp: true },
+      { k: "agendados", label: "Agendados", col: "meta_agendados_dia", real: sumF(metaFun, "agendadas"), color: "#8b5cf6", disp: true },
+      { k: "realizados", label: "Realizados", col: "meta_realizados_dia", real: sumF(metaFun, "realizadas"), color: "#10b981", disp: true },
+      { k: "fechados", label: "Fechados", col: "meta_fechados_dia", real: 0, color: "#f59e0b", disp: false },
+    ];
+    return INDS.map(ind => {
+      const base = baseSum(ind.col);
+      const meta = base * mMult;
+      const expected = base * elapsed;
+      const pct = meta > 0 ? Math.round(100 * ind.real / meta) : null;
+      const pace = expected > 0 ? ind.real / expected : null;   // <1 abaixo do ritmo
+      const falta = Math.max(0, meta - ind.real);
+      return { ...ind, base, meta, pct, pace, falta };
+    });
+  }, [metas, selSdrs, sdrIds, metaWin, mMult, metaLig, metaFun]);
+
+  const semColor = (pct: number | null) => pct == null ? "#64748b" : pct >= 100 ? "#10b981" : pct >= 70 ? "#f59e0b" : "#ef4444";
+
+  // performance do dia por SDR
+  const diaRows = useMemo(() => {
+    const ids = selSdrs.length ? selSdrs : sdrIds;
+    return ids.map(id => {
+      const sdr = sdrs.find(s => s.id === id);
+      const L = diaLig.find(x => x.member_id === id);
+      const fs = diaFun.filter(x => x.member_id === id);
+      return {
+        id, name: sdr?.name || "—",
+        ligacoes: Number(L?.feitas) || 0,
+        conectados: Number(L?.atendidas) || 0,
+        agendados: fs.reduce((a, f) => a + (Number(f.agendadas) || 0), 0),
+        realizados: fs.reduce((a, f) => a + (Number(f.realizadas) || 0), 0),
+        noshow: fs.reduce((a, f) => a + (Number(f.noshow) || 0), 0),
+      };
+    });
+  }, [diaLig, diaFun, selSdrs, sdrIds, sdrs]);
 
   // agregados por SDR (do funil) p/ esforço + ranking
   const bySdr = useMemo(() => {
@@ -175,6 +278,124 @@ export const PerfSdrView: React.FC = () => {
           </>
         );
       })()}
+
+      {/* § METAS — ATINGIMENTO */}
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-1.5"><Target size={14} className="text-[var(--color-v4-red)]" /> Metas — atingimento</h3>
+        <div className="flex bg-[var(--color-v4-surface)] rounded-lg p-0.5">
+          {([["dia", "Diária"], ["semana", "Semanal"], ["mes", "Mensal"]] as [MetaWin, string][]).map(([w, l]) => (
+            <button key={w} onClick={() => setMetaWin(w)}
+              className={`px-3 py-1 rounded-md text-xs font-medium ${metaWin === w ? "bg-[var(--color-v4-red)] text-white" : "text-[var(--color-v4-text-muted)]"}`}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div className={`${card} mb-6`}>
+        {metaRows.every(r => r.meta === 0) ? (
+          <div className="text-[12px] text-[var(--color-v4-text-muted)] py-2">Sem meta definida para os SDRs selecionados neste mês. Cadastre em <span className="text-white">Metas &gt; Metas de Atividade</span>.</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+            {metaRows.map(r => (
+              <div key={r.k}>
+                <div className="flex items-center justify-between text-[12px] mb-1">
+                  <span className="text-white font-medium">{r.label}</span>
+                  {!r.disp ? (
+                    <span className="text-[10px] text-amber-400/80 flex items-center gap-1"><AlertTriangle size={11} /> realizado indisponível</span>
+                  ) : r.meta === 0 ? (
+                    <span className="text-[10px] text-[var(--color-v4-text-muted)]">sem meta</span>
+                  ) : (
+                    <span className="text-[var(--color-v4-text-muted)]">{r.real} de {r.meta} · faltam {r.falta}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-4 rounded bg-[var(--color-v4-surface)] overflow-hidden">
+                    <div className="h-full rounded transition-all" style={{ width: `${Math.min(100, r.pct ?? 0)}%`, background: r.disp ? semColor(r.pct) : "#334155" }} />
+                  </div>
+                  <span className="w-12 text-right text-[11px] font-semibold" style={{ color: r.disp ? semColor(r.pct) : "#64748b" }}>
+                    {r.disp && r.pct != null ? `${r.pct}%` : "—"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-3 opacity-70">Meta {metaWin === "dia" ? "diária" : metaWin === "semana" ? "semanal (base ×5)" : "mensal (base × dias úteis)"} · realizado acumulado na janela. Semáforo: <span className="text-emerald-400">≥100%</span> / <span className="text-amber-400">70–99%</span> / <span className="text-red-400">&lt;70%</span>.</div>
+      </div>
+
+      {/* § FAROL DE URGÊNCIA */}
+      <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5"><Flame size={14} className="text-orange-400" /> Farol de urgência</h3>
+      <div className={`${card} mb-6`}>
+        {(() => {
+          const riscos = metaRows.filter(r => r.disp && r.meta > 0 && r.pace != null && (r.pace as number) < 1)
+            .sort((a, b) => (a.pace as number) - (b.pace as number));
+          if (riscos.length === 0) {
+            return <div className="text-[12px] text-emerald-400 flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Tudo no ritmo — nenhuma meta em risco na janela {metaWin === "dia" ? "diária" : metaWin === "semana" ? "semanal" : "mensal"}.</div>;
+          }
+          const msg: Record<string, string> = {
+            ligacoes: "aumentar volume de discagem",
+            conexoes: "melhorar taxa de conexão / horários de ligação",
+            agendados: "priorizar prospecção e agendamento",
+            realizados: "reforçar confirmação/anti-no-show das agendadas",
+          };
+          return (
+            <div className="space-y-2">
+              {riscos.map(r => {
+                const pacePct = Math.round((r.pace as number) * 100);
+                const crit = (r.pace as number) < 0.7;
+                return (
+                  <div key={r.k} className="flex items-center gap-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${crit ? "bg-red-500" : "bg-amber-400"}`} />
+                    <span className="text-[12px] text-white font-medium w-24">{r.label}</span>
+                    <span className="text-[11px] text-[var(--color-v4-text-muted)]">{r.real} de {r.meta} · <span style={{ color: crit ? "#ef4444" : "#f59e0b" }}>{pacePct}% do ritmo</span></span>
+                    <span className="text-[11px] text-[var(--color-v4-text-muted)] flex-1 text-right">→ {msg[r.k] || "priorizar"}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* § PERFORMANCE DO DIA */}
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-1.5"><CalendarDays size={14} className="text-[var(--color-v4-red)]" /> Performance do dia</h3>
+        <input type="date" value={diaSel} max={iso(new Date())} onChange={e => setDiaSel(e.target.value)}
+          className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-1 text-xs text-white" />
+      </div>
+      <div className={`${card} mb-6`}>
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]">
+          <thead><tr className="text-[11px] text-[var(--color-v4-text-muted)] text-left">
+            <th className="px-2 py-1">SDR</th>
+            <th className="px-2 py-1 text-right">Ligações</th><th className="px-2 py-1 text-right">Conectados</th>
+            <th className="px-2 py-1 text-right">Agendados</th><th className="px-2 py-1 text-right">Realizados</th>
+            <th className="px-2 py-1 text-right">No-show</th><th className="px-2 py-1 text-right text-amber-400/80">Fechados</th>
+          </tr></thead>
+          <tbody>
+            {diaRows.map(r => (
+              <tr key={r.id} className="border-t border-[var(--color-v4-border)] text-white">
+                <td className="px-2 py-1.5"><span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: colorForMember({ name: r.name }) }} />{r.name.split(" ")[0]}</span></td>
+                <td className="px-2 py-1.5 text-right">{r.ligacoes}</td>
+                <td className="px-2 py-1.5 text-right">{r.conectados}</td>
+                <td className="px-2 py-1.5 text-right">{r.agendados}</td>
+                <td className="px-2 py-1.5 text-right">{r.realizados}</td>
+                <td className="px-2 py-1.5 text-right">{r.noshow}</td>
+                <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">—</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-[var(--color-v4-border)] text-white font-semibold bg-[var(--color-v4-surface)]/40">
+              <td className="px-2 py-1.5">Total do dia</td>
+              <td className="px-2 py-1.5 text-right">{diaRows.reduce((a, r) => a + r.ligacoes, 0)}</td>
+              <td className="px-2 py-1.5 text-right">{diaRows.reduce((a, r) => a + r.conectados, 0)}</td>
+              <td className="px-2 py-1.5 text-right">{diaRows.reduce((a, r) => a + r.agendados, 0)}</td>
+              <td className="px-2 py-1.5 text-right">{diaRows.reduce((a, r) => a + r.realizados, 0)}</td>
+              <td className="px-2 py-1.5 text-right">{diaRows.reduce((a, r) => a + r.noshow, 0)}</td>
+              <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">—</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">Fechados por SDR sem fonte confiável (fonte externa/financeiro).</div>
+      </div>
 
       {/* § ESFORÇO */}
       <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5"><PhoneCall size={14} className="text-[var(--color-v4-red)]" /> Esforço</h3>

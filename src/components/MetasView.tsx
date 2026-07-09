@@ -61,6 +61,24 @@ export const MetasView: React.FC = () => {
     setEditingMeta(null);
   };
 
+  // ---- Metas de ATIVIDADE (base diária) por SDR × indicador (migration_080) ----
+  const sdrs = members.filter(m => m.active && m.role === 'sdr');
+  const ATIV_COLS = [
+    { key: 'meta_ligacoes_dia', label: 'Ligações' },
+    { key: 'meta_conexoes_dia', label: 'Conexões' },
+    { key: 'meta_agendados_dia', label: 'Agendados' },
+    { key: 'meta_realizados_dia', label: 'Realizados' },
+    { key: 'meta_fechados_dia', label: 'Fechados' },
+  ] as const;
+  const [editingAtiv, setEditingAtiv] = useState<{ memberId: string; vals: Record<string, number> } | null>(null);
+
+  const handleSaveAtiv = async () => {
+    if (!editingAtiv) return;
+    // Só as colunas de atividade + chave — o upsert não toca nas colunas monetárias.
+    await saveMeta({ member_id: editingAtiv.memberId, mes: mesDate, ...editingAtiv.vals } as any);
+    setEditingAtiv(null);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="flex items-center justify-between mb-6">
@@ -141,6 +159,60 @@ export const MetasView: React.FC = () => {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* ===== METAS DE ATIVIDADE — base diária por SDR × indicador ===== */}
+      <div className="flex items-center gap-2 mb-2">
+        <h3 className="text-lg font-display font-bold text-white">Metas de Atividade</h3>
+        <span className="text-xs text-[var(--color-v4-text-muted)]">base diária por SDR · semanal = ×5 · mensal = ×dias úteis</span>
+      </div>
+      <div className="bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-xl overflow-hidden mb-6">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]">
+          <thead>
+            <tr className="text-left text-[var(--color-v4-text-muted)] bg-[var(--color-v4-surface)]">
+              <th className="px-4 py-3">SDR</th>
+              {ATIV_COLS.map(c => <th key={c.key} className="px-4 py-3 text-right">{c.label}/dia</th>)}
+              {isGestor && <th className="px-4 py-3"></th>}
+            </tr>
+          </thead>
+          <tbody>
+            {sdrs.map(sdr => {
+              const meta = metas.find(m => m.member_id === sdr.id && m.mes === mesDate);
+              const isEditing = editingAtiv?.memberId === sdr.id;
+              return (
+                <tr key={sdr.id} className="border-t border-[var(--color-v4-border)]">
+                  <td className="px-4 py-3 text-white font-medium">{sdr.name.split(' ')[0]}</td>
+                  {ATIV_COLS.map(c => (
+                    <td key={c.key} className="px-4 py-3 text-right">
+                      {isEditing ? (
+                        <input type="number" min={0} className={`${inputClass} text-right`} value={editingAtiv!.vals[c.key] ?? 0}
+                          onChange={e => setEditingAtiv(p => p ? { ...p, vals: { ...p.vals, [c.key]: Math.max(0, Number(e.target.value)) } } : p)} />
+                      ) : (
+                        <span className={(meta as any)?.[c.key] ? 'text-white' : 'text-[var(--color-v4-text-muted)]'}>{(meta as any)?.[c.key] || '—'}</span>
+                      )}
+                    </td>
+                  ))}
+                  {isGestor && (
+                    <td className="px-4 py-3">
+                      {isEditing ? (
+                        <button onClick={handleSaveAtiv} className="text-green-400 hover:text-green-300"><Save size={14} /></button>
+                      ) : (
+                        <button onClick={() => setEditingAtiv({ memberId: sdr.id, vals: Object.fromEntries(ATIV_COLS.map(c => [c.key, (meta as any)?.[c.key] || 0])) })}
+                          className="text-[var(--color-v4-text-muted)] hover:text-white text-xs">Editar</button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {sdrs.length === 0 && <tr><td colSpan={ATIV_COLS.length + 2} className="px-4 py-6 text-center text-[var(--color-v4-text-muted)]">Nenhum SDR ativo.</td></tr>}
+          </tbody>
+        </table>
+        </div>
+        <div className="px-4 py-2 text-[11px] text-[var(--color-v4-text-muted)] opacity-70">
+          Fechados: meta cadastrável, mas o realizado por SDR não tem fonte confiável (fonte externa/financeiro) — aparece como indisponível no atingimento.
+        </div>
       </div>
 
       {/* Comissoes moved to separate tab */}

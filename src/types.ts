@@ -229,6 +229,12 @@ export interface Meta {
   meta_reunioes: number;
   meta_leads: number;
   meta_projetos: number;
+  // Metas de atividade — base DIÁRIA (migration_080). Semanal=×5, mensal=×dias úteis.
+  meta_ligacoes_dia?: number;
+  meta_conexoes_dia?: number;
+  meta_agendados_dia?: number;
+  meta_realizados_dia?: number;
+  meta_fechados_dia?: number;
   created_at: string;
 }
 
