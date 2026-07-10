@@ -18,3 +18,17 @@ View your app in AI Studio: https://ai.studio/apps/77945ee4-778c-45ec-80c5-16f92
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Scripts manuais (migração / debug)
+
+Os scripts em `scripts/` que batem na Management API do Supabase leem o
+Personal Access Token da variável de ambiente **`SUPABASE_PAT`** — o token
+**não** fica hardcoded no código. Rode assim:
+
+```bash
+export SUPABASE_PAT=sbp_...   # seu token pessoal (supabase.com > Account > Access Tokens)
+python3 scripts/apply_migration_004.py
+```
+
+Sem a variável definida, o script encerra com uma mensagem pedindo
+`SUPABASE_PAT`. Veja [.env.example](.env.example). Nunca comite o token real.
