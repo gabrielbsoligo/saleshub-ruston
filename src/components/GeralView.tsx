@@ -114,7 +114,7 @@ export const GeralView: React.FC = () => {
           <button key={s.k} onClick={() => openPopup(s.k, s.label)} className={`${card} text-left hover:border-[var(--color-v4-red)] transition-colors`}>
             <div className="text-[11px] text-[var(--color-v4-text-muted)] flex items-center gap-1"><s.Icon size={12} style={{ color: s.color }} /> {s.label}</div>
             <div className="text-3xl font-bold text-white">{tot ? (tot[s.k] ?? 0) : "—"}</div>
-            <div className="text-[9px] text-[var(--color-v4-text-muted)]">{s.src === "sdr" ? "pré-vendas" : "closer"}</div>
+            <div className="text-[9px] text-[var(--color-v4-text-muted)]">{s.k === "conexao" ? "pré-vendas · aprox." : s.src === "sdr" ? "pré-vendas" : "closer"}</div>
           </button>
         ))}
       </div>
@@ -138,7 +138,7 @@ export const GeralView: React.FC = () => {
             );
           })}
         </div>
-        {tot && <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">No-show: {tot.noshow} · Conexão = ligações atendidas (proxy; ligação não tem canal). Etapas pré-vendas por SDR-dono; proposta/contrato/fechado por closer.</div>}
+        {tot && <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">No-show: {tot.noshow} · Conexão ≈ leads recebidos alcançados (≥1 ligação atendida no período, match por telefone ~57% — é um piso, nunca passa de recebidos). Etapas pré-vendas por SDR-dono; proposta/contrato/fechado por closer. Agendados/realizados contam reuniões do período (podem incluir leads de meses anteriores).</div>}
       </div>
 
       {/* POR CANAL */}
