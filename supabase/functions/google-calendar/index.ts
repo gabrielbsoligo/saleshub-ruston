@@ -108,10 +108,12 @@ Deno.serve(async (req) => {
       if (!organizerId) throw new Error('No SDR or closer ID')
 
       let activeToken = await getValidToken(supabase, organizerId)
+      let ownerId = organizerId   // agenda que hospeda o evento (rastreado p/ delete/patch)
 
       // Fallback to closer token if SDR token failed
       if (!activeToken && data.closer_id && data.closer_id !== organizerId) {
         activeToken = await getValidToken(supabase, data.closer_id)
+        if (activeToken) ownerId = data.closer_id
       }
 
       if (!activeToken) {
@@ -187,6 +189,71 @@ Deno.serve(async (req) => {
         event_id: created.id,
         meet_link: created.hangoutLink || created.conferenceData?.entryPoints?.[0]?.uri || null,
         html_link: created.htmlLink,
+        owner_id: ownerId,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
+    if (action === 'update_event') {
+      // MOVE (PATCH) o evento existente na agenda do dono (calendar_owner_id).
+      // Preserva event_id + meet_link + convites (Google manda "horário atualizado").
+      const ownerId = data.owner_id || data.sdr_id || data.closer_id
+      if (!ownerId) throw new Error('No calendar owner id')
+      if (!data.event_id) throw new Error('No event_id')
+
+      const token = await getValidToken(supabase, ownerId)
+      if (!token) throw new Error('No valid token for calendar owner')
+
+      // Rebuild attendees (closer pode ter mudado no reagendamento)
+      const attendees: { email: string }[] = []
+      if (data.closer_id) {
+        const { data: closer } = await supabase.from('team_members').select('email').eq('id', data.closer_id).single()
+        if (closer?.email) attendees.push({ email: closer.email })
+      }
+      if (data.sdr_id && data.sdr_id !== data.closer_id) {
+        const { data: sdr } = await supabase.from('team_members').select('email').eq('id', data.sdr_id).single()
+        if (sdr?.email) attendees.push({ email: sdr.email })
+      }
+      attendees.push({ email: 'ruston@v4company.com' })
+      if (data.lead_email) attendees.push({ email: data.lead_email })
+      if (data.participantes_extras) {
+        for (const email of data.participantes_extras) {
+          if (email.trim()) attendees.push({ email: email.trim() })
+        }
+      }
+
+      const startTime = new Date(data.data_reuniao)
+      const endTime = new Date(startTime.getTime() + 60 * 60 * 1000)
+      const patch: any = {
+        start: { dateTime: startTime.toISOString(), timeZone: 'America/Sao_Paulo' },
+        end: { dateTime: endTime.toISOString(), timeZone: 'America/Sao_Paulo' },
+      }
+      if (attendees.length) patch.attendees = attendees
+      if (data.empresa) patch.summary = `V4 Company + ${data.empresa}`
+
+      const patchResp = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${data.event_id}?sendUpdates=all`,
+        { method: 'PATCH', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(patch) },
+      )
+
+      if (patchResp.status === 404 || patchResp.status === 410) {
+        // Evento sumiu da agenda -> o caller cai pro fallback (delete+create).
+        return new Response(JSON.stringify({ error: 'EVENT_NOT_FOUND' }), {
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+      if (!patchResp.ok) {
+        const err = await patchResp.text()
+        throw new Error(`Calendar API (patch): ${err}`)
+      }
+
+      const updated = await patchResp.json()
+      return new Response(JSON.stringify({
+        event_id: updated.id,
+        meet_link: updated.hangoutLink || updated.conferenceData?.entryPoints?.[0]?.uri || null,
+        html_link: updated.htmlLink,
+        owner_id: ownerId,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
@@ -340,10 +407,16 @@ Deno.serve(async (req) => {
     if (action === 'delete_event') {
       const token = await getValidToken(supabase, data.member_id)
       if (!token) throw new Error('No valid token')
-      await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${data.event_id}?sendUpdates=all`, {
+      const delResp = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${data.event_id}?sendUpdates=all`, {
         method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` },
       })
-      return new Response(JSON.stringify({ ok: true }), {
+      // 404/410 = já não existe (ou não está nesta agenda) -> tratamos como sucesso.
+      // Qualquer outro erro NÃO pode virar {ok:true} falso — propaga pra não falhar em silêncio.
+      if (!delResp.ok && delResp.status !== 404 && delResp.status !== 410) {
+        const err = await delResp.text()
+        throw new Error(`Calendar API (delete ${delResp.status}): ${err}`)
+      }
+      return new Response(JSON.stringify({ ok: true, gone: delResp.status === 404 || delResp.status === 410 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }

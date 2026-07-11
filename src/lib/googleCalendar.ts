@@ -34,11 +34,14 @@ export interface CreateCalendarEventData {
   participantes_extras?: string[];
 }
 
-export async function createCalendarEvent(data: CreateCalendarEventData): Promise<{
+export interface CalendarEventResult {
   event_id: string;
   meet_link: string | null;
   html_link: string;
-} | null> {
+  owner_id: string;   // agenda que hospeda o evento (SDR ou closer via fallback)
+}
+
+export async function createCalendarEvent(data: CreateCalendarEventData): Promise<CalendarEventResult | null> {
   try {
     const headers = getAuthHeaders();
     const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
@@ -72,9 +75,41 @@ export async function createCalendarEvent(data: CreateCalendarEventData): Promis
 
 export async function deleteCalendarEvent(memberId: string, eventId: string): Promise<void> {
   const headers = getAuthHeaders();
-  await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
+  const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ action: 'delete_event', data: { member_id: memberId, event_id: eventId } }),
   });
+  // Não engolir falha: se o delete não deu certo, o chamador precisa saber
+  // (senão volta a falhar em silêncio e deixa evento órfão).
+  if (!resp.ok) {
+    let msg = `Erro ${resp.status} ao apagar evento`;
+    try { const e = await resp.json(); msg = e.error || msg; } catch { /* noop */ }
+    throw new Error(msg);
+  }
+}
+
+// Marker de erro quando o evento não existe mais na agenda (caller cai no fallback).
+export const EVENT_NOT_FOUND = 'EVENT_NOT_FOUND';
+
+export interface UpdateCalendarEventData extends CreateCalendarEventData {
+  event_id: string;
+  owner_id: string;
+}
+
+// Move (PATCH) o evento existente. Lança EVENT_NOT_FOUND se o evento sumiu.
+export async function updateCalendarEvent(data: UpdateCalendarEventData): Promise<CalendarEventResult | null> {
+  const headers = getAuthHeaders();
+  const resp = await fetch(`${SUPABASE_FUNCTIONS_URL}/google-calendar`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ action: 'update_event', data }),
+  });
+  if (resp.status === 404) throw new Error(EVENT_NOT_FOUND);
+  if (!resp.ok) {
+    let msg = `Erro ${resp.status}`;
+    try { const e = await resp.json(); msg = e.error || msg; } catch { /* noop */ }
+    throw new Error(msg);
+  }
+  return await resp.json();
 }

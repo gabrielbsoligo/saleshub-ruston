@@ -216,6 +216,10 @@ export interface Reuniao {
   realizada: boolean;
   show?: boolean;
   notas?: string;
+  calendar_event_id?: string | null;
+  calendar_owner_id?: string | null;   // agenda Google que hospeda o evento (migration_083)
+  meet_link?: string | null;
+  participantes_extras?: string[];
   created_at: string;
 }
 

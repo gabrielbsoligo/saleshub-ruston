@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { supabase } from './lib/supabase';
 import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus, RoletaStatusRow } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
-import { createCalendarEvent, deleteCalendarEvent } from './lib/googleCalendar';
+import { createCalendarEvent, deleteCalendarEvent, updateCalendarEvent } from './lib/googleCalendar';
 import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
 import { emitDealGanhoWebhook } from './lib/rokkoWebhook';
 import toast from 'react-hot-toast';
@@ -497,9 +497,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         throw new Error('REUNIAO_ATIVA_EXISTENTE');
       }
       if (existingActive && replaceExisting) {
-        const calEventId = (existingActive as any).calendar_event_id;
+        const calEventId = existingActive.calendar_event_id;
         if (calEventId) {
-          const organizer = existingActive.sdr_id || existingActive.closer_id;
+          // dono real da agenda (fallback pro palpite antigo em linhas legadas sem owner)
+          const organizer = existingActive.calendar_owner_id || existingActive.sdr_id || existingActive.closer_id;
           if (organizer) {
             deleteCalendarEvent(organizer, calEventId).catch(e => console.error('Failed to delete calendar event:', e));
           }
@@ -555,13 +556,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const { error: calUpdateErr } = await supabase.from('reunioes').update({
               calendar_event_id: calResult.event_id,
               meet_link: calResult.meet_link,
+              calendar_owner_id: calResult.owner_id,
             }).eq('id', data.id);
 
             if (calUpdateErr) {
               console.error('Meet link save failed:', calUpdateErr);
               toast.error('Evento criado mas link do Meet não salvou. Recarregue a página.');
             } else {
-              setReunioes(prev => prev.map(re => re.id === data.id ? { ...re, calendar_event_id: calResult.event_id, meet_link: calResult.meet_link } : re));
+              setReunioes(prev => prev.map(re => re.id === data.id ? { ...re, calendar_event_id: calResult.event_id, meet_link: calResult.meet_link, calendar_owner_id: calResult.owner_id } : re));
               toast.success('Google Meet criado!', { icon: '📅' });
             }
           }
@@ -581,26 +583,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Reagenda uma reunião existente para um novo horário/closer (substituição).
-  // Move a MESMA reunião (não cria nova linha) e move o evento do Google Calendar
-  // (apaga o antigo + cria no novo horário) — assim não fica reunião fantasma pra trás.
+  // Move a MESMA reunião (não cria nova linha). No Google Calendar tenta MOVER o
+  // MESMO evento (PATCH pela agenda do dono) — preserva event_id, meet_link e
+  // convites. Só se o evento sumiu (404) cai no fallback delete+create.
   const rescheduleReuniao = async (
     existing: Reuniao,
     opts: { data_reuniao: string; closer_id?: string; lead_email?: string; participantes_extras?: string[] },
   ) => {
-    // 1. apaga o evento antigo no Calendar (se houver)
-    const oldEventId = (existing as any).calendar_event_id;
-    const oldOrganizer = existing.sdr_id || existing.closer_id;
-    if (oldEventId && oldOrganizer) {
-      await deleteCalendarEvent(oldOrganizer, oldEventId).catch(e => console.error('reschedule: falha ao apagar evento antigo:', e));
-    }
+    const oldEventId = existing.calendar_event_id;
+    // dono real da agenda; fallback pro palpite antigo em linhas legadas sem owner
+    const oldOwner = existing.calendar_owner_id || existing.sdr_id || existing.closer_id;
 
-    // 2. atualiza a própria reunião (mesma linha) com o novo horário/closer
+    // 1. atualiza a própria reunião (mesma linha) com o novo horário/closer.
+    //    NÃO zera calendar_event_id ainda — se o PATCH der certo, mantemos o mesmo evento.
     const newCloserId = opts.closer_id ?? existing.closer_id;
     const rowUpdates: any = {
       data_reuniao: opts.data_reuniao,
       closer_id: newCloserId || null,
-      calendar_event_id: null,
-      meet_link: null,
     };
     if (opts.participantes_extras) rowUpdates.participantes_extras = opts.participantes_extras;
 
@@ -609,31 +608,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, ...rowUpdates } : r));
     fetchRoleta(); // closer mudou → atualiza a fila do rodízio
 
-    // 3. cria o evento novo no novo horário
+    // 2. Calendar
     const sdrId = existing.sdr_id;
     const closer = newCloserId ? members.find(m => m.id === newCloserId) : null;
     const sdrMember = sdrId ? members.find(m => m.id === sdrId) : null;
     const calendarAvailable = sdrMember?.google_calendar_connected || closer?.google_calendar_connected;
 
-    if (calendarAvailable) {
-      const lead = existing.lead_id ? leads.find(l => l.id === existing.lead_id) : null;
-      try {
-        const calResult = await createCalendarEvent({
-          empresa: existing.empresa || lead?.empresa || 'Reunião',
-          nome_contato: existing.nome_contato || lead?.nome_contato || undefined,
-          canal: existing.canal || lead?.canal || undefined,
-          data_reuniao: opts.data_reuniao,
-          closer_id: newCloserId || undefined,
-          sdr_id: sdrId || undefined,
-          lead_email: opts.lead_email || (lead as any)?.email || undefined,
-          participantes_extras: opts.participantes_extras || (existing as any).participantes_extras || undefined,
-          lead_id: existing.lead_id || undefined,
-          reuniao_id: existing.id,
-        } as any);
+    if (!calendarAvailable && !oldEventId) { toast.success('Reunião reagendada!'); return; }
 
+    const lead = existing.lead_id ? leads.find(l => l.id === existing.lead_id) : null;
+    const eventData = {
+      empresa: existing.empresa || lead?.empresa || 'Reunião',
+      nome_contato: existing.nome_contato || lead?.nome_contato || undefined,
+      canal: existing.canal || lead?.canal || undefined,
+      data_reuniao: opts.data_reuniao,
+      closer_id: newCloserId || undefined,
+      sdr_id: sdrId || undefined,
+      lead_email: opts.lead_email || (lead as any)?.email || undefined,
+      participantes_extras: opts.participantes_extras || existing.participantes_extras || undefined,
+      lead_id: existing.lead_id || undefined,
+      reuniao_id: existing.id,
+    };
+
+    const saveCal = async (event_id: string, meet_link: string | null, owner_id: string) => {
+      await supabase.from('reunioes').update({ calendar_event_id: event_id, meet_link, calendar_owner_id: owner_id }).eq('id', existing.id);
+      setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, calendar_event_id: event_id, meet_link, calendar_owner_id: owner_id } : r));
+    };
+
+    // 2a. PATCH (mover o mesmo evento) — preserva meet_link e convites.
+    if (oldEventId && oldOwner) {
+      try {
+        const moved = await updateCalendarEvent({ ...eventData, event_id: oldEventId, owner_id: oldOwner } as any);
+        if (moved) {
+          await saveCal(moved.event_id, moved.meet_link, moved.owner_id);
+          toast.success('Reunião reagendada — evento movido!', { icon: '📅' });
+          return;
+        }
+      } catch (e: any) {
+        // Qualquer falha no PATCH (evento sumiu/404, edge ainda sem a ação update_event,
+        // erro transitório) → cai no fallback delete+create abaixo, que já mira a agenda
+        // certa pelo owner (não duplica). Perde só a continuidade do meet_link.
+        console.warn('reschedule: PATCH falhou, recriando via delete+create:', e?.message || e);
+      }
+    }
+
+    // 2b. Fallback: apaga o antigo (best-effort, agenda certa) + cria novo.
+    if (oldEventId && oldOwner) {
+      await deleteCalendarEvent(oldOwner, oldEventId).catch(e => console.error('reschedule: falha ao apagar evento antigo:', e));
+    }
+    if (calendarAvailable) {
+      try {
+        const calResult = await createCalendarEvent(eventData as any);
         if (calResult) {
-          await supabase.from('reunioes').update({ calendar_event_id: calResult.event_id, meet_link: calResult.meet_link }).eq('id', existing.id);
-          setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, calendar_event_id: calResult.event_id, meet_link: calResult.meet_link } : r));
+          await saveCal(calResult.event_id, calResult.meet_link, calResult.owner_id);
           toast.success('Reunião reagendada!', { icon: '📅' });
           return;
         }
@@ -690,6 +717,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const reuniao = reunioes.find(r => r.id === id);
       setReunioes(prev => prev.map(r => r.id === id ? { ...r, ...updates } : r));
+
+      // CALENDAR: cancelamento / no-show apaga o evento no Google (não deixar lixo vivo).
+      // Não apaga em substituição por reagendamento (nota 'Substituída' — o
+      // rescheduleReuniao já move o evento). Usa o dono real da agenda (calendar_owner_id).
+      const virouNoShow = updates.realizada === true && updates.show === false;
+      if (virouNoShow && reuniao?.calendar_event_id && !updates.notas?.includes('Substituída')) {
+        const owner = reuniao.calendar_owner_id || reuniao.sdr_id || reuniao.closer_id;
+        if (owner) {
+          try {
+            await deleteCalendarEvent(owner, reuniao.calendar_event_id);
+            await supabase.from('reunioes').update({ calendar_event_id: null, calendar_owner_id: null, meet_link: null }).eq('id', id);
+            setReunioes(prev => prev.map(r => r.id === id ? { ...r, calendar_event_id: null, calendar_owner_id: null, meet_link: null } : r));
+          } catch (e) {
+            console.error('cancel/no-show: falha ao apagar evento do Calendar:', e);
+          }
+        }
+      }
 
       // AUTOMACAO: reuniao realizada (show=true) → cria deal automaticamente
       if (updates.realizada && updates.show && reuniao) {
