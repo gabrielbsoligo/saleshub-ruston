@@ -1,0 +1,46 @@
+name: Kommo Chat Spike (diagnostic)
+
+# Run diagnóstica única (manual). Descobre se o histórico das conversas de
+# WhatsApp vem por XHR JSON ou só por WebSocket. NÃO grava nada no banco.
+on:
+  workflow_dispatch:
+    inputs:
+      leads:
+        description: "lead ids separados por espaço"
+        default: "24504277 24156559 24523405"
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KOMMO_WEB_USER: ${{ secrets.KOMMO_WEB_USER }}
+      KOMMO_WEB_PASS: ${{ secrets.KOMMO_WEB_PASS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run spike
+        run: python scripts/spikes/kommo_chat_spike.py ${{ github.event.inputs.leads }}
+
+      - name: Upload capture artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kommo-chat-capture
+          path: spike_out/
+          if-no-files-found: warn
