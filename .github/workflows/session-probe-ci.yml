@@ -1,0 +1,37 @@
+name: Kommo Session Probe (cross-IP)
+
+# Reusa a sessão minada no IP do Gabriel (secret KOMMO_STORAGE_STATE_B64)
+# e testa /ajax/v4/inbox/list do IP do GitHub Actions. Sem login, sem banco.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      KOMMO_STORAGE_STATE_B64: ${{ secrets.KOMMO_STORAGE_STATE_B64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      - name: Decode storage_state (não loga conteúdo)
+        run: |
+          if [ -z "$KOMMO_STORAGE_STATE_B64" ]; then echo "secret KOMMO_STORAGE_STATE_B64 ausente"; exit 1; fi
+          printf '%s' "$KOMMO_STORAGE_STATE_B64" | base64 -d > storage_state.json
+          echo "storage_state.json decodificado ($(wc -c < storage_state.json) bytes)"
+
+      - name: Probe /ajax/v4/inbox/list do IP do Actions
+        run: python scripts/spikes/session_probe_ci.py
+
+      - name: Cleanup (nunca deixa a credencial pra trás)
+        if: always()
+        run: rm -f storage_state.json

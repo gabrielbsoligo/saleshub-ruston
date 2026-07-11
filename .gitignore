@@ -26,3 +26,7 @@ scraped_data.json
 # Saídas com dados sensíveis (PII de leads/clientes) — geradas em runtime, não versionar
 outputs/
 reports/
+
+# Credencial VIVA: sessão logada do Kommo (spikes). NUNCA versionar — só no secret.
+storage_state.json
+spike_out/
