@@ -298,7 +298,13 @@ async function persistSessions(supabase: any, reuniaoId: string, sessions: Trans
   const { error } = await supabase
     .from('reuniao_transcricoes')
     .upsert(rows, { onConflict: 'reuniao_id,drive_file_id' })
-  if (error) console.error('persistSessions erro:', error.message)
+  if (error) { console.error('persistSessions erro:', error.message); return }
+  // Sessões reais do Drive chegaram → remove o placeholder migrado (backfill), que
+  // era a transcrição única antiga e agora está coberta pelas sessões reais.
+  await supabase.from('reuniao_transcricoes')
+    .delete()
+    .eq('reuniao_id', reuniaoId)
+    .like('drive_file_id', 'migrated:%')
 }
 
 async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): Promise<FetchResult> {
