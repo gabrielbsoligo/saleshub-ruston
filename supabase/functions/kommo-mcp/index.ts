@@ -100,6 +100,15 @@ const TOOLS = [
 const WRITE = new Set(['move_lead', 'update_lead_value', 'update_lead_field', 'add_note', 'create_task'])
 const BULK_LIMIT = 10  // confirm que afeta > N registros exige confirm_bulk=true (trava anti-massa)
 
+// >>> MODO SÓ LEITURA (decisão Gabriel): o MCP NÃO escreve no Kommo por enquanto. <<<
+// As write tools ficam DESLIGADAS por default — some do tools/list e são recusadas
+// no tools/call. Pra religar depois: setar o secret KOMMO_MCP_WRITE_ENABLED=true no
+// painel do Supabase (nenhuma mudança de código). Fica pendente: o bug "select grava
+// 200 mas no-op" só volta a importar quando o write religar.
+const WRITE_ENABLED = Deno.env.get('KOMMO_MCP_WRITE_ENABLED') === 'true'
+// Tools efetivamente expostas: sem as de escrita enquanto WRITE_ENABLED=false.
+const EXPOSED_TOOLS = TOOLS.filter((t) => WRITE_ENABLED || !WRITE.has(t.name))
+
 function jrpc(id: any, result?: any, error?: any) { return error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result } }
 
 async function rpc(sb: any, fn: string, args: any) {
@@ -182,9 +191,13 @@ async function handle(msg: any, sb: any): Promise<any | null> {
   if (method.startsWith('notifications/')) return null
   if (method === 'initialize') return jrpc(id, { protocolVersion: params?.protocolVersion ?? PROTOCOL, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER })
   if (method === 'ping') return jrpc(id, {})
-  if (method === 'tools/list') return jrpc(id, { tools: TOOLS })
+  if (method === 'tools/list') return jrpc(id, { tools: EXPOSED_TOOLS })
   if (method === 'tools/call') {
     const name = params?.name, a = params?.arguments ?? {}
+    // Trava só-leitura: recusa qualquer write tool enquanto WRITE_ENABLED=false.
+    if (WRITE.has(name) && !WRITE_ENABLED) {
+      return jrpc(id, { content: [{ type: 'text', text: 'Erro: escrita desabilitada — o MCP está em modo SÓ LEITURA. Nenhuma alteração no Kommo é feita por aqui.' }], isError: true })
+    }
     try {
       const out = name === 'lemit_consultar' ? await lemitConsultar(a) : WRITE.has(name) ? await writeTool(sb, name, a) : await readTool(sb, name, a)
       return jrpc(id, { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] })
