@@ -19,6 +19,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
 const TRANSCRIPT_TIMEOUT_MS = 2 * 60 * 60 * 1000 // 2h até desistir
+const MIN_TRANSCRICAO_CHARS = 200 // abaixo disso: sem fala suficiente -> "sem transcrição válida"
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -83,22 +84,28 @@ async function getCalendarEvent(token: string, eventId: string): Promise<Calenda
 // Drive search
 // ============================================================
 
-interface FoundFiles {
-  transcript_text: string | null
+// Uma sessão da reunião = um Doc de transcrição do Meet (cliente que cai e
+// reentra gera N Docs no mesmo evento). recording_url é anexado por ordem/tempo.
+interface TranscriptSession {
+  drive_file_id: string
+  titulo: string
   transcript_url: string | null
+  transcript_text: string | null
   recording_url: string | null
+  started_at: string | null   // modifiedTime do Doc (ordena cronologicamente)
 }
 
 class InsufficientScopeError extends Error {
   constructor() { super('ACCESS_TOKEN_SCOPE_INSUFFICIENT'); this.name = 'InsufficientScopeError' }
 }
 
-async function findTranscriptInDrive(
+// Coleta TODAS as sessões (Docs de transcrição) da janela do evento — não pega só 1.
+// Dedup por id. Vídeos coletados à parte e anexados por ordem cronológica.
+async function collectSessionsInDrive(
   token: string,
   fingerprint: { summary: string; startIso: string; meetCode: string | null; fallbackEmpresa?: string },
-): Promise<FoundFiles> {
-  const out: FoundFiles = { transcript_text: null, transcript_url: null, recording_url: null }
-  if (!fingerprint.startIso) return out
+): Promise<TranscriptSession[]> {
+  if (!fingerprint.startIso) return []
 
   // Janela temporal: do início do evento até 24h depois (transcript demora ~30 min)
   const start = new Date(fingerprint.startIso)
@@ -106,34 +113,25 @@ async function findTranscriptInDrive(
   const before = new Date(start.getTime() + 24 * 60 * 60 * 1000).toISOString()
 
   // Termos de busca: priorizar título do evento, fallback no nome da empresa
-  // Também gerar variações parciais (ex: "Vilmar rodas" → "Vilmar")
   const searchTerms: string[] = []
   if (fingerprint.summary) searchTerms.push(fingerprint.summary)
   if (fingerprint.fallbackEmpresa) {
-    if (!searchTerms.includes(fingerprint.fallbackEmpresa)) {
-      searchTerms.push(fingerprint.fallbackEmpresa)
-    }
-    // Adicionar primeiro nome como fallback (ex: "Vilmar rodas" → "Vilmar")
+    if (!searchTerms.includes(fingerprint.fallbackEmpresa)) searchTerms.push(fingerprint.fallbackEmpresa)
     const firstName = fingerprint.fallbackEmpresa.split(/\s+/)[0]
-    if (firstName && firstName.length >= 3 && !searchTerms.includes(firstName)) {
-      searchTerms.push(firstName)
-    }
+    if (firstName && firstName.length >= 3 && !searchTerms.includes(firstName)) searchTerms.push(firstName)
   }
-  if (searchTerms.length === 0) return out
+  if (searchTerms.length === 0) return []
 
-  // Localizar pasta "Meet Recordings" (limita ruído) — opcional, fallback global
   const meetFolderId = await findMeetRecordingsFolderId(token)
   console.log(`  searchTerms: ${JSON.stringify(searchTerms)}, meetFolder: ${meetFolderId ? 'found' : 'none'}`)
 
-  let transcriptDocId: string | null = null
+  const isTranscript = (n: string) => /transcript|transcri[çc][ãa]o/i.test(n)
 
-  // Estratégia: buscar COM pasta Meet Recordings, se não achar buscar SEM pasta (global)
+  // ---- Coletar TODOS os Docs candidatos (dedup por id) ----
+  const docsById = new Map<string, { id: string; name: string; webViewLink: string; modifiedTime: string }>()
   const folderPasses = meetFolderId ? [meetFolderId, null] : [null]
-
   for (const folderId of folderPasses) {
-    if (transcriptDocId) break
     for (const term of searchTerms) {
-      if (transcriptDocId) break
       const safe = term.replace(/'/g, "\\'")
       const parts = [
         `name contains '${safe}'`,
@@ -144,10 +142,8 @@ async function findTranscriptInDrive(
       ]
       if (folderId) parts.push(`'${folderId}' in parents`)
       const query = parts.join(' and ')
-
-      console.log(`  Drive query (folder=${folderId ? 'Meet Recordings' : 'global'}): name contains '${safe}'`)
       const searchResp = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=25`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       )
       if (searchResp.status === 403) {
@@ -155,23 +151,21 @@ async function findTranscriptInDrive(
         if (JSON.stringify(errBody).includes('SCOPE_INSUFFICIENT')) throw new InsufficientScopeError()
       }
       if (!searchResp.ok) { console.log(`  Drive search failed: ${searchResp.status}`); continue }
-
       const files = (await searchResp.json()).files || []
-      console.log(`  Drive results: ${files.length} files found`, files.map((f: any) => f.name))
-      // Preferência: arquivo cujo nome contenha "Transcript|Transcrição|Transcricao"
-      const isTranscript = (n: string) => /transcript|transcri[çc][ãa]o/i.test(n)
-      const transcript = files.find((f: any) => isTranscript(f.name)) || files[0]
-      if (transcript) {
-        transcriptDocId = transcript.id
-        out.transcript_url = transcript.webViewLink
-        console.log(`  Found transcript: ${transcript.name} (${transcript.id})`)
-      }
+      for (const f of files) if (f.id && !docsById.has(f.id)) docsById.set(f.id, f)
     }
   }
 
-  // Vídeo (gravação)
+  let docs = [...docsById.values()]
+  // Se algum arquivo parece transcrição pelo nome, mantém só esses (evita puxar
+  // outros Docs com o mesmo termo no título). Senão, usa todos os candidatos.
+  const named = docs.filter(d => isTranscript(d.name))
+  if (named.length > 0) docs = named
+  console.log(`  Docs candidatos: ${docs.length}`, docs.map(d => d.name))
+
+  // ---- Coletar vídeos (gravações) ----
+  const recordings: { url: string; modifiedTime: string }[] = []
   for (const term of searchTerms) {
-    if (out.recording_url) break
     const safe = term.replace(/'/g, "\\'")
     const parts = [
       `name contains '${safe}'`,
@@ -183,7 +177,7 @@ async function findTranscriptInDrive(
     if (meetFolderId) parts.push(`'${meetFolderId}' in parents`)
     const query = parts.join(' and ')
     const videoResp = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink)&orderBy=modifiedTime desc&pageSize=3`,
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,webViewLink,modifiedTime)&orderBy=modifiedTime desc&pageSize=10`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     )
     if (videoResp.status === 403) {
@@ -192,23 +186,36 @@ async function findTranscriptInDrive(
     }
     if (videoResp.ok) {
       const v = (await videoResp.json()).files || []
-      if (v.length > 0) out.recording_url = v[0].webViewLink
+      for (const f of v) if (f.webViewLink && !recordings.some(r => r.url === f.webViewLink)) {
+        recordings.push({ url: f.webViewLink, modifiedTime: f.modifiedTime })
+      }
     }
   }
+  recordings.sort((a, b) => (a.modifiedTime || '').localeCompare(b.modifiedTime || ''))
 
-  // Extrair texto do Doc de transcrição
-  if (transcriptDocId) {
+  // ---- Extrair texto de cada Doc; montar sessões em ordem cronológica ----
+  const sessions: TranscriptSession[] = []
+  // ordena por modifiedTime asc (cronológico)
+  docs.sort((a, b) => (a.modifiedTime || '').localeCompare(b.modifiedTime || ''))
+  for (const d of docs) {
+    let text: string | null = null
     const docResp = await fetch(
-      `https://docs.googleapis.com/v1/documents/${transcriptDocId}`,
+      `https://docs.googleapis.com/v1/documents/${d.id}`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     )
-    if (docResp.ok) {
-      const doc = await docResp.json()
-      out.transcript_text = extractTextFromDoc(doc)
-    }
+    if (docResp.ok) text = extractTextFromDoc(await docResp.json())
+    sessions.push({
+      drive_file_id: d.id,
+      titulo: d.name,
+      transcript_url: d.webViewLink || null,
+      transcript_text: text,
+      recording_url: null,
+      started_at: d.modifiedTime || null,
+    })
   }
-
-  return out
+  // anexa gravações por ordem (sessão i ↔ gravação i)
+  sessions.forEach((s, i) => { if (recordings[i]) s.recording_url = recordings[i].url })
+  return sessions
 }
 
 let cachedMeetFolderId: { token: string; id: string | null } | null = null
@@ -255,10 +262,43 @@ function extractTextFromDoc(doc: any): string {
 
 interface FetchResult {
   status: 'found' | 'not_found' | 'needs_reauth'
-  transcript_text?: string
-  transcript_url?: string
+  transcript_text?: string        // concatenado de TODAS as sessões (cache/compat)
+  transcript_url?: string          // 1ª sessão
   recording_url?: string
+  sessions?: TranscriptSession[]   // todas as sessões (fonte-da-verdade)
   error?: string
+}
+
+// Concatena o texto das sessões em ordem cronológica com marcador por sessão.
+function concatSessions(sessions: TranscriptSession[]): string {
+  const withText = sessions.filter(s => (s.transcript_text || '').trim().length > 0)
+  if (withText.length === 0) return ''
+  if (withText.length === 1) return (withText[0].transcript_text || '').trim()
+  return withText.map((s, i) => {
+    const hhmm = s.started_at ? new Date(s.started_at).toISOString().slice(11, 16) : `${i + 1}`
+    return `--- Sessão ${i + 1} (${hhmm}) ---\n${(s.transcript_text || '').trim()}`
+  }).join('\n\n')
+}
+
+// Persiste as sessões em reuniao_transcricoes (upsert por (reuniao_id, drive_file_id) —
+// re-execução não duplica). Fonte-da-verdade das transcrições.
+async function persistSessions(supabase: any, reuniaoId: string, sessions: TranscriptSession[]): Promise<void> {
+  if (!sessions.length) return
+  const rows = sessions.map((s, i) => ({
+    reuniao_id: reuniaoId,
+    sessao: i + 1,
+    fonte: 'google_meet',
+    titulo: s.titulo || null,
+    transcript_url: s.transcript_url,
+    transcript_text: s.transcript_text,
+    recording_url: s.recording_url,
+    drive_file_id: s.drive_file_id,
+    started_at: s.started_at,
+  }))
+  const { error } = await supabase
+    .from('reuniao_transcricoes')
+    .upsert(rows, { onConflict: 'reuniao_id,drive_file_id' })
+  if (error) console.error('persistSessions erro:', error.message)
 }
 
 async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): Promise<FetchResult> {
@@ -303,25 +343,28 @@ async function tryFetchTranscriptForReuniao(supabase: any, reuniaoId: string): P
     }
   }
 
-  // Buscar transcrição no Drive de CADA candidato até encontrar
+  // Buscar TODAS as sessões no Drive de CADA candidato até encontrar
   let lastRecordingUrl: string | undefined
   const needsReauthMembers: string[] = []
   let successfulSearches = 0
 
   for (const entry of tokenEntries) {
     try {
-      console.log(`Buscando transcrição no Drive do membro ${entry.memberId}...`)
+      console.log(`Buscando transcrições no Drive do membro ${entry.memberId}...`)
       console.log(`  fingerprint: summary="${fingerprint.summary}", empresa="${fingerprint.fallbackEmpresa}", startIso="${fingerprint.startIso}"`)
-      const found = await findTranscriptInDrive(entry.token, fingerprint)
+      const sessions = await collectSessionsInDrive(entry.token, fingerprint)
       successfulSearches++
-      console.log(`  resultado: transcript=${!!found.transcript_text}, recording=${!!found.recording_url}`)
-      if (found.recording_url) lastRecordingUrl = found.recording_url
-      if (found.transcript_text) {
+      const rec = sessions.find(s => s.recording_url)?.recording_url
+      if (rec) lastRecordingUrl = rec
+      const concat = concatSessions(sessions)
+      console.log(`  resultado: ${sessions.length} sessões, texto=${concat.length} chars, recording=${!!rec}`)
+      if (concat.length > 0) {
         return {
           status: 'found',
-          transcript_text: found.transcript_text,
-          transcript_url: found.transcript_url || undefined,
-          recording_url: found.recording_url || lastRecordingUrl,
+          transcript_text: concat,
+          transcript_url: sessions.find(s => s.transcript_url)?.transcript_url || undefined,
+          recording_url: rec || lastRecordingUrl,
+          sessions,
         }
       }
     } catch (e: any) {
@@ -562,10 +605,15 @@ async function processPending(supabase: any): Promise<{ processed: number; advan
       if (auto.status === 'pending' || auto.status === 'fetching_transcript') {
         const age = Date.now() - new Date(auto.created_at).getTime()
         if (age > TRANSCRIPT_TIMEOUT_MS) {
-          await supabase.from('post_meeting_automations').update({
-            status: 'error',
-            error_message: 'Transcrição não apareceu em 2h. Verifique se gravação/transcrição do Meet está ativada para o organizador.',
-          }).eq('id', auto.id)
+          // Se já há sessões persistidas mas sem fala suficiente = "sem transcrição válida"
+          // (não gera resumo falso). Senão, transcrição realmente não apareceu.
+          const { data: sess } = await supabase.from('reuniao_transcricoes')
+            .select('transcript_text').eq('reuniao_id', auto.reuniao_id)
+          const totalChars = (sess || []).reduce((n: number, s: any) => n + ((s.transcript_text || '').trim().length), 0)
+          const error_message = (sess && sess.length > 0 && totalChars < MIN_TRANSCRICAO_CHARS)
+            ? 'Sem transcrição válida: sessões encontradas mas sem fala suficiente para analisar.'
+            : 'Transcrição não apareceu em 2h. Verifique se gravação/transcrição do Meet está ativada para o organizador.'
+          await supabase.from('post_meeting_automations').update({ status: 'error', error_message }).eq('id', auto.id)
           errors++
           continue
         }
@@ -584,11 +632,23 @@ async function processPending(supabase: any): Promise<{ processed: number; advan
           continue
         }
 
+        // Persiste TODAS as sessões encontradas (fonte-da-verdade), mesmo que ainda
+        // vá esperar mais — dedup por drive_file_id evita duplicar na próxima tick.
+        if (result.sessions?.length) await persistSessions(supabase, auto.reuniao_id, result.sessions)
+
         if (result.status !== 'found' || !result.transcript_text) continue
+
+        // FALLBACK: texto concatenado abaixo do limiar = sem fala suficiente.
+        // Não gera resumo falso — segue esperando (mais sessões/transcrição pode chegar);
+        // ao estourar o timeout de 2h vira erro "sem transcrição válida".
+        if (result.transcript_text.trim().length < MIN_TRANSCRICAO_CHARS) {
+          console.log(`  transcrição abaixo do limiar (${result.transcript_text.trim().length} < ${MIN_TRANSCRICAO_CHARS}), aguardando`)
+          continue
+        }
 
         await supabase.from('post_meeting_automations').update({
           status: 'analyzing',
-          transcript_text: result.transcript_text,
+          transcript_text: result.transcript_text,   // cache do concatenado
           actions_taken: { transcript_url: result.transcript_url || null, recording_url: result.recording_url || null },
         }).eq('id', auto.id)
         advanced++
@@ -680,6 +740,8 @@ Deno.serve(async (req) => {
     if (action === 'fetch_transcript') {
       if (!data?.reuniao_id) return json({ error: 'reuniao_id obrigatório' }, 400)
       const result = await tryFetchTranscriptForReuniao(supabase, data.reuniao_id)
+      // Persiste as sessões achadas (mesmo comportamento do cron) — dedup evita duplicar.
+      if (result.sessions?.length) await persistSessions(supabase, data.reuniao_id, result.sessions)
       if (result.status === 'needs_reauth') {
         return json({ error: result.error, needs_reauth: true }, 400)
       }
@@ -691,6 +753,7 @@ Deno.serve(async (req) => {
         transcript_text: result.transcript_text,
         transcript_url: result.transcript_url,
         recording_url: result.recording_url,
+        sessions_count: result.sessions?.length || 0,
       })
     }
 
