@@ -23,6 +23,11 @@
 #   python kommo_msg_worker_local.py --mode backfill --limit 5
 #   python kommo_msg_worker_local.py --mode backfill 24550897 24523405   (leads explicitos)
 #   python kommo_msg_worker_local.py --mode incremental --since 2026-07-11T00:00:00Z
+#
+# CI (GitHub Actions): rodar HEADED sob xvfb (identico ao local) — nao usar headless.
+#   xvfb-run -a python scripts/workers/kommo_msg_worker_local.py --mode incremental
+#   (WORKER_HEADLESS=1 forca headless, mas NAO recomendado p/ este extrator.)
+# Aviso de relogar por email: setar SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS + ALERT_EMAIL_TO.
 import sys, os, re, json, time, argparse, datetime, pathlib
 try: sys.stdout.reconfigure(encoding="utf-8")
 except Exception: pass
@@ -43,8 +48,37 @@ if not pathlib.Path("storage_state.json").exists():
 
 PACE_SECONDS = 5          # respiro entre leads (nao martelar o Kommo / poupar a sessao)
 LOAD_WAIT_MS = 6000       # espera pos-goto pro chat hidratar
+HEADLESS = os.environ.get("WORKER_HEADLESS", "0") == "1"  # CI usa xvfb + headed (default)
 
 def log(*a): print(*a, flush=True)
+
+# ---- aviso de RELOGAR: email quando a sessao cai (guard de sessao degradada) ----
+# Opcional: so envia se SMTP_* estiverem no ambiente (no Actions vem de secrets).
+def notify_session_down(lead_id, reason):
+    host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    user = os.environ.get("SMTP_USER"); pwd = os.environ.get("SMTP_PASS")
+    to   = os.environ.get("ALERT_EMAIL_TO", "gabriel.bianchini@v4company.com")
+    if not (user and pwd):
+        log("  (SMTP_USER/SMTP_PASS ausentes — pulei o email; rodando local?)")
+        return
+    import smtplib, ssl
+    from email.message import EmailMessage
+    m = EmailMessage()
+    m["Subject"] = f"[Kommo worker] Sessao caiu no lead {lead_id} — relogar"
+    m["From"] = user; m["To"] = to
+    m.set_content(
+        "O worker de mensagens do Kommo parou: sessao provavelmente degradada.\n\n"
+        f"Lead: {lead_id}\nMotivo: {reason}\n\n"
+        "Acao: relogar no Kommo NA SUA MAQUINA, regenerar o storage_state.json, "
+        "atualizar o secret KOMMO_STORAGE_STATE_B64 no GitHub e re-disparar o backfill "
+        "(ele retoma sozinho pelos leads ainda nao marcados).\n")
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as s:
+            s.starttls(context=ssl.create_default_context()); s.login(user, pwd); s.send_message(m)
+        log(f"  email de aviso enviado p/ {to}")
+    except Exception as e:
+        log(f"  aviso: falha ao enviar email ({e}) — veja o log do Actions.")
 
 # ---- PostgREST RPC (service_role) ----
 def rpc(fn, payload):
@@ -234,7 +268,7 @@ def main():
 
     done=0; wrote=0; failed_lead=None
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False)
+        browser = pw.chromium.launch(headless=HEADLESS)
         ctx = browser.new_context(storage_state="storage_state.json", user_agent=SHARED_UA,
                                   viewport={"width":1500,"height":950})
         page = ctx.new_page()
@@ -258,6 +292,7 @@ def main():
                 log(f"  !! ERRO ao carregar/extrair lead {lid}: {e}")
                 log(f"  >> Sessao provavelmente caiu no lead {lid}. Relogar (regenerar "
                     f"storage_state.json) e rodar de novo — o worker retoma daqui.")
+                notify_session_down(lid, f"erro ao carregar/extrair: {e}")
                 break
 
             msgs, evs = to_payload(res)
@@ -268,6 +303,7 @@ def main():
                     f"rounds={res.get('_rounds')}), mas ESTA na fila (tem conversa).")
                 log(f"  >> Sessao provavelmente caiu no lead {lid} (chat em skeleton). NAO vou "
                     f"marcar/gravar vazio. Relogar (regenerar storage_state.json) e rodar de novo.")
+                notify_session_down(lid, f"0 mensagens num lead com conversa (anchors={res.get('_anchors')}, rounds={res.get('_rounds')}) — chat em skeleton")
                 break
 
             r = rpc("kommo_apply_mensagens", {

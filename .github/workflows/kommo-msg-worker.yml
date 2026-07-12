@@ -1,0 +1,99 @@
+name: Kommo Msg Worker
+
+# Extrai mensagens de WhatsApp do DOM do Kommo (extrator v9, congelado) e grava via
+# RPC kommo_apply_mensagens. REUSA a sessao gerada MANUALMENTE pelo Gabriel (o login
+# automatizado do datacenter e bloqueado pelo Kommo) — vem do secret KOMMO_STORAGE_STATE_B64.
+# Roda HEADED sob xvfb (identico ao teste local; headless nao e usado p/ nao mudar o scroll).
+#
+# Gatilhos:
+#   - schedule (hora em hora): modo INCREMENTAL (so leads com msg nova via kommo.events).
+#   - workflow_dispatch: BACKFILL manual (retomavel) — re-disparar apos relogar.
+#
+# Quando a sessao cai (guard: 0 msgs em lead que tem conversa), o worker PARA, manda email
+# de "relogar" (SMTP) e sai com erro (run vermelho). Gabriel reloga local, atualiza o
+# secret KOMMO_STORAGE_STATE_B64 e re-dispara — retoma sozinho pelos leads nao-marcados.
+
+on:
+  schedule:
+    - cron: "7 * * * *"          # :07 de cada hora (de hora em hora) — incremental
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "modo"
+        type: choice
+        options: ["backfill", "incremental"]
+        default: "backfill"
+      limit:
+        description: "limite de leads (vazio = todos)"
+        default: ""
+      leads:
+        description: "lead ids explicitos separados por espaco (opcional)"
+        default: ""
+      since:
+        description: "incremental: corte ISO opcional (ex 2026-07-11T00:00:00Z)"
+        default: ""
+
+permissions:
+  contents: read
+
+# serializa: backfill e incremental compartilham a mesma sessao/IP — nunca em paralelo.
+concurrency:
+  group: kommo-msg-worker
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350          # abaixo do teto de 6h; na pratica para antes (sessao cai)
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (Playwright + Chromium + xvfb)
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright requests
+          python -m playwright install --with-deps chromium
+          sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Restore Kommo session (storage_state.json)
+        env:
+          KOMMO_STORAGE_STATE_B64: ${{ secrets.KOMMO_STORAGE_STATE_B64 }}
+        run: |
+          if [ -z "$KOMMO_STORAGE_STATE_B64" ]; then
+            echo "::error::secret KOMMO_STORAGE_STATE_B64 vazio — gere o storage_state.json local e configure o secret."
+            exit 1
+          fi
+          echo "$KOMMO_STORAGE_STATE_B64" | base64 -d > storage_state.json
+          python - <<'PY'
+          import json; json.load(open("storage_state.json")); print("storage_state.json OK")
+          PY
+
+      - name: Run worker (headed via xvfb)
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            MODE=incremental; LIMIT=""; LEADS=""; SINCE=""
+          else
+            MODE="${{ github.event.inputs.mode }}"
+            LIMIT="${{ github.event.inputs.limit }}"
+            LEADS="${{ github.event.inputs.leads }}"
+            SINCE="${{ github.event.inputs.since }}"
+          fi
+          ARGS="--mode $MODE"
+          [ -n "$LIMIT" ] && ARGS="$ARGS --limit $LIMIT"
+          [ -n "$SINCE" ] && ARGS="$ARGS --since $SINCE"
+          echo "args: $ARGS $LEADS"
+          xvfb-run -a python scripts/workers/kommo_msg_worker_local.py $ARGS $LEADS
