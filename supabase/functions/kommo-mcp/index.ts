@@ -71,6 +71,15 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'list_lead_activities', description: 'Timeline do lead: tarefas, notas, chat e mudança de etapa.',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' } }, required: ['lead_id'] } },
+  // ---- DESCOBERTA (filtro grosso por sinais estruturados; depois use get_lead_360 no escolhido) ----
+  { name: 'o_que_tenho_pra_fechar', description: 'DESCOBERTA. Lista os leads com proposta ABERTA rankeados por chance REAL de fechar (etapa avançada + interação recente do cliente; BANT/temperatura como apoio) + flags: provisao_furada (proposta mas cliente sumiu há >3d — parece que fecha e não fecha) e quente_recente (interação <3d). Filtro grosso, NÃO lê conversa. Depois use get_lead_360 em cada pra ler as conversas/transcrições e montar o plano.',
+    inputSchema: { type: 'object', properties: { dias: { type: 'integer', description: 'opcional: só propostas criadas nos últimos N dias' } } } },
+  { name: 'leads_esfriando', description: 'DESCOBERTA. Oportunidades ABERTAS sem INTERAÇÃO REAL (msg WhatsApp / ligação / reunião realizada) há mais de p_dias — ordenadas do mais parado. Marca dados_parciais=true quando o WhatsApp do lead ainda não foi extraído (aí "sem msg" não vira "frio" às cegas). NÃO lê conversa; para entender o porquê, use get_lead_360.',
+    inputSchema: { type: 'object', properties: { dias: { type: 'integer', description: 'dias sem interação (default 3)' } } } },
+  { name: 'leads_em_proposta', description: 'DESCOBERTA. Todos os leads com proposta ABERTA (negociação/contrato na rua/feedback), com valor, produto, etapa, dono e dias sem interação. Filtro grosso; para o detalhe de um lead use get_lead_360.',
+    inputSchema: { type: 'object', properties: {} } },
+  { name: 'leads_por_etapa', description: 'DESCOBERTA. Como está o funil AGORA: contagem (e valor) de leads por etapa + lista capada. Opcional filtrar por pipeline e por entrada nos últimos N dias. Visão macro; para um lead específico use get_lead_360.',
+    inputSchema: { type: 'object', properties: { pipeline: { type: 'integer', description: 'id do pipeline (opcional)' }, dias: { type: 'integer', description: 'entrada nos últimos N dias (opcional)' } } } },
   { name: 'funnel_by_owner', description: 'Deals e valor por etapa, por closer (opcionalmente filtra um responsável).',
     inputSchema: { type: 'object', properties: { responsavel: { type: 'string' } } } },
   { name: 'deals_without_next_task', description: 'Deals (em aberto, com proposta) SEM tarefa aberta no Kommo — candidatos a próximo passo.',
@@ -131,6 +140,10 @@ async function readTool(sb: any, name: string, a: any) {
     case 'find_stale_deals': { const d = await rpc(sb, 'kommo_find_stale_deals', { valor_min: a.valor_min ?? 50000, dias: a.dias ?? 15, somente_com_vinculo: a.somente_com_vinculo ?? true }); return { count: d?.length ?? 0, valor_total_somado: (d ?? []).reduce((s: number, r: any) => s + Number(r.valor_total || 0), 0), deals: d } }
     case 'find_duplicate_leads': { const [sum, rows] = await Promise.all([rpc(sb, 'kommo_duplicates_summary', {}), rpc(sb, 'kommo_list_duplicates', { limite: a.limite ?? 300 })]); return { resumo: sum?.[0] ?? {}, clusters: rows } }
     case 'get_lead_360': return await rpc(sb, 'kommo_lead_360', { p_lead: String(a.lead) })
+    case 'o_que_tenho_pra_fechar': return await rpc(sb, 'kommo_o_que_tenho_pra_fechar', { p_dias: a.dias ?? null })
+    case 'leads_esfriando': return await rpc(sb, 'kommo_leads_esfriando', { p_dias: a.dias ?? 3 })
+    case 'leads_em_proposta': return await rpc(sb, 'kommo_leads_em_proposta', {})
+    case 'leads_por_etapa': return await rpc(sb, 'kommo_leads_por_etapa', { p_pipeline: a.pipeline ?? null, p_dias: a.dias ?? null })
     case 'get_lead': return { leads: await rpc(sb, 'kommo_get_lead', { p_query: String(a.query) }) }
     case 'list_lead_activities': return { atividades: await rpc(sb, 'kommo_lead_activities', { p_lead_id: Number(a.lead_id) }) }
     case 'funnel_by_owner': return { funil: await rpc(sb, 'kommo_funnel_by_owner', { p_owner: a.responsavel ?? null }) }
