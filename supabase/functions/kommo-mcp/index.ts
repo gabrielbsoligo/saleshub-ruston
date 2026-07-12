@@ -65,7 +65,9 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { valor_min: { type: 'number' }, dias: { type: 'integer' }, somente_com_vinculo: { type: 'boolean' } } } },
   { name: 'find_duplicate_leads', description: 'Leads duplicados (telefone/email normalizados) com contexto. Detecta e agrupa — merge/move é write tool.',
     inputSchema: { type: 'object', properties: { limite: { type: 'integer' } } } },
-  { name: 'get_lead', description: 'Ficha do lead por id, nome, telefone ou email (etapa, responsável, valor, última atividade, contatos/empresa).',
+  { name: 'get_lead_360', description: 'Dossiê COMPLETO de UM lead — use PRIMEIRO quando a pergunta for sobre um lead específico (histórico, plano de ação, propensão a fechar). Resolve as duas identidades (Kommo/SalesHub) e traz FUNIL (jornada de etapas), REUNIÕES com TRANSCRIÇÕES e resumo/BANT da IA, MENSAGENS de WhatsApp, TAREFAS, VALORES/pagamentos e dados/BANT do lead — em UMA timeline cronológica + agrupado por tipo, com um resumo (temperatura, valor, msgs in/out, última interação do cliente). Aceita id Kommo, nome, telefone ou email.',
+    inputSchema: { type: 'object', properties: { lead: { type: 'string', description: 'id Kommo, nome, telefone ou email do lead' } }, required: ['lead'] } },
+  { name: 'get_lead', description: 'Ficha RÁPIDA do lead por id, nome, telefone ou email (etapa, responsável, valor, última atividade, contatos/empresa). Para o histórico COMPLETO use get_lead_360.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'list_lead_activities', description: 'Timeline do lead: tarefas, notas, chat e mudança de etapa.',
     inputSchema: { type: 'object', properties: { lead_id: { type: 'integer' } }, required: ['lead_id'] } },
@@ -128,6 +130,7 @@ async function readTool(sb: any, name: string, a: any) {
   switch (name) {
     case 'find_stale_deals': { const d = await rpc(sb, 'kommo_find_stale_deals', { valor_min: a.valor_min ?? 50000, dias: a.dias ?? 15, somente_com_vinculo: a.somente_com_vinculo ?? true }); return { count: d?.length ?? 0, valor_total_somado: (d ?? []).reduce((s: number, r: any) => s + Number(r.valor_total || 0), 0), deals: d } }
     case 'find_duplicate_leads': { const [sum, rows] = await Promise.all([rpc(sb, 'kommo_duplicates_summary', {}), rpc(sb, 'kommo_list_duplicates', { limite: a.limite ?? 300 })]); return { resumo: sum?.[0] ?? {}, clusters: rows } }
+    case 'get_lead_360': return await rpc(sb, 'kommo_lead_360', { p_lead: String(a.lead) })
     case 'get_lead': return { leads: await rpc(sb, 'kommo_get_lead', { p_query: String(a.query) }) }
     case 'list_lead_activities': return { atividades: await rpc(sb, 'kommo_lead_activities', { p_lead_id: Number(a.lead_id) }) }
     case 'funnel_by_owner': return { funil: await rpc(sb, 'kommo_funnel_by_owner', { p_owner: a.responsavel ?? null }) }
