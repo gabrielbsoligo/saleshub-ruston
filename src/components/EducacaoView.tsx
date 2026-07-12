@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { GraduationCap, Search, Upload, X, FileText, FileType2, FileCode2, Trash2, Pencil, ExternalLink } from "lucide-react";
+import { GraduationCap, Search, Upload, X, FileText, FileType2, FileCode2, FileSpreadsheet, FileImage, FileArchive, Presentation, File as FileIcon, Download, Trash2, Pencil, ExternalLink } from "lucide-react";
 import toast from "react-hot-toast";
 import { supabase } from "../lib/supabase";
 
 // Educação — biblioteca de materiais (HTML/PDF/MD) com título, descrição, data de
 // atualização e busca full-text (conteudo_texto extraído no upload; PDF via pdf.js).
+// tipo = extens\u00e3o crua (aberto a qualquer arquivo). A categoria define \u00edcone/preview.
 interface Material {
-  id: string; titulo: string; descricao: string | null; tipo: "html" | "pdf" | "md";
+  id: string; titulo: string; descricao: string | null; tipo: string;
   storage_path: string | null; file_url: string; conteudo_texto: string | null;
   tamanho_bytes: number | null; created_at: string; updated_at: string;
 }
@@ -14,29 +15,37 @@ interface Material {
 const norm = (s: string) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 const fmtDate = (s: string) => new Date(s).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 const fmtSize = (b: number | null) => b == null ? "" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`;
-const tipoMeta: Record<Material["tipo"], { label: string; Icon: React.ComponentType<{ size?: number }>; cls: string }> = {
-  html: { label: "HTML", Icon: FileCode2, cls: "text-sky-400 bg-sky-500/15" },
-  pdf: { label: "PDF", Icon: FileType2, cls: "text-red-400 bg-red-500/15" },
-  md: { label: "MD", Icon: FileText, cls: "text-emerald-400 bg-emerald-500/15" },
-};
 
-function tipoFromName(name: string): Material["tipo"] | null {
-  const n = name.toLowerCase();
-  if (n.endsWith(".pdf")) return "pdf";
-  if (n.endsWith(".html") || n.endsWith(".htm")) return "html";
-  if (n.endsWith(".md") || n.endsWith(".markdown") || n.endsWith(".txt")) return "md";
-  return null;
+type Cat = "md" | "html" | "pdf" | "image" | "sheet" | "doc" | "slide" | "archive" | "text" | "file";
+const CATS: { cat: Cat; exts: string[]; label: string; Icon: React.ComponentType<{ size?: number }>; cls: string }[] = [
+  { cat: "md",      exts: ["md", "markdown"],                          label: "MD",       Icon: FileText,        cls: "text-emerald-400 bg-emerald-500/15" },
+  { cat: "html",    exts: ["html", "htm"],                            label: "HTML",     Icon: FileCode2,       cls: "text-sky-400 bg-sky-500/15" },
+  { cat: "pdf",     exts: ["pdf"],                                    label: "PDF",      Icon: FileType2,       cls: "text-red-400 bg-red-500/15" },
+  { cat: "image",   exts: ["png","jpg","jpeg","gif","webp","svg","bmp","avif"], label: "Imagem", Icon: FileImage, cls: "text-violet-400 bg-violet-500/15" },
+  { cat: "sheet",   exts: ["xls","xlsx","csv","ods"],                 label: "Planilha", Icon: FileSpreadsheet, cls: "text-green-400 bg-green-500/15" },
+  { cat: "doc",     exts: ["doc","docx","odt","rtf"],                 label: "Doc",      Icon: FileText,        cls: "text-blue-400 bg-blue-500/15" },
+  { cat: "slide",   exts: ["ppt","pptx","odp"],                       label: "Slides",   Icon: Presentation,    cls: "text-orange-400 bg-orange-500/15" },
+  { cat: "archive", exts: ["zip","rar","7z","tar","gz"],              label: "Arquivo",  Icon: FileArchive,     cls: "text-amber-400 bg-amber-500/15" },
+  { cat: "text",    exts: ["txt","log","json"],                       label: "Texto",    Icon: FileText,        cls: "text-slate-300 bg-slate-500/15" },
+];
+const extFromName = (name: string) => (name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || "file");
+function catMeta(ext: string): { cat: Cat; label: string; Icon: React.ComponentType<{ size?: number }>; cls: string } {
+  const f = CATS.find((c) => c.exts.includes((ext || "").toLowerCase()));
+  return f ? { cat: f.cat, label: f.label, Icon: f.Icon, cls: f.cls }
+           : { cat: "file", label: (ext || "arquivo").toUpperCase().slice(0, 5), Icon: FileIcon, cls: "text-[var(--color-v4-text-muted)] bg-white/5" };
 }
 
-// extrai o texto pra busca: md/txt cru; html sem tags; pdf via pdf.js (import sob demanda)
-async function extractText(file: File, tipo: Material["tipo"]): Promise<string> {
+// extrai texto pra busca s\u00f3 dos tipos leg\u00edveis; o resto entra sem texto (busca por t\u00edtulo/descri\u00e7\u00e3o).
+const TEXT_EXTS = ["md", "markdown", "txt", "log", "json", "csv"];
+async function extractText(file: File, ext: string): Promise<string> {
+  const e = (ext || "").toLowerCase();
   try {
-    if (tipo === "md") return await file.text();
-    if (tipo === "html") {
+    if (TEXT_EXTS.includes(e)) return (await file.text()).slice(0, 500000);
+    if (["html", "htm"].includes(e)) {
       const doc = new DOMParser().parseFromString(await file.text(), "text/html");
-      return (doc.body?.textContent || "").replace(/\s+/g, " ").trim();
+      return (doc.body?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 500000);
     }
-    if (tipo === "pdf") {
+    if (e === "pdf") {
       const pdfjs: any = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -45,9 +54,9 @@ async function extractText(file: File, tipo: Material["tipo"]): Promise<string> 
         const c = await (await pdf.getPage(i)).getTextContent();
         text += c.items.map((it: any) => it.str).join(" ") + "\n";
       }
-      return text.replace(/\s+/g, " ").trim();
+      return text.replace(/\s+/g, " ").trim().slice(0, 500000);
     }
-  } catch (e) { console.warn("extractText falhou", e); }
+  } catch (e2) { console.warn("extractText falhou", e2); }
   return "";
 }
 
@@ -115,7 +124,7 @@ export const EducacaoView: React.FC = () => {
           <div className="w-9 h-9 rounded-xl bg-[var(--color-v4-red-muted)] text-[var(--color-v4-red)] flex items-center justify-center"><GraduationCap size={18} /></div>
           <div>
             <h1 className="text-lg font-bold text-white">Educação</h1>
-            <p className="text-xs text-[var(--color-v4-text-muted)]">Materiais do time — playbooks, scripts, guias (HTML, PDF, Markdown).</p>
+            <p className="text-xs text-[var(--color-v4-text-muted)]">Materiais do time — playbooks, scripts, guias e qualquer arquivo. Busca por conteúdo em HTML, PDF, Markdown e texto.</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -135,7 +144,7 @@ export const EducacaoView: React.FC = () => {
         : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtrados.map((m) => {
-            const meta = tipoMeta[m.tipo];
+            const meta = catMeta(m.tipo);
             return (
               <div key={m.id} className="rounded-xl border border-[var(--color-v4-border)] bg-[var(--color-v4-surface)] p-4 flex flex-col gap-2 hover:border-[var(--color-v4-red)]/40 transition-colors">
                 <div className="flex items-start justify-between gap-2">
@@ -181,16 +190,15 @@ const UploadModal: React.FC<{ onClose: () => void; onDone: () => void }> = ({ on
 
   const submit = async () => {
     if (!file) { toast.error("Escolha um arquivo"); return; }
-    const tipo = tipoFromName(file.name);
-    if (!tipo) { toast.error("Formato não suportado (use HTML, PDF ou MD)"); return; }
     if (!titulo.trim()) { toast.error("Dê um título"); return; }
-    if (file.size > 25 * 1024 * 1024) { toast.error("Tamanho máximo: 25MB"); return; }
+    if (file.size > 50 * 1024 * 1024) { toast.error("Tamanho máximo: 50MB"); return; }
+    const ext = extFromName(file.name);      // qualquer extensão
+    const tipo = ext;
     setSaving(true);
     const t = toast.loading("Enviando material…");
     try {
-      const conteudo = await extractText(file, tipo);
+      const conteudo = await extractText(file, ext);
       const id = crypto.randomUUID();
-      const ext = file.name.split(".").pop()!.toLowerCase();
       const path = `${id}.${ext}`;
       const { error: upErr } = await supabase.storage.from("educacao").upload(path, file, { upsert: true, contentType: file.type || undefined });
       if (upErr) throw upErr;
@@ -210,9 +218,10 @@ const UploadModal: React.FC<{ onClose: () => void; onDone: () => void }> = ({ on
   return (
     <Modal title="Adicionar material" onClose={onClose}>
       <label className="block mb-3">
-        <span className="text-xs text-[var(--color-v4-text-muted)]">Arquivo (HTML, PDF ou Markdown)</span>
-        <input type="file" accept=".html,.htm,.pdf,.md,.markdown,.txt" onChange={(e) => pick(e.target.files?.[0] || null)}
+        <span className="text-xs text-[var(--color-v4-text-muted)]">Arquivo (qualquer tipo — HTML, PDF, MD, DOCX, XLSX, imagens…)</span>
+        <input type="file" onChange={(e) => pick(e.target.files?.[0] || null)}
           className="mt-1 block w-full text-sm text-white file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-[var(--color-v4-red)] file:text-white" />
+        {file && <span className="mt-1 block text-[11px] text-[var(--color-v4-text-muted)]">{file.name} · {fmtSize(file.size)}{TEXT_EXTS.concat(["html","htm","pdf"]).includes(extFromName(file.name)) ? " · conteúdo será indexado p/ busca" : " · busca por título/descrição"}</span>}
       </label>
       <Field label="Título"><input value={titulo} onChange={(e) => setTitulo(e.target.value)} className={inputCls} /></Field>
       <Field label="Descrição"><textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={3} className={inputCls} /></Field>
@@ -265,9 +274,21 @@ const ViewerModal: React.FC<{ material: Material; onClose: () => void }> = ({ ma
         </div>
       </div>
       <div className="flex-1 overflow-hidden">
-        {material.tipo === "md"
-          ? <div className="h-full overflow-y-auto p-6 text-[13px] text-white leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMd(material.conteudo_texto || "") }} />
-          : <iframe src={material.file_url} title={material.titulo} className={`w-full h-full border-0 ${material.tipo === "html" ? "bg-white" : ""}`} />}
+        {(() => {
+          const cat = catMeta(material.tipo).cat;
+          if (cat === "md") return <div className="h-full overflow-y-auto p-6 text-[13px] text-white leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMd(material.conteudo_texto || "") }} />;
+          if (cat === "image") return <div className="h-full overflow-auto flex items-center justify-center bg-black/40 p-4"><img src={material.file_url} alt={material.titulo} className="max-w-full max-h-full object-contain" /></div>;
+          if (cat === "html" || cat === "pdf" || cat === "text") return <iframe src={material.file_url} title={material.titulo} className={`w-full h-full border-0 ${cat === "html" ? "bg-white" : ""}`} />;
+          // office/zip/desconhecido: navegador não pré-visualiza -> baixar/abrir
+          const M = catMeta(material.tipo);
+          return (
+            <div className="h-full flex flex-col items-center justify-center gap-3 text-center p-6">
+              <span className={`w-16 h-16 rounded-2xl flex items-center justify-center ${M.cls}`}><M.Icon size={30} /></span>
+              <p className="text-sm text-[var(--color-v4-text-muted)] max-w-xs">Este tipo de arquivo (.{material.tipo}) não tem pré-visualização no navegador.</p>
+              <a href={material.file_url} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm bg-[var(--color-v4-red)] text-white hover:opacity-90"><Download size={15} /> Baixar / abrir</a>
+            </div>
+          );
+        })()}
       </div>
     </div>
   </div>
