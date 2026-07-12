@@ -19,6 +19,7 @@ import {
   Phone,
   Repeat,
   BookOpen,
+  GraduationCap,
   UserRoundCheck,
   Headphones,
   Activity,
@@ -31,7 +32,7 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico" | "playbook" | "perf_sdr" | "call_quality" | "geral";
+export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico" | "educacao" | "perf_sdr" | "call_quality" | "geral";
 
 export const Layout: React.FC<{
   children: ReactNode;
@@ -51,7 +52,7 @@ export const Layout: React.FC<{
     { id: "reunioes" as const, label: "Reuniões", icon: Calendar },
     { id: "agendas_time" as const, label: "Agendas", icon: CalendarClock },
     { id: "prepcall" as const, label: "Prep Call", icon: Sparkles },
-    { id: "playbook" as const, label: "Playbook", icon: BookOpen },
+    { id: "educacao" as const, label: "Educação", icon: GraduationCap },
     { id: "3c_manual" as const, label: "3C Manual", icon: Phone, badge: "temp", allowedRoles: ['sdr', 'closer', 'gestor'] as TeamRole[] },
     { id: "performance" as const, label: "Performance", icon: BarChart3 },
     { id: "metas" as const, label: "Metas", icon: Target },

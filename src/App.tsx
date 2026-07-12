@@ -17,7 +17,7 @@ import { ContratosView } from "./components/ContratosView";
 import { AuditoriaView } from "./components/AuditoriaView";
 import { PrepCallView } from "./components/PrepCallView";
 import { ThreeCManualView } from "./components/ThreeCManualView";
-import { PlaybookView } from "./components/PlaybookView";
+import { EducacaoView } from "./components/EducacaoView";
 import { RoletaHistoricoView } from "./components/RoletaHistoricoView";
 import { PerfSdrView } from "./components/PerfSdrView";
 import { CallQualityView } from "./components/CallQualityView";
@@ -258,7 +258,7 @@ const MainApp: React.FC = () => {
       case "auditoria": return <AuditoriaView />;
       case "prepcall": return <PrepCallView />;
       case "3c_manual": return <ThreeCManualView />;
-      case "playbook": return <PlaybookView />;
+      case "educacao": return <EducacaoView />;
       case "roleta_historico": return <RoletaHistoricoView />;
       case "perf_sdr": return <PerfSdrView />;
       case "call_quality": return <CallQualityView />;
