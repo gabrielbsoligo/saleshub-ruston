@@ -8,7 +8,8 @@
 # Idempotente (a RPC deduplica). Retomavel (a fila pula quem ja tem messages_extracted_at).
 #
 # DOIS MODOS (muda so a fila):
-#   --mode backfill     fila = leads com talk (/api/v4/talks) e messages_extracted_at IS NULL
+#   --mode backfill     fila = UNIAO (talks live ∪ events-chat ∪ mensagens) ∩ kommo.leads, pendentes
+#                       (messages_extracted_at IS NULL). A prova de ponto cego (>= qualquer fonte sozinha).
 #   --mode incremental  fila = leads com chat novo desde a ultima extracao (kommo.events)
 #
 # SEGURANCA DE SESSAO DEGRADADA: todo lead da fila TEM conversa (veio de talks/eventos de
@@ -207,12 +208,14 @@ def build_queue(page, args):
     if args.mode == "backfill":
         origin_map = fetch_talk_leads(page)
         if explicit:
-            cand = explicit
+            # leads explicitos: so os pendentes DESSES ids (nao expande p/ a uniao)
+            pend = rpc("kommo_mensagens_pending", {"p_lead_ids": explicit}) or []
         else:
-            cand = sorted(origin_map.keys())
-        pend = rpc("kommo_mensagens_pending", {"p_lead_ids": cand}) or []
+            # FONTE DA FILA = UNIAO (talks live ∪ events-chat ∪ mensagens) ∩ kommo.leads.
+            # talks ao vivo entram como extra; a RPC une com events/mensagens e exclui orfaos.
+            talk_ids = sorted(origin_map.keys())
+            pend = rpc("kommo_mensagens_backfill_pending", {"p_extra_lead_ids": talk_ids}) or []
         queue = [row["lead_id"] for row in pend]
-        # leads explicitos que nao vieram de talks ainda precisam de origin (resolve no lead)
     else:  # incremental
         if explicit:
             queue = sorted(explicit)
