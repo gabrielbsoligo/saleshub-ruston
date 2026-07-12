@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     // Support both direct 4com payload and n8n wrapped payload
     const data = body.body || body
 
-    if (!data.id && !data.caller) {
+    if (!data.id && !data._id && !data.caller) {
       return new Response(JSON.stringify({ error: 'Invalid payload' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
@@ -48,7 +48,11 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const callId = data.id || `${data.caller}-${data.startedAt}`
+    // provider: 'api4com' (default, fluxo atual) ou '3c' (n8n clonado). 3C usa _id como call_id.
+    const provider = String(data.provider || body.provider || 'api4com').toLowerCase() === '3c' ? '3c' : 'api4com'
+    const callId = provider === '3c'
+      ? (data._id || data.id)
+      : (data.id || `${data.caller}-${data.startedAt}`)
     const duration = parseInt(data.duration) || 0
     const hangupCause = data.hangupCause || ''
 
@@ -56,14 +60,21 @@ Deno.serve(async (req) => {
     // Must have duration > 0 (actual conversation happened) AND not a failed cause
     const atendida = duration > 0 && !NOT_ANSWERED_CAUSES.includes(hangupCause)
 
-    // Match caller (ramal) to team member
+    // Resolve SDR: 3C -> pelo agente (agent.id/agent.name via agente_3c_map); API4COM -> pelo ramal (caller).
     let memberId: string | null = null
-    if (data.caller) {
-      const { data: member } = await supabase
-        .from('team_members')
-        .select('id')
-        .eq('ramal_4com', data.caller)
-        .single()
+    if (provider === '3c') {
+      const agentId = data.agent?.id ?? data.agent_id ?? null
+      const agentName = data.agent?.name ?? data.agent_name ?? null
+      if (agentId) {
+        const { data: m } = await supabase.from('agente_3c_map').select('member_id').eq('agent_id', String(agentId)).maybeSingle()
+        if (m?.member_id) memberId = m.member_id
+      }
+      if (!memberId && agentName) {
+        const { data: tm } = await supabase.from('team_members').select('id').ilike('name', String(agentName)).maybeSingle()
+        if (tm) memberId = tm.id
+      }
+    } else if (data.caller) {
+      const { data: member } = await supabase.from('team_members').select('id').eq('ramal_4com', data.caller).maybeSingle()
       if (member) memberId = member.id
     }
 
@@ -87,6 +98,7 @@ Deno.serve(async (req) => {
       event_type: data.eventType || 'channel-hangup',
       member_id: memberId,
       atendida,
+      provider,
     }, { onConflict: 'call_id' })
 
     if (error) {

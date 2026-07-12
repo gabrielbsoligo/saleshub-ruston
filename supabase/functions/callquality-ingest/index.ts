@@ -20,10 +20,12 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { return json({ ok: false, error: 'JSON inválido no corpo' }, 400) }
   const p = body?.body || body   // n8n às vezes embrulha em .body
 
-  // call_id: API4COM manda `id`; aceitamos também call_id explícito
-  const call_id = p?.call_id ?? p?.id ?? null
+  // provider: 'api4com' (default) ou '3c'. 3C manda call_id em `_id`.
+  const provider = String(p?.provider || body?.provider || 'api4com').toLowerCase() === '3c' ? '3c' : 'api4com'
+  // call_id: API4COM manda `id`; 3C manda `_id`; aceitamos também call_id explícito
+  const call_id = p?.call_id ?? p?.id ?? p?._id ?? null
   if (!call_id) {
-    return json({ ok: false, error: 'call_id ausente — envie o payload da API4COM (campo "id" ou "call_id") junto com transcricao e analise' }, 400)
+    return json({ ok: false, error: 'call_id ausente — envie o payload (id/_id/call_id) junto com transcricao e analise' }, 400)
   }
 
   // analise: objeto OU string JSON
@@ -47,7 +49,20 @@ Deno.serve(async (req) => {
   let sdr_kommo_user_id: number | null = p?.sdr_kommo_user_id ?? null
   const { data: lg } = await supabase.from('ligacoes_4com').select('member_id').eq('call_id', call_id).maybeSingle()
   if (lg?.member_id) sdr_id = lg.member_id
-  if (!sdr_id && p?.caller) {
+  // 3C: resolve pelo agente (agent.id/agent.name via agente_3c_map), NÃO pelo ramal.
+  if (!sdr_id && provider === '3c') {
+    const agentId = p?.agent?.id ?? p?.agent_id ?? null
+    const agentName = p?.agent?.name ?? p?.agent_name ?? null
+    if (agentId) {
+      const { data: am } = await supabase.from('agente_3c_map').select('member_id').eq('agent_id', String(agentId)).maybeSingle()
+      if (am?.member_id) sdr_id = am.member_id
+    }
+    if (!sdr_id && agentName) {
+      const { data: tm } = await supabase.from('team_members').select('id').ilike('name', String(agentName)).maybeSingle()
+      if (tm) sdr_id = tm.id
+    }
+  }
+  if (!sdr_id && provider !== '3c' && p?.caller) {
     const { data: m } = await supabase.from('team_members').select('id, kommo_user_id').eq('ramal_4com', String(p.caller)).maybeSingle()
     if (m) { sdr_id = m.id; sdr_kommo_user_id = sdr_kommo_user_id ?? m.kommo_user_id }
   }
@@ -65,10 +80,11 @@ Deno.serve(async (req) => {
     nota_final: nota_final != null ? Number(nota_final) : null,
     pontos_positivos, pontos_negativos, transcricao,
     analise: analise && typeof analise === 'object' ? analise : null,  // objeto inteiro (critérios + coaching)
+    provider,
     analisado_em: new Date().toISOString(),
     raw: body,
   }, { onConflict: 'call_id' }).select('id').single()
 
   if (error) return json({ ok: false, error: error.message }, 500)
-  return json({ ok: true, id: data.id, call_id, sdr_id, nota_final })
+  return json({ ok: true, id: data.id, call_id, provider, sdr_id, nota_final })
 })

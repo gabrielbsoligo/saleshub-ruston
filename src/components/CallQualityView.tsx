@@ -20,7 +20,7 @@ interface Row {
   pontos_positivos: string[]; pontos_negativos: string[]; transcricao: string | null;
   record_url: string | null; duration: number; direction: string; started_at: string;
   kommo_lead_id: number | null; lead_nome: string | null; analise: Record<string, unknown> | null;
-  analisado_em: string | null; tem_analise: boolean; total: number;
+  provider: string | null; analisado_em: string | null; tem_analise: boolean; total: number;
 }
 
 // cor da nota de CRITÉRIO (escala 0–5, diferente da nota final 0–10)
@@ -66,6 +66,7 @@ export const CallQualityView: React.FC = () => {
   const [cTo, setCTo] = useState(iso(new Date()));
   const [selSdrs, setSelSdrs] = useState<string[]>([]);
   const [filtro, setFiltro] = useState<Filtro>("todas");
+  const [provider, setProvider] = useState<string>("");   // "" = todos
   const [order, setOrder] = useState<OrderCol>("data");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(0);
@@ -88,15 +89,15 @@ export const CallQualityView: React.FC = () => {
     setLoading(true);
     const p_sdrs = selSdrs.length ? selSdrs : null;   // null = TODOS os callers
     const [list, cnt, anl] = await Promise.all([
-      supabase.rpc("get_call_quality", { p_from: from, p_to: to, p_sdrs, p_filtro: filtro, p_order: order, p_dir: dir, p_limit: PAGE, p_offset: page * PAGE }),
+      supabase.rpc("get_call_quality", { p_from: from, p_to: to, p_sdrs, p_filtro: filtro, p_order: order, p_dir: dir, p_limit: PAGE, p_offset: page * PAGE, p_provider: provider || null }),
       supabase.rpc("get_call_quality_counts", { p_from: from, p_to: to, p_sdrs }),
-      supabase.rpc("get_call_quality", { p_from: from, p_to: to, p_sdrs, p_filtro: "avaliadas", p_order: "data", p_dir: "desc", p_limit: 2000, p_offset: 0 }),
+      supabase.rpc("get_call_quality", { p_from: from, p_to: to, p_sdrs, p_filtro: "avaliadas", p_order: "data", p_dir: "desc", p_limit: 2000, p_offset: 0, p_provider: provider || null }),
     ]);
     setRows((list.data || []) as Row[]);
     setAnalyzed((anl.data || []) as Row[]);
     if (cnt.data?.[0]) setCounts(cnt.data[0]);
     setLoading(false);
-  }, [from, to, selSdrs, filtro, order, dir, page]);
+  }, [from, to, selSdrs, filtro, order, dir, page, provider]);
   useEffect(() => { if (callers.length) load(); }, [load, callers.length]);
 
   // reset página quando muda filtro/período/sdr/ordem
@@ -154,6 +155,12 @@ export const CallQualityView: React.FC = () => {
           </span>
         )}
         <MultiSelectFilter options={callers.map(s => ({ value: s.id, label: s.name }))} selected={selSdrs} onChange={setSelSdrs} placeholder="Todos (SDR/closer/gestor)" />
+        <select value={provider} onChange={e => setProvider(e.target.value)} title="Provedor da ligação"
+          className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-lg px-2 py-1.5 text-xs text-white">
+          <option value="">Todos provedores</option>
+          <option value="api4com">API4COM</option>
+          <option value="3c">3C</option>
+        </select>
         <div className="flex bg-[var(--color-v4-surface)] rounded-lg p-0.5">
           {([["todas", "Todas"], ["avaliadas", "Só avaliadas"], ["sem", "Sem análise"]] as [Filtro, string][]).map(([f, l]) => (
             <button key={f} onClick={() => setFiltro(f)}

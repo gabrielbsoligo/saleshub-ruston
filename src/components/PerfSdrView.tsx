@@ -38,6 +38,7 @@ export const PerfSdrView: React.FC = () => {
   const [cTo, setCTo] = useState(iso(new Date()));
   const [selSdrs, setSelSdrs] = useState<string[]>([]);   // [] = todos
   const [selCanais, setSelCanais] = useState<string[]>([]);
+  const [provider, setProvider] = useState<string>("");   // "" = todos provedores
 
   const [from, to] = useMemo(() => {
     const today = new Date();
@@ -59,7 +60,7 @@ export const PerfSdrView: React.FC = () => {
     const p_sdrs = selSdrs.length ? selSdrs : sdrIds;      // nunca null -> só SDRs
     const p_canais = selCanais.length ? selCanais : null;
     const [a, b, c, d, e] = await Promise.all([
-      supabase.rpc("get_perf_ligacoes", { p_from: from, p_to: to, p_sdrs }),
+      supabase.rpc("get_perf_ligacoes", { p_from: from, p_to: to, p_sdrs, p_provider: provider || null }),
       supabase.rpc("get_perf_tarefas", { p_from: from, p_to: to, p_sdrs }),
       supabase.rpc("get_perf_conexoes", { p_from: from, p_to: to, p_sdrs }),
       supabase.rpc("get_perf_funil", { p_from: from, p_to: to, p_sdrs, p_canais }),
@@ -67,7 +68,7 @@ export const PerfSdrView: React.FC = () => {
     ]);
     setLig(a.data || []); setTar(b.data || []); setCon(c.data || []); setFun(d.data || []); setEvo(e.data || []);
     setLoading(false);
-  }, [from, to, selSdrs, selCanais, sdrIds]);
+  }, [from, to, selSdrs, selCanais, sdrIds, provider]);
 
   useEffect(() => { if (sdrIds.length) load(); }, [load, sdrIds.length]);
 
@@ -91,11 +92,11 @@ export const PerfSdrView: React.FC = () => {
     const p_sdrs = selSdrs.length ? selSdrs : sdrIds;
     const today = iso(new Date());
     const [a, b] = await Promise.all([
-      supabase.rpc("get_perf_ligacoes", { p_from: mFrom, p_to: today, p_sdrs }),
+      supabase.rpc("get_perf_ligacoes", { p_from: mFrom, p_to: today, p_sdrs, p_provider: provider || null }),
       supabase.rpc("get_perf_funil", { p_from: mFrom, p_to: today, p_sdrs, p_canais: null }),
     ]);
     setMetaLig(a.data || []); setMetaFun(b.data || []);
-  }, [mFrom, selSdrs, sdrIds]);
+  }, [mFrom, selSdrs, sdrIds, provider]);
   useEffect(() => { if (sdrIds.length) loadMeta(); }, [loadMeta, sdrIds.length]);
 
   // ---- PERFORMANCE DO DIA (seletor de data próprio) ----
@@ -105,11 +106,11 @@ export const PerfSdrView: React.FC = () => {
   const loadDia = useCallback(async () => {
     const p_sdrs = selSdrs.length ? selSdrs : sdrIds;
     const [a, b] = await Promise.all([
-      supabase.rpc("get_perf_ligacoes", { p_from: diaSel, p_to: diaSel, p_sdrs }),
+      supabase.rpc("get_perf_ligacoes", { p_from: diaSel, p_to: diaSel, p_sdrs, p_provider: provider || null }),
       supabase.rpc("get_perf_funil", { p_from: diaSel, p_to: diaSel, p_sdrs, p_canais: null }),
     ]);
     setDiaLig(a.data || []); setDiaFun(b.data || []);
-  }, [diaSel, selSdrs, sdrIds]);
+  }, [diaSel, selSdrs, sdrIds, provider]);
   useEffect(() => { if (sdrIds.length) loadDia(); }, [loadDia, sdrIds.length]);
 
   // atingimento por indicador na janela da meta
@@ -219,6 +220,12 @@ export const PerfSdrView: React.FC = () => {
         )}
         <MultiSelectFilter options={sdrOpts} selected={selSdrs} onChange={setSelSdrs} placeholder="Todos os SDRs" />
         <MultiSelectFilter options={canalOpts} selected={selCanais} onChange={setSelCanais} placeholder="Todos os canais" />
+        <select value={provider} onChange={e => setProvider(e.target.value)} title="Provedor da ligação"
+          className="bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded-lg px-2 py-1.5 text-xs text-white">
+          <option value="">Todos provedores</option>
+          <option value="api4com">API4COM</option>
+          <option value="3c">3C</option>
+        </select>
         {loading && <span className="text-xs text-[var(--color-v4-text-muted)]">carregando…</span>}
       </div>
 
