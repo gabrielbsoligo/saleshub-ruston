@@ -19,7 +19,41 @@ interface Row {
   call_id: string; sdr_id: string | null; sdr_name: string | null; nota_final: number | null;
   pontos_positivos: string[]; pontos_negativos: string[]; transcricao: string | null;
   record_url: string | null; duration: number; direction: string; started_at: string;
-  kommo_lead_id: number | null; analisado_em: string | null; tem_analise: boolean; total: number;
+  kommo_lead_id: number | null; lead_nome: string | null; analise: Record<string, unknown> | null;
+  analisado_em: string | null; tem_analise: boolean; total: number;
+}
+
+// cor da nota de CRITÉRIO (escala 0–5, diferente da nota final 0–10)
+const critColor = (n: number | null) => n == null ? "text-[var(--color-v4-text-muted)]" : n >= 4 ? "text-emerald-400" : n >= 2.5 ? "text-amber-400" : "text-red-400";
+const fmtCrit = (k: string) => k.replace(/[_]+/g, " ").replace(/\s*&\s*/g, " & ").trim();
+// resiliente ao formato real do n8n: critérios podem vir SOLTOS no root OU aninhados
+// numa chave tipo "ANÁLISE_DETALHADA_POR_CRITÉRIO"; cada critério = { nota, justificativa }.
+function extractCriterios(a: any): { nome: string; nota: number | null; justificativa: string }[] {
+  if (!a || typeof a !== "object") return [];
+  const out: { nome: string; nota: number | null; justificativa: string }[] = [];
+  const push = (k: string, v: any) => {
+    if (v && typeof v === "object" && ("nota" in v || "justificativa" in v))
+      out.push({ nome: k, nota: v.nota != null ? Number(v.nota) : null, justificativa: String(v.justificativa ?? "") });
+  };
+  for (const [k, v] of Object.entries(a)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && ("nota" in (v as any) || "justificativa" in (v as any))) push(k, v);
+    else if (v && typeof v === "object" && !Array.isArray(v) && /detalhad|crit[eé]rio/i.test(k))
+      for (const [k2, v2] of Object.entries(v as any)) push(k2, v2);
+  }
+  return out;
+}
+function extractCoaching(a: any): string {
+  if (!a || typeof a !== "object") return "";
+  for (const [k, v] of Object.entries(a)) if (/coaching|feedback/i.test(k) && typeof v === "string") return v;
+  return "";
+}
+// negativos: usa a coluna; se vazia (linha antiga), deriva do analise (qualquer chave NEGATIV)
+function negativos(r: Row): string[] {
+  if (r.pontos_negativos?.length) return r.pontos_negativos;
+  const a = r.analise as any;
+  if (a && typeof a === "object")
+    for (const [k, v] of Object.entries(a)) if (/negativ/i.test(k) && Array.isArray(v)) return v as string[];
+  return [];
 }
 
 export const CallQualityView: React.FC = () => {
@@ -182,7 +216,7 @@ export const CallQualityView: React.FC = () => {
                       : <span className="text-[10px] text-amber-400/70 border border-dashed border-amber-400/40 rounded px-1.5 py-0.5">sem análise</span>}
                   </td>
                   <td className="px-2 py-1.5">{r.sdr_name || "—"}</td>
-                  <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)]">{r.kommo_lead_id ?? "—"}</td>
+                  <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)] truncate max-w-[160px]">{r.lead_nome || (r.kommo_lead_id ?? "—")}</td>
                   <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)]">{new Date(r.started_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
                   <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{fmtDur(r.duration)}</td>
                   <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)] truncate max-w-[220px]">{r.tem_analise ? (r.pontos_negativos?.[0] || r.pontos_positivos?.[0] || "") : ""}</td>
@@ -234,9 +268,37 @@ export const CallQualityView: React.FC = () => {
               </div>
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                 <div className="text-[11px] font-semibold text-amber-400 mb-1 flex items-center gap-1"><AlertTriangle size={12} /> Pontos negativos / oportunidades</div>
-                <ul className="text-[12px] text-white space-y-1 list-disc pl-4">{(drill.pontos_negativos || []).map((p, i) => <li key={i}>{p}</li>)}</ul>
+                <ul className="text-[12px] text-white space-y-1 list-disc pl-4">{negativos(drill).map((p, i) => <li key={i}>{p}</li>)}</ul>
               </div>
             </div>
+            {(() => {
+              const crits = extractCriterios(drill.analise);
+              return crits.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-[11px] font-semibold text-white mb-1">Análise detalhada por critério</div>
+                  <div className="space-y-1.5">
+                    {crits.map((c, i) => (
+                      <div key={i} className="rounded-lg border border-[var(--color-v4-border)] bg-[var(--color-v4-surface)] p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[12px] font-medium text-white">{fmtCrit(c.nome)}</span>
+                          <span className={`text-[12px] font-bold ${critColor(c.nota)}`}>{c.nota ?? "—"}</span>
+                        </div>
+                        {c.justificativa && <div className="text-[11px] text-[var(--color-v4-text-muted)] mt-0.5">{c.justificativa}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            {(() => {
+              const fb = extractCoaching(drill.analise);
+              return fb && (
+                <div className="mb-3 rounded-lg border border-[var(--color-v4-red)]/30 bg-[var(--color-v4-red)]/5 p-3">
+                  <div className="text-[11px] font-semibold text-[var(--color-v4-red)] mb-1">Feedback de coaching</div>
+                  <div className="text-[12px] text-white whitespace-pre-wrap">{fb}</div>
+                </div>
+              );
+            })()}
             <div className="text-[11px] font-semibold text-white mb-1">Transcrição</div>
             <div className="text-[12px] text-[var(--color-v4-text-muted)] whitespace-pre-wrap max-h-64 overflow-y-auto bg-[var(--color-v4-surface)] rounded-lg p-3">{drill.transcricao || "—"}</div>
           </div>

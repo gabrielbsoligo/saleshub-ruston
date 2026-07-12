@@ -31,7 +31,13 @@ Deno.serve(async (req) => {
   if (typeof analise === 'string') { try { analise = JSON.parse(analise) } catch { analise = {} } }
   const nota_final = analise?.NOTA_FINAL ?? analise?.nota_final ?? null
   const pontos_positivos = analise?.PONTOS_POSITIVOS ?? analise?.pontos_positivos ?? []
-  const pontos_negativos = analise?.PONTOS_NEGATIVOS_OU_OPORTUNIDADES ?? analise?.pontos_negativos ?? []
+  // resiliente ao nome exato: _OU_OPORTUNIDADES | _OPORTUNIDADES | PONTOS_NEGATIVOS | qualquer chave NEGATIV
+  const pontos_negativos = analise?.PONTOS_NEGATIVOS_OU_OPORTUNIDADES
+    ?? analise?.PONTOS_NEGATIVOS_OPORTUNIDADES ?? analise?.PONTOS_NEGATIVOS
+    ?? analise?.pontos_negativos
+    ?? (analise && typeof analise === 'object'
+          ? (Object.entries(analise).find(([k, v]) => /negativ/i.test(k) && Array.isArray(v))?.[1] ?? [])
+          : [])
   const transcricao = p?.transcricao ?? null
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
@@ -58,6 +64,7 @@ Deno.serve(async (req) => {
     sdr_kommo_user_id, sdr_id,
     nota_final: nota_final != null ? Number(nota_final) : null,
     pontos_positivos, pontos_negativos, transcricao,
+    analise: analise && typeof analise === 'object' ? analise : null,  // objeto inteiro (critérios + coaching)
     analisado_em: new Date().toISOString(),
     raw: body,
   }, { onConflict: 'call_id' }).select('id').single()
