@@ -14,8 +14,11 @@ name: Kommo Msg Worker
 # secret KOMMO_STORAGE_STATE_B64 e re-dispara — retoma sozinho pelos leads nao-marcados.
 
 on:
-  schedule:
-    - cron: "7 * * * *"          # :07 de cada hora (de hora em hora) — incremental
+  # INCREMENTAL AGENDADO DESLIGADO durante o backfill dos 1.500: os dois brigam pela
+  # mesma sessao/IP e o horario mandaria email de "sessao caiu" toda hora ate relogar.
+  # LIGAR (descomentar) só depois do backfill fechar e a sessão estabilizar.
+  # schedule:
+  #   - cron: "7 * * * *"        # :07 de cada hora (de hora em hora) — incremental
   workflow_dispatch:
     inputs:
       mode:
