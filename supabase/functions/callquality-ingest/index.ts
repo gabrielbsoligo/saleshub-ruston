@@ -1,7 +1,11 @@
 // callquality-ingest — recebe do n8n a análise de qualidade de ligação e grava em call_quality.
 // Payload = { ...payload_4com (com id/call_id, caller...), transcricao: string, analise: {...} | "json string" }
 //   analise = { NOTA_FINAL:int, PONTOS_POSITIVOS:[...], PONTOS_NEGATIVOS_OU_OPORTUNIDADES:[...] }
-// Amarra por call_id (= payload.id da API4COM). UPSERT idempotente por call_id. CORS liberado.
+// provider: 'api4com' (default) | '3c'. 3C manda call_id em `_id`, SDR via agent.id/agent.name,
+//   lead via kommo_lead_id explícito. Como o 3C NÃO tem webhook de ligação crua, quando provider='3c'
+//   também gravamos a linha em ligacoes_4com (senão a chamada não aparece nas telas/perf).
+//   API4COM intacto: ligacoes_4com dele continua vindo do webhook-4com; aqui só gravamos call_quality.
+// Amarra por call_id. UPSERT idempotente por call_id. CORS liberado.
 // Deploy: supabase functions deploy callquality-ingest --no-verify-jwt
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -73,6 +77,40 @@ Deno.serve(async (req) => {
 
   const kommo_lead_id = p?.kommo_lead_id ?? p?.lead_id ?? null
 
+  // parse de data resiliente: aceita ISO, epoch (s/ms) ou "YYYY-MM-DD HH:MM:SS"
+  const parseTs = (v: any): string | null => {
+    if (v == null || v === '') return null
+    if (typeof v === 'number') { const d = new Date(v > 1e12 ? v : v * 1000); return isNaN(+d) ? null : d.toISOString() }
+    const s = String(v).trim()
+    if (/^\d+$/.test(s)) { const n = Number(s); const d = new Date(n > 1e12 ? n : n * 1000); return isNaN(+d) ? null : d.toISOString() }
+    const d = new Date(s.includes('T') ? s : s.replace(' ', 'T'))
+    return isNaN(+d) ? null : d.toISOString()
+  }
+
+  // 3C: NÃO existe webhook de "ligação crua" (só chega a chamada já analisada). Gravamos a
+  // linha em ligacoes_4com aqui, senão a chamada some das telas/perf (que leem de ligacoes_4com).
+  // API4COM segue intacto: quem escreve ligacoes_4com dele é o webhook-4com, aqui não mexemos.
+  let ligacoes_error: string | null = null
+  if (provider === '3c') {
+    const duration = p?.duration ?? p?.speaking_time ?? p?.speakingTime ?? null
+    const record_url = p?.record_url ?? p?.recording_url ?? p?.recordUrl ?? p?.recording ?? p?.mp3 ?? null
+    const started_at = parseTs(p?.startedAt ?? p?.started_at ?? p?.call_date ?? p?.callDate ?? p?.date)
+    const { error: le } = await supabase.from('ligacoes_4com').upsert({
+      call_id: String(call_id),
+      provider: '3c',
+      direction: p?.direction ?? 'outbound',
+      caller: p?.caller != null ? String(p.caller) : null,
+      called: p?.called != null ? String(p.called) : null,
+      duration: duration != null ? Number(duration) : null,
+      started_at,
+      member_id: sdr_id,
+      atendida: true,                                   // 3C só manda ligação atendida/analisada
+      record_url,
+      event_type: 'call-history-was-created',
+    }, { onConflict: 'call_id' })
+    if (le) ligacoes_error = le.message
+  }
+
   const { data, error } = await supabase.from('call_quality').upsert({
     call_id: String(call_id),
     kommo_lead_id: kommo_lead_id ? Number(kommo_lead_id) : null,
@@ -86,5 +124,5 @@ Deno.serve(async (req) => {
   }, { onConflict: 'call_id' }).select('id').single()
 
   if (error) return json({ ok: false, error: error.message }, 500)
-  return json({ ok: true, id: data.id, call_id, provider, sdr_id, nota_final })
+  return json({ ok: true, id: data.id, call_id, provider, sdr_id, nota_final, ligacoes_error })
 })

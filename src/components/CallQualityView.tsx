@@ -222,7 +222,12 @@ export const CallQualityView: React.FC = () => {
                       ? <span className={`inline-flex items-center justify-center w-8 h-6 rounded font-bold text-xs ${notaBg(r.nota_final)} ${notaColor(r.nota_final)}`}>{r.nota_final ?? "?"}</span>
                       : <span className="text-[10px] text-amber-400/70 border border-dashed border-amber-400/40 rounded px-1.5 py-0.5">sem análise</span>}
                   </td>
-                  <td className="px-2 py-1.5">{r.sdr_name || "—"}</td>
+                  <td className="px-2 py-1.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      {r.sdr_name || "—"}
+                      <span className={`text-[9px] font-semibold uppercase tracking-wide rounded px-1 py-px border ${r.provider === "3c" ? "text-sky-300 border-sky-400/40 bg-sky-400/10" : "text-emerald-300 border-emerald-400/40 bg-emerald-400/10"}`} title={`Origem: ${r.provider === "3c" ? "3C Plus" : "API4COM"}`}>{r.provider === "3c" ? "3C" : "4COM"}</span>
+                    </span>
+                  </td>
                   <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)] truncate max-w-[160px]">{r.lead_nome || (r.kommo_lead_id ?? "—")}</td>
                   <td className="px-2 py-1.5 text-[var(--color-v4-text-muted)]">{new Date(r.started_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
                   <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{fmtDur(r.duration)}</td>
