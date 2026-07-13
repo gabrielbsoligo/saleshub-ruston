@@ -14,7 +14,9 @@ import toast from "react-hot-toast";
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
   const { addDeal, updateDeal, deleteDeal, members, leads, fetchDeals, fetchLeads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
-  const sdrs = members.filter(m => (m.role === 'sdr' || m.role === 'gestor') && m.active);
+  // SDR (origem) = quem gerou a reuniao. Qualquer usuario ativo pode ter gerado (inclusive closers),
+  // entao lista TODOS os membros ativos, ordenados por nome.
+  const sdrs = [...members].filter(m => m.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
   const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'ganho'>('geral');
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
