@@ -61,7 +61,7 @@ export const Layout: React.FC<{
     { id: "blackbox" as const, label: "BlackBox", icon: Box },
     { id: "leadbroker" as const, label: "LeadBroker", icon: Box },
     { id: "auditoria" as const, label: "Auditoria", icon: ClipboardCheck, allowedRoles: ['gestor'] as TeamRole[] },
-    { id: "roleta_historico" as const, label: "Roleta SDR", icon: Repeat, allowedRoles: ['gestor'] as TeamRole[] },
+    { id: "roleta_historico" as const, label: "Roleta", icon: Repeat, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "perf_sdr" as const, label: "Perf. SDR", icon: UserRoundCheck, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "call_quality" as const, label: "Qualidade Ligação", icon: Headphones, allowedRoles: ['gestor'] as TeamRole[] },
     { id: "equipe" as const, label: "Equipe", icon: Users },
