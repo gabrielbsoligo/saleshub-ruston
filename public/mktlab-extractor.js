@@ -84,6 +84,7 @@
   else if (ca.includes('out')) data.canal = 'outbound';
   else if (ca.includes('recom')) data.canal = 'recomendacao';
   else if (ca.includes('indic')) data.canal = 'indicacao';
+  else if (ca.includes('reativ')) data.canal = 'reativacao';
   else if (ca.includes('recov')) data.canal = 'recovery';
   else data.canal = 'leadbroker';
 

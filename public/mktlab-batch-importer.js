@@ -210,7 +210,7 @@
   // RFC: gabrielbsoligo/saleshub-ruston#5
   // ============================================================
 
-  var VALID_CANAIS = ['blackbox', 'leadbroker', 'outbound', 'indicacao', 'recomendacao', 'recovery'];
+  var VALID_CANAIS = ['blackbox', 'leadbroker', 'outbound', 'indicacao', 'recomendacao', 'recovery', 'reativacao'];
 
   function mapCanalFromText(raw) {
     var s = String(raw || '').toLowerCase();
@@ -220,6 +220,7 @@
     if (s.indexOf('out') >= 0) return 'outbound';
     if (s.indexOf('recom') >= 0) return 'recomendacao';
     if (s.indexOf('indic') >= 0) return 'indicacao';
+    if (s.indexOf('reativ') >= 0) return 'reativacao';
     if (s.indexOf('recov') >= 0) return 'recovery';
     return null;
   }
@@ -487,6 +488,7 @@
               <option value="recomendacao">Recomendacao</option>\
               <option value="indicacao">Indicacao</option>\
               <option value="recovery">Recovery</option>\
+              <option value="reativacao">Reativacao</option>\
             </select>\
           </div>\
           <div class="sh-section">\
