@@ -1,8 +1,7 @@
 -- migration_094_canal_reativacao.sql
--- Adiciona o canal 'reativacao' (Reativação), com os MESMOS comportamentos do 'recovery'
--- (mesmo funil/status no Kommo e MESMA tag de Origem enum 863727). A separação existe pro
--- pitch/relatórios no SalesHub; no Kommo a Reativação aparece igual ao Recovery.
--- Se um dia quiserem uma Origem própria no Kommo, trocar só o enum no CASE (origem_enum_id).
+-- Adiciona o canal 'reativacao' (Reativação), com os mesmos comportamentos do 'recovery'
+-- (mesmo funil/status no Kommo: 14062116/108545252), MAS com Origem PRÓPRIA no Kommo:
+-- enum 873245 ("Reativação"), separada do Recovery (863727). Separação vale no SalesHub E no Kommo.
 -- ADITIVO/REVERSÍVEL. fn_categoria_de_origem NÃO muda (reativacao cai no ELSE -> 'outbound',
 -- exatamente como recovery). Reverter: recolocar o CHECK sem 'reativacao' e o CASE sem a linha.
 
@@ -61,7 +60,7 @@ BEGIN
         WHEN 'recomendacao' THEN 823304
         WHEN 'indicacao' THEN 823330
         WHEN 'recovery' THEN 863727
-        WHEN 'reativacao' THEN 863727   -- mesma Origem do Recovery no Kommo (trocar aqui se criarem enum próprio)
+        WHEN 'reativacao' THEN 873245   -- opção "Reativação" própria no campo Origem do Kommo
         ELSE NULL END;
 
     IF p.sdr_id IS NOT NULL THEN
