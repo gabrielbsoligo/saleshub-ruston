@@ -6,7 +6,7 @@ import { colorForMember } from "./HourlyCallsChart";
 import { Activity, X, ExternalLink, Phone, Link2, CalendarCheck, Video, FileText, FileSignature, Trophy } from "lucide-react";
 
 const KOMMO = "https://financeirorustonengenhariacombr.kommo.com";
-const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "recomendacao", "indicacao", "sem origem"];
+const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "reativacao", "recomendacao", "indicacao", "sem origem"];
 type Preset = "hoje" | "7d" | "30d" | "custom";
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 

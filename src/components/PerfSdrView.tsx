@@ -21,7 +21,7 @@ const bizDaysElapsedWeek = (ref: Date) => {
   return wd === 0 ? 5 : Math.min(wd, 5);   // dom conta semana cheia (5); seg=1..sex=5
 };
 
-const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "recomendacao", "indicacao", "sem origem"];
+const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "reativacao", "recomendacao", "indicacao", "sem origem"];
 type Preset = "hoje" | "7d" | "30d" | "custom";
 
 const fmtDur = (s: number) => s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;

@@ -29,7 +29,8 @@ export type LeadCanal =
   | 'outbound'
   | 'recomendacao'
   | 'indicacao'
-  | 'recovery';
+  | 'recovery'
+  | 'reativacao';
 
 export type LeadFonte = 'GOOGLE' | 'FACEBOOK' | 'ORGANICO' | 'OUTRO';
 
@@ -506,6 +507,7 @@ export const CANAL_LABELS: Record<LeadCanal, string> = {
   recomendacao: 'Recomendação',
   indicacao: 'Indicação',
   recovery: 'Recovery',
+  reativacao: 'Reativação',
 };
 
 export const ROLE_LABELS: Record<TeamRole, string> = {
