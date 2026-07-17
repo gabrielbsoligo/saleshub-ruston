@@ -64,8 +64,17 @@ CREATE OR REPLACE FUNCTION public.get_perf_closer(
       AND COALESCE(r.closer_confirmado_id, r.closer_id) IS NOT NULL
       AND (p_closers IS NULL OR COALESCE(r.closer_confirmado_id, r.closer_id) = ANY(p_closers))
       AND (p_canais  IS NULL OR COALESCE(NULLIF(r.canal,''), l.canal, 'sem origem') = ANY(p_canais))
-      AND (p_call_de  IS NULL OR r.data_reuniao::date >= p_call_de)
-      AND (p_call_ate IS NULL OR r.data_reuniao::date <= p_call_ate)
+      -- janela dos shows: se houver filtro de call explícito usa ele; senão trava no MÊS de
+      -- referência (senão o denominador contaria reuniões do histórico todo e afundaria a conversão).
+      AND (CASE
+             WHEN p_call_de IS NOT NULL OR p_call_ate IS NOT NULL THEN
+               (p_call_de IS NULL OR r.data_reuniao::date >= p_call_de)
+               AND (p_call_ate IS NULL OR r.data_reuniao::date <= p_call_ate)
+             WHEN p_ref_mes IS NOT NULL THEN
+               r.data_reuniao >= date_trunc('month', p_ref_mes)
+               AND r.data_reuniao < date_trunc('month', p_ref_mes) + interval '1 month'
+             ELSE TRUE
+           END)
       AND (p_lead_de  IS NULL OR l.created_at::date >= p_lead_de)
       AND (p_lead_ate IS NULL OR l.created_at::date <= p_lead_ate)
     GROUP BY COALESCE(r.closer_confirmado_id, r.closer_id)
