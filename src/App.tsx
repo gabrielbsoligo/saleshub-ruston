@@ -19,6 +19,7 @@ import { PrepCallView } from "./components/PrepCallView";
 import { ThreeCManualView } from "./components/ThreeCManualView";
 import { EducacaoView } from "./components/EducacaoView";
 import { RoletaView } from "./components/RoletaView";
+import { PerfCloserView } from "./components/PerfCloserView";
 import { PerfSdrView } from "./components/PerfSdrView";
 import { CallQualityView } from "./components/CallQualityView";
 import { GeralView } from "./components/GeralView";
@@ -261,6 +262,7 @@ const MainApp: React.FC = () => {
       case "educacao": return <EducacaoView />;
       case "roleta_historico": return <RoletaView />;
       case "perf_sdr": return <PerfSdrView />;
+      case "perf_closer": return <PerfCloserView />;
       case "call_quality": return <CallQualityView />;
       case "geral": return <GeralView />;
       case "equipe": return <EquipeView />;
