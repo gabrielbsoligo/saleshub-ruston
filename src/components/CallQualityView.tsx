@@ -5,6 +5,7 @@ import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Headphones, ThumbsUp, AlertTriangle, X, Play, ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from "lucide-react";
+import toast from "react-hot-toast";
 
 type Preset = "hoje" | "7d" | "30d" | "custom";
 type Filtro = "todas" | "avaliadas" | "sem";
@@ -76,6 +77,7 @@ export const CallQualityView: React.FC = () => {
   const [counts, setCounts] = useState<{ total: number; avaliadas: number; sem_analise: number; media: number | null }>({ total: 0, avaliadas: 0, sem_analise: 0, media: null });
   const [loading, setLoading] = useState(true);
   const [drill, setDrill] = useState<Row | null>(null);
+  const [vincLead, setVincLead] = useState("");   // P3: vínculo manual ligação↔lead
 
   const [from, to] = useMemo(() => {
     const t = new Date();
@@ -219,7 +221,12 @@ export const CallQualityView: React.FC = () => {
                 <tr key={r.call_id} className="border-t border-[var(--color-v4-border)] text-white hover:bg-[var(--color-v4-surface)]/40">
                   <td className="px-2 py-1.5">
                     {r.tem_analise
-                      ? <span className={`inline-flex items-center justify-center w-8 h-6 rounded font-bold text-xs ${notaBg(r.nota_final)} ${notaColor(r.nota_final)}`}>{r.nota_final ?? "?"}</span>
+                      ? (r.nota_final != null
+                        ? <span className={`inline-flex items-center justify-center w-8 h-6 rounded font-bold text-xs ${notaBg(r.nota_final)} ${notaColor(r.nota_final)}`}>{r.nota_final}</span>
+                        : r.transcricao
+                          // tinha áudio/transcrição e mesmo assim não saiu nota => a análise FALHOU (não esconder atrás de "?")
+                          ? <span className="text-[10px] text-red-400/80 border border-dashed border-red-400/40 rounded px-1.5 py-0.5" title="Tinha transcrição mas a análise não retornou nota — reprocessar no n8n">erro análise</span>
+                          : <span className="text-[10px] text-[var(--color-v4-text-muted)] border border-dashed border-[var(--color-v4-border)] rounded px-1.5 py-0.5" title="Ligação sem gravação (ex.: teste ou não atendida)">sem gravação</span>)
                       : <span className="text-[10px] text-amber-400/70 border border-dashed border-amber-400/40 rounded px-1.5 py-0.5">sem análise</span>}
                   </td>
                   <td className="px-2 py-1.5">
@@ -259,13 +266,39 @@ export const CallQualityView: React.FC = () => {
           <div className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl shadow-2xl p-5">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
-                <span className={`inline-flex items-center justify-center w-12 h-12 rounded-xl text-2xl font-bold ${notaBg(drill.nota_final)} ${notaColor(drill.nota_final)}`}>{drill.nota_final ?? "?"}</span>
+                <span className={`inline-flex items-center justify-center w-12 h-12 rounded-xl font-bold ${drill.nota_final != null ? 'text-2xl' : 'text-[9px] text-center leading-tight'} ${notaBg(drill.nota_final)} ${notaColor(drill.nota_final)}`}>{drill.nota_final ?? (drill.transcricao ? 'erro análise' : 'sem gravação')}</span>
                 <div>
                   <div className="text-white font-semibold">{drill.sdr_name || "—"}</div>
                   <div className="text-[11px] text-[var(--color-v4-text-muted)]">{new Date(drill.started_at).toLocaleString("pt-BR")} · {fmtDur(drill.duration)} · {drill.direction}</div>
                 </div>
               </div>
               <button onClick={() => setDrill(null)} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
+            </div>
+            {/* P3: vínculo com o lead — mostra o vinculado ou permite colar o lead do Kommo (idempotente: substitui) */}
+            <div className="mb-3 flex items-center gap-2 text-[12px]">
+              <span className="text-[11px] text-[var(--color-v4-text-muted)]">Lead:</span>
+              {drill.kommo_lead_id ? (
+                <a href={`https://financeirorustonengenhariacombr.kommo.com/leads/detail/${drill.kommo_lead_id}`} target="_blank" rel="noopener"
+                  className="text-[var(--color-v4-red)] hover:underline">{drill.lead_nome || `#${drill.kommo_lead_id}`}</a>
+              ) : (
+                <span className="text-[var(--color-v4-text-muted)]">sem vínculo</span>
+              )}
+              <input value={vincLead} onChange={e => setVincLead(e.target.value)} placeholder="id ou link do lead no Kommo"
+                className="flex-1 bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] rounded px-2 py-1 text-xs text-white" />
+              <button
+                onClick={async () => {
+                  const kid = Number((vincLead.match(/\d{6,}/) || [])[0]);
+                  if (!kid) { toast.error('Cole o id (ou o link) do lead no Kommo'); return; }
+                  const { data, error } = await supabase.rpc('vincular_ligacao_manual', { p_call_id: drill.call_id, p_kommo_lead_id: kid });
+                  if (error || !(data as any)?.ok) { toast.error(error?.message || 'Ligação não encontrada'); return; }
+                  toast.success('Ligação vinculada!');
+                  setDrill({ ...drill, kommo_lead_id: kid });
+                  setVincLead('');
+                  load();
+                }}
+                className="px-2 py-1 rounded bg-[var(--color-v4-red)] text-white text-xs font-medium hover:opacity-90">
+                {drill.kommo_lead_id ? 'Revincular' : 'Vincular'}
+              </button>
             </div>
             {drill.record_url && (
               <div className="mb-3">

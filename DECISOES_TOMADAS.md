@@ -47,6 +47,22 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     (COALESCE no upsert). Webhook do Kommo não carrega result → cobre-se pelo delta de 2min.
     Full sync de tasks disparado pra backfill histórico (52k tarefas, corre em fatias no cron).
 
+## P3 — Ligação ↔ lead
+
+13. **Cascata**: payload explícito → telefone×contatos Kommo → telefone×leads SH → janela ±15min
+    de tarefa do agente. Ambiguidade (2+ leads no mesmo fone): tenta só ATIVOS (fora won/lost);
+    persiste 2+ → `telefone_ambiguo`, NÃO adivinha. Telefone comparado em DDD+8 (norm_phone
+    resolve 8vs9); API4COM manda `0`+DDD+9d — zero de tronco tratado no ponto de vínculo (a
+    função global norm_phone NÃO foi alterada: ela sustenta índice/matview e o funil de conexão).
+14. **Resultado no primeiro dreno**: 3C 100% vinculado (payload explícito); API4COM ~42% e
+    subindo com o cron (`ligacoes-vinculo-sweep` */20min). O grosso do não-casado é
+    `telefone_nao_casou` = número que NÃO existe no CRM (outbound frio de lista) — honesto,
+    fica em `ligacoes_sem_vinculo` com motivo e é retentado quando entra contato novo.
+15. **"Reprocessar análise" (re-rodar o OpenAI)** é fluxo do n8n (a análise chega pronta via
+    ingest) → PENDÊNCIA EXTERNA. O que entrou no app: vínculo manual por linha (colar id/link
+    do lead do Kommo; substitui, não acumula) + rótulos honestos ("sem gravação" quando não há
+    transcrição; "erro análise" quando tinha transcrição e não saiu nota).
+
 ## P5 — reconhecimento (travado pra build)
 
 11. **Hipótese dos ~25% sem par: CONFIRMADA com precisão melhor** — os 244 `status=none` da
