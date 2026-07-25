@@ -635,8 +635,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setReunioes(prev => prev.map(r => r.id === existing.id ? { ...r, calendar_event_id: event_id, meet_link, calendar_owner_id: owner_id } : r));
     };
 
+    // P1.4 (handoff): reagendou pra OUTRO closer e o evento mora na agenda do closer ANTIGO
+    // (ou de membro INATIVO — ex-funcionário segura o evento) -> não dá pra só mover: o
+    // organizador ficaria errado. Nesses casos pula o PATCH e cai no delete+create abaixo,
+    // que re-hospeda na agenda certa (SDR primeiro; senão o closer novo) e reconvida todo mundo.
+    // Troca de organizador + responsável andam juntas: o push pro Kommo (reuniao_marcada)
+    // reatribui o responsável na mesma transação de reagendamento.
+    const closerChanged = !!newCloserId && !!existing.closer_id && newCloserId !== existing.closer_id;
+    const ownerMember = oldOwner ? members.find(m => m.id === oldOwner) : null;
+    const mustRehost = (closerChanged && oldOwner === existing.closer_id)
+      || (ownerMember ? ownerMember.active === false : false);
+
     // 2a. PATCH (mover o mesmo evento) — preserva meet_link e convites.
-    if (oldEventId && oldOwner) {
+    if (oldEventId && oldOwner && !mustRehost) {
       try {
         const moved = await updateCalendarEvent({ ...eventData, event_id: oldEventId, owner_id: oldOwner } as any);
         if (moved) {

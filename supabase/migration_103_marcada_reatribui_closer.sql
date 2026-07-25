@@ -1,0 +1,173 @@
+-- migration_103_marcada_reatribui_closer.sql
+-- P1.4 (metade Kommo) — "ao agendar pra outro closer, não troca quem organizou o evento".
+-- A metade Google (re-hospedar o evento quando o dono era o closer antigo/membro inativo) foi
+-- feita no frontend (store.tsx rescheduleReuniao). Esta migração cobre o CRM: no push de
+-- 'reuniao_marcada' (que o reagendamento dispara), se o responsável atual do lead é
+--   (a) um CLOSER ativo diferente do closer efetivo da reunião, OU
+--   (b) um membro INATIVO (ex-funcionário — caso Erick),
+-- o PATCH passa a incluir responsible_user_id = closer efetivo. Responsável SDR/gestor ativo
+-- pré-reunião NÃO é tocado (convenção: o SDR segura o lead até a realizada).
+-- Única mudança vs versão anterior: bloco (f2) + captura de responsible_user_id no SELECT (g0).
+-- Reverter: reaplicar a versão anterior de kommo.plan_reuniao_push.
+
+CREATE OR REPLACE FUNCTION kommo.plan_reuniao_push(p_reuniao_id uuid, p_status text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'kommo', 'public'
+AS $function$
+DECLARE
+  r            public.reunioes%ROWTYPE;
+  v_kommo_id   BIGINT;
+  v_via        TEXT;
+  v_map        RECORD;
+  v_cur_pipe   BIGINT;
+  v_cur_status BIGINT;
+  v_cur_resp   BIGINT;
+  v_uid        BIGINT;
+  v_body       JSONB;
+  v_closer_tm  UUID;
+  v_closer_uid BIGINT;
+  v_resp_role  TEXT;
+  v_resp_active BOOLEAN;
+  -- confirmação/lembrete
+  v_local      TIMESTAMP;      -- wall-clock local (SP)
+  v_hour       INT;
+  v_bloco      INT;
+  v_alvo_ts    TIMESTAMPTZ;    -- instante do bloco (7/11/14h) — alvo lógico
+  v_disparo_ts TIMESTAMPTZ;    -- valor GRAVADO no campo = alvo − 1h (Salesbot soma +1h)
+  v_cfv        JSONB;
+  v_hora_txt   TEXT;           -- "9h" / "15h30"
+  v_texto      TEXT;           -- "hoje às 15h" / "10/07 às 15h" (var {{2}} do template)
+  v_meet_code  TEXT;           -- SÓ o código da sala (var {{1}}; campo TEXT 1042431 não prefixa http://)
+BEGIN
+  SELECT * INTO r FROM public.reunioes WHERE id = p_reuniao_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('erro','reuniao_inexistente'); END IF;
+
+  -- (c) resolver kommo_id em cadeia
+  v_kommo_id := kommo.norm_kommo_id(r.kommo_id); v_via := 'reunioes.kommo_id';
+  IF v_kommo_id IS NULL THEN
+    SELECT kommo.norm_kommo_id(l.kommo_id) INTO v_kommo_id FROM public.leads l WHERE l.id=r.lead_id;
+    IF v_kommo_id IS NOT NULL THEN v_via:='lead_id->leads.kommo_id'; END IF;
+  END IF;
+  IF v_kommo_id IS NULL THEN
+    SELECT kommo.norm_kommo_id(d.kommo_id) INTO v_kommo_id FROM public.deals d WHERE d.id=r.deal_id;
+    IF v_kommo_id IS NOT NULL THEN v_via:='deal_id->deals.kommo_id'; END IF;
+  END IF;
+  IF v_kommo_id IS NULL THEN
+    RETURN jsonb_build_object('would_patch',false,'skip_reason','sem_kommo_id','status',p_status,'reuniao',p_reuniao_id);
+  END IF;
+
+  -- (d) mapa determinístico
+  SELECT * INTO v_map FROM kommo.resolve_stage_map('reuniao', p_status);
+  IF v_map IS NULL THEN
+    RETURN jsonb_build_object('would_patch',false,'skip_reason','nao_mapeado','status',p_status,'kommo_id',v_kommo_id);
+  END IF;
+
+  -- (g0) estado atual do lead (agora inclui o responsável, usado no f2)
+  SELECT pipeline_id, status_id, responsible_user_id
+    INTO v_cur_pipe, v_cur_status, v_cur_resp
+    FROM kommo.leads WHERE id=v_kommo_id;
+
+  -- (#1) GUARDA: marcada/noshow NÃO regridem lead no Closer(11010459)/won(142). realizada é exceção.
+  IF p_status IN ('reuniao_marcada','noshow')
+     AND (v_cur_pipe = 11010459 OR v_cur_status = 142) THEN
+    RETURN jsonb_build_object('would_patch',false,'skip_reason','guarda_lead_no_closer',
+      'status',p_status,'kommo_id',v_kommo_id,'pipeline_atual',v_cur_pipe,'status_atual',v_cur_status);
+  END IF;
+
+  -- (#3) guarda noshow: se a reunião tem deal, não tratar como noshow
+  IF p_status='noshow' AND EXISTS (SELECT 1 FROM public.deals d WHERE d.reuniao_id=r.id) THEN
+    RETURN jsonb_build_object('would_patch',false,'skip_reason','noshow_mas_tem_deal','status',p_status,'kommo_id',v_kommo_id);
+  END IF;
+
+  -- (e) corpo do PATCH: etapa
+  v_body := jsonb_build_object('pipeline_id', v_map.kommo_pipeline_id, 'status_id', v_map.kommo_status_id);
+
+  -- (f) reatribuir responsável = closer da reunião
+  IF v_map.extra_action->>'reatribuir_responsavel' = 'closer_da_reuniao' THEN
+    v_closer_tm := COALESCE(r.closer_confirmado_id, r.closer_id);
+    SELECT tm.kommo_user_id INTO v_uid FROM public.team_members tm WHERE tm.id=v_closer_tm;
+    IF v_uid IS NOT NULL THEN v_body := v_body || jsonb_build_object('responsible_user_id', v_uid); END IF;
+  END IF;
+
+  -- (f2) P1.4: marcada/reagendamento — organizador e responsável andam JUNTOS.
+  -- Se o responsável atual é um CLOSER ativo ≠ closer efetivo da reunião, ou é membro INATIVO,
+  -- reatribui pro closer efetivo. SDR/gestor ativo pré-reunião fica como está.
+  IF p_status = 'reuniao_marcada' AND NOT (v_body ? 'responsible_user_id') THEN
+    SELECT tm.kommo_user_id INTO v_closer_uid FROM public.team_members tm
+     WHERE tm.id = COALESCE(r.closer_confirmado_id, r.closer_id) AND tm.active IS TRUE;
+    IF v_closer_uid IS NOT NULL AND v_cur_resp IS NOT NULL AND v_cur_resp <> v_closer_uid THEN
+      SELECT tm.role, tm.active INTO v_resp_role, v_resp_active
+        FROM public.team_members tm WHERE tm.kommo_user_id = v_cur_resp
+        ORDER BY tm.active DESC LIMIT 1;
+      IF (v_resp_role = 'closer' AND v_resp_active IS TRUE) OR (v_resp_active IS FALSE) THEN
+        v_body := v_body || jsonb_build_object('responsible_user_id', v_closer_uid);
+      END IF;
+    END IF;
+  END IF;
+
+  -- (g) campos de confirmação/lembrete — SÓ em reuniao_marcada (inclui reschedule)
+  IF p_status = 'reuniao_marcada' AND r.data_reuniao IS NOT NULL THEN
+    v_local := (r.data_reuniao AT TIME ZONE 'America/Sao_Paulo');   -- wall-clock local
+    v_hour  := EXTRACT(hour FROM v_local)::int;
+    v_bloco := CASE WHEN v_hour <= 11 THEN 7 WHEN v_hour <= 17 THEN 11 ELSE 14 END;
+    v_alvo_ts := (date_trunc('day', v_local) + make_interval(hours => v_bloco)) AT TIME ZONE 'America/Sao_Paulo';
+    -- Salesbot dispara "1h depois" do campo -> grava alvo − 1h pra compensar.
+    v_disparo_ts := v_alvo_ts - interval '1 hour';
+
+    -- texto legível pro cliente (var {{2}} do template). Fuso local -03.
+    v_hora_txt := to_char(v_local,'FMHH24') || 'h'
+                  || CASE WHEN to_char(v_local,'MI')='00' THEN '' ELSE to_char(v_local,'MI') END;
+    v_texto := CASE
+                 WHEN v_local::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date
+                   THEN 'hoje às ' || v_hora_txt
+                 ELSE to_char(v_local,'DD/MM') || ' às ' || v_hora_txt
+               END;
+
+    -- Data da Reunião + Lembrete 5min + Reunião (texto) (sempre)
+    v_cfv := jsonb_build_array(
+      jsonb_build_object('field_id',1042421,'values',
+        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM r.data_reuniao)::bigint))),
+      jsonb_build_object('field_id',1042425,'values',
+        jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM (r.data_reuniao - interval '5 min' - interval '1 hour'))::bigint))),
+      jsonb_build_object('field_id',1042429,'values',
+        jsonb_build_array(jsonb_build_object('value', v_texto)))
+    );
+    -- Disparo Confirmação: grava (alvo − 1h). Guarda de futuro sobre o VALOR
+    -- GRAVADO (v_disparo_ts), não sobre o alvo; se já passou, LIMPA (values:null).
+    IF v_disparo_ts >= now() THEN
+      v_cfv := v_cfv || jsonb_build_array(
+        jsonb_build_object('field_id',1042423,'values',
+          jsonb_build_array(jsonb_build_object('value', EXTRACT(epoch FROM v_disparo_ts)::bigint))));
+    ELSE
+      -- Kommo limpa campo com "values": null (nem [] nem [{value:null}] são aceitos)
+      v_cfv := v_cfv || jsonb_build_array(
+        jsonb_build_object('field_id',1042423,'values', NULL::jsonb));
+    END IF;
+    -- Link Call código: grava SÓ O CÓDIGO da sala no campo TEXT 1042431 (o campo
+    -- url 1042427 prefixava http:// em código solto; text não prefixa). Template
+    -- usa prefixo fixo https://meet.google.com/ + {{1}}=código. Extrai o que vem
+    -- depois da última "/" (tira query string e barra final); se já for código, mantém.
+    IF COALESCE(r.meet_link,'') <> '' THEN
+      v_meet_code := regexp_replace(
+                       regexp_replace(rtrim(split_part(r.meet_link,'?',1),'/'), '^.*/', ''),
+                       '\s','','g');
+      IF v_meet_code <> '' THEN
+        v_cfv := v_cfv || jsonb_build_array(
+          jsonb_build_object('field_id',1042431,'values',
+            jsonb_build_array(jsonb_build_object('value', v_meet_code))));
+      END IF;
+    END IF;
+    v_body := v_body || jsonb_build_object('custom_fields_values', v_cfv);
+  END IF;
+
+  RETURN jsonb_build_object(
+    'would_patch', true, 'status', p_status,
+    'kommo_id', v_kommo_id, 'resolvido_via', v_via,
+    'pipeline_atual', v_cur_pipe, 'status_atual', v_cur_status,
+    'closer_reatribuido', COALESCE(v_uid, CASE WHEN (v_body ? 'responsible_user_id') THEN (v_body->>'responsible_user_id')::bigint END),
+    'disparo_bloco_ts', v_alvo_ts, 'disparo_gravado_ts', v_disparo_ts,
+    'endpoint', '/api/v4/leads/'||v_kommo_id, 'metodo','PATCH',
+    'body', v_body);
+END $function$;
