@@ -31,3 +31,34 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
    duplicatas em 17k+ ligações) → os "2 itens" e a nota com erro são INTERNOS ao n8n:
    (a) nó que posta a nota duplica (split) — deduplicar lá; (b) `get3cRecording` 404 sem gravação
    → ligar "Continue On Fail" no nó. **PENDÊNCIA EXTERNA (n8n) → [GABRIEL/operador do n8n]**.
+
+## P2 — Dado honesto do funil
+
+8. **Mapa de etapas (kommo.funil_map, migration_104)** semeado a partir do CRUZAMENTO REAL dos
+   dados (não de suposição); linhas `aproximado=true` (baldes de prioridade ↔ negociacao/
+   follow_longo) são corrigíveis com UPDATE no mapa, sem tocar dados. O relatório
+   `get_divergencia_etapas()` mostrou: won Kommo 266 × 45 com deal casado (217 sem vínculo —
+   é o gap de reconciliação do P5, não etapa errada); deals `perdido` parados em baldes ativos
+   (vazamento tipo P1, listado no detalhe do relatório).
+9. **Nota da análise (kommo-ai-note)**: publica no lead com prefixo "🤖 Análise da reunião
+   (SalesHub)"; trigger dispara no completed; reprocesso ATUALIZA a mesma nota (kommo_note_id).
+   Não fiz backfill em massa das análises antigas — só passam a publicar as novas (e reprocessos).
+10. **result da tarefa (migration_106/107)**: delta sem result não apaga result já capturado
+    (COALESCE no upsert). Webhook do Kommo não carrega result → cobre-se pelo delta de 2min.
+    Full sync de tasks disparado pra backfill histórico (52k tarefas, corre em fatias no cron).
+
+## P5 — reconhecimento (travado pra build)
+
+11. **Hipótese dos ~25% sem par: CONFIRMADA com precisão melhor** — os 244 `status=none` da
+    reconciliação são DEALS, e 242/244 (99%) **não têm lead_id** (deal órfão de lead → sem
+    telefone/email/qualquer chave pra casar). Não é "telefone vazio no lead": é vínculo
+    deal→lead faltando. Corrigir = backfill de lead_id (via reuniao_id/empresa) ANTES de mexer
+    no algoritmo de matching. Travas 1 e 2 propostas em PROPOSTAS_GABRIEL.md.
+
+## P6 — Painéis
+
+12. **Contradição da roleta granular: RESOLVIDA** — migration_067 existe no repo E está aplicada
+    no banco (get_roleta_sdr_leads/ciclos vivas); a tela unificada Roleta (abas SDR/Closer,
+    componente único) foi mergeada em 5e3d4cd. O hash 8e0f617 citado no TASKS não existe mais
+    (histórico reescrito), mas o trabalho existe. Resta só o que o handoff pede além disso
+    (recomendações, caixa honesta, drawer).
