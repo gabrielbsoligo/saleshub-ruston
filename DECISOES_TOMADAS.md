@@ -78,3 +78,15 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     componente único) foi mergeada em 5e3d4cd. O hash 8e0f617 citado no TASKS não existe mais
     (histórico reescrito), mas o trabalho existe. Resta só o que o handoff pede além disso
     (recomendações, caixa honesta, drawer).
+
+## P4 — Workflow de discagem
+
+16. **Construído (server-side, destravado pelo P3)**: toda tentativa API4COM vinculada vira NOTA
+    no lead (desfecho + duração + agente; idempotente por kommo_note_id; trava de frescor 24h —
+    o backfill histórico do P3 não vira spam) e dá BAIXA em tarefa de LIGAÇÃO do mesmo agente
+    **vencida/da hora** (tarefa FUTURA da cadência não é fechada por um toque de hoje — ajuste
+    feito após teste real fechar uma R3 de D+3; reaberta). Nunca cria tarefa retroativa.
+    Notas 3C ficam com o n8n (evita duplicar).
+17. **Click-to-call, click-to-next-lead e tela 3C**: moram DENTRO do Kommo/3C/n8n (widget) — o
+    SDR não ganha segunda tela (regra do handoff). PENDÊNCIA EXTERNA; mapa de tabulação
+    proposto em PROPOSTAS_GABRIEL.md (trava 3).
