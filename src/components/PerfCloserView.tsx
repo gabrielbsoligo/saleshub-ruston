@@ -16,7 +16,12 @@ interface CloserRow {
   vendido_mrr: number; vendido_ot: number; vendido_total: number;
   deals_ganhos: number; deals_mrr: number; deals_ot: number;
   shows: number; meta_mrr: number; meta_ot: number;
+  recomendacoes: number;                       // do ai_result.indicacoes[] (nunca manual)
+  deals_por_etapa: Record<string, number>;     // snapshot dos deals ativos
 }
+const ETAPA_ABREV: Record<string, string> = { negociacao: 'NEG', contrato_na_rua: 'CTR', dar_feedback: 'FB', follow_longo: 'FL' };
+const fmtEtapas = (e: Record<string, number>) =>
+  Object.entries(e || {}).map(([k, v]) => `${ETAPA_ABREV[k] || k} ${v}`).join(' · ') || '—';
 interface PacePoint { dia: string; mrr: number; ot: number; }
 
 // Filtro de intervalo de data (de/até) com botão limpar. Um por tipo de data.
@@ -97,7 +102,8 @@ export const PerfCloserView: React.FC = () => {
       mrr: a.mrr + r.vendido_mrr, ot: a.ot + r.vendido_ot, total: a.total + r.vendido_total,
       ganhos: a.ganhos + r.deals_ganhos, dmrr: a.dmrr + r.deals_mrr, dot: a.dot + r.deals_ot,
       shows: a.shows + r.shows, metaMrr: a.metaMrr + r.meta_mrr, metaOt: a.metaOt + r.meta_ot,
-    }), { mrr: 0, ot: 0, total: 0, ganhos: 0, dmrr: 0, dot: 0, shows: 0, metaMrr: 0, metaOt: 0 });
+      recs: a.recs + (r.recomendacoes || 0),
+    }), { mrr: 0, ot: 0, total: 0, ganhos: 0, dmrr: 0, dot: 0, shows: 0, metaMrr: 0, metaOt: 0, recs: 0 });
     return {
       ...s, metaTotal: s.metaMrr + s.metaOt,
       ticketMrr: s.dmrr > 0 ? s.mrr / s.dmrr : 0,
@@ -191,11 +197,12 @@ export const PerfCloserView: React.FC = () => {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
         {kpi("Total vendido", fmtFull(T.total), Wallet, "#e63946", `${T.ganhos} deals ganhos`)}
         {kpi("Ticket médio MRR", fmtFull(T.ticketMrr), TrendingUp, "#22c55e", `${T.dmrr} deals c/ MRR`)}
         {kpi("Ticket médio OT", fmtFull(T.ticketOt), TrendingUp, "#3b82f6", `${T.dot} deals c/ OT`)}
         {kpi("Taxa de conversão", `${T.conversao.toFixed(1)}%`, Percent, "#a855f7", `${T.ganhos}/${T.shows} reuniões`)}
+        {kpi("Recomendações", String(T.recs), Trophy, "#f59e0b", "extraídas das calls (IA)")}
       </div>
 
       {/* TABELA por closer */}
@@ -216,6 +223,9 @@ export const PerfCloserView: React.FC = () => {
                 <th className="px-2 py-1 text-right">Ticket OT</th>
                 <th className="px-2 py-1 text-right">Ganhos</th>
                 <th className="px-2 py-1 text-right">Conv.</th>
+                <th className="px-2 py-1 text-right">Recom.</th>
+                <th className="px-2 py-1">Pipe (etapas)</th>
+                <th className="px-2 py-1 text-right" title="A atribuição de caixa está furada na origem (contrato caiu no gestor) — coluna presente, mas sem número inventado.">Caixa</th>
               </tr>
             </thead>
             <tbody>
@@ -239,11 +249,17 @@ export const PerfCloserView: React.FC = () => {
                     <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{fmtFull(tOt)}</td>
                     <td className="px-2 py-1.5 text-right">{r.deals_ganhos}</td>
                     <td className="px-2 py-1.5 text-right text-[var(--color-v4-text-muted)]">{conv.toFixed(1)}%</td>
+                    <td className="px-2 py-1.5 text-right text-amber-400">{r.recomendacoes || 0}</td>
+                    <td className="px-2 py-1.5 text-[11px] text-[var(--color-v4-text-muted)]">{fmtEtapas(r.deals_por_etapa)}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      <span className="text-[9px] uppercase tracking-wide text-[var(--color-v4-text-muted)] border border-dashed border-[var(--color-v4-border)] rounded px-1 py-px"
+                        title="Atribuição de caixa sem fonte confiável (contrato de julho caiu no gestor). Melhor honesto que zero.">sem atribuição</span>
+                    </td>
                   </tr>
                 );
               })}
               {rows.length === 0 && (
-                <tr><td colSpan={8} className="px-2 py-4 text-center text-[var(--color-v4-text-muted)]">Nenhum closer / dado no período.</td></tr>
+                <tr><td colSpan={11} className="px-2 py-4 text-center text-[var(--color-v4-text-muted)]">Nenhum closer / dado no período.</td></tr>
               )}
             </tbody>
           </table>

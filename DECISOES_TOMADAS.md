@@ -90,3 +90,11 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
 17. **Click-to-call, click-to-next-lead e tela 3C**: moram DENTRO do Kommo/3C/n8n (widget) — o
     SDR não ganha segunda tela (regra do handoff). PENDÊNCIA EXTERNA; mapa de tabulação
     proposto em PROPOSTAS_GABRIEL.md (trava 3).
+18. **Painel de closers (migration_111 + PerfCloserView)**: dimensões mínimas completas —
+    conversão, ticket médio (MRR/OT), reuniões realizadas, recomendações (do ai_result.
+    indicacoes[], janela = mesma dos shows; nunca campo manual), deals por etapa (snapshot dos
+    ativos), filtro por canal já existia. Caixa: coluna presente com selo "sem atribuição"
+    (tooltip explica) — sem número inventado, como manda o handoff.
+19. **Deal drawer (escopo P6.6)**: NÃO construído nesta rodada — não está no "pronto quando" do
+    pacote e o dossiê já existe pronto pra reuso (public.kommo_lead_360; hoje grant só
+    service_role — ao construir o drawer, conceder a authenticated). Próxima fatia natural.
