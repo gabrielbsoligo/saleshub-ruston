@@ -193,3 +193,8 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     /"lead ativo homônimo" em vez de "devolvido a outro pipeline"); todos são motivos de higiene,
     então NÃO afetam conversão nem funil. Os que estavam no funil Closer foram revividos pela
     recuperação. A lista manual de Won subiu de 4 para 10 (mais casos ficaram visíveis).
+38. **Escave round 2 — o sync FUNCIONAVA (webhook 00:01:16 → cópia 00:01:17, 1s), mas o lead tem
+    2 deals e o T1 espelhava só o mais recente** (LIMIT 1 herdado do padrão da cadência). O card
+    duplicado antigo ficava parado na etapa velha — parecia sync quebrado. T1 agora espelha TODOS
+    os deals do lead, cada um com as próprias guardas. Causa raiz medida: **61 leads com deal
+    duplicado (123 deals)** — lista em `get_deals_duplicados()` → [GABRIEL] decidir apagar/fundir.
