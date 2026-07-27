@@ -243,7 +243,8 @@ export const PerformanceView: React.FC = () => {
       {tab === 'closer' && (() => {
         const [cYear, cMonth] = selectedMes.split('-').map(Number);
         const cStart = new Date(cYear, cMonth - 1, 1);
-        const cEnd = new Date(cYear, cMonth, 0);
+        // último dia INTEIRO do mês: new Date(ano, mes, 0) dá 00:00 e cortava tudo do último dia
+        const cEnd = new Date(cYear, cMonth, 0, 23, 59, 59, 999);
 
         const closerStats = closers.map(closer => {
           const closerReunioes = reunioes.filter(r => {
@@ -271,7 +272,10 @@ export const PerformanceView: React.FC = () => {
             .map(d => (new Date(d.data_fechamento!).getTime() - new Date(d.data_call!).getTime()) / 86400000);
           const tempoCiclo = ciclos.length > 0 ? Math.round(ciclos.reduce((a, b) => a + b, 0) / ciclos.length) : 0;
 
-          const closerRecs = recomendacoes.filter(r => r.closer_id === closer.id && r.created_at >= cStart.toISOString() && r.created_at <= cEnd.toISOString());
+          // só recomendação que CRIOU LEAD (mesma regra da aba do deal e do Perf. Closers);
+          // linhas órfãs (lead_criado_id nulo) não representam lead gerado
+          const closerRecs = recomendacoes.filter(r => r.closer_id === closer.id && r.lead_criado_id
+            && r.created_at >= cStart.toISOString() && r.created_at <= cEnd.toISOString());
 
           return { closer, shows, noShows, vendas, perdidos, totalDeals, mrr, ot, ticketMedio, txConversao, tempoCiclo, recsColetadas: closerRecs.length };
         });

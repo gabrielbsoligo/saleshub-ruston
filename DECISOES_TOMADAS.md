@@ -98,3 +98,20 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
 19. **Deal drawer (escopo P6.6)**: NÃO construído nesta rodada — não está no "pronto quando" do
     pacote e o dossiê já existe pronto pra reuso (public.kommo_lead_360; hoje grant só
     service_role — ao construir o drawer, conceder a authenticated). Próxima fatia natural.
+20. **Recomendações: fonte trocada por correção do Gabriel (contraria o P6.3 do handoff).** O
+    handoff mandava contar de `ai_result.indicacoes[]` (o que a IA extraiu da call). Na prática o
+    time cadastra a recomendação DENTRO da negociação (aba Recomendações do deal), às vezes horas
+    depois — e é esse cadastro que cria o lead. Fonte agora = `public.recomendacoes`
+    (deal_id + closer_id + lead_criado_id), gravada por `useRecomendacoesDraft.saveDrafts`.
+    Efeito no mês: 12 (IA) → **20** (Yuri 11 · Nathan 6 · Sandro 3).
+    Regras: só conta quem CRIOU LEAD e o lead existe (mesma regra da aba do deal — exclui 14
+    linhas históricas órfãs); janela pelo `created_at` da recomendação (o cadastro é posterior à
+    call), em BRT; canal = o da negociação de origem. A IA continua PRÉ-PREENCHENDO o formulário
+    (FeedbackDrawer) — ela sugere, o cadastro é que conta.
+    **Fora da conta (proposital):** leads `canal='recomendacao'` sem origem em negociação (20 no
+    mês: importados/avulsos, sem `recomendado_por`) — não têm closer atribuível; contá-los
+    inventaria dono. Se quiser esses num ranking, tem que ser por SDR, não por closer.
+21. **PerformanceView (aba Closer)**: mesma regra aplicada + 2 bugs corrigidos — `cEnd` era o
+    último dia às 00:00 (cortava o dia inteiro de TODAS as métricas da aba: shows, vendas, MRR/OT,
+    ciclo) e o contador incluía linhas órfãs sem lead.
+    `indicacoes_coletadas` (aba SDR) é lançamento MANUAL de formulário — não foi tocado.

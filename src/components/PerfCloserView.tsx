@@ -16,7 +16,7 @@ interface CloserRow {
   vendido_mrr: number; vendido_ot: number; vendido_total: number;
   deals_ganhos: number; deals_mrr: number; deals_ot: number;
   shows: number; meta_mrr: number; meta_ot: number;
-  recomendacoes: number;                       // do ai_result.indicacoes[] (nunca manual)
+  recomendacoes: number;                       // cadastradas na negociação e que geraram lead
   deals_por_etapa: Record<string, number>;     // snapshot dos deals ativos
 }
 const ETAPA_ABREV: Record<string, string> = { negociacao: 'NEG', contrato_na_rua: 'CTR', dar_feedback: 'FB', follow_longo: 'FL' };
@@ -202,7 +202,7 @@ export const PerfCloserView: React.FC = () => {
         {kpi("Ticket médio MRR", fmtFull(T.ticketMrr), TrendingUp, "#22c55e", `${T.dmrr} deals c/ MRR`)}
         {kpi("Ticket médio OT", fmtFull(T.ticketOt), TrendingUp, "#3b82f6", `${T.dot} deals c/ OT`)}
         {kpi("Taxa de conversão", `${T.conversao.toFixed(1)}%`, Percent, "#a855f7", `${T.ganhos}/${T.shows} reuniões`)}
-        {kpi("Recomendações", String(T.recs), Trophy, "#f59e0b", "extraídas das calls (IA)")}
+        {kpi("Recomendações", String(T.recs), Trophy, "#f59e0b", "cadastradas nas negociações")}
       </div>
 
       {/* TABELA por closer */}
