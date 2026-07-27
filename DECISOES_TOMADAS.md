@@ -198,3 +198,6 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     duplicado antigo ficava parado na etapa velha — parecia sync quebrado. T1 agora espelha TODOS
     os deals do lead, cada um com as próprias guardas. Causa raiz medida: **61 leads com deal
     duplicado (123 deals)** — lista em `get_deals_duplicados()` → [GABRIEL] decidir apagar/fundir.
+39. **REVERSÃO a pedido do Gabriel**: T1 volta a espelhar SÓ o deal mais recente do lead
+    (migration_123 desfaz a 122). Consequência assumida: duplicata antiga não acompanha a etapa
+    do Kommo — a limpeza dos 61 leads duplicados resolve na raiz. get_deals_duplicados() mantida.
