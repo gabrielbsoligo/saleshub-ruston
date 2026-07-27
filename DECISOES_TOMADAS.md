@@ -91,8 +91,8 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     SDR não ganha segunda tela (regra do handoff). PENDÊNCIA EXTERNA; mapa de tabulação
     proposto em PROPOSTAS_GABRIEL.md (trava 3).
 18. **Painel de closers (migration_111 + PerfCloserView)**: dimensões mínimas completas —
-    conversão, ticket médio (MRR/OT), reuniões realizadas, recomendações (do ai_result.
-    indicacoes[], janela = mesma dos shows; nunca campo manual), deals por etapa (snapshot dos
+    conversão, ticket médio (MRR/OT), reuniões realizadas, recomendações (fonte corrigida no
+    item 20 — cadastro na negociação, não extração da IA), deals por etapa (snapshot dos
     ativos), filtro por canal já existia. Caixa: coluna presente com selo "sem atribuição"
     (tooltip explica) — sem número inventado, como manda o handoff.
 19. **Deal drawer (escopo P6.6)**: NÃO construído nesta rodada — não está no "pronto quando" do
