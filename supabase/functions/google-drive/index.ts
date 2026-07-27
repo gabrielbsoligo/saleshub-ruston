@@ -432,11 +432,15 @@ Retorne APENAS um JSON valido com os campos especificados.
 - "frio": Nao tem data definida para fechar, cliente indefinido, sem compromisso concreto
 
 ### Proximo Passo
-- "contrato_na_rua": Cliente pediu contrato ou esta analisando proposta formal (temperatura quente)
+- "contrato_na_rua": Cliente pediu contrato ou esta analisando proposta formal
 - "contrato_assinado": Cliente confirmou fechamento na propria call
-- "negociacao": Ainda em negociacao ativa, com proxima reuniao marcada
-- "follow_longo": Sem data definida para proximo contato, acompanhamento de longo prazo
+- "marcar_call_proposta": Ficou de marcar uma call para apresentar a proposta
+- "alta_prioridade": Segue em follow QUENTE, fechamento esperado em 1-10 dias
+- "media_prioridade": Segue em follow MORNO, fechamento esperado em 11-30 dias
+- "baixa_prioridade": Segue em follow FRIO, sem data definida ou +30 dias
 - "perdido": Cliente deu negativa clara, nao quer prosseguir
+IMPORTANTE: os tres baldes de prioridade devem ser coerentes com a "temperatura"
+(quente=alta_prioridade, morno=media_prioridade, frio=baixa_prioridade).
 
 ### BANT Score (1-4)
 - 1: Apenas Budget; 2: + Authority; 3: + Need; 4: + Timeline
@@ -480,7 +484,7 @@ A quantidade/tipo base de toques vem do balde (stage) no SalesHub; aqui voce SO 
 ## Formato JSON
 {
   "temperatura": "quente"|"morno"|"frio",
-  "proximo_passo": "negociacao"|"contrato_na_rua"|"contrato_assinado"|"follow_longo"|"perdido",
+  "proximo_passo": "marcar_call_proposta"|"alta_prioridade"|"media_prioridade"|"baixa_prioridade"|"contrato_na_rua"|"contrato_assinado"|"perdido",
   "valor_escopo": number, "valor_recorrente": number,
   "produtos_ot": [string], "produtos_mrr": [string],
   "bant": number, "tier": "tiny"|"small"|"medium"|"large"|"enterprise",

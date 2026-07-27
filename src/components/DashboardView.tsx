@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { DEAL_STATUS_LABELS, CANAL_LABELS, ROLE_LABELS, type Deal, type Reuniao, type Meta } from "../types";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_ATIVOS, CANAL_LABELS, ROLE_LABELS, type Deal, type Reuniao, type Meta } from "../types";
 import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw, Tv } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
@@ -124,7 +124,7 @@ export const DashboardView: React.FC = () => {
     return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show;
   });
 
-  const pipelineAtivo = deals.filter(d => ['negociacao', 'contrato_na_rua', 'dar_feedback'].includes(d.status));
+  const pipelineAtivo = deals.filter(d => DEAL_STATUS_ATIVOS.includes(d.status));
   const pipelineMrr = pipelineAtivo.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
   const pipelineOt = pipelineAtivo.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
 

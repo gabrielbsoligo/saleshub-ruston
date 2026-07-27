@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import { Calendar, Clock, CheckCircle2, XCircle, FileText, Trophy, Phone } from 'lucide-react';
 import { useResumoDia } from '../hooks/useResumoDia';
 import { useAppStore } from '../store';
-import type { Reuniao } from '../types';
+import { DEAL_STAGES, type Reuniao } from '../types';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const yesterdayStr = () => {
@@ -30,24 +30,9 @@ function fmtBRL(v?: number | null) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 }).format(v);
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  dar_feedback: 'Feedback',
-  follow_longo: 'Follow Longo',
-  negociacao: 'Negociação',
-  contrato_na_rua: 'Pra rua',
-  contrato_assinado: 'Fechado',
-  perdido: 'Perdido',
-};
-
-const STATUS_BG: Record<string, string> = {
-  dar_feedback: 'bg-amber-500/15 text-amber-400',
-  follow_longo: 'bg-orange-500/15 text-orange-400',
-  negociacao: 'bg-blue-500/15 text-blue-400',
-  contrato_na_rua: 'bg-yellow-500/15 text-yellow-400',
-  contrato_assinado: 'bg-green-500/15 text-green-400',
-  perdido: 'bg-red-500/15 text-red-400',
-};
-
+// rótulo/cor do funil vêm da fonte única (types.ts)
+const STATUS_LABELS: Record<string, string> = Object.fromEntries(DEAL_STAGES.map(x => [x.slug, x.curto]));
+const STATUS_BG: Record<string, string> = Object.fromEntries(DEAL_STAGES.map(x => [x.slug, x.badge]));
 export const ResumoDoDia: React.FC = () => {
   const { members } = useAppStore();
   const [data, setData] = useState<string>(todayStr());

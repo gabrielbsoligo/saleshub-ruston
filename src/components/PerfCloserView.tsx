@@ -5,6 +5,7 @@ import { useAppStore } from "../store";
 import { MultiSelectFilter } from "./ui/MultiSelect";
 import { colorForMember } from "./HourlyCallsChart";
 import { PaceLineChart, PaceBar, fmtFull } from "./pace/PaceCharts";
+import { DEAL_STAGES } from "../types";
 import { generateDailyPaceLine, getPacePercentage } from "../lib/paceUtils";
 
 const CANAIS = ["leadbroker", "blackbox", "outbound", "recovery", "reativacao", "recomendacao", "indicacao", "sem origem"];
@@ -19,7 +20,7 @@ interface CloserRow {
   recomendacoes: number;                       // cadastradas na negociação e que geraram lead
   deals_por_etapa: Record<string, number>;     // snapshot dos deals ativos
 }
-const ETAPA_ABREV: Record<string, string> = { negociacao: 'NEG', contrato_na_rua: 'CTR', dar_feedback: 'FB', follow_longo: 'FL' };
+const ETAPA_ABREV: Record<string, string> = Object.fromEntries(DEAL_STAGES.map(s => [s.slug, s.abrev]));
 const fmtEtapas = (e: Record<string, number>) =>
   Object.entries(e || {}).map(([k, v]) => `${ETAPA_ABREV[k] || k} ${v}`).join(' · ') || '—';
 interface PacePoint { dia: string; mrr: number; ot: number; }

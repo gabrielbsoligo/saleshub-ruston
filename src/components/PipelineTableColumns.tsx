@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { X, Settings, ChevronUp, ChevronDown, RotateCcw, ExternalLink } from 'lucide-react';
-import { DEAL_STATUS_LABELS, TEMPERATURA_LABELS, type Deal } from '../types';
+import { DEAL_STATUS_LABELS, DEAL_STATUS_ORDER, TEMPERATURA_LABELS, type Deal } from '../types';
 import { cn } from './Layout';
 
 const STORAGE_KEY = 'pipeline_table_columns_v1';
@@ -32,9 +32,9 @@ export interface ColumnDef {
 }
 
 // ---------- orders ----------
-const STATUS_ORDER: Record<string, number> = {
-  dar_feedback: 0, follow_longo: 1, negociacao: 2, contrato_na_rua: 3, contrato_assinado: 4, perdido: 5,
-};
+// ordem do funil vem da fonte única (types.ts), não duplicada aqui
+const STATUS_ORDER: Record<string, number> =
+  Object.fromEntries(DEAL_STATUS_ORDER.map((s, i) => [s, i]));
 const TEMP_ORDER: Record<string, number> = { quente: 0, morno: 1, frio: 2 };
 const TIER_ORDER: Record<string, number> = { tiny: 0, small: 1, medium: 2, large: 3, enterprise: 4 };
 

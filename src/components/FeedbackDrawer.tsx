@@ -1,7 +1,10 @@
 import React, { useState, useCallback } from "react";
 import { useAppStore } from "../store";
 import { X, Send, AlertCircle, ArrowRight, ArrowLeft, Sparkles, Loader2, Calendar } from "lucide-react";
-import { PRODUTOS_OT, PRODUTOS_MRR, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
+import { PRODUTOS_OT, PRODUTOS_MRR, TIER_LABELS, DEAL_STATUS_LABELS, statusFromTemperatura, normalizeDealStatus, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
+
+// pseudo-opção: o destino real sai da temperatura (alta/média/baixa prioridade)
+const SEGUIR_FOLLOW = 'seguir_follow';
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
 import { ContractUpload } from "./ui/ContractUpload";
@@ -86,6 +89,9 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
 
   const step1Valid = form.closer_id && form.temperatura && form.bant && form.proximo_passo;
   const isGanho = form.proximo_passo === 'contrato_assinado';
+  // mostra pro closer em qual balde a temperatura vai cair (sem ele ter que adivinhar)
+  const baldeDaTemp = statusFromTemperatura(form.temperatura);
+  const seguirFollowLabel = baldeDaTemp ? ` → ${DEAL_STATUS_LABELS[baldeDaTemp]}` : ' (marque a temperatura)';
 
   // ==============================
   // AI auto-fill logic
@@ -95,7 +101,14 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     const filled = new Set<string>();
 
     if (result.temperatura) { set('temperatura', result.temperatura); filled.add('temperatura'); }
-    if (result.proximo_passo) { set('proximo_passo', result.proximo_passo); filled.add('proximo_passo'); }
+    if (result.proximo_passo) {
+      // a IA ainda pode devolver valor legado (negociacao/follow_longo) ou já um balde:
+      // qualquer coisa que seja "continuar o follow" vira a pseudo-opção, o resto é literal.
+      const norm = normalizeDealStatus(result.proximo_passo, result.temperatura);
+      const ehFollow = norm === 'alta_prioridade' || norm === 'media_prioridade' || norm === 'baixa_prioridade';
+      set('proximo_passo', ehFollow ? SEGUIR_FOLLOW : (norm ?? ''));
+      filled.add('proximo_passo');
+    }
     if (result.bant) { set('bant', result.bant); filled.add('bant'); }
     if (result.tier) { set('tier', result.tier); filled.add('tier'); }
     if (result.resumo_executivo) { set('resumo_call', result.resumo_executivo); filled.add('resumo_call'); }
@@ -221,7 +234,10 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         closer_id: form.closer_id,
         temperatura: form.temperatura as Temperatura,
         bant: form.bant,
-        status: form.proximo_passo as DealStatus,
+        // "seguir em follow" resolve pelo balde da temperatura; o resto é etapa explícita
+        status: (form.proximo_passo === SEGUIR_FOLLOW
+          ? statusFromTemperatura(form.temperatura)
+          : form.proximo_passo) as DealStatus,
         motivo_perda: form.proximo_passo === 'perdido' ? form.motivo_perda : undefined,
         data_retorno: form.data_retorno?.split('T')[0] || undefined,
         produtos_ot: form.produtos_ot,
@@ -424,10 +440,12 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
             <div><label className={labelClass}>Próximo passo *</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'negociacao', label: '📋 Em Negociação', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-                  { value: 'contrato_na_rua', label: '📝 Contrato na Rua', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
+                  // "Seguir em follow" NÃO é uma etapa: o balde (alta/média/baixa) vem da
+                  // TEMPERATURA acima — mesma regra do espelhamento com o Kommo.
+                  { value: SEGUIR_FOLLOW, label: `🔄 Seguir em follow${seguirFollowLabel}`, color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+                  { value: 'marcar_call_proposta', label: '📞 Marcar call proposta', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' },
+                  { value: 'contrato_na_rua', label: '📝 Contrato', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
                   { value: 'contrato_assinado', label: '✅ Fechou!', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
-                  { value: 'follow_longo', label: '⏳ Follow Longo', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' },
                   { value: 'perdido', label: '❌ Perdido', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
                 ].map(opt => (
                   <button key={opt.value} type="button" onClick={() => set('proximo_passo', opt.value)}
@@ -442,7 +460,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               <div><label className={labelClass}>Motivo da perda *</label><input className={inputClass} value={form.motivo_perda} onChange={e => set('motivo_perda', e.target.value)} /></div>
             )}
 
-            {(form.proximo_passo === 'follow_longo' || form.proximo_passo === 'negociacao' || form.proximo_passo === 'contrato_na_rua') && (
+            {(form.proximo_passo === SEGUIR_FOLLOW || form.proximo_passo === 'marcar_call_proposta' || form.proximo_passo === 'contrato_na_rua') && (
               <div className={`bg-[var(--color-v4-surface)] rounded-xl p-4 ${aiHighlight('data_retorno')}`}>
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar size={14} className="text-yellow-400" />

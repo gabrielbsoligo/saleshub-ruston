@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { X, Save, Trash2, Loader2, Plus, Trash2 as Trash2Icon, Calendar } from "lucide-react";
-import { PRODUTOS_OT, PRODUTOS_MRR, CANAL_LABELS, TIER_LABELS, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
+import { PRODUTOS_OT, PRODUTOS_MRR, CANAL_LABELS, TIER_LABELS, DEAL_STAGES, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
 import { ContractUpload } from "./ui/ContractUpload";
@@ -36,7 +36,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const [form, setForm] = useState({
     empresa: '', kommo_id: '', kommo_link: '', closer_id: '', sdr_id: '',
     data_call: '', data_fechamento: '', data_retorno: '',
-    status: 'negociacao' as DealStatus, origem: '',
+    status: 'dar_feedback' as DealStatus, origem: '',
     temperatura: '' as Temperatura | '', bant: 0, motivo_perda: '',
     produtos_ot: [] as string[], produtos_mrr: [] as string[],
     valor_escopo: 0, valor_recorrente: 0,
@@ -192,11 +192,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
               <label className={labelClass}>Proximo Passo</label>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { value: 'negociacao', label: '\uD83D\uDCCB Em Negociacao', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-                  { value: 'contrato_na_rua', label: '\uD83D\uDCDD Contrato na Rua', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
-                  { value: 'contrato_assinado', label: '\u2705 Fechou!', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
-                  { value: 'follow_longo', label: '\u23F3 Follow Longo', color: 'bg-orange-500/20 text-orange-400 border-orange-500/30' },
-                  { value: 'perdido', label: '\u274C Perdido', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
+                  ...DEAL_STAGES.filter(x => x.kanban).map(x => ({ value: x.slug, label: x.rotulo, color: x.badge + ' border-current' }))
                 ].map(opt => (
                   <button key={opt.value} type="button" onClick={() => set('status', opt.value)}
                     className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-colors ${
@@ -234,7 +230,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             )}
 
             {/* Data Retorno + Agendar Reuniao */}
-            {(form.status === 'follow_longo' || form.status === 'negociacao' || form.status === 'contrato_na_rua') && (
+            {(['baixa_prioridade','media_prioridade','alta_prioridade','marcar_call_proposta','contrato_na_rua'].includes(form.status)) && (
               <div className="bg-[var(--color-v4-surface)] rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar size={14} className="text-yellow-400" />

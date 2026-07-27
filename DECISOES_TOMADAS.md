@@ -138,3 +138,30 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
 27. **CHECK de negociacao/follow_longo NÃO foi fechado**: dados 100% migrados (0 deals), mas o
     front ainda produz esses valores (análise de call -> proximo_passo -> FeedbackDrawer:224).
     Fechar hoje quebraria o feedback do closer. Pendência de front, não de dados.
+
+## Front migrado para as etapas novas (27/07, noite)
+
+28. **Gatilho automático (seção 4 da spec) — NÃO existia**: o espelhamento era lote manual.
+    Criado `kommo.espelhar_deal()` + 2 triggers: T1 (etapa muda no Kommo -> SH copia; se for
+    Feedback reunião aplica a temperatura) e T2 (closer preenche temperatura -> move os 2 lados).
+    Testado com rollback: Feedback sem temp -> dar_feedback; marcou quente -> alta_prioridade;
+    Kommo -> Contrato -> contrato_na_rua. Guardas G1/G2 valem também no gatilho.
+29. **BUG LATENTE achado na varredura**: `deals.status` ainda tinha `DEFAULT 'negociacao'` — a
+    migration_114 trocou só o CHECK. Todo INSERT sem status explícito ressuscitaria o extinto.
+    Default agora é `dar_feedback`. (Verificado: INSERT sem status devolve dar_feedback.)
+30. **Fonte única de etapas no front** (`DEAL_STAGES` em types.ts): ordem/rótulo/cor/sigla estavam
+    duplicados em 5 lugares (PipelineView, PipelineTableColumns, ResumoDoDia, PerfCloserView,
+    types) e saíam de sincronia. Agora todos derivam de lá. Sem isso os 5 status novos ficariam
+    INVISÍVEIS no kanban (as colunas eram hardcoded).
+31. **FeedbackDrawer**: "Em Negociação"/"Follow Longo" saíram. Entrou "🔄 Seguir em follow" (o
+    balde vem da TEMPERATURA, mostrado no próprio botão) + Marcar call proposta · Contrato ·
+    Fechou! · Perdido. A IA pré-preenche passando por `normalizeDealStatus`, que converte valor
+    legado (análise antiga em cache) para etapa canônica.
+32. **DealDrawer**: deal novo nascia com `status:'negociacao'` -> agora `dar_feedback`; o grid de
+    etapas é gerado do DEAL_STAGES.
+33. **Prompts da IA** (callAnalyzer + google-drive) e a descrição da tool do kommo-mcp passaram a
+    listar as etapas canônicas, com a regra de coerência temperatura<->balde.
+34. **Métricas que quebrariam em silêncio**: `get_funil_geral_totais.proposta` lia
+    `status_novo='negociacao'` (zeraria a coluna Proposta do GeralView) -> passa a considerar
+    marcar_call_proposta + baldes; `get_perf_closer.deals_por_etapa` idem; DashboardView
+    "pipeline ativo" agora usa DEAL_STATUS_ATIVOS (antes subestimava o pipe).

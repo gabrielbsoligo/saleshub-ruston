@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
-import { DEAL_STATUS_LABELS, TEMPERATURA_LABELS, type Deal, type DealStatus, type Temperatura } from "../types";
+import { DEAL_STATUS_LABELS, DEAL_STAGES, TEMPERATURA_LABELS, type Deal, type DealStatus, type Temperatura } from "../types";
 import { cn } from "./Layout";
 import { Plus, ExternalLink, Search, ArrowUpDown, LayoutGrid, List, ChevronUp, ChevronDown, Thermometer } from "lucide-react";
 import { DealDrawer } from "./DealDrawer";
@@ -19,26 +19,11 @@ import {
   ALL_COLUMNS,
 } from "./PipelineTableColumns";
 
-// Nova ordem do kanban
-const PIPELINE_STAGES: DealStatus[] = ['dar_feedback', 'follow_longo', 'negociacao', 'contrato_na_rua', 'contrato_assinado', 'perdido'];
-
-const STAGE_COLORS: Record<DealStatus, string> = {
-  dar_feedback: 'border-amber-400',
-  follow_longo: 'border-orange-500',
-  negociacao: 'border-blue-500',
-  contrato_na_rua: 'border-yellow-500',
-  contrato_assinado: 'border-green-500',
-  perdido: 'border-red-500',
-};
-
-const STAGE_BG: Record<DealStatus, string> = {
-  dar_feedback: 'bg-amber-500/20 text-amber-400',
-  follow_longo: 'bg-orange-500/20 text-orange-400',
-  negociacao: 'bg-blue-500/20 text-blue-400',
-  contrato_na_rua: 'bg-yellow-500/20 text-yellow-400',
-  contrato_assinado: 'bg-green-500/20 text-green-400',
-  perdido: 'bg-red-500/20 text-red-400',
-};
+// Etapas do kanban = as do funil Closer no Kommo, na mesma ordem (fonte única em types.ts).
+// "Incoming leads" fica de fora: é a entrada que vive só no Kommo, sem deal no SalesHub.
+const PIPELINE_STAGES: DealStatus[] = DEAL_STAGES.filter(s => s.kanban).map(s => s.slug);
+const STAGE_COLORS: Record<string, string> = Object.fromEntries(DEAL_STAGES.map(s => [s.slug, s.borda]));
+const STAGE_BG: Record<string, string> = Object.fromEntries(DEAL_STAGES.map(s => [s.slug, s.badge]));
 
 const TEMP_COLORS: Record<string, string> = {
   quente: 'text-red-400 bg-red-400/10',

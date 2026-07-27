@@ -15,13 +15,76 @@ export type LeadStatus =
   | 'aguardando_feedback'
   | 'convertido';
 
+// Etapas canônicas = as MESMAS do funil Closer no Kommo (pipeline 11010459).
+// A ordem aqui é a ordem do funil. `negociacao` e `follow_longo` foram extintos:
+// viraram os baldes de prioridade, decididos pela TEMPERATURA (ver statusFromTemperatura).
 export type DealStatus =
-  | 'dar_feedback'
-  | 'negociacao'
-  | 'contrato_na_rua'
-  | 'contrato_assinado'
-  | 'follow_longo'
-  | 'perdido';
+  | 'incoming_leads'
+  | 'dar_feedback'          // Feedback reunião
+  | 'marcar_call_proposta'
+  | 'baixa_prioridade'
+  | 'media_prioridade'
+  | 'alta_prioridade'
+  | 'contrato_na_rua'       // Contrato
+  | 'contrato_assinado'     // Won
+  | 'perdido';              // Lost
+
+export const DEAL_STATUS_ORDER: DealStatus[] = [
+  'incoming_leads', 'dar_feedback', 'marcar_call_proposta',
+  'baixa_prioridade', 'media_prioridade', 'alta_prioridade',
+  'contrato_na_rua', 'contrato_assinado', 'perdido',
+];
+
+/**
+ * FONTE ÚNICA de ordem/rótulo/cor/sigla das etapas — espelha kommo.funil_etapas.
+ * Antes isso vivia duplicado em 5 lugares (PipelineView, PipelineTableColumns,
+ * ResumoDoDia, PerfCloserView, types) e saía de sincronia. Mexer só aqui.
+ */
+export interface DealStageMeta {
+  slug: DealStatus; rotulo: string; curto: string; abrev: string;
+  borda: string; badge: string;
+  /** aparece como coluna do kanban (Incoming leads vive só no Kommo) */
+  kanban: boolean;
+  /** etapa ativa = ainda em jogo (nem ganho nem perdido) */
+  ativa: boolean;
+}
+
+export const DEAL_STAGES: DealStageMeta[] = [
+  { slug: 'incoming_leads',       rotulo: 'Incoming leads',            curto: 'Incoming',    abrev: 'IN',  borda: 'border-slate-500',  badge: 'bg-slate-500/20 text-slate-300',  kanban: false, ativa: true },
+  { slug: 'dar_feedback',         rotulo: '🔔 Feedback reunião',       curto: 'Feedback',    abrev: 'FB',  borda: 'border-amber-400',  badge: 'bg-amber-500/20 text-amber-400',  kanban: true,  ativa: true },
+  { slug: 'marcar_call_proposta', rotulo: 'Marcar call proposta',      curto: 'Call prop.',  abrev: 'CP',  borda: 'border-cyan-500',   badge: 'bg-cyan-500/20 text-cyan-400',    kanban: true,  ativa: true },
+  { slug: 'alta_prioridade',      rotulo: 'Alta prioridade (1-10d)',   curto: 'Alta',        abrev: 'ALT', borda: 'border-red-400',    badge: 'bg-red-400/20 text-red-300',      kanban: true,  ativa: true },
+  { slug: 'media_prioridade',     rotulo: 'Média prioridade (11-30d)', curto: 'Média',       abrev: 'MED', borda: 'border-blue-500',   badge: 'bg-blue-500/20 text-blue-400',    kanban: true,  ativa: true },
+  { slug: 'baixa_prioridade',     rotulo: 'Baixa prioridade (+30d)',   curto: 'Baixa',       abrev: 'BAI', borda: 'border-orange-500', badge: 'bg-orange-500/20 text-orange-400',kanban: true,  ativa: true },
+  { slug: 'contrato_na_rua',      rotulo: 'Contrato',                  curto: 'Contrato',    abrev: 'CTR', borda: 'border-yellow-500', badge: 'bg-yellow-500/20 text-yellow-400',kanban: true,  ativa: true },
+  { slug: 'contrato_assinado',    rotulo: 'Venda ganha',               curto: 'Ganha',       abrev: 'WON', borda: 'border-green-500',  badge: 'bg-green-500/20 text-green-400',  kanban: true,  ativa: false },
+  { slug: 'perdido',              rotulo: 'Venda perdida',             curto: 'Perdida',     abrev: 'LOST',borda: 'border-red-500',    badge: 'bg-red-500/20 text-red-400',      kanban: true,  ativa: false },
+];
+
+export const DEAL_STAGE_BY_SLUG: Record<string, DealStageMeta> =
+  Object.fromEntries(DEAL_STAGES.map(s => [s.slug, s]));
+/** etapas ATIVAS (pipe em jogo) — usar em vez de listas hardcoded */
+export const DEAL_STATUS_ATIVOS: DealStatus[] = DEAL_STAGES.filter(s => s.ativa).map(s => s.slug);
+
+/** Balde de prioridade que a temperatura determina (regra do espelhamento). */
+export function statusFromTemperatura(t?: string | null): DealStatus | null {
+  const v = (t || '').toLowerCase();
+  return v === 'quente' ? 'alta_prioridade'
+       : v === 'morno'  ? 'media_prioridade'
+       : v === 'frio'   ? 'baixa_prioridade' : null;
+}
+
+/**
+ * Aceita valores LEGADOS (negociacao/follow_longo) que ainda possam vir de análise antiga
+ * em cache ou de payload velho, e converte para as etapas canônicas.
+ * `negociacao` = deal ativo -> o balde vem da temperatura.
+ */
+export function normalizeDealStatus(v?: string | null, temperatura?: string | null): DealStatus | null {
+  if (!v) return null;
+  if (v === 'negociacao') return statusFromTemperatura(temperatura) ?? 'dar_feedback';
+  if (v === 'follow_longo') return 'baixa_prioridade';
+  return (DEAL_STATUS_ORDER as string[]).includes(v) ? (v as DealStatus) : null;
+}
 
 export type LeadCanal =
   | 'blackbox'
@@ -491,13 +554,17 @@ export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
   convertido: 'Convertido',
 };
 
+// Rótulos espelhando o funil Closer do Kommo (mesma nomenclatura que o Gabriel vê lá).
 export const DEAL_STATUS_LABELS: Record<DealStatus, string> = {
-  dar_feedback: '🔔 Dar Feedback',
-  negociacao: 'Negociação',
-  contrato_na_rua: 'Contrato na Rua',
-  contrato_assinado: 'Contrato Assinado',
-  follow_longo: 'Follow Longo',
-  perdido: 'Perdido',
+  incoming_leads: 'Incoming leads',
+  dar_feedback: '🔔 Feedback reunião',
+  marcar_call_proposta: 'Marcar call proposta',
+  baixa_prioridade: 'Baixa prioridade (+30d)',
+  media_prioridade: 'Média prioridade (11-30d)',
+  alta_prioridade: 'Alta prioridade (1-10d)',
+  contrato_na_rua: 'Contrato',
+  contrato_assinado: 'Venda ganha',
+  perdido: 'Venda perdida',
 };
 
 export const CANAL_LABELS: Record<LeadCanal, string> = {
@@ -531,7 +598,9 @@ export type AutomationStatus = 'pending' | 'fetching_transcript' | 'analyzing' |
 
 export interface CallAnalysisResult {
   temperatura: Temperatura;
-  proximo_passo: 'negociacao' | 'contrato_na_rua' | 'contrato_assinado' | 'follow_longo' | 'perdido';
+  // etapas canônicas; os legados ('negociacao'/'follow_longo') seguem aceitos na leitura
+  // (análise antiga em cache) e são convertidos por normalizeDealStatus.
+  proximo_passo: DealStatus | 'negociacao' | 'follow_longo';
   valor_escopo: number;
   valor_recorrente: number;
   produtos_ot: string[];
