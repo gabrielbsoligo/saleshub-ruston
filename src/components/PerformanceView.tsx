@@ -7,6 +7,8 @@ import { supabase } from "../lib/supabase";
 export const PerformanceView: React.FC = () => {
   const { members, performanceSdr, savePerformanceSdr, performanceCloser, savePerformanceCloser, ligacoes, deals, reunioes } = useAppStore();
   const [recomendacoes, setRecomendacoes] = useState<any[]>([]);
+  // espelho de public.is_perda_higiene (migration_116) — manter os dois lados iguais
+  const isPerdaHigiene = (m?: string | null) => /^(devolvido a outro pipeline|sem v[ií]nculo|nome amb[íi]guo|lead ativo hom[ôo]nimo)/i.test((m || '').trim());
   const [tab, setTab] = useState<'ligacoes' | 'sdr' | 'closer'>('ligacoes');
   const [selectedMember, setSelectedMember] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -259,7 +261,9 @@ export const PerformanceView: React.FC = () => {
             return dc && dc >= cStart && dc <= cEnd && d.closer_id === closer.id;
           });
           const vendas = closerDeals.filter(d => d.status === 'contrato_assinado').length;
-          const perdidos = closerDeals.filter(d => d.status === 'perdido').length;
+          // decisão 4 (espelhamento): perda por HIGIENE DE BASE (fase 6) não é perda comercial —
+          // fica fora da contagem do painel, senão a limpeza derruba o número do closer.
+          const perdidos = closerDeals.filter(d => d.status === 'perdido' && !isPerdaHigiene(d.motivo_perda)).length;
           const totalDeals = closerDeals.length;
 
           const mrr = closerDeals.filter(d => d.status === 'contrato_assinado').reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);

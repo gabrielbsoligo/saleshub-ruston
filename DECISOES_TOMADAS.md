@@ -115,3 +115,26 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     último dia às 00:00 (cortava o dia inteiro de TODAS as métricas da aba: shows, vendas, MRR/OT,
     ciclo) e o contador incluía linhas órfãs sem lead.
     `indicacoes_coletadas` (aba SDR) é lançamento MANUAL de formulário — não foi tocado.
+
+## Espelhamento do funil Closer (27/07)
+
+22. **Armazenamento das 9 etapas**: valores existentes reaproveitados onde significam o mesmo
+    (Won=contrato_assinado, Lost=perdido, Contrato=contrato_na_rua, Feedback=dar_feedback) + 5
+    valores novos. Não renomeei a espinha do dinheiro na véspera da weekly; o rótulo exibido é o
+    do Kommo (kommo.funil_etapas.rotulo). Reversível pelo mapa.
+23. **G2 (guarda de promoção)**: criada por mim como extensão da decisão 1 — Kommo=Won com SH
+    não-ganho NÃO vira contrato_assinado automático (criaria recebimentos + data_fechamento=hoje).
+    Confirmada depois pelo Gabriel na triagem dos 4.
+24. **Conflito decisão 1 x 2** (won/lost nunca rebaixado × reativar os 12 perdido): a 2 é
+    específica e assume o efeito (R$ 214k), então a guarda ficou só para GANHO.
+25. **Grupo MB**: sem log de transição em lugar nenhum (nem API — 204, lead de mai/2025 fora da
+    retenção) => fallback data_call=2025-05-06 pela regra da migration_101. Recebimento nasceu com
+    a data histórica (carimbei data_primeiro_pagamento no mesmo UPDATE).
+    ⚠️ São DOIS deals no mesmo lead (19k MRR + 12k OT); espelhei só o de 19k (o citado) —
+    o de 12k segue perdido e está na lista manual. → [GABRIEL] duplicata ou 2º escopo?
+26. **Fase 6 — trava do lead ativo pegou 95 casos** (estimava poucos): homônimos vivos em Nutrição
+    44, Outbound 30, Pré-Vendas 13, Closer 8. Consequência: o match por nome não uniu nada; as 7
+    uniões vieram de chave forte. A exceção de julho não pegou ninguém (0).
+27. **CHECK de negociacao/follow_longo NÃO foi fechado**: dados 100% migrados (0 deals), mas o
+    front ainda produz esses valores (análise de call -> proximo_passo -> FeedbackDrawer:224).
+    Fechar hoje quebraria o feedback do closer. Pendência de front, não de dados.
