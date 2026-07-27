@@ -53,9 +53,10 @@ export const DEAL_STAGES: DealStageMeta[] = [
   { slug: 'incoming_leads',       rotulo: 'Incoming leads',            curto: 'Incoming',    abrev: 'IN',  borda: 'border-slate-500',  badge: 'bg-slate-500/20 text-slate-300',  kanban: false, ativa: true },
   { slug: 'dar_feedback',         rotulo: '🔔 Feedback reunião',       curto: 'Feedback',    abrev: 'FB',  borda: 'border-amber-400',  badge: 'bg-amber-500/20 text-amber-400',  kanban: true,  ativa: true },
   { slug: 'marcar_call_proposta', rotulo: 'Marcar call proposta',      curto: 'Call prop.',  abrev: 'CP',  borda: 'border-cyan-500',   badge: 'bg-cyan-500/20 text-cyan-400',    kanban: true,  ativa: true },
-  { slug: 'alta_prioridade',      rotulo: 'Alta prioridade (1-10d)',   curto: 'Alta',        abrev: 'ALT', borda: 'border-red-400',    badge: 'bg-red-400/20 text-red-300',      kanban: true,  ativa: true },
-  { slug: 'media_prioridade',     rotulo: 'Média prioridade (11-30d)', curto: 'Média',       abrev: 'MED', borda: 'border-blue-500',   badge: 'bg-blue-500/20 text-blue-400',    kanban: true,  ativa: true },
+  // ordem dos baldes = a mesma do Kommo (Baixa sort 40 · Média 50 · Alta 60)
   { slug: 'baixa_prioridade',     rotulo: 'Baixa prioridade (+30d)',   curto: 'Baixa',       abrev: 'BAI', borda: 'border-orange-500', badge: 'bg-orange-500/20 text-orange-400',kanban: true,  ativa: true },
+  { slug: 'media_prioridade',     rotulo: 'Média prioridade (11-30d)', curto: 'Média',       abrev: 'MED', borda: 'border-blue-500',   badge: 'bg-blue-500/20 text-blue-400',    kanban: true,  ativa: true },
+  { slug: 'alta_prioridade',      rotulo: 'Alta prioridade (1-10d)',   curto: 'Alta',        abrev: 'ALT', borda: 'border-red-400',    badge: 'bg-red-400/20 text-red-300',      kanban: true,  ativa: true },
   { slug: 'contrato_na_rua',      rotulo: 'Contrato',                  curto: 'Contrato',    abrev: 'CTR', borda: 'border-yellow-500', badge: 'bg-yellow-500/20 text-yellow-400',kanban: true,  ativa: true },
   { slug: 'contrato_assinado',    rotulo: 'Venda ganha',               curto: 'Ganha',       abrev: 'WON', borda: 'border-green-500',  badge: 'bg-green-500/20 text-green-400',  kanban: true,  ativa: false },
   { slug: 'perdido',              rotulo: 'Venda perdida',             curto: 'Perdida',     abrev: 'LOST',borda: 'border-red-500',    badge: 'bg-red-500/20 text-red-400',      kanban: true,  ativa: false },
