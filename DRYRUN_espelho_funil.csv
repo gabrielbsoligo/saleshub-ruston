@@ -1,0 +1,146 @@
+kommo_id,empresa,etapa_kommo_hoje,status_sh_hoje,temperatura,etapa_final,escreve_no_kommo,acao
+24696563,"Agrofide Trading Finance",Feedback reunião,negociacao,morno,media_prioridade,SIM,mover pelos 2 lados (temperatura)
+22403217,"Aprovai",Feedback reunião,perdido,frio,baixa_prioridade,SIM,mover pelos 2 lados (temperatura)
+24702161,"Construtora e Incorporadora Mineirinho Ltda",Feedback reunião,negociacao,morno,media_prioridade,SIM,mover pelos 2 lados (temperatura)
+21693695,"empório tio ali",Feedback reunião,follow_longo,quente,alta_prioridade,SIM,mover pelos 2 lados (temperatura)
+7230986,"LOCABEL - LOCADORA BETINENSE DE EQUIPAMENTOS PARA CONSTRUCAO LTDA",Feedback reunião,negociacao,quente,alta_prioridade,SIM,mover pelos 2 lados (temperatura)
+22885825,"PPPIX",Feedback reunião,perdido,frio,baixa_prioridade,SIM,mover pelos 2 lados (temperatura)
+24462599,"Sky energia",Feedback reunião,negociacao,quente,alta_prioridade,SIM,mover pelos 2 lados (temperatura)
+24658645,"Trivel",Feedback reunião,contrato_assinado,quente,alta_prioridade,SIM,mover pelos 2 lados (temperatura)
+24696529,"AHL Comercio Ltda",Marcar call proposta,negociacao,morno,marcar_call_proposta,nao,copiar do Kommo
+23209565,"Bonifácio Transporte de Carga",Marcar call proposta,follow_longo,morno,marcar_call_proposta,nao,copiar do Kommo
+24755415,"CBF - Confederacao Brasileira de Futebol",Marcar call proposta,perdido,(sem temperatura),marcar_call_proposta,nao,copiar do Kommo
+24698905,"Delta power sistemas do brasil",Marcar call proposta,negociacao,morno,marcar_call_proposta,nao,copiar do Kommo
+24678885,"Exclusiv Móveis e Decorações",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24647403,"FBR veículos",Marcar call proposta,follow_longo,morno,marcar_call_proposta,nao,copiar do Kommo
+8432010,"Grupo All",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24173345,"Gugas Atacado",Marcar call proposta,follow_longo,morno,marcar_call_proposta,nao,copiar do Kommo
+24156749,"IBDN - Instituto Brasileiro de Defesa da Natureza",Marcar call proposta,follow_longo,morno,marcar_call_proposta,nao,copiar do Kommo
+24700009,"Meta Produtos e Serviços",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24620535,"Moto Gerais Peças e Serviços ltda",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24698021,"Novod Soluções",Marcar call proposta,follow_longo,quente,marcar_call_proposta,nao,copiar do Kommo
+24748069,"OXI DOIS BOLSAS E ACESSORIOS LTDA",Marcar call proposta,negociacao,frio,marcar_call_proposta,nao,copiar do Kommo
+24514883,"Sergio Lima Educação",Marcar call proposta,follow_longo,quente,marcar_call_proposta,nao,copiar do Kommo
+24682757,"SSA Brasil",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24746311,"Temda",Marcar call proposta,follow_longo,morno,marcar_call_proposta,nao,copiar do Kommo
+24622511,"Tincar",Marcar call proposta,negociacao,quente,marcar_call_proposta,nao,copiar do Kommo
+24419551,"UTIMOVEIS",Marcar call proposta,perdido,morno,marcar_call_proposta,nao,copiar do Kommo
+24693163,"7C turismo & consultoria",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+22874477,"Alaska Câmaras Frigoríficas",Baixa prioridade (+30d),perdido,quente,baixa_prioridade,nao,copiar do Kommo
+24050767,"Castan Imóveis",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+23201993,"EMPORIO DAS PERUANAS",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+24403319,"FORT DIESEL CENTRO AUTOMOTIVO EIRELI",Baixa prioridade (+30d),negociacao,morno,baixa_prioridade,nao,copiar do Kommo
+23924033,"Fraga ar condicionado",Baixa prioridade (+30d),contrato_na_rua,frio,baixa_prioridade,nao,copiar do Kommo
+24320783,"Grupo GPSs",Baixa prioridade (+30d),perdido,quente,baixa_prioridade,nao,copiar do Kommo
+24426547,"Imenco",Baixa prioridade (+30d),perdido,morno,baixa_prioridade,nao,copiar do Kommo
+24156697,"Las Bicicletas",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+23588365,"Megawatt Solução em energia",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+24050859,"MICREX/BIOWORLD",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+22518491,"Mult",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+23941987,"Mutum mármores e granitos",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+22547024,"Point Construcoes",Baixa prioridade (+30d),follow_longo,morno,baixa_prioridade,nao,copiar do Kommo
+19163784,"Sorveteria Gelaboca",Baixa prioridade (+30d),perdido,morno,baixa_prioridade,nao,copiar do Kommo
+23392589,"Supreme medical shop",Baixa prioridade (+30d),perdido,morno,baixa_prioridade,nao,copiar do Kommo
+24306431,"Tdex tecnologia",Baixa prioridade (+30d),perdido,morno,baixa_prioridade,nao,copiar do Kommo
+22547026,"Técnica Demanda e Distribuição Hospitalar",Baixa prioridade (+30d),follow_longo,morno,baixa_prioridade,nao,copiar do Kommo
+24229165,"Vindos fabrica",Baixa prioridade (+30d),follow_longo,frio,baixa_prioridade,nao,copiar do Kommo
+7231052,"ELO URBANO CONSTRUTORA E INCORPORADORA LTDA",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+7236242,"Endress+Hauser",Média prioridade (11-30d),follow_longo,morno,media_prioridade,nao,copiar do Kommo
+24386293,"Frossard restsursntes ltda",Média prioridade (11-30d),follow_longo,frio,media_prioridade,nao,copiar do Kommo
+23504431,"Hera Distribuidora",Média prioridade (11-30d),follow_longo,quente,media_prioridade,nao,copiar do Kommo
+23778709,"Impacto cell",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+24284705,"Jz implementos",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+23731325,"LB Soldas",Média prioridade (11-30d),follow_longo,morno,media_prioridade,nao,copiar do Kommo
+24620507,"Lopes distribuidora",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+23924341,"Proenergy Fitness Center",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+23960523,"RDA Distribuidora",Média prioridade (11-30d),negociacao,morno,media_prioridade,nao,copiar do Kommo
+7235208,"CONSTRUTORA E INCORPORADORA J.A. RUSSI LTDA",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24156847,"Emagil fit",Alta prioridade (1-10d),perdido,morno,alta_prioridade,nao,copiar do Kommo
+23783101,"Forteplus Sistemas",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24156555,"Gomidias",Alta prioridade (1-10d),follow_longo,quente,alta_prioridade,nao,copiar do Kommo
+24392167,"Grupo WWS",Alta prioridade (1-10d),negociacao,quente,alta_prioridade,nao,copiar do Kommo
+24268481,"Inegral Facilities",Alta prioridade (1-10d),negociacao,frio,alta_prioridade,nao,copiar do Kommo
+24700205,"loja outside",Alta prioridade (1-10d),follow_longo,morno,alta_prioridade,nao,copiar do Kommo
+24422421,"MCK Advogados",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24063759,"Nocta Consultoria e Corretora de Seguros LTDA",Alta prioridade (1-10d),contrato_na_rua,morno,alta_prioridade,nao,copiar do Kommo
+24390897,"NOVA Acessórios Automotivos",Alta prioridade (1-10d),perdido,frio,alta_prioridade,nao,copiar do Kommo
+24504277,"redeinova",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24424643,"Resenmuck",Alta prioridade (1-10d),follow_longo,quente,alta_prioridade,nao,copiar do Kommo
+24625277,"SOL by RZK",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24411823,"SORVETES RETRO",Alta prioridade (1-10d),negociacao,morno,alta_prioridade,nao,copiar do Kommo
+24620561,"Coopera IT",Contrato,contrato_na_rua,quente,contrato,nao,copiar (já equivalente)
+24460281,"Alumi souza",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7233742,"America Remodeling",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23418749,"Andromeda",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+24628893,"ARJ LTDA",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22666419,"Assoalhos Classe A",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22644513,"BARUCK",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22745291,"Bengalas Cristo Redentor",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7233682,"Brandz",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7235834,"Bristol",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+12054809,"Catarge Engenharia",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23920625,"Centro Universitário Don Domênico - UNIDON",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+24620523,"Cetmac Tecnologia Industrial Ltda",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23744941,"Cgn autocenter",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7235346,"Chiptronic",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+24622387,"Clinica oftalmologica torres",Won,perdido,quente,won,nao,copiar do Kommo
+9922030,"Cobmais",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+24474031,"Colégio Dom Bosco",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+24371001,"Construtora Piacentini",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+23924123,"Copermix Amapá Ltda",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+8108192,"Crescere",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7236168,"GRUPO MB",Won,perdido,quente,won,nao,copiar do Kommo
+22326155,"HD soluções inovadoras",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+22513883,"Hebrom serviços de logística",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23747377,"HIGOR ESQUADRIAS DE ALUMINIO",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22523383,"Integra saude rio",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+12672628,"Interage Imoveis",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22678257,"IPS Engenharia",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22875091,"ITCE",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23724163,"Larissa Fotógrafa",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+21790703,"Legacy Coffee",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23176949,"Marcio Guinchos",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+24156283,"Mercadinho Aliança Divina",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+12929042,"Meta Trading",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23528645,"Metallog",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22326031,"Natural Light",Won,perdido,quente,won,nao,copiar do Kommo
+24545933,"Petfriendly turismo",Won,perdido,quente,won,nao,copiar do Kommo
+10642408,"Pixole",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7235778,"Pronus",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+22732129,"Restaurante Itabaiana",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22654115,"Shineray SWM",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23813273,"Shopping do Milk Shake",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23924693,"Supernet",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+12976634,"SX Loc",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23534789,"Terra imoveis",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+22654665,"Unitá",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7234828,"Universo dos Containers",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23266635,"vera cruz moveis",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+7233762,"Xceed Professional",Won,contrato_assinado,quente,won,nao,copiar (já equivalente)
+23025199,"Zyra Solutions",Won,contrato_assinado,morno,won,nao,copiar (já equivalente)
+23588219,"3D industrial",Lost,follow_longo,frio,lost,nao,copiar do Kommo
+7227902,"AMERICA RENTAL EQUIPAMENTOS LTDA",Lost,follow_longo,frio,lost,nao,copiar do Kommo
+23174879,"ATSD BR COMERCIO e Ind ( ADVANCED TECHOLOGIES)",Lost,follow_longo,morno,lost,nao,copiar do Kommo
+24698645,"Auto Posto Parque Universitário Americana Ltda",Lost,follow_longo,frio,lost,nao,copiar do Kommo
+24269497,"Avanti Química",Lost,negociacao,morno,lost,nao,copiar do Kommo
+24620489,"Biofarma",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+24018677,"Brinquemix",Lost,negociacao,morno,lost,nao,copiar do Kommo
+24156665,"Cca química",Lost,negociacao,morno,lost,nao,copiar do Kommo
+24289373,"Curso Trade",Lost,perdido,quente,lost,nao,copiar (já equivalente)
+23783287,"DIOXIDE INDUSTRIA QUIMICA LTDA",Lost,perdido,frio,lost,nao,copiar (já equivalente)
+23693137,"fics car brasil",Lost,negociacao,morno,lost,nao,copiar do Kommo
+23726897,"Fumagalli contabilidade e perfecta construtora",Lost,negociacao,frio,lost,nao,copiar do Kommo
+23863893,"Grupo CIMENTAO LEMENSE",Lost,follow_longo,quente,lost,nao,copiar do Kommo
+23962755,"Guimarães bebedouro",Lost,negociacao,morno,lost,nao,copiar do Kommo
+23513203,"HT Group",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+23236241,"Laqus",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+24156651,"Leads Motos",Lost,negociacao,frio,lost,nao,copiar do Kommo
+22656503,"Mar Eventos",Lost,follow_longo,morno,lost,nao,copiar do Kommo
+23958999,"MUNDIAL MAQUINAS",Lost,perdido,quente,lost,nao,copiar (já equivalente)
+23786423,"PD Energy",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+23744913,"Queijios Premiatta",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+24419639,"Redemac Madesul",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+24304535,"UDIFER INDUSTRIA",Lost,negociacao,morno,lost,nao,copiar do Kommo
+23935613,"Unike imóveis",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+23901057,"Wd Empreendimentos",Lost,perdido,morno,lost,nao,copiar (já equivalente)
+23237511,"Zeom",Lost,perdido,morno,lost,nao,copiar (já equivalente)
