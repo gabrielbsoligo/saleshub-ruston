@@ -334,6 +334,12 @@ export const DashboardView: React.FC = () => {
                 {generalPace.mrrOnTrack && generalPace.otOnTrack ? '✅ No ritmo' : '⚠️ Abaixo'}
               </div>
             </div>
+            <PaceBar label="Total Ganho (MRR + OT)"
+              realizado={mrrMes + otMes}
+              expected={generalPace.expectedMrr + generalPace.expectedOt}
+              meta={totalMetaMrr + totalMetaOt}
+              gap={(generalPace.expectedMrr + generalPace.expectedOt) - (mrrMes + otMes)}
+              onTrack={mrrMes + otMes >= generalPace.expectedMrr + generalPace.expectedOt} />
             <PaceBar label="MRR Ganho" realizado={mrrMes} expected={generalPace.expectedMrr} meta={totalMetaMrr} gap={generalPace.gapMrr} onTrack={generalPace.mrrOnTrack} />
             <PaceBar label="OT Ganho" realizado={otMes} expected={generalPace.expectedOt} meta={totalMetaOt} gap={generalPace.gapOt} onTrack={generalPace.otOnTrack} />
             <PaceBar label="Reuniões Realizadas" realizado={reunioesDoMes.length} expected={generalPace.expectedReunioes} meta={totalMetaReunioes} gap={generalPace.gapReunioes} onTrack={generalPace.reunioesOnTrack} isCurrency={false} />
