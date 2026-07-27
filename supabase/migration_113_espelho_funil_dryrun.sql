@@ -121,8 +121,8 @@ RETURNS TABLE(
   SELECT fe.ordem, fe.rotulo,
          COUNT(p.kid)::int AS deals_no_kommo,
          -- "no SalesHub" = deal casado cujo status já equivale à etapa do Kommo
-         COUNT(*) FILTER (WHERE p.deal_id IS NOT NULL AND p.sh IS NOT DISTINCT FROM fe.sh_legado)::int,
-         COUNT(*) FILTER (WHERE p.deal_id IS NOT NULL AND p.sh IS DISTINCT FROM fe.sh_legado)::int,
+         COUNT(*) FILTER (WHERE p.deal_id IS NOT NULL AND p.sh IS NOT DISTINCT FROM COALESCE(fe.sh_legado, fe.slug))::int,
+         COUNT(*) FILTER (WHERE p.deal_id IS NOT NULL AND p.sh IS DISTINCT FROM COALESCE(fe.sh_legado, fe.slug))::int,
          COUNT(*) FILTER (WHERE p.deal_id IS NULL)::int
   FROM kommo.funil_etapas fe
   LEFT JOIN pares p ON p.status_id = fe.kommo_status_id
