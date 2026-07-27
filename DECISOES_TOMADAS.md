@@ -176,3 +176,20 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     PRECEDÊNCIA no feedback: T3 dispara antes de T2 (ordem alfabética), então etapa explícita do
     closer (Contrato/Fechou/Perdido) ganha da temperatura — ramo B só age com o deal em
     `dar_feedback`.
+36. **BUG SISTÊMICO achado no teste da Escave (lead 20365312)**: 507 dos 862 deals (59%) têm
+    `kommo_id` gravado como float — `'20365312.0'`. O normalizador ingênuo usado em 20 funções
+    (`NULLIF(regexp_replace(...,'\D','','g'),'')::bigint`) apaga o ponto e MANTÉM o zero:
+    vira `203653120`, id inexistente. Efeitos: (a) o espelhamento não enxergava 59% dos deals;
+    (b) **a CADÊNCIA DO CLOSER também não** — `plan_closer` e `lead_stage_to_cadencia_closer`
+    usavam o mesmo regex; bug PRÉ-EXISTENTE, não introduzido pelo espelho; (c) a roleta idem.
+    Não houve match ERRADO (ids inflados têm 9 dígitos, os reais 8 — não colidem): só omissão.
+    Fix: `kommo.norm_kommo_id()` (já existia, faz floor(numeric)) em todas as funções.
+    Recuperação: 18 deals re-espelhados; divergência voltou a só os casos de guarda.
+    Lotes (`aplicar_espelho_copia`/`aplicar_fase6`) ganharam a flag `espelho.sync` — sem ela,
+    re-executar viraria escrita em massa no Kommo agora que T3 existe (0 escritas indevidas
+    confirmadas na recuperação).
+37. **Impacto na fase 6**: 133 deals foram julgados com o id quebrado. Destes, 118 têm lead em
+    OUTRO pipeline (o destino `perdido` estava certo, só o motivo ficou impreciso — "sem vínculo"
+    /"lead ativo homônimo" em vez de "devolvido a outro pipeline"); todos são motivos de higiene,
+    então NÃO afetam conversão nem funil. Os que estavam no funil Closer foram revividos pela
+    recuperação. A lista manual de Won subiu de 4 para 10 (mais casos ficaram visíveis).
