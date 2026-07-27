@@ -165,3 +165,14 @@ Registro dos ramos não 100% cobertos pela árvore (regra do handoff: caminho re
     `status_novo='negociacao'` (zeraria a coluna Proposta do GeralView) -> passa a considerar
     marcar_call_proposta + baldes; `get_perf_closer.deals_por_etapa` idem; DashboardView
     "pipeline ativo" agora usa DEAL_STATUS_ATIVOS (antes subestimava o pipe).
+35. **Espelhamento BIDIRECIONAL (decisão do Gabriel, amplia a Trava 1)**: mover a etapa da
+    negociação no SalesHub agora move o card no Kommo (T3, migration_120). Escreve SÓ status_id;
+    pipeline_id e responsible_user_id seguem hard-block. Anti-loop com 2 travas independentes:
+    (a) flag transaction-local `espelho.sync` que kommo.espelhar_deal() liga — o UPDATE vindo do
+    Kommo não repropaga (também protege os lotes de virarem escrita em massa se re-executados);
+    (b) "já igual" — T3 lê o status_id atual e não escreve se já for o alvo.
+    Testado com rollback: arraste no SH -> 1 PATCH no Kommo; movimento no Kommo -> 0 PATCH
+    (só a cadência re-planeja, que é o correto).
+    PRECEDÊNCIA no feedback: T3 dispara antes de T2 (ordem alfabética), então etapa explícita do
+    closer (Contrato/Fechou/Perdido) ganha da temperatura — ramo B só age com o deal em
+    `dar_feedback`.
