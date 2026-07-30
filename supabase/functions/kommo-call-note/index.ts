@@ -27,10 +27,13 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
   const { data: lg } = await supabase.from('ligacoes_4com')
-    .select('id, call_id, provider, direction, atendida, duration, started_at, member_id, kommo_lead_id, kommo_note_id, hangup_cause')
+    .select('id, call_id, provider, direction, atendida, duration, started_at, ended_at, member_id, kommo_lead_id, kommo_note_id, hangup_cause')
     .eq('id', b.ligacao_id).maybeSingle()
   if (!lg?.kommo_lead_id) return json({ skipped: true, reason: 'sem_vinculo' })
   if (lg.kommo_note_id) return json({ skipped: true, reason: 'nota_ja_postada', note_id: lg.kommo_note_id })
+  // API4COM manda evento no INÍCIO da chamada — sem ended_at o desfecho ainda não existe;
+  // a nota sai só no hangup (o trigger re-dispara). 3C chega num evento único já final.
+  if (lg.provider !== '3c' && !lg.ended_at) return json({ skipped: true, reason: 'ligacao_em_andamento' })
 
   const { data: agente } = lg.member_id
     ? await supabase.from('team_members').select('name, kommo_user_id').eq('id', lg.member_id).maybeSingle()
