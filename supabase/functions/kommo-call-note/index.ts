@@ -1,5 +1,6 @@
-// kommo-call-note — P4: TODA tentativa de ligação (API4COM) vira NOTA no lead do Kommo, e se
-// existir TAREFA DE LIGAÇÃO ABERTA do mesmo agente pro lead, dá BAIXA com o desfecho.
+// kommo-call-note — P4: tentativa de ligação (API4COM) NÃO ATENDIDA vira NOTA no lead do
+// Kommo (atendida ganha a nota completa pelo n8n), e se existir TAREFA DE LIGAÇÃO ABERTA
+// do mesmo agente pro lead, dá BAIXA com o desfecho (atendida ou não).
 // NUNCA cria tarefa retroativa (criar retroativo suja o dado de cadência — regra do handoff).
 // Idempotente: ligacoes_4com.kommo_note_id — 1 nota por ligação, replays não duplicam.
 // Disparo: trigger em ligacoes_4com quando o vínculo (kommo_lead_id) chega, com trava de
@@ -47,9 +48,11 @@ Deno.serve(async (req) => {
   const desfecho = lg.atendida ? 'ATENDEU' : (lg.hangup_cause ? `NÃO ATENDEU (${lg.hangup_cause})` : 'NÃO ATENDEU')
   const texto = `📞 Tentativa de ligação — ${desfecho}\n${quando} · ${dur} · ${lg.direction === 'inbound' ? 'receptiva' : 'ativa'} · ${agente?.name ?? 'agente ?'} · via ${lg.provider === '3c' ? '3C' : 'API4COM'} (SalesHub)`
 
-  // nota (só API4COM — o fluxo 3C do n8n já cuida das notas dele)
+  // nota SÓ quando NÃO ATENDEU (Gabriel, 30/07): ligação atendida já ganha a nota completa
+  // pelo fluxo do n8n — a "Tentativa — ATENDEU" daqui era ruído duplicado. E só API4COM
+  // (o fluxo 3C do n8n já cuida das notas dele). A baixa de tarefa continua nos dois casos.
   let noteId: number | null = null
-  if (lg.provider !== '3c') {
+  if (lg.provider !== '3c' && !lg.atendida) {
     const r = await fetch(`${KOMMO_BASE}/api/v4/leads/${lg.kommo_lead_id}/notes`, {
       method: 'POST', headers: H,
       body: JSON.stringify([{ note_type: 'common', params: { text: texto } }]),
