@@ -134,6 +134,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         empresa: ind.empresa || '',
         nome_contato: ind.nome || '',
         telefone: ind.telefone || '',
+        contexto: ind.contexto || '',
       })));
       filled.add('recomendacoes');
     }
@@ -516,15 +517,20 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               </div>
               {recomendacoes.length === 0 && <p className="text-xs text-[var(--color-v4-text-muted)]">Nenhuma recomendação nova nesta reunião</p>}
               {recomendacoes.map((rec, i) => (
-                <div key={i} className="flex gap-2 mb-2">
-                  <input className={inputClass + " flex-1"} placeholder="Empresa *" value={rec.empresa}
-                    onChange={e => updateRecomendacao(i, { empresa: e.target.value })} />
-                  <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
-                    onChange={e => updateRecomendacao(i, { nome_contato: e.target.value })} />
-                  <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
-                    onChange={e => updateRecomendacao(i, { telefone: e.target.value })} />
-                  <button type="button" onClick={() => removeRecomendacao(i)}
-                    className="p-2 text-red-400 hover:text-red-300"><Trash2Icon size={14} /></button>
+                <div key={i} className="mb-2 space-y-2">
+                  <div className="flex gap-2">
+                    <input className={inputClass + " flex-1"} placeholder="Empresa *" value={rec.empresa}
+                      onChange={e => updateRecomendacao(i, { empresa: e.target.value })} />
+                    <input className={inputClass + " flex-1"} placeholder="Contato" value={rec.nome_contato}
+                      onChange={e => updateRecomendacao(i, { nome_contato: e.target.value })} />
+                    <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
+                      onChange={e => updateRecomendacao(i, { telefone: e.target.value })} />
+                    <button type="button" onClick={() => removeRecomendacao(i)}
+                      className="p-2 text-red-400 hover:text-red-300"><Trash2Icon size={14} /></button>
+                  </div>
+                  <textarea className={inputClass + " w-full resize-none"} rows={2}
+                    placeholder="Contexto (opcional — vira nota no lead do Kommo)" value={rec.contexto}
+                    onChange={e => updateRecomendacao(i, { contexto: e.target.value })} />
                 </div>
               ))}
             </div>

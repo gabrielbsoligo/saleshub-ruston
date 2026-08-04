@@ -350,6 +350,9 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                       <input className={inputClass + " flex-1"} placeholder="Telefone" value={rec.telefone}
                         onChange={e => updateRecomendacao(i, { telefone: e.target.value })} />
                     </div>
+                    <textarea className={inputClass + " w-full resize-none"} rows={2}
+                      placeholder="Contexto (opcional — vira nota no lead do Kommo)" value={rec.contexto}
+                      onChange={e => updateRecomendacao(i, { contexto: e.target.value })} />
                   </div>
                   <button type="button" onClick={() => removeRecomendacao(i)}
                     className="p-2 text-red-400 hover:text-red-300 self-start mt-1"><Trash2Icon size={14} /></button>

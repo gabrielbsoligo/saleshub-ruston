@@ -21,6 +21,7 @@ export interface Draft {
   empresa: string;
   nome_contato: string;
   telefone: string;
+  contexto: string;   // opcional — vira NOTA no lead do Kommo depois que ele é criado
 }
 
 // Recomendacao existente ja vem com o lead criado em JOIN.
@@ -60,7 +61,7 @@ export interface UseRecomendacoesDraftResult {
   reloadExisting: () => Promise<void>;
 }
 
-const EMPTY_DRAFT: Draft = { empresa: '', nome_contato: '', telefone: '' };
+const EMPTY_DRAFT: Draft = { empresa: '', nome_contato: '', telefone: '', contexto: '' };
 
 export function useRecomendacoesDraft(dealId: string | null | undefined): UseRecomendacoesDraftResult {
   const [existing, setExisting] = useState<ExistingRecomendacao[]>([]);
@@ -133,12 +134,15 @@ export function useRecomendacoesDraft(dealId: string | null | undefined): UseRec
         .select('id')
         .single();
 
-      // recomendacoes soh referencia o lead (dados ficam no lead, not duplicated)
+      // recomendacoes soh referencia o lead (dados ficam no lead, not duplicated).
+      // contexto: quando preenchido, trigger no banco posta como NOTA no lead do Kommo
+      // assim que o kommo_id chegar (migration_130).
       await supabase.from('recomendacoes').insert({
         deal_id: ctx.dealId,
         closer_id: ctx.closerId || null,
         sdr_id: ctx.dealSdrId || null,
         lead_criado_id: newLead?.id || null,
+        contexto: rec.contexto?.trim() || null,
       });
     }
 

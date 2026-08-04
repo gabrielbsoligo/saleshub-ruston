@@ -1,5 +1,6 @@
 // kommo-writeback — ponte de ESCRITA SalesHub->Kommo (pg_net não faz PATCH).
-// Recebe {secret, kommo_id, patch?, reuniao_id?, tasks_owner?} e faz PATCH /api/v4/leads/{kommo_id}.
+// Recebe {secret, kommo_id, patch?, reuniao_id?, tasks_owner?, note_text?}.
+// patch -> PATCH /api/v4/leads/{id}. note_text -> POST /api/v4/leads/{id}/notes (nota comum).
 // tasks_owner (kommo_user_id): se presente, reatribui TODAS as tarefas ABERTAS do lead p/ esse dono
 // (usado quando a roleta atribuiu antes do lead sincronizar no Kommo -> corrige dono do lead + tarefas).
 // Auth por segredo (KOMMO_SYNC_SECRET). Token do Kommo via secret KOMMO_API_TOKEN.
@@ -13,7 +14,7 @@ Deno.serve(async (req) => {
   if (!b?.secret || b.secret !== Deno.env.get('KOMMO_SYNC_SECRET')) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), { status: 401 })
   }
-  if (!b.kommo_id || (!b.patch && !b.tasks_owner)) {
+  if (!b.kommo_id || (!b.patch && !b.tasks_owner && !b.note_text)) {
     return new Response(JSON.stringify({ error: 'missing kommo_id/patch' }), { status: 400 })
   }
   const token = Deno.env.get('KOMMO_API_TOKEN')
@@ -23,6 +24,17 @@ Deno.serve(async (req) => {
     if (b.patch) {
       const r = await fetch(`${KOMMO_BASE}/api/v4/leads/${b.kommo_id}`, { method: 'PATCH', headers: H, body: JSON.stringify(b.patch) })
       leadStatus = r.status; leadBody = (await r.text()).slice(0, 400)
+    }
+
+    // nota comum no lead (opcional) — usado pelo contexto da recomendação (migration_130)
+    let noteStatus: number | null = null, noteId: number | null = null
+    if (b.note_text) {
+      const nr = await fetch(`${KOMMO_BASE}/api/v4/leads/${b.kommo_id}/notes`, {
+        method: 'POST', headers: H,
+        body: JSON.stringify([{ note_type: 'common', params: { text: String(b.note_text).slice(0, 4000) } }]),
+      })
+      noteStatus = nr.status
+      noteId = nr.ok ? ((await nr.json())?._embedded?.notes?.[0]?.id ?? null) : null
     }
 
     // reatribui tarefas ABERTAS do lead (opcional) — corrige a tarefa do salesbot ("LEAD NOVO! MOVER")
@@ -41,7 +53,7 @@ Deno.serve(async (req) => {
     }
     // A resposta fica registrada no net._http_response (pg_net) p/ auditoria/process_kommo_responses.
     return new Response(
-      JSON.stringify({ kommo_id: b.kommo_id, reuniao_id: b.reuniao_id ?? null, kommo_status: leadStatus, kommo_body: leadBody, tasks_reassigned: tasksReassigned }),
+      JSON.stringify({ kommo_id: b.kommo_id, reuniao_id: b.reuniao_id ?? null, kommo_status: leadStatus, kommo_body: leadBody, tasks_reassigned: tasksReassigned, note_status: noteStatus, note_id: noteId }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )
   } catch (e) {
