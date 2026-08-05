@@ -21,9 +21,11 @@ Deno.serve(async (req) => {
     return json({ ok: r.ok, task_types: j?._embedded?.task_types ?? j })
   }
 
-  // Verificação diária: pré-entrada (etapa type=1) com conversa duplicada de lead existente.
+  // Rotina noturna: pré-entrada (etapa type=1) com conversa duplicada de lead existente.
   // Busca o telefone do contato na API do Kommo (o espelho não vincula contato antes do aceite),
-  // casa contra a base (RPC match_lead_por_fone) e cria tarefa ALERTA no lead REAL.
+  // casa contra a base (RPC match_lead_por_fone) e VINCULA automaticamente: anexa o contato ao
+  // lead real (a conversa passa a aparecer lá), registra nota e fecha o card da pré-entrada (143).
+  // Também dá baixa em ALERTA antigo aberto que cite a mesma pré-entrada.
   if (b.action === 'verificar_preentrada') {
     const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
@@ -47,20 +49,48 @@ Deno.serve(async (req) => {
       const { data: matches } = await supabase.rpc('match_lead_por_fone', { p_fone: fone, p_pre_id: pre.kid })
       const m = (matches ?? [])[0]
       if (!m) { out.push({ pre: pre.kid, fone, match: null }); continue }
-      if (m.ja_alertado) { out.push({ pre: pre.kid, match: m.kid, skip: 'ja_alertado' }); continue }
-      const due = Math.floor(Date.now() / 1000) + 8 * 3600
-      const tr = await fetch(`${KOMMO_BASE}/api/v4/tasks`, {
+
+      // 1) anexa o contato da conversa ao lead REAL — o chat passa a aparecer lá
+      const link = await fetch(`${KOMMO_BASE}/api/v4/leads/${m.kid}/link`, {
         method: 'POST', headers: H,
-        body: JSON.stringify([{ entity_id: m.kid, entity_type: 'leads',
-          responsible_user_id: m.responsible_user_id,
-          task_type_id: 3928475,
-          text: `Conversa duplicada na pré-entrada #${pre.kid} (${pre.nome || ''}) — vincular o chat neste lead`,
-          complete_till: due }]),
+        body: JSON.stringify([{ to_entity_id: contactId, to_entity_type: 'contacts' }]),
       })
-      out.push({ pre: pre.kid, match: m.kid, alerta: tr.status })
+      if (!link.ok) { out.push({ pre: pre.kid, match: m.kid, skip: 'link_' + link.status }); continue }
+      await new Promise((res) => setTimeout(res, 120))
+
+      // 2) nota no lead real (auditoria do vínculo automático)
+      await fetch(`${KOMMO_BASE}/api/v4/leads/${m.kid}/notes`, {
+        method: 'POST', headers: H,
+        body: JSON.stringify([{ note_type: 'common', params: {
+          text: `🔗 Conversa duplicada da pré-entrada #${pre.kid} (${pre.nome || ''}) vinculada automaticamente — contato anexado a este lead; card da pré-entrada fechado. (SalesHub)` } }]),
+      })
+      await new Promise((res) => setTimeout(res, 120))
+
+      // 3) fecha o card da pré-entrada (perdido na própria pipeline)
+      const closePre = await fetch(`${KOMMO_BASE}/api/v4/leads/${pre.kid}`, {
+        method: 'PATCH', headers: H, body: JSON.stringify({ status_id: 143 }),
+      })
+      await new Promise((res) => setTimeout(res, 120))
+
+      // 4) baixa ALERTA antigo aberto citando esta pré-entrada (rotina anterior criava alerta)
+      const tr = await fetch(`${KOMMO_BASE}/api/v4/tasks?filter[entity_type]=leads&filter[entity_id]=${m.kid}&filter[is_completed]=0&limit=50`, { headers: H })
+      if (tr.ok) {
+        const tasks = (await tr.json())?._embedded?.tasks || []
+        for (const t of tasks) {
+          if ((t.text || '').indexOf(`pré-entrada #${pre.kid}`) >= 0) {
+            await fetch(`${KOMMO_BASE}/api/v4/tasks/${t.id}`, {
+              method: 'PATCH', headers: H,
+              body: JSON.stringify({ is_completed: true, result: { text: 'Vinculado automaticamente pelo SalesHub' } }),
+            })
+            await new Promise((res) => setTimeout(res, 120))
+          }
+        }
+      }
+      out.push({ pre: pre.kid, match: m.kid, vinculado: true, pre_fechada: closePre.ok })
       await new Promise((res) => setTimeout(res, 200))
     }
-    return json({ ok: true, verificados: (pres ?? []).length, resultados: out })
+    return json({ ok: true, verificados: (pres ?? []).length,
+      vinculados: out.filter((x) => x.vinculado).length, resultados: out })
   }
 
   if (!Array.isArray(b.tasks) || b.tasks.length === 0) return json({ error: 'tasks vazio' }, 400)
