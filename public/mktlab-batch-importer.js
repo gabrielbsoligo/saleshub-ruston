@@ -1,5 +1,5 @@
 // ============================================================
-// MKTLAB → SalesHub Batch Importer v1.0
+// MKTLAB → SalesHub Batch Importer v1.1 — respeita filtro do MKTLAB (personalizedFilterId)
 // Bookmarklet: roda na pagina do mktlab.app/crm/leads
 // Injeta side panel com UI pra importar leads em lote
 // ============================================================
@@ -33,6 +33,8 @@
   var currentUser = null;
   var teamMembers = [];
   var detectedColumns = [];
+  var savedFilters = [];        // filtros salvos do MKTLAB (/crm/api/filters/leads/list)
+  var detectedFilterId = null;  // último personalizedFilterId usado pela PRÓPRIA página
   var fetchedLeads = [];
   var enrichedLeads = [];
   var selectedIds = {};
@@ -56,6 +58,22 @@
       if (!res.ok) return res.json().then(function(b) { throw new Error(b.message || b.error_description || 'HTTP ' + res.status); });
       return res.json();
     });
+  }
+
+  // ---- Aprende o filtro ativo: intercepta as chamadas da própria página ----
+  // Quando o usuário aplica um filtro na UI do MKTLAB, o app chama
+  // /crm/api/leads/list?...&personalizedFilterId=<id>. Guardamos o último id visto.
+  if (!window.__shFetchPatched) {
+    window.__shFetchPatched = true;
+    var _origFetch = window.fetch;
+    window.fetch = function(u, o) {
+      try {
+        var url = typeof u === 'string' ? u : (u && u.url) || '';
+        var m = url.match(/\/crm\/api\/leads\/(?:list|count)\?[^#]*personalizedFilterId=([0-9a-fA-F-]{8,})/);
+        if (m) { window.__shDetectedFilter = m[1]; }
+      } catch (e) {}
+      return _origFetch.apply(this, arguments);
+    };
   }
 
   // ---- MKTLAB API (uses page cookies) ----
@@ -139,12 +157,13 @@
   }
 
   // ---- Fetch leads from column (paginated) ----
-  function fetchAllLeads(columnId) {
+  function fetchAllLeads(columnId, filterId) {
     var allLeads = [];
     var page = 1;
 
     function fetchPage() {
-      var url = 'https://mktlab.app/crm/api/leads/list?page=' + page + '&limit=50&columnId=' + columnId + '&personalizedFilterId=';
+      var url = 'https://mktlab.app/crm/api/leads/list?page=' + page + '&limit=50&columnId=' + columnId +
+                '&personalizedFilterId=' + encodeURIComponent(filterId || '');
       return mktFetch(url).then(function(data) {
         var cards = data.cards || [];
         if (cards.length === 0) return allLeads;
@@ -473,6 +492,8 @@
           </div>\
           <div class="sh-section">\
             <div class="sh-section-title">2. Filtros</div>\
+            <label class="sh-label">Filtro do MKTLAB (o mesmo da tela)</label>\
+            <select class="sh-select" id="sh-filter"><option value="">Sem filtro (coluna inteira)</option></select>\
             <div class="sh-row">\
               <div><label class="sh-label">Data inicio</label><input class="sh-input" type="date" id="sh-date-start"></div>\
               <div><label class="sh-label">Data fim</label><input class="sh-input" type="date" id="sh-date-end"></div>\
@@ -667,6 +688,7 @@
         $('sh-main').classList.remove('sh-hidden');
         populateSDRs();
         scanColumns();
+        loadFilters();
       }).catch(function() {
         supabaseSession = null;
         // Show login on failure
@@ -735,7 +757,42 @@
     });
   }
 
-  $('sh-btn-scan').onclick = scanColumns;
+  // ---- Filtros salvos do MKTLAB ----
+  function loadFilters() {
+    mktFetch('https://mktlab.app/crm/api/filters/leads/list').then(function(data) {
+      var arr = (data && (data.filters || data.data || data)) || [];
+      if (!Array.isArray(arr)) arr = [];
+      savedFilters = arr.map(function(f) {
+        return { id: f.id || f._id || f.uuid || '', name: f.name || f.title || f.label || (f.id || '').slice(0, 8) };
+      }).filter(function(f) { return f.id; });
+      renderFilterSelect();
+    }).catch(function() { renderFilterSelect(); });
+  }
+
+  function renderFilterSelect() {
+    var sel = $('sh-filter');
+    if (!sel) return;
+    detectedFilterId = window.__shDetectedFilter || detectedFilterId;
+    sel.innerHTML = '<option value="">Sem filtro (coluna inteira)</option>';
+    var hasDetected = false;
+    savedFilters.forEach(function(f) {
+      var opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.name + (f.id === detectedFilterId ? ' (ativo na tela)' : '');
+      if (f.id === detectedFilterId) { opt.selected = true; hasDetected = true; }
+      sel.appendChild(opt);
+    });
+    // filtro ativo que não está na lista de salvos (ad-hoc): oferece mesmo assim
+    if (detectedFilterId && !hasDetected) {
+      var opt2 = document.createElement('option');
+      opt2.value = detectedFilterId;
+      opt2.textContent = 'Filtro ativo na tela (' + detectedFilterId.slice(0, 8) + '…)';
+      opt2.selected = true;
+      sel.appendChild(opt2);
+    }
+  }
+
+  $('sh-btn-scan').onclick = function() { scanColumns(); loadFilters(); };
 
   // ---- Fetch leads ----
   function updateFetchBtn() {
@@ -746,11 +803,13 @@
   $('sh-btn-fetch').onclick = function() {
     var columnId = $('sh-column').value;
     if (!columnId) return;
+    renderFilterSelect();  // pega o filtro ativo mais recente da página
+    var filterId = $('sh-filter') ? $('sh-filter').value : '';
 
     $('sh-btn-fetch').disabled = true;
     $('sh-btn-fetch').innerHTML = '<span class="sh-spinner"></span> Buscando...';
 
-    fetchAllLeads(columnId).then(function(leads) {
+    fetchAllLeads(columnId, filterId).then(function(leads) {
       fetchedLeads = leads;
 
       // Date filter
