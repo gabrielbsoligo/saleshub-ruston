@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
 import { DEAL_STATUS_LABELS, DEAL_STAGES, TEMPERATURA_LABELS, type Deal, type DealStatus, type Temperatura } from "../types";
 import { cn } from "./Layout";
-import { Plus, ExternalLink, Search, ArrowUpDown, LayoutGrid, List, ChevronUp, ChevronDown, Thermometer } from "lucide-react";
+import { Plus, ExternalLink, Search, ArrowUpDown, LayoutGrid, List, ChevronUp, ChevronDown, Thermometer, Clock } from "lucide-react";
 import { DealDrawer } from "./DealDrawer";
 import { FeedbackDrawer } from "./FeedbackDrawer";
 import { DragDropContext, Droppable, Draggable, type DropResult } from "@hello-pangea/dnd";
@@ -30,6 +30,19 @@ const TEMP_COLORS: Record<string, string> = {
   morno: 'text-yellow-400 bg-yellow-400/10',
   frio: 'text-blue-400 bg-blue-400/10',
 };
+
+// Alerta de data de retorno no card do kanban:
+// vermelho = retorno já venceu · amarelo = vence em até 2 dias (hoje conta como amarelo)
+function retornoAlert(deal: Deal): { tipo: 'vencido' | 'proximo'; label: string } | null {
+  if (!deal.data_retorno) return null;
+  if (deal.status === 'contrato_assinado' || deal.status === 'perdido') return null;
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const ret = new Date(deal.data_retorno + 'T00:00:00');
+  const dias = Math.round((ret.getTime() - hoje.getTime()) / 86400000);
+  if (dias < 0) return { tipo: 'vencido', label: `Retorno venceu há ${-dias}d` };
+  if (dias <= 2) return { tipo: 'proximo', label: dias === 0 ? 'Retorno hoje' : `Retorno em ${dias}d` };
+  return null;
+}
 
 type SortOption = 'default' | 'valor_mrr_desc' | 'valor_mrr_asc' | 'created_at_desc' | 'created_at_asc' | 'temperatura';
 
@@ -306,6 +319,8 @@ export const PipelineView: React.FC = () => {
                                   onClick={() => setSelectedDeal(deal)}
                                   className={cn(
                                     "p-3 rounded-lg bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-border-strong)] cursor-pointer transition-colors",
+                                    retornoAlert(deal)?.tipo === 'vencido' && "border-red-500/60 hover:border-red-400",
+                                    retornoAlert(deal)?.tipo === 'proximo' && "border-yellow-500/60 hover:border-yellow-400",
                                     snapshot.isDragging && "shadow-xl shadow-black/30 border-[var(--color-v4-red)] rotate-1"
                                   )}>
                                   <div className="flex items-start justify-between mb-1">
@@ -320,6 +335,12 @@ export const PipelineView: React.FC = () => {
                                     )}
                                     {deal.temperatura && <span className={cn("text-[10px] px-1.5 py-0.5 rounded", TEMP_COLORS[deal.temperatura])}>{TEMPERATURA_LABELS[deal.temperatura]}</span>}
                                     {deal.bant === 4 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-semibold">BANT 4</span>}
+                                    {(() => { const a = retornoAlert(deal); return a ? (
+                                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-semibold inline-flex items-center gap-1",
+                                        a.tipo === 'vencido' ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400")}>
+                                        <Clock size={9} /> {a.label}
+                                      </span>
+                                    ) : null; })()}
                                   </div>
                                   <div className="flex items-center justify-between text-xs">
                                     <div className="flex gap-2">

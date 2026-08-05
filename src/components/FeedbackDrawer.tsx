@@ -221,6 +221,14 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
 
   const handleSubmit = async () => {
     if (!step1Valid || isProcessing) return;
+    // data de retorno OBRIGATÓRIA quando o deal segue vivo (follow/call proposta/contrato na rua)
+    const precisaRetorno = form.proximo_passo === SEGUIR_FOLLOW
+      || form.proximo_passo === 'marcar_call_proposta'
+      || form.proximo_passo === 'contrato_na_rua';
+    if (precisaRetorno && !form.data_retorno) {
+      toast.error('Preencha a Data de Retorno — obrigatória quando a negociação segue em aberto.');
+      return;
+    }
     setIsProcessing(true);
     try {
       if (isGanho) {
@@ -465,7 +473,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               <div className={`bg-[var(--color-v4-surface)] rounded-xl p-4 ${aiHighlight('data_retorno')}`}>
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar size={14} className="text-yellow-400" />
-                  <span className="text-xs font-bold text-white uppercase">Data de Retorno</span>
+                  <span className="text-xs font-bold text-white uppercase">Data de Retorno *</span>
                 </div>
                 <input type="date" value={form.data_retorno?.split('T')[0] || ''} onChange={e => {
                   set('data_retorno', e.target.value || '');
