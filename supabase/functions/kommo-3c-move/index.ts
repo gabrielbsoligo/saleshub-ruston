@@ -16,6 +16,9 @@
 
 const TARGET_PIPELINE_ID = 14062096
 const TARGET_STATUS_ID = 108545100
+// GUARDA (caso Mega Ômega, 06/08): lead que está no funil CLOSER tem negociação em andamento —
+// a tela do 3C NUNCA pode puxá-lo de volta pro funil de SDR.
+const CLOSER_PIPELINE_ID = 11010459
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,6 +55,17 @@ Deno.serve(async (req) => {
   if (!secret || !supabaseUrl) {
     return json({ error: 'server misconfigured (secret/url)' }, 500)
   }
+
+  // guarda: se o lead está no funil Closer, bloqueia o move (negociação em andamento)
+  try {
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const supabase = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
+    const { data: pipelineAtual } = await supabase.rpc('get_lead_pipeline', { p_kommo_id: Number(kommoId) })
+    if (Number(pipelineAtual) === CLOSER_PIPELINE_ID) {
+      return json({ blocked: true, reason: 'lead_no_funil_closer',
+        message: 'Lead está no funil Closer (negociação em andamento) — não movido.' }, 200)
+    }
+  } catch (_) { /* espelho indisponível: segue o fluxo normal */ }
 
   const patch = {
     pipeline_id: TARGET_PIPELINE_ID,
