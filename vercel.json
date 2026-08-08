@@ -4,6 +4,8 @@
   "framework": "vite",
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/setup-no-digital", "destination": "/setup-no-digital/index.html" }
+    { "source": "/setup-no-digital", "destination": "/setup-no-digital/index.html" },
+    { "source": "/enriquecedor", "destination": "/enriquecedor/index.html" },
+    { "source": "/enriquecedor/:path*", "destination": "/enriquecedor/index.html" }
   ]
 }

@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --color-v4-red: #e63946;
+  --color-v4-red-hover: #ff4d5a;
+  --color-v4-red-muted: #e6394620;
+
+  --color-v4-bg: #121212;
+  --color-v4-card: #1e1e1e;
+  --color-v4-surface: #252525;
+  --color-v4-card-hover: #2a2a2a;
+
+  --color-v4-text: #f5f5f5;
+  --color-v4-text-muted: #a0a0a0;
+  --color-v4-text-disabled: #666666;
+
+  --color-v4-border: #2e2e2e;
+  --color-v4-border-strong: #383838;
+
+  --color-v4-success: #22c55e;
+  --color-v4-warning: #facc15;
+  --color-v4-error: #ef4444;
+
+  --font-sans: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-v4-bg);
+  color: var(--color-v4-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Botão pulsante (chama o clique para expandir) — pulso vermelho lento */
+@keyframes pulse-red {
+  0%,
+  100% {
+    background-color: #e63946;
+    box-shadow: 0 0 0 0 rgba(230, 57, 70, 0.45);
+  }
+  50% {
+    background-color: #d12f3d;
+    box-shadow: 0 0 26px 6px rgba(230, 57, 70, 0.55);
+  }
+}
+.animate-pulse-red {
+  animation: pulse-red 3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-red {
+    animation: none;
+    background-color: #e63946;
+  }
+}
+
+/* Botões da Auditoria de ads — acendem no hover, na cor da categoria */
+.glow-alta,
+.glow-media,
+.glow-baixa {
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.glow-alta {
+  box-shadow: inset 0 0 14px rgba(34, 197, 94, 0.2);
+}
+.glow-alta:hover {
+  box-shadow: inset 0 0 14px rgba(34, 197, 94, 0.4), 0 0 20px rgba(34, 197, 94, 0.55);
+}
+.glow-media {
+  box-shadow: inset 0 0 14px rgba(234, 179, 8, 0.2);
+}
+.glow-media:hover {
+  box-shadow: inset 0 0 14px rgba(234, 179, 8, 0.4), 0 0 20px rgba(234, 179, 8, 0.55);
+}
+.glow-baixa {
+  box-shadow: inset 0 0 14px rgba(230, 57, 70, 0.2);
+}
+.glow-baixa:hover {
+  box-shadow: inset 0 0 14px rgba(230, 57, 70, 0.4), 0 0 20px rgba(230, 57, 70, 0.55);
+}
+
+/* Seta dos expansíveis (<details>) — indica que dá para abrir/fechar */
+.chev {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+details[open] > summary .chev {
+  transform: rotate(90deg);
+}
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-v4-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-v4-border-strong);
+  border-radius: 9999px;
+}

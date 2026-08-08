@@ -7,11 +7,14 @@ supabase/.temp/
 *.log
 .env*
 !.env.example
+!.env.local.example
 .env.local
 .vercel
 
 # Claude Code local settings
 .claude/
+# Exceto as skills do enriquecedor (fazem parte do sub-projeto, não são config local)
+!enriquecedor/.claude/
 scripts/workers/__pycache__/
 *.pyc
 

@@ -24,6 +24,8 @@ import {
   Headphones,
   Activity,
   Trophy,
+  Wand2,
+  ExternalLink,
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -32,6 +34,12 @@ import { ROLE_LABELS, type TeamRole } from "../types";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+// Sub-app independente (pasta enriquecedor/), servido em /enriquecedor/ no deploy.
+// Em dev roda como processo separado: `npm run dev` dentro de enriquecedor/ (porta 3001).
+const ENRIQUECEDOR_URL = import.meta.env.DEV
+  ? "http://localhost:3001/enriquecedor/"
+  : "/enriquecedor/";
 
 export type View = "pipeline" | "leads" | "reunioes" | "agendas_time" | "performance" | "metas" | "comissoes" | "contratos" | "equipe" | "dashboard" | "blackbox" | "leadbroker" | "auditoria" | "prepcall" | "3c_manual" | "roleta_historico" | "educacao" | "perf_sdr" | "perf_closer" | "call_quality" | "geral";
 
@@ -128,6 +136,22 @@ export const Layout: React.FC<{
               </button>
             );
           })}
+
+          {currentUser.role !== "financeiro" && (
+            <>
+              <div className="my-2 border-t border-[var(--color-v4-border)]" />
+              <a
+                href={ENRIQUECEDOR_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center w-full gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors text-[var(--color-v4-text-muted)] hover:bg-[var(--color-v4-card-hover)] hover:text-white"
+              >
+                <Wand2 size={18} />
+                <span className="flex-1 text-left">Enriquecedor</span>
+                <ExternalLink size={14} className="opacity-60" />
+              </a>
+            </>
+          )}
         </nav>
 
         <div className="p-4 border-t border-[var(--color-v4-border)]">
