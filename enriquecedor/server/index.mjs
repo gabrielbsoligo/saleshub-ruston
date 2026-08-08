@@ -11,6 +11,15 @@ import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
 
+// Normaliza envs colados com aspas/espaços (ex.: valores copiados de um .env
+// no formato CHAVE="valor" para o painel do Railway/Vercel).
+for (const k of Object.keys(process.env)) {
+  const v = process.env[k];
+  if (typeof v !== 'string') continue;
+  const clean = v.trim().replace(/^(["'])(.*)\1$/s, '$2');
+  if (clean !== v) process.env[k] = clean;
+}
+
 // PORT: injetada pela plataforma (Railway) em produção; 3011 no dev local.
 const PORT = Number(process.env.PORT || process.env.ENRICH_PORT || 3011);
 const UA =
@@ -1761,11 +1770,15 @@ async function isAuthenticated(req) {
     const r = await fetch(`${AUTH_SUPABASE_URL}/auth/v1/user`, {
       headers: { apikey: AUTH_SUPABASE_ANON, authorization: `Bearer ${token}` },
     });
-    if (!r.ok) return false;
+    if (!r.ok) {
+      console.warn(`[auth] token recusado pelo Supabase (HTTP ${r.status})`);
+      return false;
+    }
     if (_authCache.size > 500) _authCache.clear();
     _authCache.set(token, Date.now() + 5 * 60_000);
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[auth] falha ao validar token no Supabase:', String(err?.message || err));
     return false;
   }
 }
@@ -1782,6 +1795,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/health') {
       return send(res, 200, {
         ok: true,
+        authRequired: AUTH_REQUIRED,
         search: searchProvider(),
         searchStatus,
         lemit: !!process.env.LEMIT_API_TOKEN,
