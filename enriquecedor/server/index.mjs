@@ -1703,9 +1703,10 @@ async function generateBriefing(payload) {
     `  }\n` +
     `}\n\n=== DADOS DA EMPRESA (fatos coletados) ===\n${ctx}`;
 
-  // Até 2 tentativas: o Sonnet às vezes demora/limita — retenta sozinho para
-  // não deixar o lead "incompleto" e não reprocessar tudo à toa.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Até 4 tentativas: briefings em sequência ("rodar todos") esbarram no limite
+  // por minuto da API — rate limit (429/529) espera bem mais entre tentativas,
+  // respeitando o retry-after quando informado.
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       // SDK oficial (retry/backoff de 429/5xx embutido). Mesma extração de texto.
       const text = await anthropicText(BRIEFING_MODEL, 4000, prompt);
@@ -1717,8 +1718,13 @@ async function generateBriefing(payload) {
       }
       const briefing = JSON.parse(m[0]);
       return { ok: true, briefing, model: BRIEFING_MODEL };
-    } catch {
-      await sleep(2000 * (attempt + 1)); // timeout/rede/limite — retenta
+    } catch (err) {
+      const status = err?.status ?? err?.response?.status;
+      const retryAfter = Number(err?.headers?.['retry-after']) || 0;
+      const rateLimited = status === 429 || status === 529;
+      console.warn(`[briefing] tentativa ${attempt + 1} falhou (HTTP ${status ?? '?'}) — ${String(err?.message || err).slice(0, 120)}`);
+      const espera = Math.max(retryAfter * 1000, (rateLimited ? 15000 : 2000) * (attempt + 1));
+      await sleep(espera);
     }
   }
   return { ok: false, briefing: null };
