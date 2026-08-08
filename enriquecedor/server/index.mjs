@@ -1802,6 +1802,34 @@ async function isAuthenticated(req) {
   }
 }
 
+// Grava erro na tabela enriquecedor_error_log (banco do SalesHub) usando o
+// token do próprio chamador — fire-and-forget: logar NUNCA quebra o fluxo.
+async function logErroMotor(req, etapa, mensagem, detalhe) {
+  try {
+    if (!AUTH_SUPABASE_URL || !AUTH_SUPABASE_ANON) return; // dev local: só console
+    console.warn(`[erro] ${etapa}: ${String(mensagem).slice(0, 200)}`);
+    const token =
+      String(req?.headers?.authorization || '').replace(/^Bearer\s+/i, '') || AUTH_SUPABASE_ANON;
+    await fetch(`${AUTH_SUPABASE_URL}/rest/v1/enriquecedor_error_log`, {
+      method: 'POST',
+      headers: {
+        apikey: AUTH_SUPABASE_ANON,
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        origem: 'motor',
+        etapa,
+        mensagem: String(mensagem).slice(0, 2000),
+        detalhe: detalhe ?? null,
+      }),
+    });
+  } catch {
+    /* nunca propaga */
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -1892,7 +1920,9 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/lemit' && req.method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, await lemitEnrich(body.cnpj));
+      const r = await lemitEnrich(body.cnpj);
+      if (r?.ok === false) void logErroMotor(req, '/api/lemit', r.note || 'falha na Lemit', { cnpj: body?.cnpj });
+      return send(res, 200, r);
     }
 
     if (url.pathname === '/api/google-negocio' && req.method === 'POST') {
@@ -1913,17 +1943,23 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/datastone' && req.method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, await datastoneCompany(body.cnpj));
+      const r = await datastoneCompany(body.cnpj);
+      if (r?.ok === false) void logErroMotor(req, '/api/datastone', r.note || 'falha na DataStone', { cnpj: body?.cnpj });
+      return send(res, 200, r);
     }
 
     if (url.pathname === '/api/datastone-pessoas' && req.method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, await datastonePessoas(body.cnpj));
+      const r = await datastonePessoas(body.cnpj);
+      if (r?.ok === false) void logErroMotor(req, '/api/datastone-pessoas', r.note || 'falha na DataStone (pessoas)', { cnpj: body?.cnpj });
+      return send(res, 200, r);
     }
 
     if (url.pathname === '/api/anuncios' && req.method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, await anunciosHeadless(body));
+      const r = await anunciosHeadless(body);
+      if (r?.ok === false) void logErroMotor(req, '/api/anuncios', r.note || 'falha na varredura de anúncios', { company: body?.company });
+      return send(res, 200, r);
     }
 
     if (url.pathname === '/api/audit-lp' && req.method === 'POST') {
@@ -1938,11 +1974,14 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/briefing' && req.method === 'POST') {
       const body = await readJson(req);
-      return send(res, 200, await generateBriefing(body));
+      const r = await generateBriefing(body);
+      if (r?.ok === false) void logErroMotor(req, '/api/briefing', 'briefing falhou após todas as tentativas', { empresa: body?.empresa });
+      return send(res, 200, r);
     }
 
     return send(res, 404, { error: 'rota não encontrada' });
   } catch (err) {
+    void logErroMotor(req, url.pathname, err?.message || err, { stack: String(err?.stack || '').slice(0, 800) });
     return send(res, 500, { error: String(err?.message || err) });
   }
 });

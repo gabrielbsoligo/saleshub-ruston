@@ -113,6 +113,28 @@ das tabelas do SalesHub, mas no mesmo Postgres, o que facilita a futura integra�
 - **Ainda local por navegador:** o agrupamento de leads em projetos/funil (estado de workflow);
   centralizar isso é um passo futuro.
 
+## Log de erros e auditoria periódica
+
+Toda falha fica registrada na tabela **`enriquecedor_error_log`** do banco do SalesHub
+(migration 137), com origem, etapa, lead e detalhe:
+
+- **App** (`origem = 'app'`): falhas das fases do funil (Qualificação, Diagnóstico, Anúncios),
+  com empresa e CNPJ do lead — gravadas em `src/lib/errorLog.ts` via `PlayAudit`.
+- **Motor** (`origem = 'motor'`): exceções de rota (500) e falhas estruturadas de
+  DataStone, Lemit, briefing e varredura de anúncios.
+
+Registrar erro é sempre best-effort (nunca quebra o fluxo do usuário). Para a auditoria
+periódica: pedir ao Claude para puxar e analisar os erros — ele tem acesso ao banco. Consulta
+típica:
+
+```sql
+select date_trunc('day', created_at) as dia, origem, etapa, mensagem, count(*)
+from enriquecedor_error_log
+where created_at > now() - interval '7 days'
+group by 1, 2, 3, 4
+order by count(*) desc;
+```
+
 ## Integração futura (fora de escopo por enquanto)
 
 Ideias registradas para quando chegar a hora: hospedar o motor, unificar login, empurrar leads

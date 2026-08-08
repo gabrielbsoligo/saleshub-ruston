@@ -16,6 +16,7 @@ import { parseSpreadsheet } from '../lib/parseSpreadsheet';
 import { buildLeadsFromRows } from '../lib/importPipeline';
 import { measureLeadAds, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { leadsRepo } from '../lib/leadsRepo';
+import { registrarErro } from '../lib/errorLog';
 import { formatCnpj } from '../lib/validation';
 import type { Lead } from '../types';
 import { LeadDetail } from './LeadDetail';
@@ -111,6 +112,10 @@ function PlayAudit({
           if (!lead) {
             onLeadStatus(wf.id, 'erro');
             setLogs((p) => [...p, { empresa: wf.empresa, msg: 'lead não encontrado', ok: false }]);
+            void registrarErro({
+              etapa: exec.label, empresa: wf.empresa, cnpj: wf.cnpj,
+              mensagem: 'lead não encontrado no repositório',
+            });
             continue;
           }
           const r = await exec.run(lead);
@@ -120,10 +125,19 @@ function PlayAudit({
           } else {
             onLeadStatus(wf.id, 'erro');
             setLogs((p) => [...p, { empresa: wf.empresa, msg: `falhou${r.note ? ` (${r.note})` : ''}`, ok: false }]);
+            void registrarErro({
+              etapa: exec.label, empresa: wf.empresa, cnpj: wf.cnpj,
+              mensagem: `auditoria falhou${r.note ? ` (${r.note})` : ''}`,
+              detalhe: { resumo: r.resumo ?? null, note: r.note ?? null },
+            });
           }
         } catch (e) {
           onLeadStatus(wf.id, 'erro');
           setLogs((p) => [...p, { empresa: wf.empresa, msg: e instanceof Error ? e.message : 'erro', ok: false }]);
+          void registrarErro({
+            etapa: exec.label, empresa: wf.empresa, cnpj: wf.cnpj,
+            mensagem: e instanceof Error ? e.message : String(e),
+          });
         }
       }
       if (!cancelado) {
