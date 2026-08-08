@@ -973,11 +973,21 @@ async function getBrowser() {
   if (_playwrightMissing) return null;
   if (!_browserPromise) {
     _browserPromise = (async () => {
+      let chromium;
       try {
-        const { chromium } = await import('playwright');
-        return await chromium.launch({ headless: true });
+        ({ chromium } = await import('playwright'));
       } catch {
-        _playwrightMissing = true;
+        _playwrightMissing = true; // pacote ausente (dev sem setup:motor): não re-tenta
+        return null;
+      }
+      try {
+        return await chromium.launch({ headless: true });
+      } catch (err) {
+        // Falha de LAUNCH pode ser transitória (boot/memória): zera a promise
+        // para re-tentar na próxima requisição, em vez de ficar "sem headless"
+        // até reiniciar o processo.
+        console.warn('[anuncios] falha ao abrir o Chromium:', String(err?.message || err).slice(0, 200));
+        _browserPromise = null;
         return null;
       }
     })();
@@ -1367,10 +1377,12 @@ function scoreAd(card, ctx) {
 
 // Anúncios de um lead com VALIDAÇÃO CRUZADA (busca pela empresa + pontuação).
 async function anunciosHeadless(payload) {
+  // "ok" SÓ quando a medição realmente aconteceu — sem headless ou sem termo de
+  // busca é FALHA (ok:false), para o funil nunca marcar "Auditado" sem medir.
   const browser = await getBrowser();
-  if (!browser) return { ok: true, note: 'headless_indisponivel', meta: null };
+  if (!browser) return { ok: false, note: 'headless_indisponivel', meta: null };
   const { company, fbHandle, siteDomain, cidade, empreendimentos } = payload || {};
-  if (!company) return { ok: true, meta: null };
+  if (!company) return { ok: false, note: 'sem_termo_busca', meta: null };
 
   // Estratégia de IP: por padrão usa o IP DIRETO (rápido e, fora de rajada, não
   // bloqueia). Se o direto estiver em cooldown, tenta o PROXY — mas só se tiver

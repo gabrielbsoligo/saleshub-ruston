@@ -684,7 +684,9 @@ async function fetchAnuncios(lead: Lead, audit: SiteAudit): Promise<SourceResult
       j.meta.lpsDescobertas = reconcileLpsFromAds(lead, j.meta.validados ?? []);
       lead.anuncios = { meta: j.meta, checkedAt: new Date().toISOString() };
     }
-    return { ok: j.ok !== false, note: j.note };
+    // Só é sucesso quando a medição veio de verdade (meta preenchido) — resposta
+    // "ok" sem meta significa que NADA foi medido (não pode virar "Auditado").
+    return { ok: j.ok !== false && !!j.meta, note: j.note };
   } catch {
     return { ok: false };
   }

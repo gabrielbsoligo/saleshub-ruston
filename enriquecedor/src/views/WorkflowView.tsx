@@ -1,4 +1,5 @@
-import { Fragment, useState, useEffect } from 'react';
+import { Fragment, useState, useEffect, useRef } from 'react';
+import PQueue from 'p-queue';
 import toast from 'react-hot-toast';
 import { Filter, Check, ArrowRight, ChevronDown, X, Play, Loader2, CheckCircle2, AlertCircle, Circle, Sparkles, FolderOpen, UploadCloud, ArrowLeft, Trash2 } from 'lucide-react';
 import {
@@ -66,9 +67,15 @@ const runF4 = async (lead: Lead): Promise<FaseResult> => {
   const r = await measureLeadAds(lead);
   const fresh = await leadsRepo.get(lead.id);
   const meta = fresh?.anuncios?.meta;
-  const nv = meta && !Array.isArray(meta) ? meta.validados.length : 0;
-  const na = meta && !Array.isArray(meta) ? meta.aValidar.length : 0;
-  return { ok: r.ok, note: r.note, resumo: r.ok ? `${nv} validados · ${na} a validar` : undefined };
+  // "Auditado" SÓ com a medição do Meta realmente feita (meta gravado no lead).
+  const medido = !!meta && !Array.isArray(meta);
+  const nv = medido ? meta.validados.length : 0;
+  const na = medido ? meta.aValidar.length : 0;
+  return {
+    ok: r.ok && medido,
+    note: r.note ?? (medido ? undefined : 'meta_nao_medido'),
+    resumo: r.ok && medido ? `${nv} validados · ${na} a validar` : undefined,
+  };
 };
 const EXEC: Record<number, { label: string; verbo: string; run: (lead: Lead) => Promise<FaseResult> }> = {
   1: { label: 'Qualificação', verbo: 'qualificando (DataStone + Lemit)', run: enrichQualificacao },
@@ -256,6 +263,53 @@ export function WorkflowView({
     setExecStatus((prev) => (prev[`${fase}:${id}`] === status ? prev : { ...prev, [`${fase}:${id}`]: status }));
   // status mostrado na linha: F1 (Triagem) = validado no import; fases executáveis = execStatus.
   const statusLinha = (l: WfLead): AuditStatus | undefined => (l.etapa === 0 ? 'ok' : stOf(l.etapa, l.id));
+
+  // ── F4 automático ──────────────────────────────────────────────────────────
+  // Lead que chega em Anúncios (F4) entra SOZINHO na fila de medição do Meta —
+  // 1 por vez, com a cadência anti-ban (~40s) — sem precisar clicar em nada.
+  // Com o runF4 exigindo o meta gravado, "Auditado" só aparece após medir.
+  // Erro NÃO re-entra sozinho (evita loop de ban): re-tenta pelo botão da fase.
+  const adsAutoQueue = useRef(new PQueue({ concurrency: 1, interval: 40_000, intervalCap: 1 }));
+  const enfileirados = useRef(new Set<string>());
+  const selIdAtual = useRef(selId);
+  useEffect(() => {
+    // troca de projeto: esvazia a fila pendente (não mistura execStatus)
+    selIdAtual.current = selId;
+    adsAutoQueue.current.clear();
+    enfileirados.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+  useEffect(() => {
+    if (!selId || !importada) return;
+    const projetoDaFila = selId;
+    for (const l of leads) {
+      if (l.etapa !== 3 || l.descartado) continue;
+      if (stOf(3, l.id) || enfileirados.current.has(l.id)) continue; // já rodou/rodando/na fila
+      enfileirados.current.add(l.id);
+      void adsAutoQueue.current.add(async () => {
+        if (projetoDaFila !== selIdAtual.current) return; // projeto trocou no meio — descarta
+        setSt(3, l.id, 'run');
+        try {
+          const lead = await leadsRepo.get(l.id);
+          const r: FaseResult = lead ? await runF4(lead) : { ok: false, note: 'lead não encontrado' };
+          setSt(3, l.id, r.ok ? 'ok' : 'erro');
+          if (!r.ok) {
+            void registrarErro({
+              etapa: 'Anúncios (Meta) — automático', empresa: l.empresa, cnpj: l.cnpj,
+              mensagem: `medição automática falhou${r.note ? ` (${r.note})` : ''}`,
+            });
+          }
+        } catch (e) {
+          setSt(3, l.id, 'erro');
+          void registrarErro({
+            etapa: 'Anúncios (Meta) — automático', empresa: l.empresa, cnpj: l.cnpj,
+            mensagem: e instanceof Error ? e.message : String(e),
+          });
+        }
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads, selId, importada]);
 
   // Executa UMA fase de UM lead (manual). Bloqueia se já houver execução ou auto ligado.
   const executarLead = (l: WfLead, fase: number) => {
