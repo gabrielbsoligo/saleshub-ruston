@@ -214,6 +214,7 @@ export function WorkflowView({
   const [execId, setExecId] = useState<string | null>(null); // lead executando (1 por vez)
   const [autoFase, setAutoFase] = useState<number | null>(null); // fase em modo automático (1 por vez)
   const [openLead, setOpenLead] = useState<string | null>(null); // menu suspenso do lead (dados auditados)
+  const [voltarMenu, setVoltarMenu] = useState<string | null>(null); // lead com o seletor "voltar p/ fase" aberto
   // status da execução por fase — chave `${fase}:${id}`; persiste no projeto.
   const [execStatus, setExecStatus] = useState<Record<string, AuditStatus>>({});
 
@@ -333,6 +334,20 @@ export function WorkflowView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFase, execId, leads, execStatus]);
+
+  // Volta o lead para uma fase anterior escolhida e limpa os status daquela
+  // fase em diante — as auditorias re-rodam (o F4 automático re-entra sozinho).
+  const voltarPara = (id: string, alvo: number) => {
+    setLeads((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, etapa: alvo, parcial: false, auditadoAte: undefined } : l)),
+    );
+    setExecStatus((prev) => {
+      const next = { ...prev };
+      for (let f = alvo; f < ETAPAS.length; f++) delete next[`${f}:${id}`];
+      return next;
+    });
+    enfileirados.current.delete(id);
+  };
 
   const avancar = (id: string) => {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, etapa: Math.min(l.etapa + 1, ETAPAS.length - 1) } : l)));
@@ -631,6 +646,47 @@ export function WorkflowView({
                                       <Sparkles size={11} /> Arquiteto
                                     </button>
                                   )}
+                                  {i > 0 &&
+                                    (voltarMenu === l.id ? (
+                                      <span className="mr-2 inline-flex items-center gap-0.5 rounded-md border border-v4-warning/60 px-1.5 py-1 align-middle">
+                                        <span className="text-[10px] text-v4-text-muted">Voltar p/</span>
+                                        {ETAPAS.slice(0, i).map((et, alvo) => (
+                                          <button
+                                            key={et.f}
+                                            onClick={(ev) => {
+                                              ev.stopPropagation();
+                                              voltarPara(l.id, alvo);
+                                              setVoltarMenu(null);
+                                            }}
+                                            title={`Voltar para ${et.f} · ${et.nome} — limpa as auditorias de ${et.f} em diante para re-rodar`}
+                                            className="rounded px-1.5 py-0.5 text-[10px] font-bold text-v4-text-muted transition hover:bg-[rgba(230,57,70,0.15)] hover:text-v4-red"
+                                          >
+                                            {et.f}
+                                          </button>
+                                        ))}
+                                        <button
+                                          onClick={(ev) => {
+                                            ev.stopPropagation();
+                                            setVoltarMenu(null);
+                                          }}
+                                          title="Cancelar"
+                                          className="ml-0.5 text-v4-text-disabled transition hover:text-v4-text"
+                                        >
+                                          <X size={10} />
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <button
+                                        onClick={(ev) => {
+                                          ev.stopPropagation();
+                                          setVoltarMenu(l.id);
+                                        }}
+                                        title="Voltar este lead para uma fase anterior (escolhe a fase; re-roda as auditorias dali em diante)"
+                                        className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-border px-2 py-1 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-warning hover:text-v4-warning"
+                                      >
+                                        <ArrowLeft size={11} /> Voltar
+                                      </button>
+                                    ))}
                                   <button
                                     onClick={(ev) => {
                                       ev.stopPropagation();
