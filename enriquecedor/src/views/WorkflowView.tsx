@@ -9,6 +9,7 @@ import {
   excluirProjeto,
   ARQ,
   SEGMENTO,
+  PERFIS,
   type WfLead,
   type AuditStatus,
   type Projeto,
@@ -37,7 +38,7 @@ interface Etapa {
 }
 
 const ETAPAS: Etapa[] = [
-  { f: 'F1', nome: 'Triagem', auditado: 'CNPJ, situação cadastral e ramo (imobiliário/construção)' },
+  { f: 'F1', nome: 'Triagem', auditado: 'CNPJ, situação cadastral e ramo de atuação' },
   { f: 'F2', nome: 'Qualificação', auditado: 'organograma, porte/faturamento, decisor e contatos (2 fontes)' },
   { f: 'F3', nome: 'Diagnóstico digital', auditado: 'site, presença digital, empreendimentos e LPs' },
   { f: 'F4', nome: 'Anúncios & mídia paga', auditado: 'Meta + Google: criativos, destino, análise do GT' },
@@ -408,6 +409,9 @@ export function WorkflowView({
       </button>
       <h1 className="mb-1 flex items-center gap-2 font-display text-2xl font-bold text-v4-text">
         <Filter size={24} className="text-v4-red" /> {projeto.nome}
+        <span className="rounded-full border border-v4-border px-2.5 py-0.5 text-[11px] font-medium text-v4-text-muted">
+          {PERFIS[projeto.perfil]?.label ?? projeto.perfil}
+        </span>
       </h1>
       <p className="mb-6 max-w-3xl text-sm text-v4-text-muted">
         Funil de aprovação — <b className="text-v4-text">{leads.length}</b> leads importados. Clique num{' '}
@@ -584,7 +588,7 @@ export function WorkflowView({
                                   </p>
                                   <p className="text-[11px] text-v4-text-disabled">{l.cnpj}</p>
                                 </td>
-                                <td className="px-2 py-2.5 text-xs text-v4-text-muted">{SEG}</td>
+                                <td className="px-2 py-2.5 text-xs text-v4-text-muted">{l.segmento ?? SEG}</td>
                                 <td className="px-2 py-2.5 text-v4-text-muted">{l.uf}</td>
                                 <td className="px-2 py-2.5">
                                   <span className="rounded bg-[rgba(34,197,94,0.15)] px-2 py-0.5 text-xs text-v4-success">ATIVA</span>
@@ -809,6 +813,7 @@ function ProjetosGrid({ projetos, onOpen }: { projetos: Projeto[]; onOpen: (id: 
                   </button>
                 </div>
                 <p className="font-display text-base font-semibold text-v4-text">{p.nome}</p>
+                <p className="mt-0.5 text-[11px] text-v4-text-disabled">{PERFIS[p.perfil]?.label ?? p.perfil}</p>
                 <p className="mt-1 text-xs text-v4-text-muted">
                   {p.importada ? `${p.leads.length} leads` : 'Sem lista — clique para importar'}
                 </p>
@@ -834,6 +839,7 @@ function toWf(lead: Lead): WfLead {
     empresa: lead.razaoSocial ?? lead.nomeFantasia ?? lead.companyNameRaw,
     cnpj: formatCnpj(lead.cnpj ?? lead.cnpjRaw),
     uf: lead.uf ?? '',
+    segmento: lead.segmento ?? null,
     etapa: 0,
   };
 }
@@ -874,6 +880,7 @@ function ImportarListaTela({ projeto, onVoltar }: { projeto: Projeto; onVoltar: 
       // No IMPORT roda só a TRIAGEM (F1): valida CNPJ/Receita e salva. As demais
       // fases (F2 Qualificação, F3 Diagnóstico, F4 Anúncios) rodam DENTRO do funil,
       // 1 por vez — pra auditar cada etapa. Sobrescreve por CNPJ.
+      for (const l of selected) l.perfil = projeto.perfil; // perfil de auditoria do projeto
       await leadsRepo.upsertMany(selected);
       const wf = selected.map(toWf);
       finalizarImportacao(projeto.id, wf, {}); // sem status: as fases rodam no funil

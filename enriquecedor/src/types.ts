@@ -16,6 +16,12 @@ export type View =
 
 export type Role = 'admin' | 'gestor' | 'sdr' | 'viewer';
 
+// Perfil de auditoria/discurso do projeto: define os prompts de IA e etapas
+// específicas de segmento. 'construtoras' é o comportamento original da
+// ferramenta; 'geral' é versátil (qualquer tipo de empresa). Novos perfis
+// específicos entram neste union com o tempo.
+export type PerfilAuditoria = 'construtoras' | 'geral';
+
 // Etapas do pipeline — espelham etapas/tags do funil no Kommo.
 export type LeadStatus =
   | 'importado'
@@ -41,6 +47,8 @@ export type DataQuality = 'valido' | 'corrigido' | 'atencao' | 'suspeito' | 'inv
 
 export interface Lead {
   id: string;
+  /** Perfil de auditoria herdado do projeto (define prompts/etapas de IA). */
+  perfil?: PerfilAuditoria;
   // --- Entrada (planilha) ---
   cnpjRaw: string;
   companyNameRaw: string;

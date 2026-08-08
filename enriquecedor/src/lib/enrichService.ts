@@ -489,6 +489,9 @@ interface SourceResult {
 }
 
 async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promise<SourceResult> {
+  // Etapa específica do perfil construtoras — no perfil versátil (geral) não há
+  // "empreendimentos" para extrair; pula sem marcar falha.
+  if (lead.perfil === 'geral') return { ok: true, note: 'nao_aplicavel_perfil' };
   try {
     const res = await motorFetch('/api/empreendimentos', {
       method: 'POST',
@@ -497,6 +500,7 @@ async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promis
         company: lead.razaoSocial ?? lead.companyNameRaw,
         nomeFantasia: lead.nomeFantasia,
         cidade: lead.cidade,
+        perfil: lead.perfil ?? 'construtoras',
         siteUrl: siteUrl ?? lead.siteUrl, // site descoberto → prioriza LP no domínio da empresa
       }),
     });
@@ -736,6 +740,7 @@ async function fetchBriefing(lead: Lead, audit: SiteAudit): Promise<SourceResult
       : 'WhatsApp funcionando (site e LPs)';
     const brokenBtns = (audit.whatsappButtons ?? []).filter((b) => !b.working);
     const payload = {
+      perfil: lead.perfil ?? 'construtoras',
       sinaisConfirmados,
       empresa: lead.razaoSocial ?? lead.companyNameRaw,
       nomeFantasia: lead.nomeFantasia,

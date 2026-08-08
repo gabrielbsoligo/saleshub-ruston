@@ -1672,10 +1672,20 @@ async function generateBriefing(payload) {
   if (!key) return { ok: true, briefing: null, note: 'ia_desativada' };
 
   const ctx = JSON.stringify(payload, null, 1).slice(0, 9000);
+  // Perfil de auditoria: 'construtoras' (original, especializado em incorporação
+  // imobiliária) ou 'geral' (versátil — qualquer tipo de empresa).
+  const perfilGeral = payload?.perfil === 'geral';
+  const contextoEmpresa = perfilGeral
+    ? `a empresa abaixo — pode ser de QUALQUER segmento; identifique o ramo real pelo CNAE/segmento ` +
+      `dos dados e adapte o vocabulário do discurso ao negócio dela (produtos/serviços, como ela vende ` +
+      `e capta clientes). NÃO use jargão imobiliário (empreendimentos, lançamentos, unidades) a menos ` +
+      `que os dados mostrem que é do setor. `
+    : `a empresa abaixo — do ramo imobiliário/construção. `;
   const prompt =
     `Você é analista e SDR sênior da V4 Ruston & Co, uma assessoria de marketing e growth ` +
     `(tráfego pago, sites/landing pages, CRM, estruturação comercial). Vamos prospectar (outbound) ` +
-    `a empresa abaixo — do ramo imobiliário/construção. Seu trabalho: analisar a empresa e gerar ` +
+    contextoEmpresa +
+    `Seu trabalho: analisar a empresa e gerar ` +
     `scripts de abordagem do DECISOR, usando os GAPS DIGITAIS reais encontrados como gancho para ` +
     `oferecer os serviços da V4.\n\n` +
     `REGRAS:\n` +
@@ -1945,6 +1955,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/empreendimentos' && req.method === 'POST') {
       const body = await readJson(req);
+      // Etapa específica do perfil construtoras — perfil versátil não tem
+      // "empreendimentos" (o cliente também pula; guarda dupla).
+      if (body?.perfil === 'geral') {
+        return send(res, 200, { ok: true, empreendimentos: [], note: 'nao_aplicavel_perfil' });
+      }
       return send(res, 200, await discoverEmpreendimentos(body));
     }
 

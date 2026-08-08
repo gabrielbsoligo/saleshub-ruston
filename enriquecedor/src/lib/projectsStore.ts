@@ -1,6 +1,20 @@
 // Store de PROJETOS (modo local/localStorage) — cada projeto tem sua lista de leads
 // e roda o funil de workflow por dentro. Fictício por enquanto (valida a UX).
 import { useSyncExternalStore } from 'react';
+import type { PerfilAuditoria } from '../types';
+
+// Perfis de auditoria disponíveis na criação do projeto. O perfil define os
+// prompts de IA (briefing/scripts) e as etapas específicas de segmento.
+export const PERFIS: Record<PerfilAuditoria, { label: string; desc: string }> = {
+  construtoras: {
+    label: 'Construtoras & Incorporadoras',
+    desc: 'Especializado em incorporação imobiliária: empreendimentos, lançamentos, LPs e discurso do setor.',
+  },
+  geral: {
+    label: 'Versátil — qualquer empresa',
+    desc: 'Auditoria e discursos genéricos: produtos/serviços e presença digital, sem etapas específicas de setor.',
+  },
+};
 
 export type AuditStatus = 'ok' | 'run' | 'erro';
 
@@ -10,6 +24,7 @@ export interface WfLead {
   empresa: string;
   cnpj: string;
   uf: string;
+  segmento?: string | null; // CNAE/segmento real do lead (Receita)
   etapa: number;
   descartado?: boolean;
   parcial?: boolean; // enviado ao arquiteto antes de completar o funil
@@ -19,6 +34,8 @@ export interface WfLead {
 export interface Projeto {
   id: string;
   nome: string;
+  /** Perfil de auditoria — projetos antigos (sem o campo) são 'construtoras'. */
+  perfil: PerfilAuditoria;
   criadoEm: number;
   importada: boolean;
   leads: WfLead[];
@@ -35,7 +52,9 @@ const listeners = new Set<() => void>();
 function read(): Projeto[] {
   if (cache) return cache;
   try {
-    cache = JSON.parse(localStorage.getItem(KEY) || '[]');
+    const raw = JSON.parse(localStorage.getItem(KEY) || '[]') as Projeto[];
+    // Projetos criados antes do campo perfil eram todos de construtoras.
+    cache = raw.map((p) => ({ ...p, perfil: p.perfil ?? 'construtoras' }));
   } catch {
     cache = [];
   }
@@ -61,8 +80,8 @@ export function useProjetos(): Projeto[] {
   return useSyncExternalStore(subscribe, read, () => [] as Projeto[]);
 }
 
-export function criarProjeto(nome: string): Projeto {
-  const p: Projeto = { id: uid(), nome: nome.trim(), criadoEm: Date.now(), importada: false, leads: [], leadStatus: {}, doneF: [] };
+export function criarProjeto(nome: string, perfil: PerfilAuditoria = 'construtoras'): Projeto {
+  const p: Projeto = { id: uid(), nome: nome.trim(), perfil, criadoEm: Date.now(), importada: false, leads: [], leadStatus: {}, doneF: [] };
   write([...read(), p]);
   return p;
 }

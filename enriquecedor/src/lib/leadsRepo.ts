@@ -163,6 +163,7 @@ function auditFromRow(r: Record<string, unknown>): SiteAudit {
 function fromRow(r: Record<string, unknown>): Lead {
   return {
     id: r.id as string,
+    perfil: (r.perfil as Lead['perfil']) ?? 'construtoras',
     cnpjRaw: (r.cnpj_raw as string) ?? '',
     companyNameRaw: (r.company_name_raw as string) ?? '',
     revenueBandRaw: (r.revenue_band_raw as string) ?? null,
@@ -201,6 +202,7 @@ function fromRow(r: Record<string, unknown>): Lead {
 function toRow(l: Lead): Record<string, unknown> {
   return {
     id: l.id,
+    perfil: l.perfil ?? 'construtoras',
     cnpj_raw: l.cnpjRaw,
     company_name_raw: l.companyNameRaw,
     revenue_band_raw: l.revenueBandRaw,

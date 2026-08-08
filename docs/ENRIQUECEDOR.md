@@ -113,6 +113,20 @@ das tabelas do SalesHub, mas no mesmo Postgres, o que facilita a futura integra�
 - **Ainda local por navegador:** o agrupamento de leads em projetos/funil (estado de workflow);
   centralizar isso é um passo futuro.
 
+## Perfis de auditoria (por projeto)
+
+Na criação do projeto escolhe-se o **tipo de auditoria & discurso** (campo `perfil`, herdado
+por cada lead — migration 139):
+
+- **`construtoras`** — Construtoras & Incorporadoras: comportamento original da ferramenta
+  (extração de empreendimentos/LPs, discurso do setor imobiliário).
+- **`geral`** — Versátil: qualquer tipo de empresa. O briefing por IA identifica o ramo pelo
+  CNAE/segmento e adapta o vocabulário; a etapa de empreendimentos é pulada (não se aplica).
+
+Projetos e leads antigos (sem o campo) contam como `construtoras`. Novos perfis específicos
+entram como novos valores do union `PerfilAuditoria` (`src/types.ts`) + variantes de prompt no
+motor (`generateBriefing`).
+
 ## Log de erros e auditoria periódica
 
 Toda falha fica registrada na tabela **`enriquecedor_error_log`** do banco do SalesHub
