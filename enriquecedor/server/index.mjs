@@ -1793,9 +1793,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/health') {
+      // Autodiagnóstico da autenticação: mostra a URL de Supabase configurada
+      // (pública por natureza) e se o GoTrue aceita a apikey — sem expor chaves.
+      let authProbe = null;
+      if (AUTH_REQUIRED) {
+        try {
+          const pr = await fetch(`${AUTH_SUPABASE_URL}/auth/v1/health`, {
+            headers: { apikey: AUTH_SUPABASE_ANON },
+          });
+          authProbe = { supabaseUrl: AUTH_SUPABASE_URL, gotrueStatus: pr.status };
+        } catch (err) {
+          authProbe = { supabaseUrl: AUTH_SUPABASE_URL, erro: String(err?.message || err) };
+        }
+      }
       return send(res, 200, {
         ok: true,
         authRequired: AUTH_REQUIRED,
+        authProbe,
         search: searchProvider(),
         searchStatus,
         lemit: !!process.env.LEMIT_API_TOKEN,
