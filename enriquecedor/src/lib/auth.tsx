@@ -7,9 +7,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { Permissions, UserProfile } from '../types';
+import type { Permissions, Role, UserProfile } from '../types';
 import { mergePermissions } from './permissions';
-import { supabase, supabaseConfigured } from './supabase';
+import { authConfigured, supabaseAuth } from './supabase';
 
 interface AuthContextValue {
   profile: UserProfile | null;
@@ -34,21 +34,40 @@ const DEMO_PROFILE: UserProfile = {
   active: true,
 };
 
-async function loadProfile(userId: string, email: string): Promise<UserProfile | null> {
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
+// Os usuários são os do SalesHub (tabela team_members, mesma sessão Supabase).
+// Mapeia o papel do SalesHub para o papel equivalente aqui.
+const SALESHUB_ROLE_MAP: Record<string, Role> = {
+  gestor: 'admin',
+  sdr: 'sdr',
+  closer: 'sdr',
+  financeiro: 'viewer',
+};
 
-  if (error || !data) return null;
+async function loadProfile(userId: string, email: string): Promise<UserProfile | null> {
+  // 1) Vínculo direto com o usuário autenticado; 2) fallback por e-mail
+  // (primeiro login, antes do trigger do SalesHub vincular auth_user_id).
+  let { data } = await supabaseAuth
+    .from('team_members')
+    .select('id, name, email, role, active')
+    .eq('auth_user_id', userId)
+    .maybeSingle();
+
+  if (!data && email) {
+    ({ data } = await supabaseAuth
+      .from('team_members')
+      .select('id, name, email, role, active')
+      .eq('email', email)
+      .maybeSingle());
+  }
+
+  if (!data || data.active === false) return null;
 
   return {
     id: data.id,
     email: data.email ?? email,
     name: data.name ?? email,
-    role: data.role,
-    customPermissions: data.custom_permissions ?? null,
+    role: SALESHUB_ROLE_MAP[data.role] ?? 'viewer',
+    customPermissions: null,
     active: data.active ?? true,
   };
 }
@@ -56,7 +75,7 @@ async function loadProfile(userId: string, email: string): Promise<UserProfile |
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const demoMode = !supabaseConfigured;
+  const demoMode = !authConfigured;
 
   useEffect(() => {
     if (demoMode) {
@@ -67,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let active = true;
 
-    supabase.auth.getSession().then(async ({ data }) => {
+    supabaseAuth.auth.getSession().then(async ({ data }) => {
       if (!active) return;
       const session = data.session;
       if (session?.user) {
@@ -76,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: sub } = supabaseAuth.auth.onAuthStateChange(async (_event, session) => {
       if (!active) return;
       if (session?.user) {
         setProfile(await loadProfile(session.user.id, session.user.email ?? ''));
@@ -97,8 +116,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(DEMO_PROFILE);
         return { error: null };
       }
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      return { error: error?.message ?? null };
+      // Mesmas credenciais do SalesHub (mesmo Supabase Auth).
+      const { data, error } = await supabaseAuth.auth.signInWithPassword({ email, password });
+      if (error) return { error: error.message };
+
+      if (data.user) {
+        const loaded = await loadProfile(data.user.id, data.user.email ?? email);
+        if (!loaded) {
+          await supabaseAuth.auth.signOut();
+          return { error: 'Este e-mail não está cadastrado (ou está inativo) na equipe do SalesHub.' };
+        }
+      }
+      return { error: null };
     },
     [demoMode],
   );
@@ -108,7 +137,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       return;
     }
-    await supabase.auth.signOut();
+    // Sessão é compartilhada com o SalesHub — sair aqui também sai de lá.
+    await supabaseAuth.auth.signOut();
     setProfile(null);
   }, [demoMode]);
 

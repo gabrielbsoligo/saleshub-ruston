@@ -65,19 +65,29 @@ As chaves de API do motor vão em `enriquecedor/.env.local` (gitignorado). Model
 > time guarda fora do git para `enriquecedor/.env.local` na máquina que rodar o motor. Quando o
 > motor for hospedado na nuvem, as chaves entram como variáveis de ambiente do serviço.
 
+## Login (integrado ao SalesHub)
+
+O enriquecedor **usa os usuários do SalesHub**: mesma autenticação Supabase e mesma tabela
+`team_members`. Quem já está logado no SalesHub entra no enriquecedor automaticamente (mesma
+sessão do navegador); senão, loga com o mesmo e-mail/senha. Sair de um encerra a sessão do outro.
+
+Mapa de papéis SalesHub → enriquecedor: `gestor` → admin, `sdr`/`closer` → sdr,
+`financeiro` → viewer. Requer as env vars `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` no build
+(no Vercel já existem; em dev standalone o app cai em modo local com login automático).
+
 ## Banco de dados
 
-O enriquecedor foi desenhado para ter **projeto Supabase próprio** (separado do Supabase do
-SalesHub — os dois têm tabela `leads`, então não podem dividir o mesmo schema hoje). Duas opções:
+O login é compartilhado, mas os **dados** do enriquecedor não podem morar no Supabase do
+SalesHub — os dois têm tabela `leads` com schemas diferentes. Duas opções:
 
-1. **Modo local (padrão atual):** sem `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` configuradas,
-   o app roda com dados em `localStorage` e login automático como admin. Zero setup.
-2. **Supabase próprio:** criar projeto em supabase.com, aplicar
+1. **Modo local (padrão atual):** os dados ficam em `localStorage` no navegador de cada usuário.
+   Zero setup.
+2. **Supabase próprio para dados:** criar projeto em supabase.com, aplicar
    [`enriquecedor/supabase/migrations/0001_init.sql`](../enriquecedor/supabase/migrations/0001_init.sql)
-   e preencher as duas variáveis `VITE_*` — guia completo em
+   e preencher `VITE_ENRIQUECEDOR_SUPABASE_URL`/`VITE_ENRIQUECEDOR_SUPABASE_ANON_KEY` — guia em
    [`enriquecedor/docs/SETUP-SUPABASE.md`](../enriquecedor/docs/SETUP-SUPABASE.md). Para valer no
-   deploy, as `VITE_*` também precisam existir como env vars do projeto no Vercel (são embutidas
-   no bundle no momento do build).
+   deploy, essas variáveis precisam existir como env vars do projeto no Vercel (são embutidas no
+   bundle no momento do build).
 
 ## Integração futura (fora de escopo por enquanto)
 

@@ -28,9 +28,13 @@ export function Login() {
           <p className="text-sm text-v4-text-muted">V4 Ruston &amp; Co</p>
         </div>
 
-        {demoMode && (
+        {demoMode ? (
           <div className="mb-4 rounded-lg bg-v4-surface p-3 text-xs text-v4-warning">
             Modo local (sem Supabase). Clique em entrar para explorar a ferramenta.
+          </div>
+        ) : (
+          <div className="mb-4 rounded-lg bg-v4-surface p-3 text-xs text-v4-text-muted">
+            Use o mesmo e-mail e senha do SalesHub. Se você já estiver logado lá, entra aqui automaticamente.
           </div>
         )}
 

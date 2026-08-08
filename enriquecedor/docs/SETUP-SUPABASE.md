@@ -1,6 +1,12 @@
 # Guia — criar o projeto Supabase do SDNA Outbound
 
-Enquanto não há projeto Supabase, a ferramenta roda em **modo local** (dados no navegador, login automático). Para persistir de verdade e ter usuários reais, siga este passo a passo (~10 min). **Não faz deploy** — só cria o banco.
+> **Atualização (integração com o SalesHub):** o **login já é o do SalesHub** — mesma
+> sessão/usuários (`team_members`), via `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`.
+> Este guia agora vale só para o banco de **DADOS** próprio do enriquecedor, que usa as
+> variáveis `VITE_ENRIQUECEDOR_SUPABASE_URL`/`VITE_ENRIQUECEDOR_SUPABASE_ANON_KEY`.
+> O passo 5 (usuário admin em `user_profiles`) ficou obsoleto.
+
+Enquanto não há projeto Supabase de dados, a ferramenta roda em **modo local** (dados no navegador). Para persistir de verdade, siga este passo a passo (~10 min). **Não faz deploy** — só cria o banco.
 
 ## 1. Criar o projeto
 1. Acesse https://supabase.com e faça login.
@@ -20,8 +26,8 @@ Enquanto não há projeto Supabase, a ferramenta roda em **modo local** (dados n
 1. Na pasta do projeto, copie `.env.example` para `.env.local`.
 2. Preencha:
    ```
-   VITE_SUPABASE_URL="https://SEU_PROJETO.supabase.co"
-   VITE_SUPABASE_ANON_KEY="sua_anon_key"
+   VITE_ENRIQUECEDOR_SUPABASE_URL="https://SEU_PROJETO.supabase.co"
+   VITE_ENRIQUECEDOR_SUPABASE_ANON_KEY="sua_anon_key"
    ```
 3. Reinicie o `npm run dev`. A ferramenta detecta as credenciais e passa a usar o Postgres (sai do modo local).
 
