@@ -1756,7 +1756,20 @@ function readJson(req) {
 // (que consome créditos de Anthropic/DataStone/Lemit). Sem essas envs (dev
 // local), a checagem fica desligada e nada muda no fluxo do terminal.
 const AUTH_SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const AUTH_SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || '';
+// A anon key é PÚBLICA (vai no bundle do navegador de qualquer usuário), então
+// um fallback embutido por projeto é seguro — e cobre o erro comum de colar no
+// painel a chave MASCARADA (eyJhbGci••••…), cujos caracteres • quebram o header.
+const ANON_FALLBACK = {
+  'https://iaompeiokjxbffwehhrx.supabase.co':
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlhb21wZWlva2p4YmZmd2VoaHJ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMjI5MDIsImV4cCI6MjA5MDc5ODkwMn0.D-rf7H8F21LyslQxmr6AGM13kWTWs7f05OcnBt5kbxg',
+};
+let AUTH_SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || '';
+if (!AUTH_SUPABASE_ANON || /[^\x20-\x7e]/.test(AUTH_SUPABASE_ANON)) {
+  if (AUTH_SUPABASE_ANON) {
+    console.warn('[auth] SUPABASE_ANON_KEY contém caracteres inválidos (cópia mascarada?) — usando fallback embutido');
+  }
+  AUTH_SUPABASE_ANON = ANON_FALLBACK[AUTH_SUPABASE_URL] || '';
+}
 const AUTH_REQUIRED = Boolean(AUTH_SUPABASE_URL && AUTH_SUPABASE_ANON);
 const _authCache = new Map(); // token -> expira (ms)
 
