@@ -28,7 +28,7 @@ export const leadsRepo = {
       );
     }
     const { data, error } = await supabase
-      .from('leads')
+      .from('enriquecedor_leads')
       .select('*')
       .order('created_at', { ascending: false });
     if (error) throw error;
@@ -39,7 +39,7 @@ export const leadsRepo = {
     if (!supabaseConfigured) {
       return readLocal<Lead>(LEADS_KEY).find((l) => l.id === id) ?? null;
     }
-    const { data, error } = await supabase.from('leads').select('*').eq('id', id).single();
+    const { data, error } = await supabase.from('enriquecedor_leads').select('*').eq('id', id).single();
     if (error) return null;
     return fromRow(data);
   },
@@ -53,7 +53,7 @@ export const leadsRepo = {
       return;
     }
     const { error } = await supabase
-      .from('leads')
+      .from('enriquecedor_leads')
       .upsert(leads.map(toRow), { onConflict: 'cnpj' });
     if (error) throw error;
   },
@@ -64,7 +64,7 @@ export const leadsRepo = {
       writeLocal(LEADS_KEY, all);
       return;
     }
-    const { error } = await supabase.from('leads').update(toRow(lead)).eq('id', lead.id);
+    const { error } = await supabase.from('enriquecedor_leads').update(toRow(lead)).eq('id', lead.id);
     if (error) throw error;
   },
 
@@ -80,7 +80,7 @@ export const leadsRepo = {
       );
       return;
     }
-    const { error } = await supabase.from('leads').delete().eq('id', id);
+    const { error } = await supabase.from('enriquecedor_leads').delete().eq('id', id);
     if (error) throw error;
   },
 
@@ -90,7 +90,7 @@ export const leadsRepo = {
       localStorage.removeItem(AUDITS_KEY);
       return;
     }
-    const { error } = await supabase.from('leads').delete().neq('id', '');
+    const { error } = await supabase.from('enriquecedor_leads').delete().neq('id', '');
     if (error) throw error;
   },
 
@@ -102,7 +102,7 @@ export const leadsRepo = {
       return;
     }
     const { error } = await supabase
-      .from('site_audits')
+      .from('enriquecedor_site_audits')
       .upsert(auditToRow(audit), { onConflict: 'lead_id' });
     if (error) throw error;
   },
@@ -111,7 +111,7 @@ export const leadsRepo = {
     if (!supabaseConfigured) {
       return readLocal<SiteAudit>(AUDITS_KEY).find((a) => a.leadId === leadId) ?? null;
     }
-    const { data } = await supabase.from('site_audits').select('*').eq('lead_id', leadId).single();
+    const { data } = await supabase.from('enriquecedor_site_audits').select('*').eq('lead_id', leadId).single();
     return data ? auditFromRow(data) : null;
   },
 };

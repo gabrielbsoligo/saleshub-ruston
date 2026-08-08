@@ -53,12 +53,16 @@ Atualizar SEMPRE:
 
 ## 🔐 Roles
 
-`admin` (tudo + usuários + config), `gestor` (importar/funil/aprovar), `sdr` (ver/registrar/marcar), `viewer` (leitura). Permissões customizáveis por usuário em `user_profiles.custom_permissions` (JSONB); helper `mergePermissions`.
+`admin` (tudo + usuários + config), `gestor` (importar/funil/aprovar), `sdr` (ver/registrar/marcar), `viewer` (leitura). Os usuários são os do SalesHub (`team_members`, sessão compartilhada), mapeados em `src/lib/auth.tsx`: gestor→admin, sdr/closer→sdr, financeiro→viewer. Helper `mergePermissions`.
 
-## 🗄️ Banco (Supabase)
+## 🗄️ Banco (Supabase do SalesHub, tabelas prefixadas)
 
-- Schema em `supabase/migrations/*.sql`.
-- Enquanto não há projeto Supabase próprio, a app roda em **modo local** (`localStorage`) — ver `supabaseConfigured` em `src/lib/supabase.ts`. Ao configurar o `.env.local`, os repositórios passam a usar o Postgres automaticamente.
+- O app roda como sub-app do SalesHub e usa o **mesmo projeto Supabase**: auth compartilhada
+  (`team_members`) e dados em tabelas com prefixo **`enriquecedor_`** — schema em
+  `../supabase/migration_136_enriquecedor.sql` (raiz do repositório). Migrations novas seguem a
+  numeração do SalesHub e SEMPRE prefixam as tabelas.
+- Se as tabelas `enriquecedor_*` não existirem no banco, a app roda em **modo local**
+  (`localStorage`) — detecção automática em `initDataMode()` (`src/lib/supabase.ts`).
 - snake_case no banco ↔ camelCase na app (mapeado em `leadsRepo`).
 
 ## 📵 Limites conhecidos (registrados no PRD)

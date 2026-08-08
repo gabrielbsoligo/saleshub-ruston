@@ -75,19 +75,20 @@ Mapa de papéis SalesHub → enriquecedor: `gestor` → admin, `sdr`/`closer` �
 `financeiro` → viewer. Requer as env vars `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` no build
 (no Vercel já existem; em dev standalone o app cai em modo local com login automático).
 
-## Banco de dados
+## Banco de dados (mesmo Supabase, tabelas prefixadas)
 
-O login é compartilhado, mas os **dados** do enriquecedor não podem morar no Supabase do
-SalesHub — os dois têm tabela `leads` com schemas diferentes. Duas opções:
+Os dados do enriquecedor moram no **mesmo banco do SalesHub**, em tabelas próprias com o
+prefixo `enriquecedor_` (ex.: `enriquecedor_leads`, `enriquecedor_decision_makers`) — isoladas
+das tabelas do SalesHub, mas no mesmo Postgres, o que facilita a futura integração/junção.
 
-1. **Modo local (padrão atual):** os dados ficam em `localStorage` no navegador de cada usuário.
-   Zero setup.
-2. **Supabase próprio para dados:** criar projeto em supabase.com, aplicar
-   [`enriquecedor/supabase/migrations/0001_init.sql`](../enriquecedor/supabase/migrations/0001_init.sql)
-   e preencher `VITE_ENRIQUECEDOR_SUPABASE_URL`/`VITE_ENRIQUECEDOR_SUPABASE_ANON_KEY` — guia em
-   [`enriquecedor/docs/SETUP-SUPABASE.md`](../enriquecedor/docs/SETUP-SUPABASE.md). Para valer no
-   deploy, essas variáveis precisam existir como env vars do projeto no Vercel (são embutidas no
-   bundle no momento do build).
+- **Ativação:** rodar [`supabase/migration_136_enriquecedor.sql`](../supabase/migration_136_enriquecedor.sql)
+  no SQL Editor do Supabase do SalesHub (uma vez). Guia:
+  [`enriquecedor/docs/SETUP-SUPABASE.md`](../enriquecedor/docs/SETUP-SUPABASE.md).
+- **Detecção automática:** o app testa no boot se as tabelas existem. Sem migration → modo
+  local (`localStorage`, nada quebra). Com migration → passa a persistir no banco. Não precisa
+  de env var nova nem redeploy.
+- **Ainda local por navegador:** o agrupamento de leads em projetos/funil (estado de workflow);
+  centralizar isso é um passo futuro.
 
 ## Integração futura (fora de escopo por enquanto)
 

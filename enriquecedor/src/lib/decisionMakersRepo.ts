@@ -24,7 +24,7 @@ export const decisionMakersRepo = {
         .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
     }
     const { data } = await supabase
-      .from('decision_makers')
+      .from('enriquecedor_decision_makers')
       .select('*')
       .eq('lead_id', leadId)
       .order('is_primary', { ascending: false });
@@ -38,9 +38,9 @@ export const decisionMakersRepo = {
       writeLocal([...others, ...people]);
       return;
     }
-    await supabase.from('decision_makers').delete().eq('lead_id', leadId);
+    await supabase.from('enriquecedor_decision_makers').delete().eq('lead_id', leadId);
     if (people.length > 0) {
-      const { error } = await supabase.from('decision_makers').insert(people.map(toRow));
+      const { error } = await supabase.from('enriquecedor_decision_makers').insert(people.map(toRow));
       if (error) throw error;
     }
   },
