@@ -1,0 +1,40 @@
+/* Ruston Enriquecedor — prefixo rew- (não colide com o Kommo) */
+.rew-card { padding: 10px 12px; }
+.rew-open {
+  width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; cursor: pointer;
+  background: #e63946; color: #fff; font-weight: 600; font-size: 13px;
+}
+.rew-open:hover { background: #d62839; }
+.rew-hint { margin: 8px 0 0; font-size: 11px; color: #6b7280; line-height: 1.35; }
+
+.rew-overlay {
+  position: fixed; inset: 0; z-index: 99999; background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.rew-modal {
+  width: 380px; max-width: 92vw; background: #fff; border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); overflow: hidden;
+  font-family: inherit;
+}
+.rew-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; font-weight: 700; font-size: 14px; background: #111; color: #fff;
+}
+.rew-x { cursor: pointer; font-size: 18px; line-height: 1; opacity: 0.7; }
+.rew-x:hover { opacity: 1; }
+.rew-body { padding: 16px; }
+.rew-body label { display: block; margin: 10px 0 4px; font-size: 12px; font-weight: 600; color: #374151; }
+.rew-body label.rew-radio { display: flex; align-items: center; gap: 6px; font-weight: 400; margin: 6px 0 0; }
+.rew-cnpj {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #d1d5db;
+  border-radius: 8px; font-size: 13px;
+}
+.rew-go {
+  width: 100%; margin-top: 14px; padding: 10px 12px; border: 0; border-radius: 8px;
+  background: #e63946; color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.rew-go:disabled { opacity: 0.6; cursor: default; }
+.rew-msg { margin-top: 10px; font-size: 12px; line-height: 1.4; }
+.rew-err { color: #dc2626; }
+.rew-okmsg { color: #16a34a; }
+.rew-msg a { color: #e63946; font-weight: 600; }

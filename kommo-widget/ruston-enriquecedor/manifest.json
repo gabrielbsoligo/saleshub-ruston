@@ -1,0 +1,33 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "code": "re_8f3a92c1d4",
+    "version": "1.0.0",
+    "interface_version": 2,
+    "init_once": true,
+    "locale": ["pt", "en", "es", "ru"],
+    "installation": true,
+    "support": {
+      "link": "https://rustonassessoria.com",
+      "email": "bianchini@rustonassessoria.com"
+    }
+  },
+  "locations": [
+    "settings",
+    "lcard-1"
+  ],
+  "settings": {
+    "secret": {
+      "name": "settings.secret",
+      "type": "text",
+      "required": true
+    },
+    "endpoint": {
+      "name": "settings.endpoint",
+      "type": "text",
+      "required": false
+    }
+  }
+}

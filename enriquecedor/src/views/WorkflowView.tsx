@@ -16,7 +16,7 @@ import {
 } from '../lib/projectsStore';
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
 import { buildLeadsFromRows } from '../lib/importPipeline';
-import { measureLeadAds, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
+import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { leadsRepo } from '../lib/leadsRepo';
 import { registrarErro } from '../lib/errorLog';
 import { formatCnpj } from '../lib/validation';
@@ -64,24 +64,12 @@ function StatusIcone({ status, size = 16 }: { status?: AuditStatus; size?: numbe
 }
 // Execução POR FASE do funil (1 fase por vez). Cada fase executável tem uma
 // função que roda o enriquecimento REAL daquele lead (idempotente lá no service).
-const runF4 = async (lead: Lead): Promise<FaseResult> => {
-  const r = await measureLeadAds(lead);
-  const fresh = await leadsRepo.get(lead.id);
-  const meta = fresh?.anuncios?.meta;
-  // "Auditado" SÓ com a medição do Meta realmente feita (meta gravado no lead).
-  const medido = !!meta && !Array.isArray(meta);
-  const nv = medido ? meta.validados.length : 0;
-  const na = medido ? meta.aValidar.length : 0;
-  return {
-    ok: r.ok && medido,
-    note: r.note ?? (medido ? undefined : 'meta_nao_medido'),
-    resumo: r.ok && medido ? `${nv} validados · ${na} a validar` : undefined,
-  };
-};
+// F4 vive no service (runAnuncios): mede o Meta e re-gera o briefing com os
+// dados de mídia — só marca ok com a medição realmente gravada.
 const EXEC: Record<number, { label: string; verbo: string; run: (lead: Lead) => Promise<FaseResult> }> = {
   1: { label: 'Qualificação', verbo: 'qualificando (DataStone + Lemit)', run: enrichQualificacao },
   2: { label: 'Diagnóstico digital', verbo: 'diagnosticando (site, empreend., GMN, briefing)', run: enrichDiagnostico },
-  3: { label: 'Anúncios (Meta)', verbo: 'medindo anúncios no Meta', run: runF4 },
+  3: { label: 'Anúncios (Meta)', verbo: 'medindo anúncios no Meta', run: runAnuncios },
 };
 
 // Console ao vivo no RODAPÉ — executa UMA fase, um lead por vez, e narra em tempo real.
@@ -269,7 +257,7 @@ export function WorkflowView({
   // ── F4 automático ──────────────────────────────────────────────────────────
   // Lead que chega em Anúncios (F4) entra SOZINHO na fila de medição do Meta —
   // 1 por vez, com a cadência anti-ban (~40s) — sem precisar clicar em nada.
-  // Com o runF4 exigindo o meta gravado, "Auditado" só aparece após medir.
+  // Com o runAnuncios exigindo o meta gravado, "Auditado" só aparece após medir.
   // Erro NÃO re-entra sozinho (evita loop de ban): re-tenta pelo botão da fase.
   const adsAutoQueue = useRef(new PQueue({ concurrency: 1, interval: 40_000, intervalCap: 1 }));
   const enfileirados = useRef(new Set<string>());
@@ -293,7 +281,7 @@ export function WorkflowView({
         setSt(3, l.id, 'run');
         try {
           const lead = await leadsRepo.get(l.id);
-          const r: FaseResult = lead ? await runF4(lead) : { ok: false, note: 'lead não encontrado' };
+          const r: FaseResult = lead ? await runAnuncios(lead) : { ok: false, note: 'lead não encontrado' };
           setSt(3, l.id, r.ok ? 'ok' : 'erro');
           if (!r.ok) {
             void registrarErro({

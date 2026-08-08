@@ -888,8 +888,8 @@ export async function enrichQualificacao(lead: Lead): Promise<FaseResult> {
 }
 
 // F3 — Diagnóstico digital: site + PageSpeed + empreendimentos + GMN + briefing.
-export async function enrichDiagnostico(lead: Lead): Promise<FaseResult> {
-  if (lead.briefing) {
+export async function enrichDiagnostico(lead: Lead, opts?: { force?: boolean }): Promise<FaseResult> {
+  if (lead.briefing && !opts?.force) {
     return { ok: true, note: 'ja_feito', resumo: 'já diagnosticado (dado existente)' };
   }
   const { audit, searchFailed } = await auditLeadSite(lead);
@@ -992,6 +992,32 @@ export async function measureLeadAds(lead: Lead): Promise<{ ok: boolean; note?: 
   await auditPendingLps(lead); // audita as LPs recém-descobertas nos anúncios
   await leadsRepo.update(lead);
   return r;
+}
+
+/**
+ * F4 (Anúncios Meta) do funil: mede e, com a medição feita, RE-GERA o briefing
+ * para que dores/ganchos/scripts incorporem os dados de mídia paga — as fases
+ * seguintes atualizam o discurso, que não fica preso ao retrato do F3.
+ * "ok" SÓ com a medição realmente gravada no lead.
+ */
+export async function runAnuncios(lead: Lead): Promise<FaseResult> {
+  const r = await measureLeadAds(lead);
+  const fresh = await leadsRepo.get(lead.id);
+  const meta = fresh?.anuncios?.meta;
+  const medido = !!meta && !Array.isArray(meta);
+  let resumo: string | undefined;
+  if (r.ok && medido && fresh) {
+    const audit = (await leadsRepo.getAudit(lead.id)) ?? ({ leadId: lead.id, isOnline: false } as unknown as SiteAudit);
+    await fetchBriefing(fresh, audit); // re-gera com anúncios no contexto
+    fresh.updatedAt = new Date().toISOString();
+    await leadsRepo.update(fresh);
+    resumo = `${meta.validados.length} validados · ${meta.aValidar.length} a validar · briefing atualizado`;
+  }
+  return {
+    ok: r.ok && medido,
+    note: r.note ?? (medido ? undefined : 'meta_nao_medido'),
+    resumo,
+  };
 }
 
 // Espaçamento entre consultas de anúncios no cliente (motor também tem gate).

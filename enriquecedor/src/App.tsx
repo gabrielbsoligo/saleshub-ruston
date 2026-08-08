@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Login } from './components/Login';
 import { Layout } from './components/Layout';
 import { NovoProjetoModal } from './components/NovoProjetoModal';
@@ -19,6 +19,22 @@ export default function App() {
   const [leadBackView, setLeadBackView] = useState<View>('leads');
   const [novoProjetoOpen, setNovoProjetoOpen] = useState(false);
 
+  // Link direto pro lead: /enriquecedor/#lead=<id> abre a página do lead —
+  // dá pra mandar o link e a pessoa cai direto no lead enriquecido.
+  useEffect(() => {
+    const applyHash = () => {
+      const id = new URLSearchParams(window.location.hash.slice(1)).get('lead');
+      if (id) {
+        setSelectedLeadId(id);
+        setLeadBackView('leads');
+        setView('lead_detalhe');
+      }
+    };
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+  }, []);
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-slate-400">
@@ -33,6 +49,13 @@ export default function App() {
     setSelectedLeadId(id);
     setLeadBackView(from);
     setView('lead_detalhe');
+    // mantém a URL compartilhável apontando pro lead aberto
+    window.history.replaceState(null, '', `#lead=${id}`);
+  };
+
+  const closeLead = () => {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    setView(leadBackView);
   };
 
   const renderView = () => {
@@ -43,7 +66,7 @@ export default function App() {
         return <LeadsView onOpenLead={openLead} />;
       case 'lead_detalhe':
         return selectedLeadId ? (
-          <LeadDetail leadId={selectedLeadId} onBack={() => setView(leadBackView)} />
+          <LeadDetail leadId={selectedLeadId} onBack={closeLead} />
         ) : (
           <LeadsView onOpenLead={openLead} />
         );

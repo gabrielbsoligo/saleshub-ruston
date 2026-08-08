@@ -1,0 +1,11 @@
+{
+  "widget": {
+    "name": "Ruston Enriquecedor",
+    "description": "Dispara o lead da Kommo pro Enriquecedor (SDNA Outbound): cria o lead, roda a esteira completa de auditoria (CNPJ, decisores, site, Google, anúncios) e devolve notas no card — o link de acompanhamento na hora e os ganchos de abordagem ao concluir.",
+    "short_description": "Enriquecimento de lead com 1 clique (notas com link e ganchos)."
+  },
+  "settings": {
+    "secret": "Segredo da integração (obrigatório — peça ao time que administra o Enriquecedor)",
+    "endpoint": "URL do endpoint (opcional — deixe em branco para usar o padrão)"
+  }
+}

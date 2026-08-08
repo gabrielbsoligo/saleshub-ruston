@@ -1824,6 +1824,359 @@ async function isAuthenticated(req) {
   }
 }
 
+// ============================================================================
+// ESTEIRA server-side (integração Kommo): roda F1→F4 de UM lead inteiro no
+// motor, gravando no banco via PostgREST com o token do chamador, e devolve
+// notas pro card na Kommo (link do lead ao entrar; ganchos de abordagem ao
+// concluir). O endpoint /api/esteira responde 202 na hora e roda em background.
+// ============================================================================
+const APP_URL = (process.env.APP_URL || 'https://gestao-comercial-rosy.vercel.app').replace(/\/$/, '');
+
+function linkDoLead(id) {
+  return `${APP_URL}/enriquecedor/#lead=${id}`;
+}
+
+// REST (PostgREST) com o token do chamador — RLS de usuário autenticado.
+function sbHeaders(token) {
+  return {
+    apikey: AUTH_SUPABASE_ANON,
+    authorization: `Bearer ${token}`,
+    'content-type': 'application/json',
+  };
+}
+async function sbSelect(token, table, query) {
+  const r = await fetch(`${AUTH_SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders(token) });
+  if (!r.ok) throw new Error(`select ${table}: HTTP ${r.status}`);
+  return r.json();
+}
+async function sbPatch(token, table, query, body) {
+  const r = await fetch(`${AUTH_SUPABASE_URL}/rest/v1/${table}?${query}`, {
+    method: 'PATCH',
+    headers: { ...sbHeaders(token), prefer: 'return=minimal' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`patch ${table}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+}
+async function sbUpsert(token, table, body, onConflict) {
+  const r = await fetch(
+    `${AUTH_SUPABASE_URL}/rest/v1/${table}${onConflict ? `?on_conflict=${onConflict}` : ''}`,
+    {
+      method: 'POST',
+      headers: { ...sbHeaders(token), prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!r.ok) throw new Error(`upsert ${table}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+}
+async function sbDelete(token, table, query) {
+  await fetch(`${AUTH_SUPABASE_URL}/rest/v1/${table}?${query}`, {
+    method: 'DELETE',
+    headers: sbHeaders(token),
+  });
+}
+
+// Nota no card da Kommo (KOMMO_SUBDOMAIN + KOMMO_API_TOKEN do ambiente).
+async function kommoNote(kommoLeadId, text) {
+  try {
+    const sub = process.env.KOMMO_SUBDOMAIN;
+    const tok = process.env.KOMMO_API_TOKEN;
+    if (!sub || !tok || !kommoLeadId) return false;
+    const r = await fetch(`https://${sub}.kommo.com/api/v4/leads/${kommoLeadId}/notes`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+      body: JSON.stringify([{ note_type: 'common', params: { text: String(text).slice(0, 19000) } }]),
+    });
+    if (!r.ok) console.warn(`[kommo] nota falhou: HTTP ${r.status}`);
+    return r.ok;
+  } catch (err) {
+    console.warn('[kommo] nota falhou:', String(err?.message || err));
+    return false;
+  }
+}
+
+// Nome de marca pra buscas (aproximação server-side do adSearchTerm do app).
+function marcaDe(nome) {
+  const limpo = String(nome || '')
+    .replace(/\b(ltda|limitada|s\/?a\.?|eireli|me|epp|holding|participacoes|participações|empreendimentos?|imobiliaria|imobiliária|incorporadora|incorporacoes|incorporações|construtora|construcoes|construções)\b/gi, '')
+    .replace(/[^\p{L}\p{N} ]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return limpo || String(nome || '');
+}
+
+// Sinais/gaps básicos server-side (aproximação do computeDores do app) — só
+// fatos verificados; alimentam o briefing gerado pela esteira.
+function sinaisBasicos(row, audit, gb, anunciosMeta) {
+  const s = [];
+  if (!audit || !audit.isOnline) s.push('Sem site no ar (ou não encontrado)');
+  else {
+    if ((audit.whatsappButtons ?? []).length === 0 && !audit.hasWhatsappWidget) s.push('Site sem botão de WhatsApp: perde contato de cliente quente');
+    const quebrados = (audit.whatsappButtons ?? []).filter((b) => !b.working).length;
+    if (quebrados > 0) s.push(`${quebrados} botão(ões) de WhatsApp com problema no site`);
+    if (!audit.hasMetaPixel) s.push('Site sem Pixel do Meta (mídia roda sem rastreio)');
+    if (!audit.hasGoogleTag) s.push('Site sem Google Tag');
+    if (audit.loadTimeMs > 5000) s.push('Site lento (carregamento acima de 5s)');
+  }
+  if (!row.company_instagram) s.push('Sem Instagram institucional identificado');
+  if (!gb || gb.found === false) s.push('Sem ficha no Google Meu Negócio');
+  else if (gb.reviews != null && gb.reviews < 20) s.push(`Poucas avaliações no Google (${gb.reviews})`);
+  if (anunciosMeta) {
+    const rodando = (anunciosMeta.validados?.length ?? 0) + (anunciosMeta.aValidar?.length ?? 0);
+    if (rodando === 0) s.push('Sem anúncios ativos na Meta Ad Library');
+  }
+  return s;
+}
+
+function payloadBriefing(row, audit, decisores, anunciosMeta) {
+  return {
+    perfil: row.perfil ?? 'construtoras',
+    sinaisConfirmados: sinaisBasicos(row, audit, row.google_business, anunciosMeta),
+    empresa: row.razao_social ?? row.company_name_raw,
+    nomeFantasia: row.nome_fantasia,
+    cnae: row.datastone?.cnaeDescription ?? row.cnae,
+    segmento: row.datastone?.segment ?? row.segmento,
+    cidade: row.cidade,
+    uf: row.uf,
+    situacao: row.situacao_cadastral,
+    receita: row.datastone?.estimatedRevenue ?? row.revenue_band_raw,
+    funcionarios: row.datastone?.employeeCount ?? null,
+    site: audit?.isOnline
+      ? {
+          url: audit.siteUrl,
+          online: true,
+          https: audit.httpsValid,
+          loadTimeMs: audit.loadTimeMs,
+          pagespeed: audit.pagespeed ?? null,
+          pixel: audit.hasMetaPixel,
+          googleTag: audit.hasGoogleTag,
+          instagram: audit.siteInstagram,
+          facebook: audit.siteFacebook,
+        }
+      : { online: false, obs: 'empresa sem site no ar' },
+    empreendimentos: (row.empreendimentos ?? []).map((e) => ({ nome: e.nome, cidade: e.cidade, status: e.status })),
+    google: row.google_business?.found !== false && row.google_business
+      ? { rating: row.google_business.rating, reviews: row.google_business.reviews, category: row.google_business.category }
+      : null,
+    anunciosMeta: anunciosMeta
+      ? { validados: anunciosMeta.validados?.length ?? 0, aValidar: anunciosMeta.aValidar?.length ?? 0, totalAnalisados: anunciosMeta.total ?? null }
+      : null,
+    decisores,
+  };
+}
+
+async function runEsteira({ leadId, kommoLeadId, token }) {
+  const setStatus = (status) =>
+    sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { status, updated_at: new Date().toISOString() }).catch(() => {});
+  let row = null;
+  try {
+    const rows = await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`);
+    row = rows?.[0];
+    if (!row) throw new Error('lead não encontrado no banco');
+
+    // ── F1 · Triagem (Receita) ───────────────────────────────────────────────
+    await setStatus('esteira_f1');
+    const digits = onlyDigits(row.cnpj ?? row.cnpj_raw);
+    if (digits.length === 14) {
+      const r1 = await fetchCnpj(digits);
+      const d = r1?.data;
+      if (d) {
+        const patch = {
+          cnpj: digits,
+          razao_social: d.razao_social ?? row.razao_social,
+          nome_fantasia: d.nome_fantasia ?? row.nome_fantasia,
+          cnae: d.cnae_fiscal ? String(d.cnae_fiscal) : row.cnae,
+          segmento: d.cnae_fiscal_descricao ?? row.segmento,
+          cidade: d.municipio ?? row.cidade,
+          uf: d.uf ?? row.uf,
+          situacao_cadastral: d.descricao_situacao_cadastral ?? row.situacao_cadastral,
+          socios: (d.qsa ?? []).map((s) => ({ nome: s.nome_socio, qualificacao: s.qualificacao_socio ?? null })),
+          data_quality: 'valido',
+        };
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, patch);
+        Object.assign(row, patch);
+      }
+    }
+
+    // ── F2 · Qualificação (DataStone + Lemit + redes dos sócios) ────────────
+    await setStatus('esteira_f2');
+    const [ds, pessoas, lemit] = await Promise.all([
+      datastoneCompany(digits).catch(() => null),
+      datastonePessoas(digits).catch(() => null),
+      lemitEnrich(digits).catch(() => null),
+    ]);
+    const patch2 = {};
+    if (ds?.ok && ds.data) {
+      patch2.datastone = ds.data;
+      if (ds.data.organograma) patch2.organograma = ds.data.organograma;
+    }
+    if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
+    let social = null;
+    try {
+      social = await discoverSociosSocial({
+        company: row.razao_social ?? row.company_name_raw,
+        socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
+      });
+    } catch { /* busca indisponível */ }
+    if (social?.companyInstagram) patch2.company_instagram = social.companyInstagram;
+    if (social?.companyFacebook) patch2.company_facebook = social.companyFacebook;
+    if (Object.keys(patch2).length) {
+      await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, patch2);
+      Object.assign(row, patch2);
+    }
+    if (pessoas?.ok && (pessoas.people ?? []).length) {
+      await sbDelete(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}`);
+      const rowsDm = pessoas.people.slice(0, 12).map((p, i) => {
+        const cel = (p.phones ?? []).find((x) => x.whatsapp) ?? (p.phones ?? [])[0] ?? null;
+        return {
+          lead_id: leadId,
+          nome: p.nome,
+          cargo: null,
+          is_primary: i === 0,
+          cpf: p.cpf ?? null,
+          phone_personal: cel?.numero ?? null,
+          phone_whatsapp: !!cel?.whatsapp,
+          email_personal: (p.emails ?? [])[0] ?? null,
+          confidence: 70,
+          source: 'datastone',
+        };
+      });
+      await sbUpsert(token, 'enriquecedor_decision_makers', rowsDm);
+    }
+
+    // ── F3 · Diagnóstico digital (site, GMN, empreendimentos, briefing) ─────
+    await setStatus('esteira_f3');
+    let audit = null;
+    try {
+      const disc = await discoverSite({
+        company: row.razao_social ?? row.company_name_raw,
+        email: row.email_raw,
+        cidade: row.cidade,
+        site: row.site_url,
+      });
+      if (disc?.url) {
+        audit = await auditUrl(disc.url).catch(() => null);
+        if (audit) {
+          try { audit.pagespeed = await pagespeed(audit.siteUrl); } catch { /* sem nota */ }
+          await sbUpsert(token, 'enriquecedor_site_audits', [{
+            lead_id: leadId,
+            site_url: audit.siteUrl,
+            source: disc.source ?? null,
+            is_online: !!audit.isOnline,
+            http_status: audit.httpStatus ?? null,
+            https_valid: !!audit.httpsValid,
+            load_time_ms: audit.loadTimeMs ?? null,
+            whatsapp_buttons: audit.whatsappButtons ?? [],
+            has_whatsapp_widget: !!audit.hasWhatsappWidget,
+            site_instagram: audit.siteInstagram ?? null,
+            site_facebook: audit.siteFacebook ?? null,
+            pagespeed: audit.pagespeed ?? null,
+            has_meta_pixel: !!audit.hasMetaPixel,
+            has_google_tag: !!audit.hasGoogleTag,
+            notes: audit.notes ?? [],
+          }], 'lead_id');
+          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: audit.siteUrl });
+          row.site_url = audit.siteUrl;
+        }
+      }
+    } catch { /* site não encontrado */ }
+    try {
+      const gb = await serperPlacesCached(row.razao_social ?? row.company_name_raw, row.cidade);
+      if (gb) {
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb });
+        row.google_business = gb;
+      }
+    } catch { /* GMN indisponível */ }
+    if ((row.perfil ?? 'construtoras') !== 'geral') {
+      try {
+        const emp = await discoverEmpreendimentos({
+          company: row.razao_social ?? row.company_name_raw,
+          nomeFantasia: row.nome_fantasia,
+          cidade: row.cidade,
+          siteUrl: row.site_url,
+        });
+        if (emp?.ok && (emp.empreendimentos ?? []).length) {
+          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { empreendimentos: emp.empreendimentos });
+          row.empreendimentos = emp.empreendimentos;
+        }
+      } catch { /* sem empreendimentos */ }
+    }
+    const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
+    let briefing = null;
+    const b1 = await generateBriefing(payloadBriefing(row, audit, decisores, null));
+    if (b1?.ok && b1.briefing) {
+      briefing = { ...b1.briefing, model: b1.model ?? null, generatedAt: new Date().toISOString() };
+      await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
+    }
+
+    // ── F4 · Anúncios (Meta headless) + briefing ATUALIZADO com a mídia ─────
+    await setStatus('esteira_f4');
+    let anunciosMeta = null;
+    try {
+      const hostDe = (u) => { try { return new URL(u.startsWith('http') ? u : `https://${u}`).hostname.replace(/^www\./, ''); } catch { return null; } };
+      const an = await anunciosHeadless({
+        company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
+        fbHandle: row.company_facebook ? (row.company_facebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null) : null,
+        siteDomain: row.site_url ? hostDe(row.site_url) : null,
+        cidade: row.cidade,
+        empreendimentos: (row.empreendimentos ?? [])
+          .filter((e) => e.status === 'lancamento' || e.status === 'em_obra')
+          .map((e) => ({ nome: e.nome, domain: e.lp ? hostDe(e.lp) : null })),
+      });
+      if (an?.meta) {
+        anunciosMeta = an.meta;
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
+          anuncios: { meta: an.meta, checkedAt: new Date().toISOString() },
+        });
+        // Fases seguintes ATUALIZAM o discurso: re-gera o briefing com a mídia.
+        const b2 = await generateBriefing(payloadBriefing(row, audit, decisores, an.meta));
+        if (b2?.ok && b2.briefing) {
+          briefing = { ...b2.briefing, model: b2.model ?? null, generatedAt: new Date().toISOString() };
+          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
+        }
+      }
+    } catch (err) {
+      console.warn('[esteira] anúncios falharam:', String(err?.message || err).slice(0, 150));
+    }
+
+    await setStatus('enriquecido');
+
+    // ── Nota final na Kommo: ganchos de abordagem ────────────────────────────
+    if (kommoLeadId) {
+      const ganchos = briefing?.ganchos ?? [];
+      const dores = briefing?.dores ?? [];
+      const texto = ganchos.length
+        ? `🎯 ENRIQUECEDOR — Ganchos de abordagem:\n\n${ganchos.map((g, i) => `${i + 1}. ${g}`).join('\n')}` +
+          (dores.length ? `\n\n📌 Dores identificadas:\n${dores.map((d) => `• ${d}`).join('\n')}` : '') +
+          `\n\n🔗 Lead completo (scripts por canal, decisores, auditoria):\n${linkDoLead(leadId)}`
+        : `⚠️ ENRIQUECEDOR — enriquecimento concluído, mas o briefing por IA não foi gerado. ` +
+          `Veja o que foi coletado: ${linkDoLead(leadId)}`;
+      await kommoNote(kommoLeadId, texto);
+    }
+  } catch (err) {
+    console.warn('[esteira] falhou:', String(err?.message || err));
+    await setStatus('esteira_erro');
+    void logErroToken(token, '/api/esteira', `esteira falhou: ${String(err?.message || err)}`, {
+      leadId, kommoLeadId: kommoLeadId ?? null,
+    });
+    if (kommoLeadId) {
+      await kommoNote(kommoLeadId, `⚠️ ENRIQUECEDOR — o enriquecimento automático falhou (${String(err?.message || err).slice(0, 200)}). Acompanhe/re-rode em: ${linkDoLead(leadId)}`);
+    }
+  }
+}
+
+// Grava erro na tabela enriquecedor_error_log com um token JWT direto.
+async function logErroToken(token, etapa, mensagem, detalhe) {
+  try {
+    if (!AUTH_SUPABASE_URL || !AUTH_SUPABASE_ANON) return;
+    console.warn(`[erro] ${etapa}: ${String(mensagem).slice(0, 200)}`);
+    await fetch(`${AUTH_SUPABASE_URL}/rest/v1/enriquecedor_error_log`, {
+      method: 'POST',
+      headers: { ...sbHeaders(token || AUTH_SUPABASE_ANON), prefer: 'return=minimal' },
+      body: JSON.stringify({ origem: 'motor', etapa, mensagem: String(mensagem).slice(0, 2000), detalhe: detalhe ?? null }),
+    });
+  } catch { /* nunca propaga */ }
+}
+
 // Grava erro na tabela enriquecedor_error_log (banco do SalesHub) usando o
 // token do próprio chamador — fire-and-forget: logar NUNCA quebra o fluxo.
 async function logErroMotor(req, etapa, mensagem, detalhe) {
@@ -2004,6 +2357,15 @@ const server = http.createServer(async (req, res) => {
       const r = await generateBriefing(body);
       if (r?.ok === false) void logErroMotor(req, '/api/briefing', 'briefing falhou após todas as tentativas', { empresa: body?.empresa });
       return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/esteira' && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      // 202 na hora; a esteira roda em background e escreve o progresso no lead.
+      void runEsteira({ leadId: body.leadId, kommoLeadId: body.kommoLeadId ?? null, token });
+      return send(res, 202, { ok: true, link: linkDoLead(body.leadId) });
     }
 
     return send(res, 404, { error: 'rota não encontrada' });

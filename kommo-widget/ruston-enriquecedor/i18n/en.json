@@ -1,0 +1,11 @@
+{
+  "widget": {
+    "name": "Ruston Enriquecedor",
+    "description": "Sends the Kommo lead to the Enricher (SDNA Outbound): creates the lead, runs the full audit pipeline and posts notes back on the card — tracking link right away and approach hooks when done.",
+    "short_description": "1-click lead enrichment (notes with link and hooks)."
+  },
+  "settings": {
+    "secret": "Integration secret (required)",
+    "endpoint": "Endpoint URL (optional — leave blank for default)"
+  }
+}

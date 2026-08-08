@@ -42,12 +42,14 @@ import {
   FileText,
   Smartphone,
   Monitor,
+  Play,
+  Link2,
 } from 'lucide-react';
 import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAudit, Lead, Organograma, SiteAudit } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
 import { resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone } from '../lib/contactSelection';
-import { auditLeadSite, enrichLeads, fetchPagespeed, measureLeadAds, setAdDecision } from '../lib/enrichService';
+import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
@@ -126,6 +128,28 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
       toast.success('Lead re-enriquecido.');
     } finally {
       setReenriching(false);
+    }
+  };
+
+  // Roda uma fase do funil (F2/F3/F4) direto da página do lead — força a
+  // re-execução (F3 re-gera o briefing mesmo se já existir) e recarrega tudo.
+  const [faseRodando, setFaseRodando] = useState<number | null>(null);
+  const handleRunFase = async (f: number) => {
+    if (!lead || faseRodando != null) return;
+    setFaseRodando(f);
+    try {
+      const fresh = (await leadsRepo.get(leadId)) ?? lead;
+      const r =
+        f === 2 ? await enrichQualificacao(fresh)
+        : f === 3 ? await enrichDiagnostico(fresh, { force: true })
+        : await runAnuncios(fresh);
+      await reloadAll();
+      if (r.ok) toast.success(`F${f} concluída${r.resumo ? ` — ${r.resumo}` : ''}.`);
+      else toast.error(`F${f} falhou${r.note ? ` (${r.note})` : ''}.`);
+    } catch (e) {
+      toast.error(`F${f} falhou: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setFaseRodando(null);
     }
   };
 
@@ -265,14 +289,46 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
             <ArrowLeft size={16} /> Voltar
           </button>
         )}
-        <button
-          onClick={handleReenrich}
-          disabled={reenriching}
-          className="flex items-center gap-2 rounded-lg border border-v4-red px-3 py-2 text-sm font-medium text-v4-red-hover hover:bg-v4-red-muted disabled:opacity-60"
-        >
-          {reenriching ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-          {reenriching ? 'Re-enriquecendo…' : 'Re-enriquecer este lead'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Rodar as fases do funil direto da página do lead */}
+          {([
+            [2, 'F2 Qualificação'],
+            [3, 'F3 Diagnóstico'],
+            [4, 'F4 Anúncios'],
+          ] as Array<[number, string]>).map(([f, rotulo]) => (
+            <button
+              key={f}
+              onClick={() => handleRunFase(f)}
+              disabled={faseRodando != null}
+              title={`Rodar ${rotulo} deste lead agora (re-executa e atualiza os dados)`}
+              className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-2 text-sm font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red disabled:opacity-50"
+            >
+              {faseRodando === f ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+              {rotulo}
+            </button>
+          ))}
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}${import.meta.env.BASE_URL ?? '/'}#lead=${leadId}`;
+              navigator.clipboard.writeText(url).then(
+                () => toast.success('Link do lead copiado!'),
+                () => toast.error('Não foi possível copiar.'),
+              );
+            }}
+            title="Copiar o link direto desta página do lead"
+            className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-2 text-sm font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red"
+          >
+            <Link2 size={14} /> Copiar link
+          </button>
+          <button
+            onClick={handleReenrich}
+            disabled={reenriching}
+            className="flex items-center gap-2 rounded-lg border border-v4-red px-3 py-2 text-sm font-medium text-v4-red-hover hover:bg-v4-red-muted disabled:opacity-60"
+          >
+            {reenriching ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            {reenriching ? 'Re-enriquecendo…' : 'Re-enriquecer este lead'}
+          </button>
+        </div>
       </div>
 
       {/* Cabeçalho-resumo — oculto no modo embedded (a linha do funil já mostra empresa/score) */}

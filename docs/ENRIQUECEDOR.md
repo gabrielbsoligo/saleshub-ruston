@@ -149,6 +149,26 @@ group by 1, 2, 3, 4
 order by count(*) desc;
 ```
 
+## Integração Kommo (widget "Ruston Enriquecedor")
+
+Da Kommo, o botão **🔎 Enriquecer lead** (widget em `kommo-widget/ruston-enriquecedor/`,
+zip pronto na pasta) dispara o lead pro enriquecedor com 1 clique:
+
+1. **Edge function `enriquecedor-kommo`** valida o segredo (`ENRIQ_KOMMO_SECRET`), cria o
+   lead em `enriquecedor_leads` (reaproveita por CNPJ), posta **nota no card com o link**
+   (`/enriquecedor/#lead=<id>`) e aciona o motor logando com o usuário de integração
+   (`integracao-enriquecedor@…`, secrets `ENRIQ_INTEG_*`).
+2. **Motor `/api/esteira`** (Railway) responde 202 e roda TUDO em background — F1 Receita,
+   F2 DataStone/Lemit/redes, F3 site/GMN/empreendimentos/briefing, F4 anúncios Meta com
+   **briefing re-gerado** incluindo a mídia — gravando o progresso no campo `status` do lead
+   (`esteira_f1`…`enriquecido`/`esteira_erro`).
+3. Ao concluir, o motor posta a **nota final com os ganchos de abordagem** + dores + link
+   (usa `KOMMO_API_TOKEN`/`KOMMO_SUBDOMAIN` do Railway).
+
+Links diretos: qualquer lead tem URL própria — `/enriquecedor/#lead=<id>` (botão
+"Copiar link" na página do lead). As fases F2/F3/F4 também podem ser rodadas de dentro
+da página do lead (F3 força re-geração do briefing).
+
 ## Integração futura (fora de escopo por enquanto)
 
 Ideias registradas para quando chegar a hora: hospedar o motor, unificar login, empurrar leads
