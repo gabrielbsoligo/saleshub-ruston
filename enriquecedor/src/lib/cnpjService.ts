@@ -1,6 +1,7 @@
 import pRetry from 'p-retry';
 import type { Socio } from '../types';
 import { onlyDigits } from './validation';
+import { motorFetch } from './motorClient';
 
 export interface CnpjData {
   cnpj: string;
@@ -52,7 +53,7 @@ export async function fetchCnpj(rawCnpj: string): Promise<CnpjLookup> {
 
   // 1) backend local
   try {
-    const res = await fetch(`/api/cnpj/${cnpj}`);
+    const res = await motorFetch(`/api/cnpj/${cnpj}`);
     if (res.ok) {
       const j = await res.json();
       if (j.ok) return { status: 'ok', data: mapRaw(j.data, cnpj) };

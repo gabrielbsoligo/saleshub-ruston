@@ -11,7 +11,8 @@ import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
 
-const PORT = Number(process.env.ENRICH_PORT || 3011);
+// PORT: injetada pela plataforma (Railway) em produção; 3011 no dev local.
+const PORT = Number(process.env.PORT || process.env.ENRICH_PORT || 3011);
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36';
 
@@ -1719,7 +1720,7 @@ function send(res, status, body) {
   res.writeHead(status, {
     'content-type': 'application/json',
     'access-control-allow-origin': '*',
-    'access-control-allow-headers': 'content-type',
+    'access-control-allow-headers': 'content-type, authorization',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
   });
   res.end(data);
@@ -1739,11 +1740,45 @@ function readJson(req) {
   });
 }
 
+// --- Autenticação (deploy) ---------------------------------------------------
+// Com SUPABASE_URL + SUPABASE_ANON_KEY no ambiente (Railway), toda rota exceto
+// /api/health exige o token de sessão do SalesHub (Authorization: Bearer <jwt>),
+// validado no Supabase — só o time logado consegue disparar enriquecimento
+// (que consome créditos de Anthropic/DataStone/Lemit). Sem essas envs (dev
+// local), a checagem fica desligada e nada muda no fluxo do terminal.
+const AUTH_SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const AUTH_SUPABASE_ANON = process.env.SUPABASE_ANON_KEY || '';
+const AUTH_REQUIRED = Boolean(AUTH_SUPABASE_URL && AUTH_SUPABASE_ANON);
+const _authCache = new Map(); // token -> expira (ms)
+
+async function isAuthenticated(req) {
+  if (!AUTH_REQUIRED) return true;
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return false;
+  const exp = _authCache.get(token);
+  if (exp && exp > Date.now()) return true;
+  try {
+    const r = await fetch(`${AUTH_SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: AUTH_SUPABASE_ANON, authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) return false;
+    if (_authCache.size > 500) _authCache.clear();
+    _authCache.set(token, Date.now() + 5 * 60_000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   try {
+    if (url.pathname !== '/api/health' && !(await isAuthenticated(req))) {
+      return send(res, 401, { error: 'não autenticado — faça login no SalesHub' });
+    }
+
     if (url.pathname === '/api/health') {
       return send(res, 200, {
         ok: true,

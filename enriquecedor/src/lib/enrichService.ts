@@ -2,6 +2,7 @@ import pLimit from 'p-limit';
 import PQueue from 'p-queue';
 import type { AdItem, DecisionMaker, DecisorEmail, DecisorPhone, DatastonePersonData, Empreendimento, EnrichIssue, Lead, SiteAudit } from '../types';
 import { computeScore } from './leadScore';
+import { motorFetch } from './motorClient';
 import { computeDores, whatsappAudit } from './dores';
 import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
@@ -173,7 +174,7 @@ export async function auditLeadSite(
   };
 
   try {
-    const res = await fetch('/api/site-audit', {
+    const res = await motorFetch('/api/site-audit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -208,7 +209,7 @@ export async function auditLeadSite(
 export async function fetchPagespeed(url: string | null): Promise<SiteAudit['pagespeed']> {
   if (!url) return null;
   try {
-    const res = await fetch('/api/pagespeed', {
+    const res = await motorFetch('/api/pagespeed', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ url }),
@@ -285,7 +286,7 @@ export async function discoverPeople(
   };
   let braveFailed = false;
   try {
-    const res = await fetch('/api/socios-social', {
+    const res = await motorFetch('/api/socios-social', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome) }),
@@ -302,7 +303,7 @@ export async function discoverPeople(
   let lemit: LemitResponse = { ok: false, company: null, people: [] };
   let lemitFailed = false;
   try {
-    const res = await fetch('/api/lemit', {
+    const res = await motorFetch('/api/lemit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cnpj: lead.cnpj }),
@@ -320,7 +321,7 @@ export async function discoverPeople(
   let dsFailed = false;
   let dsNote: string | undefined;
   try {
-    const res = await fetch('/api/datastone-pessoas', {
+    const res = await motorFetch('/api/datastone-pessoas', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cnpj: lead.cnpj }),
@@ -489,7 +490,7 @@ interface SourceResult {
 
 async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promise<SourceResult> {
   try {
-    const res = await fetch('/api/empreendimentos', {
+    const res = await motorFetch('/api/empreendimentos', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -512,7 +513,7 @@ async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promis
 
 async function fetchGoogleBusiness(lead: Lead): Promise<SourceResult> {
   try {
-    const res = await fetch('/api/google-negocio', {
+    const res = await motorFetch('/api/google-negocio', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ company: lead.razaoSocial ?? lead.companyNameRaw, cidade: lead.cidade }),
@@ -659,7 +660,7 @@ async function fetchAnuncios(lead: Lead, audit: SiteAudit): Promise<SourceResult
     const timer = setTimeout(() => ctrl.abort(), 150_000);
     let res: Response;
     try {
-      res = await fetch('/api/anuncios', {
+      res = await motorFetch('/api/anuncios', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: ctrl.signal,
@@ -692,7 +693,7 @@ async function fetchAnuncios(lead: Lead, audit: SiteAudit): Promise<SourceResult
 /** DataStone: organograma (diretoria + gerência) + porte. Muta o lead. */
 async function fetchDatastone(lead: Lead): Promise<SourceResult> {
   try {
-    const res = await fetch('/api/datastone', {
+    const res = await motorFetch('/api/datastone', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ cnpj: lead.cnpj }),
@@ -783,7 +784,7 @@ async function fetchBriefing(lead: Lead, audit: SiteAudit): Promise<SourceResult
         : null,
       decisores,
     };
-    const res = await fetch('/api/briefing', {
+    const res = await motorFetch('/api/briefing', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
@@ -955,7 +956,7 @@ async function auditPendingLps(lead: Lead): Promise<number> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 60_000); // não deixa uma LP travar tudo
     try {
-      const res = await fetch('/api/audit-lp', {
+      const res = await motorFetch('/api/audit-lp', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: ctrl.signal,

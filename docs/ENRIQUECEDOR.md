@@ -30,20 +30,43 @@ O `npm run build` da raiz agora faz dois builds:
 O `vercel.json` tem rewrites para servir `/enriquecedor` e rotas internas. Nenhuma configuração
 extra é necessária no painel do Vercel para a **interface** funcionar.
 
-## ⚠️ Limitação atual na nuvem: o "motor"
+## O "motor" na nuvem (Railway)
 
 O enriquecedor tem duas partes:
 
-- **Site (React)** — funciona 100% na nuvem (importar lista, validar, funil, telas).
+- **Site (React)** — servido pelo Vercel junto do SalesHub.
 - **Motor (`enriquecedor/server/index.mjs`)** — backend Node com Playwright que descobre/audita
-  sites, consulta CNPJ, DataStone, Lemit, Meta etc. Ele **não roda no Vercel** (precisa de um
-  processo Node persistente com headless browser). Na nuvem, as ações que dependem do motor
-  (rotas `/api/*`) ficam indisponíveis até hospedarmos o motor em algum lugar (Railway, VPS,
-  etc.) — planejado para a fase de integração.
+  sites, consulta CNPJ, DataStone, Lemit, Meta etc. Roda no **Railway** (o Vercel não comporta
+  processo persistente com headless browser). `enriquecedor/Dockerfile` + `railway.json` já
+  deixam o deploy pronto.
 
-Para usar o enriquecimento completo hoje: rodar localmente (`npm run dev` dentro de
-`enriquecedor/`), com uma execução única de `npm run setup:motor` antes (baixa o Chromium do
-Playwright — era o antigo `postinstall`, movido para não pesar/quebrar o build do Vercel).
+### Subir o motor no Railway (uma vez)
+
+1. Railway → **New Project → Deploy from GitHub repo** → `saleshub-ruston` (branch `main`).
+2. No serviço: **Settings → Root Directory** = `enriquecedor`. Ele detecta o `Dockerfile`
+   (imagem oficial do Playwright, Chromium incluso) e o `railway.json` (healthcheck em
+   `/api/health`).
+3. **Variables** — colar as chaves do motor (valores fora do git, no cofre do time):
+   `ANTHROPIC_API_KEY`, `BRAVE_API_KEY`, `SERPER_API_KEY`, `PAGESPEED_API_KEY`,
+   `DATASTONE_API_TOKEN`, `LEMIT_API_TOKEN`, `PROXY_SERVER`, `PROXY_USERNAME`,
+   `PROXY_PASSWORD` e, para exigir login do time nas rotas, `SUPABASE_URL` +
+   `SUPABASE_ANON_KEY` (os mesmos do SalesHub).
+4. **Settings → Networking → Generate Domain** → copiar a URL pública
+   (ex.: `https://xxxx.up.railway.app`).
+5. No **Vercel** → projeto do SalesHub → **Environment Variables** → criar
+   `VITE_MOTOR_URL` = URL do passo 4 → **Redeploy** (a URL é embutida no bundle no build).
+
+### Segurança
+
+Com `SUPABASE_URL`/`SUPABASE_ANON_KEY` configuradas no Railway, **toda rota do motor (exceto
+`/api/health`) exige o token de sessão do SalesHub** — o frontend envia automaticamente
+(`motorClient.ts`). Sem login válido: HTTP 401. Isso impede estranhos de gastar os créditos
+das APIs pagas.
+
+### Dev local (continua igual)
+
+`npm run dev` dentro de `enriquecedor/` sobe site + motor; `npm run setup:motor` uma vez antes
+(baixa o Chromium do Playwright). Sem `SUPABASE_URL` no ambiente, o motor local não exige token.
 
 ## Credenciais (NUNCA commitar)
 
