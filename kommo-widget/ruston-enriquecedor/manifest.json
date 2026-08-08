@@ -3,7 +3,6 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "code": "re_8f3a92c1d4",
     "version": "1.0.0",
     "interface_version": 2,
     "init_once": true,
@@ -16,7 +15,7 @@
   },
   "locations": [
     "settings",
-    "lcard-1"
+    "lcard-0"
   ],
   "settings": {
     "secret": {
