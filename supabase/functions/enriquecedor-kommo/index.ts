@@ -49,6 +49,29 @@ Deno.serve(async (req) => {
     return json(400, { error: 'JSON inválido' })
   }
 
+  // Ação auxiliar: criar TAREFA no card (ex.: pedir pro SDR responsável
+  // despachar manualmente um lead cujo CNPJ não foi confirmado em lote).
+  if (body.acao === 'tarefa') {
+    const leadId = String(body.kommo_lead_id ?? '').trim()
+    const texto = String(body.texto ?? '').trim()
+    if (!leadId || !texto) return json(400, { error: 'kommo_lead_id e texto obrigatórios' })
+    const payload: Record<string, unknown> = {
+      entity_id: Number(leadId),
+      entity_type: 'leads',
+      text: texto.slice(0, 4000),
+      task_type_id: Number(body.task_type_id ?? 1),
+      complete_till: Number(body.complete_till ?? Math.floor(Date.now() / 1000) + 24 * 3600),
+    }
+    if (body.responsible_user_id) payload.responsible_user_id = Number(body.responsible_user_id)
+    const r = await fetch(`https://${KOMMO_SUB}.kommo.com/api/v4/tasks`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}`, 'content-type': 'application/json' },
+      body: JSON.stringify([payload]),
+    })
+    const jr = await r.json().catch(() => null)
+    return json(r.ok ? 200 : 502, { ok: r.ok, status: r.status, id: jr?._embedded?.tasks?.[0]?.id ?? null })
+  }
+
   const cnpj = onlyDigits(body.cnpj)
   const kommoLeadId = String(body.kommo_lead_id ?? '').trim()
   const empresa = String(body.empresa ?? '').trim()
