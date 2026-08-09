@@ -1,11 +1,14 @@
 /* Ruston Enriquecedor — prefixo rew- (não colide com o Kommo) */
-.rew-card { padding: 10px 12px; }
-.rew-open {
-  width: 100%; padding: 9px 12px; border: 0; border-radius: 8px; cursor: pointer;
-  background: #e63946; color: #fff; font-weight: 600; font-size: 13px;
+.rew-fab {
+  position: fixed; right: 22px; bottom: 96px; z-index: 99990;
+  display: flex; align-items: center; gap: 7px;
+  padding: 11px 16px; border: 0; border-radius: 999px; cursor: pointer;
+  background: #e63946; color: #fff; font-weight: 700; font-size: 13px;
+  box-shadow: 0 6px 20px rgba(230, 57, 70, 0.45);
+  transition: transform 0.15s ease, background 0.15s ease;
 }
-.rew-open:hover { background: #d62839; }
-.rew-hint { margin: 8px 0 0; font-size: 11px; color: #6b7280; line-height: 1.35; }
+.rew-fab:hover { background: #d62839; transform: translateY(-2px); }
+.rew-fab span { line-height: 1; }
 
 .rew-overlay {
   position: fixed; inset: 0; z-index: 99999; background: rgba(0, 0, 0, 0.55);

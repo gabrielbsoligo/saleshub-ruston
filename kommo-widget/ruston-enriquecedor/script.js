@@ -1,12 +1,17 @@
 /**
  * Ruston Enriquecedor — widget privado do Kommo (Web SDK).
- * No card do lead, painel com a LUPA: abre um modal que dispara o lead pro
- * ENRIQUECEDOR (SDNA Outbound). O backend cria o lead, devolve uma nota com o
- * link de acompanhamento na hora e, ao fim da esteira, outra nota com os
+ * BOTÃO FLUTUANTE no card do lead (🔎 Enriquecer): abre um modal que dispara o
+ * lead pro ENRIQUECEDOR (SDNA Outbound). O backend cria o lead, devolve nota
+ * com o link de acompanhamento na hora e, ao fim da esteira, outra nota com os
  * ganchos de abordagem.
  *
+ * GATILHO DE UI: vigia leve da URL (mesma técnica do ruston-notify, que
+ * funciona nesta conta) — o Kommo é SPA e o callback render dos cards não é
+ * confiável com init_once; injetar o botão observando /leads/detail/<id> é
+ * garantido e sobrevive à navegação.
+ *
  * Configuração (na instalação):
- *   secret   — segredo da integração (obrigatório; quem te passa é o time).
+ *   secret   — segredo da integração (obrigatório).
  *   endpoint — URL da function (opcional; tem padrão).
  *
  * Namespace: classes/estado com prefixo "rew-" pra não colidir.
@@ -16,6 +21,7 @@ define(['jquery'], function ($) {
     var self = this;
     var NS = 'rew';
     var ENDPOINT_PADRAO = 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/enriquecedor-kommo';
+    var state = { booted: false, timer: null };
 
     function cfg() {
       var s = {};
@@ -41,7 +47,7 @@ define(['jquery'], function ($) {
 
     // Busca nome + possível campo de CNPJ do lead (sessão do próprio Kommo).
     function fetchLead(id) {
-      return fetch('/api/v4/leads/' + id + '?with=contacts', { credentials: 'include' })
+      return fetch('/api/v4/leads/' + id, { credentials: 'include' })
         .then(function (r) { return r.ok ? r.json() : null; })
         .catch(function () { return null; });
     }
@@ -64,7 +70,7 @@ define(['jquery'], function ($) {
 
     function abrirModal() {
       var id = leadIdAtual();
-      if (!id) { alert('Abra um card de lead para enriquecer.'); return; }
+      if (!id) return;
       fecharModal();
       var html =
         '<div class="' + NS + '-overlay">' +
@@ -132,34 +138,43 @@ define(['jquery'], function ($) {
       });
     }
 
-    // ---------- painel no card do lead ----------
-    function renderPanel() {
-      self.render_template({
-        caption: { class_name: NS + '-panel' },
-        body:
-          '<div class="' + NS + '-card">' +
-          '  <button class="' + NS + '-open">🔎 Enriquecer lead</button>' +
-          '  <p class="' + NS + '-hint">Cria no Enriquecedor, roda a esteira completa e devolve os ganchos numa nota.</p>' +
-          '</div>',
-        render: '',
-      });
+    // ---------- botão flutuante (só no card de lead) ----------
+    function tick() {
+      var noCard = !!leadIdAtual();
+      var existe = $('.' + NS + '-fab').length > 0;
+      if (noCard && !existe) {
+        $('body').append(
+          '<button class="' + NS + '-fab" title="Enviar este lead pro Enriquecedor (esteira completa + notas no card)">' +
+          '🔎 <span>Enriquecer</span></button>',
+        );
+      } else if (!noCard && existe) {
+        $('.' + NS + '-fab').remove();
+        fecharModal();
+      }
+    }
+
+    function boot() {
+      if (state.booted) return;
+      state.booted = true;
+      $(document).off('click.' + NS).on('click.' + NS, '.' + NS + '-fab', abrirModal);
+      state.timer = setInterval(tick, 700);
+      tick();
     }
 
     this.callbacks = {
-      render: function () {
-        try {
-          if (self.system().area === 'lcard') renderPanel();
-        } catch (e) { if (window.console) console.error('[ruston-enriquecedor] render', e); }
+      render: function () { return true; },
+      init: function () {
+        try { boot(); } catch (e) { if (window.console) console.error('[ruston-enriquecedor] init', e); }
         return true;
       },
-      init: function () { return true; },
-      bind_actions: function () {
-        $(document).off('click.' + NS).on('click.' + NS, '.' + NS + '-open', abrirModal);
-        return true;
-      },
+      bind_actions: function () { return true; },
       settings: function () { return true; },
       onSave: function () { return true; },
-      destroy: function () { fecharModal(); },
+      destroy: function () {
+        if (state.timer) clearInterval(state.timer);
+        $('.' + NS + '-fab').remove();
+        fecharModal();
+      },
     };
     return this;
   };
