@@ -62,6 +62,17 @@ const DECISOR_LEVEL: Record<string, { label: string; cls: string }> = {
   baixo: { label: 'decisor baixo', cls: 'bg-v4-surface text-v4-text-muted' },
 };
 
+// Fases da esteira automática (disparo via Kommo) — o motor grava o progresso
+// no status do lead; a página acompanha ao vivo enquanto estiver rodando.
+const ESTEIRA_LABEL: Record<string, string> = {
+  kommo_recebido: 'na fila do motor',
+  kommo_reenvio: 'na fila do motor',
+  esteira_f1: 'F1 · Triagem (Receita)',
+  esteira_f2: 'F2 · Qualificação (decisores e contatos)',
+  esteira_f3: 'F3 · Diagnóstico digital + briefing',
+  esteira_f4: 'F4 · Anúncios Meta + briefing final',
+};
+
 const SITE_SOURCE_LABELS: Record<string, string> = {
   informado: 'informado',
   email: 'domínio do e-mail',
@@ -118,6 +129,18 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
     setAudit(a);
     setPeople(ppl);
   };
+
+  // Enquanto a esteira automática roda no motor, a página se atualiza sozinha
+  // (5s) até chegar em enriquecido/erro.
+  const emEsteira = !!lead && (lead.status as string) in ESTEIRA_LABEL;
+  useEffect(() => {
+    if (!emEsteira) return;
+    const t = setInterval(() => {
+      void reloadAll();
+    }, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emEsteira, leadId]);
 
   const handleReenrich = async () => {
     if (!lead) return;
@@ -330,6 +353,26 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
           </button>
         </div>
       </div>
+
+      {/* Progresso da esteira automática (disparo via Kommo) */}
+      {emEsteira && lead && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-[#3b82f6]/50 bg-[rgba(59,130,246,0.08)] px-4 py-3 text-sm text-v4-text">
+          <Loader2 size={16} className="shrink-0 animate-spin text-[#3b82f6]" />
+          <span>
+            <b>Esteira automática rodando</b> — {ESTEIRA_LABEL[lead.status as string]}. A página atualiza
+            sozinha conforme os dados chegam; ao concluir, os ganchos voltam pra Kommo em nota.
+          </span>
+        </div>
+      )}
+      {(lead?.status as string) === 'esteira_erro' && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-v4-error/50 bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-v4-text">
+          <span className="shrink-0 text-v4-error">⚠️</span>
+          <span>
+            <b>A esteira automática falhou no meio do caminho.</b> O que foi coletado está salvo — rode as
+            fases pelos botões acima (F2/F3/F4) pra completar; o erro ficou no log.
+          </span>
+        </div>
+      )}
 
       {/* Cabeçalho-resumo — oculto no modo embedded (a linha do funil já mostra empresa/score) */}
       {!embedded && (
