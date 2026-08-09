@@ -1,9 +1,12 @@
 // Edge Function: parse-contract
-// Recebe PDF do contrato (base64 ou URL), envia direto pro Claude (lê PDF nativo)
+// Recebe PDF do contrato (base64 ou URL), envia pro LLM (leitura nativa de PDF)
 // e extrai produtos, preços e datas estruturados.
+// LLM: OpenAI (gpt-4.1, Responses API) e a PRIMARIA; Claude (sonnet) entra como
+// RESERVA se a OpenAI falhar — sem saldo, 4xx/5xx (pedido do Gabriel, 09/08).
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -97,10 +100,75 @@ Datas no formato YYYY-MM-DD.
 }`
 
 // ============================================================
-// Claude with native PDF reading
+// LLM with native PDF reading — OpenAI primaria, Claude reserva
 // ============================================================
 
-async function analyzeContractPdf(pdfBase64: string): Promise<any> {
+function extractJson(textOut: string): any {
+  let jsonStr = textOut
+  const jsonMatch = textOut.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (jsonMatch) jsonStr = jsonMatch[1]
+  const braceMatch = jsonStr.match(/\{[\s\S]*\}/)
+  if (braceMatch) jsonStr = braceMatch[0]
+  return JSON.parse(jsonStr.trim())
+}
+
+async function viaOpenAI(pdfBase64: string): Promise<any | null> {
+  if (!OPENAI_API_KEY) return null
+  const maxRetries = 3
+  let response: Response | null = null
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4.1',
+        max_output_tokens: 4000,
+        temperature: 0.1,
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_file',
+                filename: 'contrato.pdf',
+                file_data: `data:application/pdf;base64,${pdfBase64}`,
+              },
+              { type: 'input_text', text: PARSE_PROMPT },
+            ],
+          },
+        ],
+      }),
+    })
+
+    if (response.ok || (response.status !== 429 && response.status < 500)) break
+    if (attempt < maxRetries) {
+      console.log(`OpenAI API ${response.status}, retry ${attempt}/${maxRetries}...`)
+      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)))
+    }
+  }
+
+  if (!response || !response.ok) {
+    console.error(`OpenAI API ${response?.status}: ${(await response?.text().catch(() => '') || '').slice(0, 300)}`)
+    return null
+  }
+
+  const data = await response.json()
+  // Responses API: output[] -> message -> content[] -> output_text
+  const textOut = data.output_text
+    ?? (data.output ?? [])
+      .flatMap((o: any) => o?.content ?? [])
+      .filter((c: any) => c?.type === 'output_text')
+      .map((c: any) => c.text)
+      .join('')
+  if (!textOut) { console.error('OpenAI: resposta sem texto'); return null }
+  try { return extractJson(textOut) } catch (e) { console.error('OpenAI: JSON invalido', e); return null }
+}
+
+async function viaClaude(pdfBase64: string): Promise<any> {
   const maxRetries = 3
   let response: Response | null = null
 
@@ -152,14 +220,15 @@ async function analyzeContractPdf(pdfBase64: string): Promise<any> {
 
   const data = await response.json()
   const textOut = data.content?.[0]?.text || ''
+  return extractJson(textOut)
+}
 
-  let jsonStr = textOut
-  const jsonMatch = textOut.match(/```(?:json)?\s*([\s\S]*?)```/)
-  if (jsonMatch) jsonStr = jsonMatch[1]
-  const braceMatch = jsonStr.match(/\{[\s\S]*\}/)
-  if (braceMatch) jsonStr = braceMatch[0]
-
-  return JSON.parse(jsonStr.trim())
+async function analyzeContractPdf(pdfBase64: string): Promise<any> {
+  const viaOAI = await viaOpenAI(pdfBase64)
+  if (viaOAI) return viaOAI
+  console.log('OpenAI indisponivel — usando Claude como reserva')
+  if (!ANTHROPIC_API_KEY) throw new Error('OpenAI falhou e ANTHROPIC_API_KEY nao configurada')
+  return viaClaude(pdfBase64)
 }
 
 // ============================================================
@@ -173,8 +242,8 @@ Deno.serve(async (req) => {
     const body = await req.json()
     const { pdf_base64, contract_url } = body
 
-    if (!ANTHROPIC_API_KEY) {
-      return json({ error: 'ANTHROPIC_API_KEY nao configurada' }, 500)
+    if (!OPENAI_API_KEY && !ANTHROPIC_API_KEY) {
+      return json({ error: 'Nenhuma chave de LLM configurada (OPENAI_API_KEY / ANTHROPIC_API_KEY)' }, 500)
     }
 
     let base64Data = pdf_base64 || ''
