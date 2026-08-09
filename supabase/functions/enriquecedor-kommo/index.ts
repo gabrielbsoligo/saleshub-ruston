@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
   const link = `${APP_URL}/enriquecedor/#lead=${leadId}`
 
   // Nota 1: link de acompanhamento, na hora.
-  await kommoNote(kommoLeadId, `🔎 ENRIQUECEDOR — lead em enriquecimento (${perfil === 'geral' ? 'perfil versátil' : 'perfil construtoras'}).\nAcompanhe em tempo real:\n${link}`)
+  await kommoNote(kommoLeadId, `ENRIQUECEDOR — lead em enriquecimento (${perfil === 'geral' ? 'perfil versátil' : 'perfil construtoras'}).\nAcompanhe em tempo real:\n${link}`)
 
   // Login do usuário de integração → JWT aceito pelo motor e pelas RLS.
   const { data: sess, error: authErr } = await sb.auth.signInWithPassword({

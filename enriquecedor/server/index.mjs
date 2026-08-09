@@ -2145,10 +2145,10 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       const ganchos = briefing?.ganchos ?? [];
       const dores = briefing?.dores ?? [];
       const texto = ganchos.length
-        ? `🎯 ENRIQUECEDOR — Ganchos de abordagem:\n\n${ganchos.map((g, i) => `${i + 1}. ${g}`).join('\n')}` +
-          (dores.length ? `\n\n📌 Dores identificadas:\n${dores.map((d) => `• ${d}`).join('\n')}` : '') +
-          `\n\n🔗 Lead completo (scripts por canal, decisores, auditoria):\n${linkDoLead(leadId)}`
-        : `⚠️ ENRIQUECEDOR — enriquecimento concluído, mas o briefing por IA não foi gerado. ` +
+        ? `ENRIQUECEDOR — GANCHOS DE ABORDAGEM\n\n${ganchos.map((g, i) => `${i + 1}. ${g}`).join('\n')}` +
+          (dores.length ? `\n\nDORES IDENTIFICADAS\n${dores.map((d) => `- ${d}`).join('\n')}` : '') +
+          `\n\nLead completo (scripts por canal, decisores, auditoria):\n${linkDoLead(leadId)}`
+        : `ENRIQUECEDOR — enriquecimento concluído, mas o briefing por IA não foi gerado. ` +
           `Veja o que foi coletado: ${linkDoLead(leadId)}`;
       await kommoNote(kommoLeadId, texto);
     }
@@ -2159,7 +2159,7 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       leadId, kommoLeadId: kommoLeadId ?? null,
     });
     if (kommoLeadId) {
-      await kommoNote(kommoLeadId, `⚠️ ENRIQUECEDOR — o enriquecimento automático falhou (${String(err?.message || err).slice(0, 200)}). Acompanhe/re-rode em: ${linkDoLead(leadId)}`);
+      await kommoNote(kommoLeadId, `ENRIQUECEDOR — o enriquecimento automático falhou (${String(err?.message || err).slice(0, 200)}). Acompanhe/re-rode em: ${linkDoLead(leadId)}`);
     }
   }
 }
