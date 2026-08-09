@@ -1,11 +1,75 @@
-// Edge Function: Analisa transcricao de call com Claude (Anthropic)
-// Roda server-side para evitar CORS do browser
+// Edge Function: Analisa transcricao de call.
+// LLM: OpenAI (gpt-4.1) e a PRIMARIA; Claude (sonnet) entra como RESERVA se a
+// OpenAI falhar — sem saldo, 4xx/5xx ou timeout (pedido do Gabriel, 09/08).
+// Roda server-side para evitar CORS do browser.
 
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+
+const SYSTEM = 'Voce e um analista especializado em calls de vendas da V4 Company. Analise transcricoes e retorne APENAS um JSON valido, sem texto adicional. Responda em portugues brasileiro.'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+// retry para erros transientes (429 / 5xx), backoff 2s, 4s
+async function fetchRetry(mk: () => Promise<Response>, transient: (s: number) => boolean): Promise<Response | null> {
+  let response: Response | null = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    response = await mk()
+    if (response.ok || !transient(response.status)) break
+    if (attempt < 3) {
+      console.log(`LLM ${response.status}, retry ${attempt}/3...`)
+      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)))
+    }
+  }
+  return response
+}
+
+async function viaOpenAI(content: string): Promise<string | null> {
+  if (!OPENAI_API_KEY) return null
+  const response = await fetchRetry(() => fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model: 'gpt-4.1',
+      max_tokens: 2000,
+      temperature: 0.2,
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content }],
+    }),
+  }), (s) => s === 429 || s >= 500)
+  if (!response?.ok) {
+    console.error(`OpenAI API ${response?.status}: ${(await response?.text().catch(() => '') || '').slice(0, 300)}`)
+    return null
+  }
+  const data = await response.json()
+  return data.choices?.[0]?.message?.content || null
+}
+
+async function viaClaude(content: string): Promise<string | null> {
+  if (!ANTHROPIC_API_KEY) return null
+  const response = await fetchRetry(() => fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      system: SYSTEM,
+      messages: [{ role: 'user', content }],
+      temperature: 0.2,
+    }),
+  }), (s) => s === 429 || s === 529 || s >= 500)
+  if (!response?.ok) {
+    console.error(`Claude API ${response?.status}: ${(await response?.text().catch(() => '') || '').slice(0, 300)}`)
+    return null
+  }
+  const data = await response.json()
+  return data.content?.[0]?.text || null
 }
 
 Deno.serve(async (req) => {
@@ -20,52 +84,23 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (!ANTHROPIC_API_KEY) {
-      return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY nao configurada' }), {
+    if (!OPENAI_API_KEY && !ANTHROPIC_API_KEY) {
+      return new Response(JSON.stringify({ error: 'Nenhuma chave de LLM configurada (OPENAI_API_KEY / ANTHROPIC_API_KEY)' }), {
         status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
 
-    // Chamar Claude API com retry para erros transientes (429, 529)
-    const maxRetries = 3
-    let response: Response | null = null
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2000,
-          system: 'Voce e um analista especializado em calls de vendas da V4 Company. Analise transcricoes e retorne APENAS um JSON valido, sem texto adicional. Responda em portugues brasileiro.',
-          messages: [
-            { role: 'user', content: prompt || transcript },
-          ],
-          temperature: 0.2,
-        }),
-      })
-
-      if (response.ok || (response.status !== 429 && response.status !== 529)) break
-
-      // Retry com backoff exponencial: 2s, 4s, 8s
-      if (attempt < maxRetries) {
-        console.log(`Claude API ${response.status}, retry ${attempt}/${maxRetries}...`)
-        await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)))
-      }
+    const content = prompt || transcript
+    let text = await viaOpenAI(content)
+    if (!text) {
+      console.log('OpenAI indisponivel — usando Claude como reserva')
+      text = await viaClaude(content)
     }
-
-    if (!response || !response.ok) {
-      const err = await response?.text() || 'No response'
-      return new Response(JSON.stringify({ error: `Claude API ${response?.status}: ${err}` }), {
+    if (!text) {
+      return new Response(JSON.stringify({ error: 'OpenAI e Claude falharam — ver logs da function' }), {
         status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
-
-    const data = await response.json()
-    const text = data.content?.[0]?.text || ''
 
     // Extrair JSON da resposta
     let jsonStr = text
@@ -74,7 +109,7 @@ Deno.serve(async (req) => {
     const braceMatch = jsonStr.match(/\{[\s\S]*\}/)
     if (braceMatch) jsonStr = braceMatch[0]
 
-    // Sanitizar: trocar undefined por null (Claude as vezes retorna undefined literal)
+    // Sanitizar: trocar undefined por null (o modelo as vezes retorna undefined literal)
     jsonStr = jsonStr.replace(/:\s*undefined/g, ': null')
 
     const result = JSON.parse(jsonStr.trim())

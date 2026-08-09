@@ -23,15 +23,17 @@
 //
 // ASSÍNCRONO (EdgeRuntime.waitUntil, só se speaking_time > 0):
 //   espera 8s -> baixa gravação do 3C (THREEC_API_TOKEN) -> transcreve
-//   (Whisper, OPENAI_API_KEY) -> resumo (Claude, ANTHROPIC_API_KEY) ->
-//   nota "LIGAÇÃO" no lead -> extração BANT (Claude) -> atualiza os 11
-//   campos textarea -> auditoria de cold call (Claude) -> POST
-//   callquality-ingest (grava call_quality + ligacoes_4com, provider 3c).
-//   Sem OPENAI_API_KEY a nota sai sem resumo (sinaliza a config faltante)
-//   e BANT/auditoria são pulados — os moves acima funcionam mesmo assim.
+//   (Whisper, OPENAI_API_KEY) -> resumo -> nota "LIGAÇÃO" no lead ->
+//   extração BANT -> atualiza os 11 campos textarea -> auditoria de cold
+//   call -> POST callquality-ingest (call_quality + ligacoes_4com, '3c').
+//   LLM de texto: OpenAI (gpt-4.1-mini) é a PRIMÁRIA; Claude entra como
+//   RESERVA se a OpenAI falhar (sem saldo, 4xx/5xx, timeout) — pedido do
+//   Gabriel em 09/08.
 //
 // Dedup por _id da chamada via call_quality (3C pode reentregar webhook).
-// ?dry=1 simula tudo sem NENHUMA escrita (usado nos testes de deploy).
+// ?dry=1 executa o pipeline INTEIRO (inclusive gravação+Whisper+LLM) mas
+// não escreve NADA (sem nota, sem PATCH, sem ingest) e responde com o
+// diagnóstico — usado pra testar transcrição em produção sem sujar lead.
 // Deploy: management API, verify_jwt=false (o 3C não manda header; o
 // token de querystring faz o papel do path secreto do n8n).
 // =============================================================
@@ -87,9 +89,27 @@ const json = (b: unknown, s = 200) =>
 const KH = () => ({ Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}`, 'Content-Type': 'application/json' })
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-// ---- Claude (texto: resumo, BANT, auditoria) --------------------------------
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
-async function claude(system: string, user: string, maxTokens = 2000): Promise<string | null> {
+// ---- LLM de texto: OpenAI primária, Claude como reserva ----------------------
+const OPENAI_MODEL = 'gpt-4.1-mini'                    // mesmo modelo do fluxo n8n
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'       // reserva
+
+async function openaiChat(system: string, user: string, maxTokens: number): Promise<string | null> {
+  const key = Deno.env.get('OPENAI_API_KEY')
+  if (!key) return null
+  const r = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: OPENAI_MODEL, max_tokens: maxTokens,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    }),
+  })
+  if (!r.ok) { console.error('openai', r.status, (await r.text().catch(() => '')).slice(0, 300)); return null }
+  const j = await r.json()
+  return j?.choices?.[0]?.message?.content ?? null
+}
+
+async function claudeChat(system: string, user: string, maxTokens: number): Promise<string | null> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   if (!key) return null
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -100,10 +120,24 @@ async function claude(system: string, user: string, maxTokens = 2000): Promise<s
       system, messages: [{ role: 'user', content: user }],
     }),
   })
-  if (!r.ok) { console.error('claude', r.status, await r.text().catch(() => '')); return null }
+  if (!r.ok) { console.error('claude', r.status, (await r.text().catch(() => '')).slice(0, 300)); return null }
   const j = await r.json()
   return j?.content?.[0]?.text ?? null
 }
+
+// OpenAI primeiro; se falhar (sem saldo, erro, sem chave), Claude assume.
+async function ai(system: string, user: string, maxTokens = 2000): Promise<{ text: string | null; via: string | null }> {
+  try {
+    const t = await openaiChat(system, user, maxTokens)
+    if (t) return { text: t, via: 'openai' }
+  } catch (e) { console.error('openai exception', e) }
+  try {
+    const t = await claudeChat(system, user, maxTokens)
+    if (t) return { text: t, via: 'claude(reserva)' }
+  } catch (e) { console.error('claude exception', e) }
+  return { text: null, via: null }
+}
+
 function parseJson(text: string | null): any {
   if (!text) return null
   const m = text.match(/\{[\s\S]*\}/)
@@ -137,24 +171,32 @@ async function transcrever(callId: string): Promise<{ text: string | null; motiv
   return { text: j?.text ?? null }
 }
 
-// ---- Pipeline assíncrono pós-resposta ---------------------------------------
-async function processarChamada(ch: any, leadId: number, leadAtual: any, dry: boolean) {
+// ---- Pipeline pós-resposta (dry: roda tudo, não escreve nada) ----------------
+async function processarChamada(ch: any, leadId: number, leadAtual: any, dry: boolean): Promise<any> {
   const callId = String(ch._id)
   const log = (...a: unknown[]) => console.log(`[3c ${callId}]`, ...a)
+  const diag: any = { dry }
   try {
-    await sleep(8000) // a gravação leva alguns segundos pra ficar disponível no 3C
+    if (!dry) await sleep(8000) // a gravação leva alguns segundos pra ficar disponível no 3C
 
-    const { text: transcricao, motivo } = dry ? { text: null, motivo: 'dry' } : await transcrever(callId)
-    if (!transcricao) log('sem transcrição:', motivo)
+    const { text: transcricao, motivo } = await transcrever(callId)
+    diag.transcricao_chars = transcricao?.length ?? 0
+    if (!transcricao) { diag.transcricao_motivo = motivo; log('sem transcrição:', motivo) }
 
     // (a) resumo -> nota no lead
-    let resumo = transcricao
-      ? (await claude(
-          'Você resume ligações de prospecção. Responda SÓ com o resumo, sem preâmbulo.',
-          `Resuma essa conversa abaixo em no máximo 3 frases, e se for caixa postal ou voicemail, responda apenas [CAIXA POSTAL]:\n\n${transcricao}`,
-          400)) ?? '(resumo indisponível)'
-      : `(transcrição indisponível — ${motivo})`
+    let resumo = '(transcrição indisponível)'
+    if (transcricao) {
+      const r = await ai(
+        'Você resume ligações de prospecção. Responda SÓ com o resumo, sem preâmbulo.',
+        `Resuma essa conversa abaixo em no máximo 3 frases, e se for caixa postal ou voicemail, responda apenas [CAIXA POSTAL]:\n\n${transcricao}`,
+        400)
+      resumo = r.text ?? '(resumo indisponível)'
+      diag.resumo_via = r.via
+    } else {
+      resumo = `(transcrição indisponível — ${motivo})`
+    }
     resumo = resumo.trim()
+    diag.resumo = resumo.slice(0, 400)
     const voicemail = resumo.includes('[CAIXA POSTAL]')
 
     const nota = `LIGAÇÃO\nFeita por: ${ch.agent?.name ?? '?'}\nTabulação: ${ch.qualification?.name ?? '—'}\nResumo: ${resumo}\n\nTelefone do Cliente: ${ch.number ?? ''}\nDuração da chamada: ${ch.billed_time ?? ch.speaking_time ?? '?'} segundos`
@@ -163,10 +205,11 @@ async function processarChamada(ch: any, leadId: number, leadAtual: any, dry: bo
         method: 'POST', headers: KH(),
         body: JSON.stringify([{ note_type: 'common', params: { text: nota } }]),
       })
+      diag.nota_status = nr.status
       log('nota', nr.status)
     }
 
-    if (!transcricao || voicemail) { await ingest(ch, leadId, transcricao, null, dry); return }
+    if (!transcricao || voicemail) { diag.voicemail = voicemail; await ingest(ch, leadId, transcricao, null, dry); return diag }
 
     // (b) extração BANT -> 11 campos do lead
     const atuais: string[] = []
@@ -174,29 +217,33 @@ async function processarChamada(ch: any, leadId: number, leadAtual: any, dry: bo
       const known = BANT_FIELDS.find(([id]) => id === f.field_id)
       if (known) atuais.push(`- ${known[1]}: ${f.values?.[0]?.value ?? ''}`)
     }
-    const bantRaw = await claude(
+    const bantR = await ai(
       `Você é um SDR da V4 Company, uma assessoria de marketing metódica e analítica, especialista na metodologia BANT. Analise a transcrição de ligação de prospecção e preencha um formulário com base nas informações extraídas.
 Para cada campo, consolide os detalhes da transcrição com respostas bem detalhadas, priorizando pontos-chave. Caso alguma informação não seja mencionada, marque como 'não informado'.
 Você também recebe os dados já preenchidos no CRM sobre esse lead; se houver informação anterior relevante para algum campo, insira-a novamente junto com as novas anotações.
 Responda SOMENTE com um JSON válido cujas chaves são exatamente: ${BANT_FIELDS.map(([, k]) => JSON.stringify(k)).join(', ')}.`,
       `TRANSCRIÇÃO:\n${transcricao}\n\nDADOS JÁ NO CRM (lead ${leadId}):\n${atuais.join('\n') || '(nada preenchido)'}`,
       2500)
-    const bant = parseJson(bantRaw)
-    if (bant && !dry) {
+    const bant = parseJson(bantR.text)
+    diag.bant_via = bantR.via
+    diag.bant_ok = !!bant
+    if (bant) {
       const cfv = BANT_FIELDS
         .map(([id, k]) => ({ id, val: typeof bant[k] === 'string' ? bant[k].trim() : '' }))
         .filter((f) => f.val)
         .map((f) => ({ field_id: f.id, values: [{ value: f.val }] }))
-      if (cfv.length) {
+      diag.bant_campos = cfv.length
+      if (cfv.length && !dry) {
         const ur = await fetch(`${KOMMO_BASE}/api/v4/leads/${leadId}`, {
           method: 'PATCH', headers: KH(), body: JSON.stringify({ custom_fields_values: cfv }),
         })
+        diag.bant_status = ur.status
         log('bant', ur.status, cfv.length, 'campos')
       }
-    } else if (!bant) log('extração BANT falhou')
+    } else log('extração BANT falhou')
 
     // (c) auditoria de cold call -> callquality-ingest
-    const audRaw = await claude(
+    const audR = await ai(
       `Você é um Auditor de Cold Calls sênior e especialista em Inside Sales (SDR/BDR). Analise a transcrição, avalie o desempenho do vendedor com base ESTRITAMENTE nestes critérios:
 1. RAPPORT, ENERGIA E SORRISO NA VOZ; 2. QUALIFICAÇÃO BANT; 3. CRIAÇÃO DE URGÊNCIA; 4. CONTORNO DE OBJEÇÕES; 5. FECHAMENTO ALTERNATIVO (propôs duas opções de horários?).
 Responda SOMENTE com JSON válido neste formato:
@@ -204,11 +251,18 @@ Responda SOMENTE com JSON válido neste formato:
 Baseie pontos positivos/negativos em trechos reais da ligação.`,
       `Transcrição:\n${transcricao}`,
       2500)
-    const analise = parseJson(audRaw)
+    const analise = parseJson(audR.text)
+    diag.auditoria_via = audR.via
+    diag.auditoria_ok = !!analise
+    diag.nota_final = analise?.NOTA_FINAL ?? null
     if (!analise) log('auditoria falhou')
     await ingest(ch, leadId, transcricao, analise, dry)
+    diag.ok = true
+    return diag
   } catch (e) {
     console.error(`[3c ${callId}] erro no pipeline`, e)
+    diag.erro = String((e as any)?.message ?? e)
+    return diag
   }
 }
 
@@ -302,11 +356,16 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 3) transcrição/nota/BANT/auditoria em background (só chamada atendida)
-  let background = 'pulado (speaking_time = 0)'
+  // 3) transcrição/nota/BANT/auditoria (só chamada atendida)
+  //    normal: em background; dry: síncrono e SEM nenhuma escrita, devolve diagnóstico
+  let background: any = 'pulado (speaking_time = 0)'
   if (Number(ch.speaking_time ?? 0) > 0) {
-    background = dry ? 'simulado (dry)' : 'agendado'
-    if (!dry) EdgeRuntime.waitUntil(processarChamada(ch, leadId, leadAtual, dry))
+    if (dry) {
+      background = await processarChamada(ch, leadId, leadAtual, true)
+    } else {
+      background = 'agendado'
+      EdgeRuntime.waitUntil(processarChamada(ch, leadId, leadAtual, false))
+    }
   }
 
   return json({ ok: true, dry, call_id: ch._id, lead_id: leadId, qualification: ch.qualification?.name ?? null, move, background })
