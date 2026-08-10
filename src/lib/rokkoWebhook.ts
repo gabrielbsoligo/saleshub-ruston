@@ -74,10 +74,12 @@ export async function emitDealGanhoWebhook(deal: Partial<Deal>): Promise<boolean
     });
     if (error) {
       console.error('[rokkoWebhook] Edge function erro:', error);
-      return;
+      return false;
     }
     console.log('[rokkoWebhook] OK', data);
+    return true;
   } catch (err) {
     console.error('[rokkoWebhook] Erro inesperado:', err);
+    return false;
   }
 }
