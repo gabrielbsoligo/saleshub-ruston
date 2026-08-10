@@ -333,8 +333,11 @@ Deno.serve(async (req) => {
     const statusAtual = Number(leadAtual?.status_id)
     if (pipeAtual === CLOSER_PIPELINE) {
       move = { blocked: true, reason: 'lead_no_funil_closer' } // negociação em andamento — nunca puxar
-    } else if (statusAtual === 142 || statusAtual === 143) {
-      move = { blocked: true, reason: 'lead_ganho_ou_perdido' }
+    } else if (statusAtual === 142) {
+      // GANHO nunca é puxado. PERDIDO fora do Closer PODE: as listas de disparo são de
+      // reativação — SDR conectou e tabulou = reabre (caso Piano Tintas/Edric, 10/08);
+      // e "não ligar mais" em perdido vai pro OPT OUT pra sair das listas.
+      move = { blocked: true, reason: 'lead_ganho' }
     } else if (qualId === QUAL_FOLLOW_KOMMO && pipeAtual === PRE_VENDAS_PIPELINE
                && (statusAtual === PV_REUNIAO_MARCADA || statusAtual === PV_NOSHOW)) {
       move = { blocked: true, reason: 'nao_regride_reuniao_marcada' }
