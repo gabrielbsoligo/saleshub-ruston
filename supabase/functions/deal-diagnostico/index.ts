@@ -49,13 +49,31 @@ Deno.serve(async (req) => {
   const supabase = svc()
 
   // ---------- CALLBACK (a rotina devolve o resultado) ----------
-  if (b.action === 'callback') {
+  // A rotina do Gabriel tentou header x-callback-secret / Authorization Bearer /
+  // secret no corpo e levou 401 (run Alacant 09-10/08). Aceitamos TODAS as formas
+  // razoáveis de mandar o mesmo secret — o valor é o que importa.
+  if (b.action === 'callback' || (b.diagnostico_id && (b.html || b.markdown || b.file_base64 || b.file_url || b.error))) {
     const { data: cfg } = await supabase.from('integracao_config').select('value').eq('key', 'deal_diag_callback_secret').maybeSingle()
-    const secret = req.headers.get('x-diag-secret') ?? b.secret
-    if (!cfg?.value || secret !== cfg.value) return json({ error: 'unauthorized' }, 401)
+    const candidatos = [
+      req.headers.get('x-diag-secret'),
+      req.headers.get('x-callback-secret'),
+      req.headers.get('x-routine-secret'),
+      (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, ''),
+      b.secret, b.callback_secret,
+    ].filter(Boolean)
+    if (!cfg?.value || !candidatos.includes(cfg.value)) return json({ error: 'unauthorized' }, 401)
 
-    const { data: diag } = await supabase.from('deal_diagnosticos').select('id, deal_id').eq('id', b.diagnostico_id).maybeSingle()
-    if (!diag) return json({ error: 'diagnostico_id desconhecido' }, 404)
+    let diag: any = null
+    if (b.diagnostico_id) {
+      const r = await supabase.from('deal_diagnosticos').select('id, deal_id').eq('id', b.diagnostico_id).maybeSingle()
+      diag = r.data
+    }
+    if (!diag && b.deal_id) {   // fallback: linha 'processing' mais recente do deal
+      const r = await supabase.from('deal_diagnosticos').select('id, deal_id').eq('deal_id', b.deal_id)
+        .eq('status', 'processing').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      diag = r.data
+    }
+    if (!diag) return json({ error: 'diagnostico_id desconhecido (mande diagnostico_id ou deal_id do payload original)' }, 404)
 
     if (b.error) {
       await supabase.from('deal_diagnosticos').update({
@@ -175,6 +193,16 @@ Deno.serve(async (req) => {
       callback_url: `${SUPABASE_URL}/functions/v1/deal-diagnostico`,
       callback_action: 'callback',
       callback_secret: cfg?.value ?? null,
+      // Instruções EXPLÍCITAS pra rotina (o prompt dela foi escrito pro fluxo n8n;
+      // este bloco garante o comportamento certo quando o disparo vem do SalesHub):
+      instrucoes: `DISPARO DO SALESHUB — siga estas instruções, elas têm prioridade sobre o fluxo n8n:
+1. Gere o diagnóstico/apresentação APENAS para a empresa "${deal.empresa}" usando a transcrição do campo 'transcricao' deste payload (não busque transcrições de outros leads no Drive; ignore arquivos de outras empresas no repo).
+2. Ao terminar (ou ao falhar), NÃO use N8N_CALLBACK_URL. Devolva o resultado pro SalesHub com:
+   POST ${SUPABASE_URL}/functions/v1/deal-diagnostico
+   Header: Content-Type: application/json e X-Diag-Secret: <valor do campo callback_secret deste payload>
+   Body JSON: {"action":"callback","diagnostico_id":"${novo.id}","html":"<HTML completo gerado>"}
+   — alternativas ao campo "html": "markdown", ou "file_base64"+"filename". Em falha: {"action":"callback","diagnostico_id":"${novo.id}","error":"<motivo>"}.
+3. Esse POST é obrigatório em todo run; silêncio deixa o card 'gerando...' pra sempre no SalesHub.`,
     }
 
     const r = await fetch(routineUrl, {
