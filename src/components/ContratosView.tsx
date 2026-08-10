@@ -15,6 +15,7 @@ import { useAppStore } from '../store';
 import { FileText, ExternalLink, AlertCircle, Search, Calendar, Download } from 'lucide-react';
 import { DealDrawer } from './DealDrawer';
 import type { Deal } from '../types';
+import { isDealFechado } from '../types';
 
 function fmtBRL(v: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 0 }).format(v);
@@ -34,7 +35,7 @@ export const ContratosView: React.FC = () => {
   const [statusAnexo, setStatusAnexo] = useState<StatusAnexo>('todos');
   const [drawerDeal, setDrawerDeal] = useState<Deal | null>(null);
 
-  const ganhos = useMemo(() => deals.filter(d => d.status === 'contrato_assinado'), [deals]);
+  const ganhos = useMemo(() => deals.filter(d => isDealFechado(d.status)), [deals]);
 
   const filtrados = useMemo(() => {
     let arr = ganhos;

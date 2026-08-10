@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useAppStore } from "../store";
+import { isDealFechado } from "../types";
 import { supabase } from "../lib/supabase";
 import { Save, TrendingUp, TrendingDown } from "lucide-react";
 // BlackBox pace uses calendar days (not business days)
@@ -132,7 +133,7 @@ export const BlackBoxView: React.FC = () => {
   const bbDeals = useMemo(() => deals.filter(d => {
     if (d.origem !== 'blackbox') return false;
     const dc = d.data_fechamento ? new Date(d.data_fechamento) : d.data_call ? new Date(d.data_call) : null;
-    return dc && dc >= mesStart && dc <= mesEnd && d.status === 'contrato_assinado';
+    return dc && dc >= mesStart && dc <= mesEnd && isDealFechado(d.status);
   }), [deals, mesStart, mesEnd]);
 
   const vendas = bbDeals.length;

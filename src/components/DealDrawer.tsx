@@ -1,24 +1,29 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
-import { X, Save, Trash2, Loader2, Plus, Trash2 as Trash2Icon, Calendar } from "lucide-react";
-import { PRODUTOS_OT, PRODUTOS_MRR, CANAL_LABELS, TIER_LABELS, DEAL_STAGES, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
+import { X, Save, Trash2, Loader2, Plus, Trash2 as Trash2Icon, Calendar, Rocket, Check } from "lucide-react";
+import { PRODUTOS_OT, PRODUTOS_MRR, CANAL_LABELS, TIER_LABELS, DEAL_STAGES, isDealFechado, type Deal, type DealStatus, type Temperatura, type DealTier } from "../types";
 import { DateInput } from "./ui/DateInput";
 import { MultiSelect } from "./ui/MultiSelect";
 import { ContractUpload } from "./ui/ContractUpload";
+import { ComprovanteUpload } from "./ui/ComprovanteUpload";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
+import { DealReunioesTab } from "./deal/DealReunioesTab";
+import { DealArquivosTab } from "./deal/DealArquivosTab";
 import { validateGanho } from "../lib/ganhoValidation";
 import { supabase } from "../lib/supabase";
 import { useRecomendacoesDraft } from "../hooks/useRecomendacoesDraft";
 import toast from "react-hot-toast";
 
 export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = ({ deal, onClose }) => {
-  const { addDeal, updateDeal, deleteDeal, members, leads, fetchDeals, fetchLeads } = useAppStore();
+  const { addDeal, updateDeal, deleteDeal, enviarParaRokko, members, leads, fetchDeals, fetchLeads } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   // SDR (origem) = quem gerou a reuniao. Qualquer usuario ativo pode ter gerado (inclusive closers),
   // entao lista TODOS os membros ativos, ordenados por nome.
   const sdrs = [...members].filter(m => m.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
-  const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'ganho'>('geral');
+  const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'reunioes' | 'arquivos' | 'ganho'>('geral');
+  const [rokkoEnviando, setRokkoEnviando] = useState(false);
+  const [rokkoEnviadoEm, setRokkoEnviadoEm] = useState<string | null>(null);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [contractParsing, setContractParsing] = useState(false);
@@ -44,6 +49,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
     data_inicio_recorrente: '', data_pgto_recorrente: '',
     link_call_vendas: '', link_transcricao: '', contrato_url: '', contrato_filename: '',
     tier: '' as DealTier | '', observacoes: '',
+    valor_pago_ato: 0, comprovante_url: '', comprovante_filename: '',
   });
 
   useEffect(() => {
@@ -63,7 +69,10 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
         link_call_vendas: deal.link_call_vendas || '', link_transcricao: deal.link_transcricao || '',
         contrato_url: deal.contrato_url || '', contrato_filename: deal.contrato_filename || '',
         tier: (deal.tier || '') as DealTier | '', observacoes: deal.observacoes || '',
+        valor_pago_ato: deal.valor_pago_ato || 0,
+        comprovante_url: deal.comprovante_url || '', comprovante_filename: deal.comprovante_filename || '',
       });
+      setRokkoEnviadoEm(deal.rokko_enviado_em || null);
     }
   }, [deal]);
 
@@ -71,8 +80,8 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
     if (isProcessing) return;
     setIsProcessing(true);
     try {
-      // Validate ganho
-      if (form.status === 'contrato_assinado') {
+      // Validate ganho (assinado ou ativado — mesmos campos obrigatórios)
+      if (isDealFechado(form.status)) {
         const result = validateGanho({ ...form, closer_id: form.closer_id, temperatura: form.temperatura, bant: form.bant, kommo_id: form.kommo_id });
         if (!result.valid) {
           setMissingFields(result.missing);
@@ -130,7 +139,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   const inputClass = "w-full px-3 py-2 rounded-lg bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] text-white text-sm focus:outline-none focus:ring-1 focus:ring-[var(--color-v4-red)]";
   const labelClass = "block text-xs font-medium text-[var(--color-v4-text-muted)] mb-1";
   const tabClass = (t: string) => `px-3 py-2 text-xs font-medium rounded-lg transition-colors ${tab === t ? 'bg-[var(--color-v4-red)] text-white' : 'text-[var(--color-v4-text-muted)] hover:bg-[var(--color-v4-card-hover)]'}`;
-  const isGanho = form.status === 'contrato_assinado';
+  const isGanho = isDealFechado(form.status);
   const contractHighlight = (field: string) => contractFilledFields.has(field) ? 'ring-1 ring-green-500/50' : '';
 
   const handleContractParsed = useCallback((result: any) => {
@@ -167,6 +176,8 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             <button onClick={() => setTab('recomendacoes')} className={tabClass('recomendacoes')}>
               Recomendações {(recomendacoes.length + recomendacoesExistentes.length) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[10px]">{recomendacoes.length + recomendacoesExistentes.length}</span>}
             </button>
+            {deal && <button onClick={() => setTab('reunioes')} className={tabClass('reunioes')}>Reuniões</button>}
+            {deal && <button onClick={() => setTab('arquivos')} className={tabClass('arquivos')}>Arquivos</button>}
             <button onClick={() => setTab('ganho')} className={tabClass('ganho')}>Fechamento</button>
           </div>
         </div>
@@ -230,7 +241,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             )}
 
             {/* Data Retorno + Agendar Reuniao */}
-            {(['baixa_prioridade','media_prioridade','alta_prioridade','marcar_call_proposta','contrato_na_rua'].includes(form.status)) && (
+            {(['baixa_prioridade','media_prioridade','alta_prioridade','marcar_call_proposta','call_proposta_agendada','contrato_na_rua'].includes(form.status)) && (
               <div className="bg-[var(--color-v4-surface)] rounded-xl p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Calendar size={14} className="text-yellow-400" />
@@ -367,9 +378,15 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             )}
           </>)}
 
+          {/* ======== TAB: REUNIOES ======== */}
+          {tab === 'reunioes' && deal && <DealReunioesTab deal={{ ...deal, ...form, id: deal.id } as any} />}
+
+          {/* ======== TAB: ARQUIVOS & FERRAMENTAS ======== */}
+          {tab === 'arquivos' && deal && <DealArquivosTab deal={{ ...deal, ...form, id: deal.id } as any} />}
+
           {/* ======== TAB: FECHAMENTO ======== */}
           {tab === 'ganho' && (<>
-            <p className="text-xs text-[var(--color-v4-text-muted)]">Campos obrigatorios para dar ganho (status = Contrato Assinado).</p>
+            <p className="text-xs text-[var(--color-v4-text-muted)]">Campos obrigatorios para fechar (✍️ Contrato Assinado). Ganho (ativado) = pagou pelo menos a entrada.</p>
             <div><label className={labelClass}>Tier {isGanho && '*'}</label>
               <select className={inputClass} value={form.tier} onChange={e => set('tier', e.target.value)}>
                 <option value="">Selecionar</option>{Object.entries(TIER_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
@@ -399,6 +416,60 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
               </div>
             )}
             <DateInput label="Data Fechamento" value={form.data_fechamento} onChange={v => set('data_fechamento', v)} />
+
+            {/* Ativa\u00E7\u00E3o: quanto entrou no ato + comprovante (opcional) */}
+            <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 space-y-3">
+              <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Ativa\u00E7\u00E3o (pagamento)</h4>
+              <div><label className={labelClass}>Valor pago no ato do fechamento (R$)</label>
+                <input type="number" className={inputClass} value={form.valor_pago_ato}
+                  onChange={e => set('valor_pago_ato', Number(e.target.value))} placeholder="0,00" />
+                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Entrada ou pagamento total. O lead s\u00F3 vai pra \uD83C\uDFC6 Ganho no Kommo quando tiver pago pelo menos a entrada.</p>
+              </div>
+              {deal ? (
+                <ComprovanteUpload
+                  dealId={deal.id}
+                  url={form.comprovante_url}
+                  filename={form.comprovante_filename}
+                  onUploaded={(url, name) => { set('comprovante_url', url); set('comprovante_filename', name); }}
+                  onRemoved={() => { set('comprovante_url', ''); set('comprovante_filename', ''); }}
+                />
+              ) : (
+                <p className="text-[10px] text-[var(--color-v4-text-muted)]">Salve a negocia\u00E7\u00E3o primeiro para anexar o comprovante.</p>
+              )}
+            </div>
+
+            {/* Rokko: disparo MANUAL \u2014 cliente pode assinar e j\u00E1 ir pra opera\u00E7\u00E3o */}
+            {deal && (
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">Opera\u00E7\u00E3o (Rokko)</h4>
+                    <p className="text-[11px] text-[var(--color-v4-text-muted)] mt-1">
+                      {rokkoEnviadoEm
+                        ? `Enviado em ${new Date(rokkoEnviadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}.`
+                        : 'Abre o projeto de onboarding no Rokko. Dispare quando o cliente for pra opera\u00E7\u00E3o.'}
+                    </p>
+                  </div>
+                  <button type="button" disabled={rokkoEnviando}
+                    onClick={async () => {
+                      if (rokkoEnviadoEm && !confirm('Esse deal j\u00E1 foi enviado pro Rokko. Enviar de novo?')) return;
+                      setRokkoEnviando(true);
+                      try {
+                        const ok = await enviarParaRokko(deal.id);
+                        if (ok) setRokkoEnviadoEm(new Date().toISOString());
+                      } finally { setRokkoEnviando(false); }
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold border flex-shrink-0 disabled:opacity-50 ${
+                      rokkoEnviadoEm
+                        ? 'bg-green-500/10 text-green-400 border-green-500/30'
+                        : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border-blue-500/30'
+                    }`}>
+                    {rokkoEnviando ? <Loader2 size={14} className="animate-spin" /> : rokkoEnviadoEm ? <Check size={14} /> : <Rocket size={14} />}
+                    {rokkoEnviadoEm ? 'Enviado' : 'Enviar pro Rokko'}
+                  </button>
+                </div>
+              </div>
+            )}
           </>)}
         </div>
 

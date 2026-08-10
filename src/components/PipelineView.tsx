@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useAppStore } from "../store";
-import { DEAL_STATUS_LABELS, DEAL_STAGES, TEMPERATURA_LABELS, type Deal, type DealStatus, type Temperatura } from "../types";
+import { DEAL_STATUS_LABELS, DEAL_STAGES, TEMPERATURA_LABELS, isDealFechado, type Deal, type DealStatus, type Temperatura } from "../types";
 import { cn } from "./Layout";
 import { Plus, ExternalLink, Search, ArrowUpDown, LayoutGrid, List, ChevronUp, ChevronDown, Thermometer, Clock } from "lucide-react";
 import { DealDrawer } from "./DealDrawer";
@@ -35,7 +35,7 @@ const TEMP_COLORS: Record<string, string> = {
 // vermelho = retorno já venceu · amarelo = vence em até 2 dias (hoje conta como amarelo)
 function retornoAlert(deal: Deal): { tipo: 'vencido' | 'proximo'; label: string } | null {
   if (!deal.data_retorno) return null;
-  if (deal.status === 'contrato_assinado' || deal.status === 'perdido') return null;
+  if (isDealFechado(deal.status) || deal.status === 'perdido') return null;
   const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
   const ret = new Date(deal.data_retorno + 'T00:00:00');
   const dias = Math.round((ret.getTime() - hoje.getTime()) / 86400000);
@@ -164,7 +164,7 @@ export const PipelineView: React.FC = () => {
       }
     }
 
-    if (newStatus === 'contrato_assinado') {
+    if (isDealFechado(newStatus)) {
       const validation = validateGanho({
         produtos_ot: deal.produtos_ot || [],
         produtos_mrr: deal.produtos_mrr || [],

@@ -77,6 +77,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
     link_transcricao: deal.link_transcricao || '',
     contrato_url: deal.contrato_url || '',
     contrato_filename: deal.contrato_filename || '',
+    valor_pago_ato: deal.valor_pago_ato || 0,
     observacoes: deal.observacoes || '',
   });
 
@@ -263,6 +264,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
         link_transcricao: form.link_transcricao || undefined,
         contrato_url: form.contrato_url || undefined,
         contrato_filename: form.contrato_filename || undefined,
+        valor_pago_ato: form.valor_pago_ato || undefined,
         tier: form.tier as DealTier || undefined,
         observacoes: form.resumo_call || form.observacoes || undefined,
         data_fechamento: isGanho ? new Date().toISOString().split('T')[0] : undefined,
@@ -454,7 +456,7 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
                   { value: SEGUIR_FOLLOW, label: `🔄 Seguir em follow${seguirFollowLabel}`, color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
                   { value: 'marcar_call_proposta', label: '📞 Marcar call proposta', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30' },
                   { value: 'contrato_na_rua', label: '📝 Contrato', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' },
-                  { value: 'contrato_assinado', label: '✅ Fechou!', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
+                  { value: 'contrato_assinado', label: '✍️ Assinou!', color: 'bg-green-500/20 text-green-400 border-green-500/30' },
                   { value: 'perdido', label: '❌ Perdido', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
                 ].map(opt => (
                   <button key={opt.value} type="button" onClick={() => set('proximo_passo', opt.value)}
@@ -587,6 +589,9 @@ export const FeedbackDrawer: React.FC<{ deal: Deal; onClose: () => void }> = ({ 
               <input className={`${inputClass} ${aiHighlight('link_call_vendas')}`} value={form.link_call_vendas} onChange={e => set('link_call_vendas', e.target.value)} placeholder="https://drive.google.com/..." /></div>
             <div><label className={labelClass}>Link Transcrição *</label>
               <input className={`${inputClass} ${aiHighlight('link_transcricao')}`} value={form.link_transcricao} onChange={e => set('link_transcricao', e.target.value)} placeholder="https://docs.google.com/..." /></div>
+            <div><label className={labelClass}>Valor pago no ato (R$) — entrada ou total</label>
+              <input type="number" className={inputClass} value={form.valor_pago_ato} onChange={e => set('valor_pago_ato', Number(e.target.value))} placeholder="0,00" />
+              <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Assinou = ✍️ Contrato Assinado. Só vai pra 🏆 Ganho quando pagar pelo menos a entrada (mova no Kommo).</p></div>
             <ContractUpload
               dealId={deal.id}
               contractUrl={form.contrato_url}

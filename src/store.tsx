@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './lib/supabase';
 import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus, RoletaStatusRow } from './types';
+import { isDealFechado } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent, updateCalendarEvent } from './lib/googleCalendar';
 import { runPostMeetingAutomation } from './lib/postMeetingOrchestrator';
@@ -39,6 +40,7 @@ interface AppState {
   updateDeal: (id: string, updates: Partial<Deal>) => Promise<void>;
   moveDeal: (id: string, newStatus: DealStatus) => Promise<void>;
   deleteDeal: (id: string) => Promise<void>;
+  enviarParaRokko: (dealId: string) => Promise<boolean>;
 
   fetchReunioes: () => Promise<void>;
   addReuniao: (r: Partial<Reuniao>, replaceExisting?: boolean) => Promise<void>;
@@ -385,8 +387,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('comissoes_registros').insert(comissaoRecords);
     }
 
-    // 2. Webhook Rokko (lead-intake — abre projeto de onboarding)
-    await emitDealGanhoWebhook(merged);
+    // Rokko NÃO dispara mais automaticamente aqui (09/08): às vezes o cliente assina e
+    // já vai pra operação, às vezes não. O disparo virou BOTÃO na aba Fechamento do
+    // DealDrawer (enviarParaRokko) — decisão humana, com carimbo rokko_enviado_em.
+  };
+
+  // Disparo MANUAL pro Rokko (botão na tela de fechamento). Carimba rokko_enviado_em.
+  const enviarParaRokko = async (dealId: string): Promise<boolean> => {
+    const deal = deals.find(d => d.id === dealId);
+    if (!deal) { toast.error('Deal não encontrado.'); return false; }
+    const ok = await emitDealGanhoWebhook(deal);
+    if (!ok) { toast.error('Falha ao enviar pro Rokko. Tente de novo.'); return false; }
+    const stamp = new Date().toISOString();
+    await supabase.from('deals').update({ rokko_enviado_em: stamp }).eq('id', dealId);
+    setDeals(prev => prev.map(d => d.id === dealId ? { ...d, rokko_enviado_em: stamp } : d));
+    toast.success('Enviado pro Rokko! Projeto de onboarding aberto.', { icon: '🚀' });
+    return true;
   };
 
   const addDeal = async (d: Partial<Deal>) => {
@@ -398,8 +414,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (error) { toast.error(error.message); return null; }
     if (data) {
       setDeals(prev => [data, ...prev]);
-      // Se ja foi criado como ganho, dispara geracao de comissao + webhook
-      if (data.status === 'contrato_assinado') {
+      // Se ja foi criado fechado (assinado ou ganho), dispara geracao de comissao
+      if (isDealFechado(data.status)) {
         await handleDealGanho(data, undefined);
       }
     }
@@ -412,8 +428,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (error) { toast.error(error.message); return; }
 
     const deal = deals.find(d => d.id === id);
-    const wasNotGanho = deal && deal.status !== 'contrato_assinado';
-    const isNowGanho = updates.status === 'contrato_assinado';
+    const wasNotGanho = deal && !isDealFechado(deal.status);
+    const isNowGanho = isDealFechado(updates.status);
 
     setDeals(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
 
@@ -426,8 +442,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const moveDeal = async (id: string, newStatus: DealStatus) => {
     const prevDeal = deals.find(d => d.id === id);
-    const wasNotGanho = prevDeal && prevDeal.status !== 'contrato_assinado';
-    const isNowGanho = newStatus === 'contrato_assinado';
+    const wasNotGanho = prevDeal && !isDealFechado(prevDeal.status);
+    const isNowGanho = isDealFechado(newStatus);
 
     const { error } = await supabase.from('deals').update({ status: newStatus }).eq('id', id);
     if (error) { toast.error(error.message); return; }
@@ -442,8 +458,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const deal = deals.find(d => d.id === id);
     if (!deal) return;
 
-    // Gatekeeping: deal ganho OU com comissoes geradas exige gestor + dupla confirmacao
-    const isGanho = deal.status === 'contrato_assinado';
+    // Gatekeeping: deal fechado (assinado/ganho) OU com comissoes geradas exige gestor + dupla confirmacao
+    const isGanho = isDealFechado(deal.status);
     const { count: comissoesCount } = await supabase
       .from('comissoes_registros')
       .select('id', { count: 'exact', head: true })
@@ -526,6 +542,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (sdrIdCriador) leadUpdate.sdr_id = sdrIdCriador;
       await supabase.from('leads').update(leadUpdate).eq('id', r.lead_id);
       setLeads(prev => prev.map(l => l.id === r.lead_id ? { ...l, ...leadUpdate } : l));
+    }
+
+    // RETORNO: não mexe no lead nem nas etapas de reunião do Kommo. O movimento é do DEAL:
+    // se a negociação está em "Marcar call proposta", agendar o retorno move pra
+    // "Call proposta agendada" — o espelho T3 empurra a etapa nova (110113248) pro Kommo
+    // e a cadência do balde PROP_AGENDADA nasce sozinha (materiais personalizados).
+    if (tipo === 'retorno' && data) {
+      const dealVinculado = r.deal_id ? deals.find(d => d.id === r.deal_id)
+        : deals.find(d => d.lead_id && d.lead_id === r.lead_id && !isDealFechado(d.status) && d.status !== 'perdido');
+      if (dealVinculado?.status === 'marcar_call_proposta') {
+        await supabase.from('deals').update({ status: 'call_proposta_agendada' }).eq('id', dealVinculado.id);
+        setDeals(prev => prev.map(d => d.id === dealVinculado.id ? { ...d, status: 'call_proposta_agendada' as DealStatus } : d));
+        toast.success('Negociação movida pra Call Proposta Agendada.', { icon: '📌' });
+      }
     }
 
     // Google Calendar - create event
@@ -712,6 +742,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Lock para impedir dupla execução
+  // Confirmação de reunião de RETORNO: nunca cria negociação — só carimba o resultado
+  // nas observações (registro do caso) do deal vinculado.
+  const registrarRetornoNoDeal = async (reuniao: Reuniao, aconteceu: boolean, notas?: string) => {
+    const deal = reuniao.deal_id ? deals.find(d => d.id === reuniao.deal_id)
+      : deals.find(d => d.lead_id && d.lead_id === reuniao.lead_id && !isDealFechado(d.status) && d.status !== 'perdido');
+    if (!deal) { toast.success(aconteceu ? 'Retorno confirmado.' : 'Retorno não realizado registrado.'); return; }
+    const dt = reuniao.data_reuniao
+      ? new Date(reuniao.data_reuniao).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+      : new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const linha = `🔄 Retorno ${dt}: ${aconteceu ? 'realizado' : 'NÃO realizado'}${notas ? ` — ${notas}` : ''}`;
+    const observacoes = deal.observacoes ? `${deal.observacoes}\n${linha}` : linha;
+    await supabase.from('deals').update({ observacoes }).eq('id', deal.id);
+    setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, observacoes } : d));
+    toast.success(aconteceu ? 'Retorno confirmado — registrado na negociação.' : 'Retorno não realizado — registrado na negociação.', { icon: '🔄' });
+  };
+
   const reuniaoProcessingRef = React.useRef<Set<string>>(new Set());
 
   const updateReuniao = async (id: string, updates: Partial<Reuniao>) => {
@@ -753,7 +799,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // um deal em andamento (negociacao/contrato_na_rua), nao gera
         // novo deal. Bug ATSD (13/05/2026): retorno virou deal_orfao em
         // 'dar_feedback' apesar do deal pai ja estar em 'negociacao'.
+        // Confirmacao de retorno = so' ATUALIZA os registros do deal
+        // (linha nas observacoes), nada de lead/etapas de reuniao.
         if (reuniao.tipo === 'retorno') {
+          await registrarRetornoNoDeal(reuniao, true, updates.notas);
           return;
         }
 
@@ -815,6 +864,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       // AUTOMACAO: no-show → update lead
       if (updates.realizada && updates.show === false && reuniao?.lead_id) {
+        // Retorno não realizado: não mexe no lead — registra nas observações do deal.
+        if (reuniao.tipo === 'retorno') {
+          if (!updates.notas?.includes('Substituída')) {
+            await registrarRetornoNoDeal(reuniao, false, updates.notas);
+          }
+          return;
+        }
         // Só atualiza lead se a nota não indicar substituição (reunião cancelada por reagendamento)
         if (!updates.notas?.includes('Substituída')) {
           await supabase.from('leads').update({ status: 'noshow' }).eq('id', reuniao.lead_id);
@@ -1042,7 +1098,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       login, logout,
       fetchMembers, addMember, updateMember,
       fetchLeads, addLead, bulkImportLeads, updateLead, deleteLead,
-      fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal,
+      fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal, enviarParaRokko,
       fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
       roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem,
       fetchMetas, saveMeta,

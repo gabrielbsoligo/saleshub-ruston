@@ -9,7 +9,7 @@ import React, { useState } from 'react';
 import { Calendar, Clock, CheckCircle2, XCircle, FileText, Trophy, Phone } from 'lucide-react';
 import { useResumoDia } from '../hooks/useResumoDia';
 import { useAppStore } from '../store';
-import { DEAL_STAGES, type Reuniao } from '../types';
+import { DEAL_STAGES, isDealFechado, type Reuniao } from '../types';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const yesterdayStr = () => {
@@ -50,7 +50,7 @@ export const ResumoDoDia: React.FC = () => {
   };
 
   // Aggregations
-  const fechadosHoje = resumo.statusChanges.filter(s => s.status_novo === 'contrato_assinado');
+  const fechadosHoje = resumo.statusChanges.filter(s => isDealFechado(s.status_novo));
   const praRuaHoje = resumo.statusChanges.filter(s => s.status_novo === 'contrato_na_rua');
   const perdidosHoje = resumo.statusChanges.filter(s => s.status_novo === 'perdido');
   const totalFechado = fechadosHoje.reduce((a, s) => a + (Number(s.valor_recorrente) || 0) + (Number(s.valor_escopo) || 0), 0);
