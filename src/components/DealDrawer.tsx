@@ -119,7 +119,7 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
         }
       }
 
-      // Reuni\u00E3o de retorno REMOVIDA: data_retorno \u00E9 gravada no deal, mas n\u00E3o cria mais reuni\u00E3o.
+      // Reunião de retorno REMOVIDA: data_retorno é gravada no deal, mas não cria mais reunião.
 
       fetchDeals();
       onClose();
@@ -417,13 +417,13 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
             )}
             <DateInput label="Data Fechamento" value={form.data_fechamento} onChange={v => set('data_fechamento', v)} />
 
-            {/* Ativa\u00E7\u00E3o: quanto entrou no ato + comprovante (opcional) */}
+            {/* Ativação: quanto entrou no ato + comprovante (opcional) */}
             <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Ativa\u00E7\u00E3o (pagamento)</h4>
+              <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Ativação (pagamento)</h4>
               <div><label className={labelClass}>Valor pago no ato do fechamento (R$)</label>
                 <input type="number" className={inputClass} value={form.valor_pago_ato}
                   onChange={e => set('valor_pago_ato', Number(e.target.value))} placeholder="0,00" />
-                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Entrada ou pagamento total. O lead s\u00F3 vai pra \uD83C\uDFC6 Ganho no Kommo quando tiver pago pelo menos a entrada.</p>
+                <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-1">Entrada ou pagamento total. O lead só vai pra 🏆 Ganho no Kommo quando tiver pago pelo menos a entrada.</p>
               </div>
               {deal ? (
                 <ComprovanteUpload
@@ -434,16 +434,16 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
                   onRemoved={() => { set('comprovante_url', ''); set('comprovante_filename', ''); }}
                 />
               ) : (
-                <p className="text-[10px] text-[var(--color-v4-text-muted)]">Salve a negocia\u00E7\u00E3o primeiro para anexar o comprovante.</p>
+                <p className="text-[10px] text-[var(--color-v4-text-muted)]">Salve a negociação primeiro para anexar o comprovante.</p>
               )}
             </div>
 
-            {/* Rokko: disparo MANUAL \u2014 cliente pode assinar e j\u00E1 ir pra opera\u00E7\u00E3o */}
+            {/* Rokko: disparo MANUAL — cliente pode assinar e já ir pra operação */}
             {deal && (
               <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">Opera\u00E7\u00E3o (Rokko)</h4>
+                    <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider">Operação (Rokko)</h4>
                     <p className="text-[11px] text-[var(--color-v4-text-muted)] mt-1">
                       {rokkoEnviadoEm
                         ? `Enviado em ${new Date(rokkoEnviadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}.`
