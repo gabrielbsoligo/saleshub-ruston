@@ -16,6 +16,7 @@ import toast from 'react-hot-toast';
 import { supabase } from '../lib/supabase';
 import { useAppStore } from '../store';
 import type { ComissaoCategoria, ComissaoTipoValor, ComissaoRole } from '../types';
+import { isDealFechado } from '../types';
 
 const CATEGORIAS: { value: ComissaoCategoria; label: string; tipoAuto?: ComissaoTipoValor }[] = [
   { value: 'inbound', label: 'Inbound (leadbroker / blackbox)' },
@@ -324,7 +325,7 @@ export const NovaComissaoModal: React.FC<Props> = ({ open, onClose, onCreated })
 
   const dealsSorted = useMemo(
     () => deals
-      .filter(d => d.status === 'contrato_assinado')
+      .filter(d => isDealFechado(d.status))
       .sort((a, b) => (a.empresa || '').localeCompare(b.empresa || '')),
     [deals]
   );

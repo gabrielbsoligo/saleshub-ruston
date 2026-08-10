@@ -14,6 +14,7 @@ import { supabase } from '../lib/supabase';
 import { CompromissoTeamPanel } from './CompromissoTeamPanel';
 import { HourlyCallsChart } from './HourlyCallsChart';
 import type { TeamMember, Ligacao4com, Deal, Reuniao, Meta } from '../types';
+import { isDealAtivado } from '../types';
 import { calculatePace, getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar } from '../lib/paceUtils';
 
 // ---------------------------------------------------------
@@ -146,7 +147,7 @@ export const TVMode: React.FC = () => {
               : d.data_call ? new Date(d.data_call) : null;
       return dc && dc >= mesStart && dc <= mesEnd;
     });
-    const dealsGanhosMes = dealsDoMes.filter(d => d.status === 'contrato_assinado');
+    const dealsGanhosMes = dealsDoMes.filter(d => isDealAtivado(d.status));
     const realMrr = dealsGanhosMes.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
     const realOt = dealsGanhosMes.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
 

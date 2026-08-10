@@ -13,6 +13,7 @@
 // =============================================================
 import React, { useMemo, useState } from 'react';
 import { useAppStore } from '../store';
+import { isDealFechado } from '../types';
 import { FileText } from 'lucide-react';
 import { ReconciliarCsvModal } from './ReconciliarCsvModal';
 
@@ -99,7 +100,7 @@ export const LeadBrokerView: React.FC = () => {
   const lbDeals = useMemo(() => deals.filter(d => {
     if (d.origem !== 'leadbroker') return false;
     const dc = d.data_fechamento ? new Date(d.data_fechamento) : d.data_call ? new Date(d.data_call) : null;
-    return dc && dc >= mesStart && dc <= mesEnd && d.status === 'contrato_assinado';
+    return dc && dc >= mesStart && dc <= mesEnd && isDealFechado(d.status);
   }), [deals, mesStart, mesEnd]);
 
   const vendas = lbDeals.length;
@@ -146,7 +147,7 @@ export const LeadBrokerView: React.FC = () => {
       .filter(l => (l.valor_lead || 0) > 0)
       .sort((a, b) => (b.valor_lead || 0) - (a.valor_lead || 0))
       .map(l => {
-        const deal = deals.find(d => d.lead_id === l.id && d.status === 'contrato_assinado');
+        const deal = deals.find(d => d.lead_id === l.id && isDealFechado(d.status));
         const fat = deal ? ((deal.valor_recorrente || deal.valor_mrr || 0) + (deal.valor_escopo || deal.valor_ot || 0)) : 0;
         return { lead: l, deal, fat, virouVenda: !!deal };
       });

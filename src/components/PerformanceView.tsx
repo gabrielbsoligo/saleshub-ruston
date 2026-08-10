@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useAppStore } from "../store";
-import { ROLE_LABELS } from "../types";
+import { ROLE_LABELS, isDealFechado } from "../types";
 import { Save, Phone, PhoneOff, Clock, Headphones, Star } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
@@ -251,7 +251,7 @@ export const PerformanceView: React.FC = () => {
         const closerStats = closers.map(closer => {
           const closerReunioes = reunioes.filter(r => {
             const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
-            return dr && dr >= cStart && dr <= cEnd && r.realizada && (r.closer_id === closer.id || (r as any).closer_confirmado_id === closer.id);
+            return dr && dr >= cStart && dr <= cEnd && r.realizada && r.tipo !== 'retorno' && (r.closer_id === closer.id || (r as any).closer_confirmado_id === closer.id);
           });
           const shows = closerReunioes.filter(r => r.show).length;
           const noShows = closerReunioes.filter(r => !r.show).length;
@@ -260,19 +260,19 @@ export const PerformanceView: React.FC = () => {
             const dc = d.data_fechamento ? new Date(d.data_fechamento) : d.data_call ? new Date(d.data_call) : null;
             return dc && dc >= cStart && dc <= cEnd && d.closer_id === closer.id;
           });
-          const vendas = closerDeals.filter(d => d.status === 'contrato_assinado').length;
+          const vendas = closerDeals.filter(d => isDealFechado(d.status)).length;
           // decisão 4 (espelhamento): perda por HIGIENE DE BASE (fase 6) não é perda comercial —
           // fica fora da contagem do painel, senão a limpeza derruba o número do closer.
           const perdidos = closerDeals.filter(d => d.status === 'perdido' && !isPerdaHigiene(d.motivo_perda)).length;
           const totalDeals = closerDeals.length;
 
-          const mrr = closerDeals.filter(d => d.status === 'contrato_assinado').reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
-          const ot = closerDeals.filter(d => d.status === 'contrato_assinado').reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
+          const mrr = closerDeals.filter(d => isDealFechado(d.status)).reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
+          const ot = closerDeals.filter(d => isDealFechado(d.status)).reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
           const ticketMedio = vendas > 0 ? (mrr + ot) / vendas : 0;
           const txConversao = shows > 0 ? (vendas / shows) * 100 : 0;
 
           // Tempo medio de ciclo (dias entre data_call e data_fechamento)
-          const ciclos = closerDeals.filter(d => d.status === 'contrato_assinado' && d.data_call && d.data_fechamento)
+          const ciclos = closerDeals.filter(d => isDealFechado(d.status) && d.data_call && d.data_fechamento)
             .map(d => (new Date(d.data_fechamento!).getTime() - new Date(d.data_call!).getTime()) / 86400000);
           const tempoCiclo = ciclos.length > 0 ? Math.round(ciclos.reduce((a, b) => a + b, 0) / ciclos.length) : 0;
 

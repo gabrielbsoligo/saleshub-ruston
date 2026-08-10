@@ -10,11 +10,13 @@ interface Props {
   initialDate?: string;
   initialTime?: string;
   initialCloserId?: string;
+  /** Reunião de RETORNO: não conta como reunião nova (SDR/closer) e não cria negociação. */
+  retorno?: boolean;
   onConfirm: (dataReuniaoISO: string, closerId: string, participantesExtras?: string[], leadEmail?: string) => void;
   onClose: () => void;
 }
 
-export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initialTime, initialCloserId, onConfirm, onClose }) => {
+export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initialTime, initialCloserId, retorno, onConfirm, onClose }) => {
   const { members, roleta } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const roletaMap = useMemo(() => new Map(roleta.map(r => [r.member_id, r])), [roleta]);
@@ -44,11 +46,15 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative w-full max-w-md bg-[var(--color-v4-card)] border border-[var(--color-v4-border)] rounded-2xl shadow-2xl overflow-hidden">
-        <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-5 py-4 flex items-center gap-3">
-          <Calendar size={18} className="text-yellow-400" />
+        <div className={`${retorno ? 'bg-teal-500/10 border-b border-teal-500/20' : 'bg-yellow-500/10 border-b border-yellow-500/20'} px-5 py-4 flex items-center gap-3`}>
+          <Calendar size={18} className={retorno ? 'text-teal-300' : 'text-yellow-400'} />
           <div className="flex-1">
-            <h3 className="text-sm font-bold text-yellow-400">Agendar Reunião</h3>
-            <p className="text-xs text-[var(--color-v4-text-muted)]">{lead.empresa}</p>
+            <h3 className={`text-sm font-bold ${retorno ? 'text-teal-300' : 'text-yellow-400'}`}>
+              {retorno ? '🔄 Agendar Reunião de RETORNO' : 'Agendar Reunião'}
+            </h3>
+            <p className="text-xs text-[var(--color-v4-text-muted)]">
+              {lead.empresa}{retorno ? ' — não conta como reunião nova; só atualiza a negociação' : ''}
+            </p>
           </div>
           <button onClick={onClose} className="text-[var(--color-v4-text-muted)] hover:text-white"><X size={18} /></button>
         </div>
@@ -61,7 +67,7 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
             </p>
           </div>
 
-          {proximo && (
+          {proximo && !retorno && (
             <div className="flex items-center gap-2 rounded-lg bg-[var(--color-v4-red)]/10 border border-[var(--color-v4-red)]/30 px-3 py-2">
               <Repeat size={14} className="text-[var(--color-v4-red)] flex-shrink-0" />
               <span className="text-xs text-white">

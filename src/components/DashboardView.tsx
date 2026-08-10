@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { DEAL_STATUS_LABELS, DEAL_STATUS_ATIVOS, CANAL_LABELS, ROLE_LABELS, type Deal, type Reuniao, type Meta } from "../types";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_ATIVOS, CANAL_LABELS, ROLE_LABELS, isDealAtivado, type Deal, type Reuniao, type Meta } from "../types";
 import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw, Tv } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
@@ -115,13 +115,13 @@ export const DashboardView: React.FC = () => {
     return dc && dc >= mesStart && dc <= mesEnd;
   }), [deals, mesStart, mesEnd]);
 
-  const dealsGanhosMes = dealsDoMes.filter(d => d.status === 'contrato_assinado');
+  const dealsGanhosMes = dealsDoMes.filter(d => isDealAtivado(d.status));   // indicador principal = ATIVADOS
   const mrrMes = dealsGanhosMes.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
   const otMes = dealsGanhosMes.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
 
   const reunioesDoMes = reunioes.filter(r => {
     const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
-    return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show;
+    return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show && r.tipo !== 'retorno';
   });
 
   const pipelineAtivo = deals.filter(d => DEAL_STATUS_ATIVOS.includes(d.status));

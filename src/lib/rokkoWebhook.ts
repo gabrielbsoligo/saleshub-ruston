@@ -1,9 +1,10 @@
 // =============================================================
 // Rokko webhook emitter — "lead ganho"
 // =============================================================
-// Quando um deal transiciona para contrato_assinado, dispara o webhook
-// no Rokko (https://rokko.rustontools.tech/api/webhooks/lead-intake)
+// Dispara o webhook no Rokko (https://rokko.rustontools.tech/api/webhooks/lead-intake)
 // que abre um projeto de onboarding pro time de operacoes.
+// Desde 09/08 NAO e' mais automatico no ganho: e' acionado pelo BOTAO
+// "Enviar pro Rokko" na aba Fechamento do DealDrawer (store.enviarParaRokko).
 //
 // O secret vive no Supabase como ROKKO_WEBHOOK_SECRET. O frontend
 // chama uma Edge Function (notify-rokko-ganho) que faz o proxy
@@ -33,10 +34,10 @@ interface RokkoPayload {
   project_start_date?: string | null;
 }
 
-export async function emitDealGanhoWebhook(deal: Partial<Deal>): Promise<void> {
+export async function emitDealGanhoWebhook(deal: Partial<Deal>): Promise<boolean> {
   if (!deal.id) {
     console.warn('[rokkoWebhook] Deal sem id — pulando.');
-    return;
+    return false;
   }
 
   // Resolve closer email + lead contato em paralelo (latencia minima)
@@ -73,10 +74,12 @@ export async function emitDealGanhoWebhook(deal: Partial<Deal>): Promise<void> {
     });
     if (error) {
       console.error('[rokkoWebhook] Edge function erro:', error);
-      return;
+      return false;
     }
     console.log('[rokkoWebhook] OK', data);
+    return true;
   } catch (err) {
     console.error('[rokkoWebhook] Erro inesperado:', err);
+    return false;
   }
 }

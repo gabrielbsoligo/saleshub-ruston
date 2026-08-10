@@ -20,19 +20,21 @@ export type LeadStatus =
 // viraram os baldes de prioridade, decididos pela TEMPERATURA (ver statusFromTemperatura).
 export type DealStatus =
   | 'incoming_leads'
-  | 'dar_feedback'          // Feedback reunião
+  | 'dar_feedback'            // Feedback reunião
   | 'marcar_call_proposta'
+  | 'call_proposta_agendada'  // Call de proposta marcada (retorno agendado)
   | 'baixa_prioridade'
   | 'media_prioridade'
   | 'alta_prioridade'
-  | 'contrato_na_rua'       // Contrato
-  | 'contrato_assinado'     // Won
-  | 'perdido';              // Lost
+  | 'contrato_na_rua'         // Contrato
+  | 'contrato_assinado'       // Assinou (aquisição) — ainda NÃO pagou
+  | 'ganho'                   // Won/ATIVADO — pagou entrada ou tudo (indicador principal)
+  | 'perdido';                // Lost
 
 export const DEAL_STATUS_ORDER: DealStatus[] = [
-  'incoming_leads', 'dar_feedback', 'marcar_call_proposta',
+  'incoming_leads', 'dar_feedback', 'marcar_call_proposta', 'call_proposta_agendada',
   'baixa_prioridade', 'media_prioridade', 'alta_prioridade',
-  'contrato_na_rua', 'contrato_assinado', 'perdido',
+  'contrato_na_rua', 'contrato_assinado', 'ganho', 'perdido',
 ];
 
 /**
@@ -53,14 +55,21 @@ export const DEAL_STAGES: DealStageMeta[] = [
   { slug: 'incoming_leads',       rotulo: 'Incoming leads',            curto: 'Incoming',    abrev: 'IN',  borda: 'border-slate-500',  badge: 'bg-slate-500/20 text-slate-300',  kanban: false, ativa: true },
   { slug: 'dar_feedback',         rotulo: '🔔 Feedback reunião',       curto: 'Feedback',    abrev: 'FB',  borda: 'border-amber-400',  badge: 'bg-amber-500/20 text-amber-400',  kanban: true,  ativa: true },
   { slug: 'marcar_call_proposta', rotulo: 'Marcar call proposta',      curto: 'Call prop.',  abrev: 'CP',  borda: 'border-cyan-500',   badge: 'bg-cyan-500/20 text-cyan-400',    kanban: true,  ativa: true },
+  { slug: 'call_proposta_agendada', rotulo: 'Call proposta agendada',  curto: 'Prop. agend.',abrev: 'CPA', borda: 'border-teal-400',   badge: 'bg-teal-400/20 text-teal-300',    kanban: true,  ativa: true },
   // ordem dos baldes = a mesma do Kommo (Baixa sort 40 · Média 50 · Alta 60)
   { slug: 'baixa_prioridade',     rotulo: 'Baixa prioridade (+30d)',   curto: 'Baixa',       abrev: 'BAI', borda: 'border-orange-500', badge: 'bg-orange-500/20 text-orange-400',kanban: true,  ativa: true },
   { slug: 'media_prioridade',     rotulo: 'Média prioridade (11-30d)', curto: 'Média',       abrev: 'MED', borda: 'border-blue-500',   badge: 'bg-blue-500/20 text-blue-400',    kanban: true,  ativa: true },
   { slug: 'alta_prioridade',      rotulo: 'Alta prioridade (1-10d)',   curto: 'Alta',        abrev: 'ALT', borda: 'border-red-400',    badge: 'bg-red-400/20 text-red-300',      kanban: true,  ativa: true },
   { slug: 'contrato_na_rua',      rotulo: 'Contrato',                  curto: 'Contrato',    abrev: 'CTR', borda: 'border-yellow-500', badge: 'bg-yellow-500/20 text-yellow-400',kanban: true,  ativa: true },
-  { slug: 'contrato_assinado',    rotulo: 'Venda ganha',               curto: 'Ganha',       abrev: 'WON', borda: 'border-green-500',  badge: 'bg-green-500/20 text-green-400',  kanban: true,  ativa: false },
+  { slug: 'contrato_assinado',    rotulo: '✍️ Contrato assinado',      curto: 'Assinado',    abrev: 'ASS', borda: 'border-lime-400',   badge: 'bg-lime-400/20 text-lime-300',    kanban: true,  ativa: false },
+  { slug: 'ganho',                rotulo: '🏆 Ganho (ativado)',        curto: 'Ganho',       abrev: 'WON', borda: 'border-green-500',  badge: 'bg-green-500/20 text-green-400',  kanban: true,  ativa: false },
   { slug: 'perdido',              rotulo: 'Venda perdida',             curto: 'Perdida',     abrev: 'LOST',borda: 'border-red-500',    badge: 'bg-red-500/20 text-red-400',      kanban: true,  ativa: false },
 ];
+
+/** Deal FECHADO (assinou o contrato): assinado OU já ativado. Use para "vendido/assinados". */
+export const isDealFechado = (s?: string | null): boolean => s === 'contrato_assinado' || s === 'ganho';
+/** Deal ATIVADO (pagou entrada ou tudo) — o INDICADOR PRINCIPAL da meta. */
+export const isDealAtivado = (s?: string | null): boolean => s === 'ganho';
 
 export const DEAL_STAGE_BY_SLUG: Record<string, DealStageMeta> =
   Object.fromEntries(DEAL_STAGES.map(s => [s.slug, s]));
@@ -254,6 +263,12 @@ export interface Deal {
   contrato_filename?: string;
   tier?: DealTier;
   observacoes?: string;
+
+  // Fechamento (ativação)
+  valor_pago_ato?: number;          // quanto o cliente já pagou no ato do fechamento
+  comprovante_url?: string;         // comprovante de pagamento (imagem, opcional)
+  comprovante_filename?: string;
+  rokko_enviado_em?: string;        // disparo manual pro Rokko (botão no Fechamento)
 
   created_at: string;
   updated_at: string;
@@ -560,11 +575,13 @@ export const DEAL_STATUS_LABELS: Record<DealStatus, string> = {
   incoming_leads: 'Incoming leads',
   dar_feedback: '🔔 Feedback reunião',
   marcar_call_proposta: 'Marcar call proposta',
+  call_proposta_agendada: 'Call proposta agendada',
   baixa_prioridade: 'Baixa prioridade (+30d)',
   media_prioridade: 'Média prioridade (11-30d)',
   alta_prioridade: 'Alta prioridade (1-10d)',
   contrato_na_rua: 'Contrato',
-  contrato_assinado: 'Venda ganha',
+  contrato_assinado: '✍️ Contrato assinado',
+  ganho: '🏆 Ganho (ativado)',
   perdido: 'Venda perdida',
 };
 

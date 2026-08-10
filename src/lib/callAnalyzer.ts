@@ -32,8 +32,9 @@ Retorne APENAS um JSON valido com os campos especificados.
 ### Proximo Passo
 Baseado na analise da call, determine o proximo passo do deal:
 - "contrato_na_rua": Cliente pediu contrato ou esta analisando proposta formal
-- "contrato_assinado": Cliente confirmou fechamento na propria call
+- "contrato_assinado": Cliente confirmou fechamento na propria call (assinou; ATIVACAO/ganho so quando pagar)
 - "marcar_call_proposta": Ficou de marcar uma call para apresentar a proposta
+- "call_proposta_agendada": A call de proposta JA ficou marcada com dia/hora definidos na propria conversa
 - "alta_prioridade": Segue em follow QUENTE, fechamento esperado em 1-10 dias
 - "media_prioridade": Segue em follow MORNO, fechamento esperado em 11-30 dias
 - "baixa_prioridade": Segue em follow FRIO, sem data definida ou +30 dias
@@ -95,7 +96,7 @@ acordadas e tarefas pontuais. Se nada foi acordado, retorne listas vazias.
 ## Formato do JSON de resposta
 {
   "temperatura": "quente" | "morno" | "frio",
-  "proximo_passo": "marcar_call_proposta" | "alta_prioridade" | "media_prioridade" | "baixa_prioridade" | "contrato_na_rua" | "contrato_assinado" | "perdido",
+  "proximo_passo": "marcar_call_proposta" | "call_proposta_agendada" | "alta_prioridade" | "media_prioridade" | "baixa_prioridade" | "contrato_na_rua" | "contrato_assinado" | "perdido",
   "valor_escopo": number,
   "valor_recorrente": number,
   "produtos_ot": ["nome exato do produto"],

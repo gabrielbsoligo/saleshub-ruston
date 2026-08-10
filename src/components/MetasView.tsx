@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAppStore } from "../store";
-import { ROLE_LABELS } from "../types";
+import { ROLE_LABELS, isDealAtivado } from "../types";
 import { Save, DollarSign } from "lucide-react";
 
 function formatCurrency(value: number) {
@@ -24,7 +24,7 @@ export const MetasView: React.FC = () => {
     const memberDeals = deals.filter(d => {
       const closer = d.closer_id === member.id;
       const sdr = d.sdr_id === member.id;
-      const ganho = d.status === 'contrato_assinado';
+      const ganho = isDealAtivado(d.status);   // meta principal = ATIVADOS (pagou entrada/total)
       const noMes = d.data_fechamento && new Date(d.data_fechamento) >= mesStart && new Date(d.data_fechamento) <= mesEnd;
       return (closer || sdr) && ganho && noMes;
     });
@@ -40,7 +40,7 @@ export const MetasView: React.FC = () => {
     // Reunioes realizadas no mes
     const realizadoReunioes = reunioes.filter(r => {
       const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
-      return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show && (r.sdr_id === member.id || r.closer_id === member.id);
+      return dr && dr >= mesStart && dr <= mesEnd && r.realizada && r.show && r.tipo !== 'retorno' && (r.sdr_id === member.id || r.closer_id === member.id);
     }).length;
 
     return { member, meta, realizadoMrr, realizadoOt, realizadoReunioes, deals: memberDeals.length, valorComissao };
