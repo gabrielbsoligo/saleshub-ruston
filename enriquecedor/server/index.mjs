@@ -1731,7 +1731,7 @@ async function generateBriefing(payload) {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       // SDK oficial (retry/backoff de 429/5xx embutido). Mesma extração de texto.
-      const text = await anthropicText(BRIEFING_MODEL, 4000, prompt);
+      const text = await anthropicText(BRIEFING_MODEL, 8000, prompt); // 4000 truncava JSONs longos (scripts extensos) — falha intermitente de parse
       if (text == null) return { ok: false, briefing: null };
       const m = text.match(/\{[\s\S]*\}/);
       if (!m) {
