@@ -58,7 +58,9 @@ const DISPARO_OPT_OUT = 108545304   // etapa OPT OUT
 // Guarda
 const CLOSER_PIPELINE = 11010459
 
-// MAPA: id do agente no 3C -> usuário responsável no Kommo (do fluxo n8n)
+// FALLBACK: id do agente no 3C -> usuário no Kommo (mapa fixo herdado do n8n).
+// A fonte principal agora é team_members.agente_3c_id (editável na tela de equipe,
+// migration_137) — usuário novo no 3C só precisa do campo preenchido lá.
 const AGENTE_3C_KOMMO: Record<string, number> = {
   '234399': 15444836, // Edric
   '234394': 14559996, // Lary
@@ -341,7 +343,15 @@ Deno.serve(async (req) => {
         ? { pipeline_id: PRE_VENDAS_PIPELINE, status_id: CONEXAO_REALIZADA }
         : { pipeline_id: DISPARO_PIPELINE, status_id: DISPARO_OPT_OUT }
       if (qualId === QUAL_FOLLOW_KOMMO) {
-        const mapped = AGENTE_3C_KOMMO[String(ch.agent?.id ?? '')]
+        // 1º team_members.agente_3c_id (tela de equipe); 2º mapa fixo; 3º mantém atual
+        const agId = String(ch.agent?.id ?? '')
+        let mapped: number | undefined
+        if (agId) {
+          const { data: tm } = await supabase.from('team_members')
+            .select('kommo_user_id').eq('agente_3c_id', agId).eq('active', true).maybeSingle()
+          if (tm?.kommo_user_id) mapped = Number(tm.kommo_user_id)
+        }
+        mapped = mapped ?? AGENTE_3C_KOMMO[agId]
         patch.responsible_user_id = mapped ?? Number(leadAtual?.responsible_user_id) // fallback: mantém atual
       }
       if (dry) {

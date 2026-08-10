@@ -152,6 +152,8 @@ export interface TeamMember {
   auth_user_id?: string;
   kommo_user_id?: number;
   ramal_4com?: string;
+  /** id do AGENTE no 3C Plus (chega no webhook em callHistory.agent.id — ex.: 234399) */
+  agente_3c_id?: string | null;
   google_calendar_connected?: boolean;
   meta_ligacoes_diaria?: number;
   cor_grafico?: string | null;

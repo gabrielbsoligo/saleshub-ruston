@@ -53,6 +53,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         email: member.email,
         role: member.role,
         ramal_4com: member.ramal_4com || '',
+        agente_3c_id: member.agente_3c_id || '',
         kommo_user_id: member.kommo_user_id,
         meta_ligacoes_diaria: member.meta_ligacoes_diaria ?? 100,
         cor_grafico: member.cor_grafico ?? null,
@@ -79,6 +80,7 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         email: form.email,
         role: form.role,
         ramal_4com: form.ramal_4com?.trim() || undefined,
+        agente_3c_id: form.agente_3c_id?.trim() || null,
         kommo_user_id: form.kommo_user_id || undefined,
         meta_ligacoes_diaria: form.meta_ligacoes_diaria ?? 100,
         cor_grafico: form.cor_grafico ?? null,
@@ -185,6 +187,20 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
               disabled={!isGestor}
               placeholder="ex: 1019"
               onChange={(e) => setForm((p) => ({ ...p, ramal_4com: e.target.value }))}
+              className={inputClass}
+            />
+          </Field>
+
+          <Field
+            label="Agente no 3C Plus"
+            hint="ID do AGENTE no 3C (não é o ramal!). É o que o webhook de ligações manda — sem isso a tabulação 'Follow no Kommo' não reatribui o lead pra pessoa. Ex.: Edric=234399, Luana=242898."
+          >
+            <input
+              type="text"
+              value={form.agente_3c_id || ''}
+              disabled={!isGestor}
+              placeholder="ex: 242898"
+              onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value }))}
               className={inputClass}
             />
           </Field>
