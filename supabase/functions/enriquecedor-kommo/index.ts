@@ -49,6 +49,16 @@ Deno.serve(async (req) => {
     return json(400, { error: 'JSON inválido' })
   }
 
+  // Ação auxiliar: postar NOTA no card (ex.: completar manualmente a nota de
+  // ganchos quando o briefing foi gerado fora da esteira).
+  if (body.acao === 'nota') {
+    const leadId = String(body.kommo_lead_id ?? '').trim()
+    const texto = String(body.texto ?? '').trim()
+    if (!leadId || !texto) return json(400, { error: 'kommo_lead_id e texto obrigatórios' })
+    const ok = await kommoNote(leadId, texto)
+    return json(ok ? 200 : 502, { ok })
+  }
+
   // Ação auxiliar: criar TAREFA no card (ex.: pedir pro SDR responsável
   // despachar manualmente um lead cujo CNPJ não foi confirmado em lote).
   if (body.acao === 'tarefa') {
