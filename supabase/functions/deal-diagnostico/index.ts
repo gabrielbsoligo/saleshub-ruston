@@ -97,11 +97,16 @@ Deno.serve(async (req) => {
 
   // ---------- FIRE (botão Ferramentas no modal) ----------
   if (b.action === 'fire') {
-    // auth: usuário logado do SalesHub
-    const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
-    const anon = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY') ?? '')
-    const { data: userData } = await anon.auth.getUser(jwt)
-    if (!userData?.user) return json({ error: 'unauthorized' }, 401)
+    // auth: usuário logado do SalesHub, OU o secret interno (X-Diag-Secret,
+    // mesmo do callback) p/ testes/automação server-side
+    const { data: fireCfg } = await supabase.from('integracao_config').select('value').eq('key', 'deal_diag_callback_secret').maybeSingle()
+    const viaSecret = !!fireCfg?.value && req.headers.get('x-diag-secret') === fireCfg.value
+    if (!viaSecret) {
+      const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+      const anon = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_ANON_KEY') ?? '')
+      const { data: userData } = await anon.auth.getUser(jwt)
+      if (!userData?.user) return json({ error: 'unauthorized' }, 401)
+    }
 
     // SEM fallback pra CLAUDE_ROUTINE_TRIGGER_URL: aquela URL dispara a rotina do
     // prep-call (outra rotina). Cada rotina tem sua própria trigger URL.
