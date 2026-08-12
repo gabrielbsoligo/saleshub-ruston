@@ -2048,10 +2048,11 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
     let audit = null;
     try {
       const disc = await discoverSite({
-        company: row.razao_social ?? row.company_name_raw,
-        email: row.email_raw,
+        companyName: row.razao_social ?? row.company_name_raw,
+        nomeFantasia: row.nome_fantasia,
+        emailDomain: row.email_raw?.includes('@') ? row.email_raw.split('@')[1] : null,
         cidade: row.cidade,
-        site: row.site_url,
+        siteUrl: row.site_url,
       });
       if (disc?.url) {
         audit = await auditUrl(disc.url).catch(() => null);
