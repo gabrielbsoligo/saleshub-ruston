@@ -217,6 +217,9 @@ const ColunaReunioes: React.FC<ColunaReunioesProps> = ({
           <div key={r.id} className="bg-[var(--color-v4-card)] rounded p-2 border border-[var(--color-v4-border)]/40">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-white font-medium truncate flex-1">{r.empresa}</span>
+              {r.tipo === 'retorno' && (
+                <span className="px-1.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-[9px] font-bold flex-shrink-0">🔄 RETORNO</span>
+              )}
               {renderExtra && renderExtra(r)}
             </div>
             <div className="flex items-center justify-between gap-2 mt-1 text-[10px] text-[var(--color-v4-text-muted)]">

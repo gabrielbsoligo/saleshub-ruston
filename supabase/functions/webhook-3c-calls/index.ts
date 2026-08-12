@@ -5,7 +5,12 @@
 // pra dentro do SalesHub. O 3C Plus (evento call-history-was-created)
 // chama direto:  POST /functions/v1/webhook-3c-calls?t=<THREEC_WEBHOOK_TOKEN>
 //
-// SÍNCRONO (resposta do webhook):
+// RESPOSTA IMEDIATA (10/08): o 3C desativa o webhook após 50 falhas e timeout
+// conta como falha — o handler devolve 200 na hora e TODO o processamento roda
+// em background (EdgeRuntime.waitUntil). A varredura sweep-3c-calls (cron 30min)
+// reinjeta qualquer evento perdido caso o webhook caia mesmo assim.
+//
+// PROCESSAMENTO (background):
 //   1. Resolve o lead: mailing_data.identifier (= id do lead no Kommo,
 //      embutido na lista de discagem) com validação via GET no Kommo;
 //      fallback: busca contato pelos 8 últimos dígitos do telefone.
@@ -58,7 +63,9 @@ const DISPARO_OPT_OUT = 108545304   // etapa OPT OUT
 // Guarda
 const CLOSER_PIPELINE = 11010459
 
-// MAPA: id do agente no 3C -> usuário responsável no Kommo (do fluxo n8n)
+// FALLBACK: id do agente no 3C -> usuário no Kommo (mapa fixo herdado do n8n).
+// A fonte principal agora é team_members.agente_3c_id (editável na tela de equipe,
+// migration_137) — usuário novo no 3C só precisa do campo preenchido lá.
 const AGENTE_3C_KOMMO: Record<string, number> = {
   '234399': 15444836, // Edric
   '234394': 14559996, // Lary
@@ -281,25 +288,17 @@ async function ingest(ch: any, leadId: number, transcricao: string | null, anali
   console.log(`[3c ${ch._id}] ingest`, r.status)
 }
 
-// ---- Handler -----------------------------------------------------------------
-Deno.serve(async (req) => {
-  if (req.method !== 'POST') return json({ error: 'use POST' }, 405)
-  const url = new URL(req.url)
-  const tok = Deno.env.get('THREEC_WEBHOOK_TOKEN')
-  if (!tok || url.searchParams.get('t') !== tok) return json({ error: 'unauthorized' }, 401)
-  const dry = url.searchParams.get('dry') === '1'
-
-  let body: any
-  try { body = await req.json() } catch { return json({ error: 'bad json' }, 400) }
-  const ch = body?.body?.['call-history-was-created']?.callHistory
-    ?? body?.['call-history-was-created']?.callHistory ?? body?.callHistory
-  if (!ch?._id) return json({ ok: true, skipped: 'payload sem callHistory' })
-
+// ---- Processamento completo de um evento (roda em BACKGROUND no fluxo normal) --
+// O 3C DESATIVA o webhook sozinho após 50 envios sem sucesso (timeout conta como
+// falha — aconteceu em 10/08, rajada do discador + latência do Kommo). Por isso o
+// handler responde na hora e TODO o trabalho (dedup, resolução, moves, transcrição)
+// acontece aqui, depois da resposta.
+async function processarEvento(ch: any, dry: boolean): Promise<any> {
   const supabase = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
 
   // dedup: 3C pode reentregar o webhook — se a chamada já foi processada, para aqui
   const { data: dup } = await supabase.from('call_quality').select('id').eq('call_id', String(ch._id)).maybeSingle()
-  if (dup && !dry) return json({ ok: true, skipped: 'chamada já processada', call_id: ch._id })
+  if (dup && !dry) return { ok: true, skipped: 'chamada já processada', call_id: ch._id }
 
   // 1) resolve o lead: identifier da lista de discagem = id do lead no Kommo
   let leadId: number | null = null
@@ -321,7 +320,7 @@ Deno.serve(async (req) => {
       }
     }
   }
-  if (!leadId) return json({ ok: true, skipped: 'lead não encontrado no Kommo', identifier: ch.mailing_data?.identifier ?? null, number: ch.number ?? null })
+  if (!leadId) return { ok: true, skipped: 'lead não encontrado no Kommo', identifier: ch.mailing_data?.identifier ?? null, number: ch.number ?? null }
 
   // 2) move por tabulação (só 240055 e 240056; o resto não mexe no lead)
   const qualId = Number(ch.qualification?.id ?? NaN)
@@ -331,8 +330,11 @@ Deno.serve(async (req) => {
     const statusAtual = Number(leadAtual?.status_id)
     if (pipeAtual === CLOSER_PIPELINE) {
       move = { blocked: true, reason: 'lead_no_funil_closer' } // negociação em andamento — nunca puxar
-    } else if (statusAtual === 142 || statusAtual === 143) {
-      move = { blocked: true, reason: 'lead_ganho_ou_perdido' }
+    } else if (statusAtual === 142) {
+      // GANHO nunca é puxado. PERDIDO fora do Closer PODE: as listas de disparo são de
+      // reativação — SDR conectou e tabulou = reabre (caso Piano Tintas/Edric, 10/08);
+      // e "não ligar mais" em perdido vai pro OPT OUT pra sair das listas.
+      move = { blocked: true, reason: 'lead_ganho' }
     } else if (qualId === QUAL_FOLLOW_KOMMO && pipeAtual === PRE_VENDAS_PIPELINE
                && (statusAtual === PV_REUNIAO_MARCADA || statusAtual === PV_NOSHOW)) {
       move = { blocked: true, reason: 'nao_regride_reuniao_marcada' }
@@ -341,7 +343,15 @@ Deno.serve(async (req) => {
         ? { pipeline_id: PRE_VENDAS_PIPELINE, status_id: CONEXAO_REALIZADA }
         : { pipeline_id: DISPARO_PIPELINE, status_id: DISPARO_OPT_OUT }
       if (qualId === QUAL_FOLLOW_KOMMO) {
-        const mapped = AGENTE_3C_KOMMO[String(ch.agent?.id ?? '')]
+        // 1º team_members.agente_3c_id (tela de equipe); 2º mapa fixo; 3º mantém atual
+        const agId = String(ch.agent?.id ?? '')
+        let mapped: number | undefined
+        if (agId) {
+          const { data: tm } = await supabase.from('team_members')
+            .select('kommo_user_id').eq('agente_3c_id', agId).eq('active', true).maybeSingle()
+          if (tm?.kommo_user_id) mapped = Number(tm.kommo_user_id)
+        }
+        mapped = mapped ?? AGENTE_3C_KOMMO[agId]
         patch.responsible_user_id = mapped ?? Number(leadAtual?.responsible_user_id) // fallback: mantém atual
       }
       if (dry) {
@@ -356,17 +366,37 @@ Deno.serve(async (req) => {
     }
   }
 
+  if (move) console.log(`[3c ${ch._id}] move`, JSON.stringify(move))
+
   // 3) transcrição/nota/BANT/auditoria (só chamada atendida)
-  //    normal: em background; dry: síncrono e SEM nenhuma escrita, devolve diagnóstico
   let background: any = 'pulado (speaking_time = 0)'
   if (Number(ch.speaking_time ?? 0) > 0) {
-    if (dry) {
-      background = await processarChamada(ch, leadId, leadAtual, true)
-    } else {
-      background = 'agendado'
-      EdgeRuntime.waitUntil(processarChamada(ch, leadId, leadAtual, false))
-    }
+    background = await processarChamada(ch, leadId, leadAtual, dry)
   }
 
-  return json({ ok: true, dry, call_id: ch._id, lead_id: leadId, qualification: ch.qualification?.name ?? null, move, background })
+  return { ok: true, dry, call_id: ch._id, lead_id: leadId, qualification: ch.qualification?.name ?? null, move, background }
+}
+
+// ---- Handler: responde NA HORA (3C conta timeout como falha e desativa após 50) --
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return json({ error: 'use POST' }, 405)
+  const url = new URL(req.url)
+  const tok = Deno.env.get('THREEC_WEBHOOK_TOKEN')
+  if (!tok || url.searchParams.get('t') !== tok) return json({ error: 'unauthorized' }, 401)
+  const dry = url.searchParams.get('dry') === '1'
+
+  let body: any
+  try { body = await req.json() } catch { return json({ error: 'bad json' }, 400) }
+  const ch = body?.body?.['call-history-was-created']?.callHistory
+    ?? body?.['call-history-was-created']?.callHistory ?? body?.callHistory
+  if (!ch?._id) return json({ ok: true, skipped: 'payload sem callHistory' })
+
+  if (dry) return json(await processarEvento(ch, true))   // teste: síncrono, sem escritas
+
+  EdgeRuntime.waitUntil(
+    processarEvento(ch, false)
+      .then((r) => console.log(`[3c ${ch._id}] resultado`, JSON.stringify(r).slice(0, 500)))
+      .catch((e) => console.error(`[3c ${ch._id}] erro`, e))
+  )
+  return json({ ok: true, queued: true, call_id: ch._id })
 })
