@@ -839,16 +839,41 @@
   };
 
   // ---- Enrich leads + check duplicates + normalize (canal + data_cadastro) ----
+  // BUG 11/08: o PostgREST corta em 1000 linhas por padrão — com 6k+ leads na base o
+  // dedup só enxergava os 1000 primeiros e marcava importação repetida como NOVO
+  // (279 falsos NOVO numa leva de 297). Agora pagina a base INTEIRA e também
+  // deduplica por TELEFONE normalizado (empresa genérica tipo "Autônomo" dava falso dup).
+  function normFone(v) {
+    var d = String(v || '').replace(/\D/g, '');
+    if (d.length < 8) return '';
+    if (d.indexOf('55') === 0 && d.length > 10) d = d.slice(2);
+    return d.slice(-10);
+  }
+  function fetchAllExisting() {
+    var size = 1000, all = [];
+    function step(offset) {
+      return supaFetch('/rest/v1/leads?select=id,empresa,telefone,mktlab_id,mktlab_link&limit=' + size + '&offset=' + offset)
+        .then(function(rows) {
+          all = all.concat(rows);
+          if (rows.length < size) return all;
+          return step(offset + size);
+        });
+    }
+    return step(0);
+  }
   function enrichLeadsData() {
-    return supaFetch('/rest/v1/leads?select=id,empresa,mktlab_id,mktlab_link')
+    return fetchAllExisting()
       .then(function(existing) {
         var existingIds = {};
         var existingLinks = {};
         var existingEmpresas = {};
+        var existingFones = {};
         existing.forEach(function(l) {
           if (l.mktlab_id) existingIds[l.mktlab_id] = true;
           if (l.mktlab_link) existingLinks[l.mktlab_link] = true;
           existingEmpresas[l.empresa.trim().toLowerCase()] = true;
+          var f = normFone(l.telefone);
+          if (f) existingFones[f] = true;
         });
 
         enrichedLeads = [];
@@ -861,7 +886,10 @@
           var mktlabId = lead.id;
           var mktlabLink = 'https://mktlab.app/crm/leads/' + lead.id;
           var empresa = (lead.companyName || lead.title || '').trim();
-          var isDup = !!(existingIds[mktlabId] || existingLinks[mktlabLink] || existingEmpresas[empresa.toLowerCase()]);
+          var foneNorm = normFone(lead.phone);
+          var isDup = !!(existingIds[mktlabId] || existingLinks[mktlabLink] ||
+                         existingEmpresas[empresa.toLowerCase()] ||
+                         (foneNorm && existingFones[foneNorm]));
 
           enrichedLeads.push({
             mktlabId: mktlabId,
