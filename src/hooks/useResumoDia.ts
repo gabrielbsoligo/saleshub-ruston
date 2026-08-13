@@ -92,9 +92,20 @@ export function useResumoDia(data: string): ResumoDia {
         // Status changes do dia via RPC
         supabase.rpc('get_status_changes_no_dia', { p_data: data }),
 
-        // Ligações do dia
-        supabase.from('ligacoes_4com').select('member_id, atendida')
-          .gte('started_at', startISO).lt('started_at', endISO),
+        // Ligações do dia — paginado: o PostgREST corta em 1000 e o dia passa disso (3C)
+        (async () => {
+          const page = 1000;
+          let rows: any[] = [];
+          for (let off = 0; off < 10000; off += page) {
+            const { data } = await supabase.from('ligacoes_4com').select('member_id, atendida')
+              .gte('started_at', startISO).lt('started_at', endISO)
+              .range(off, off + page - 1);
+            if (!data?.length) break;
+            rows = rows.concat(data);
+            if (data.length < page) break;
+          }
+          return { data: rows };
+        })(),
       ]);
 
       setReunioesAgendadas((rAgendadas.data as Reuniao[]) || []);

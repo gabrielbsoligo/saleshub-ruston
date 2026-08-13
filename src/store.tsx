@@ -977,8 +977,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ===================== LIGACOES 4COM =====================
   const fetchLigacoes = useCallback(async () => {
-    const { data } = await supabase.from('ligacoes_4com').select('*').order('started_at', { ascending: false }).limit(2000);
-    if (data) setLigacoes(data);
+    // O PostgREST corta QUALQUER select em 1000 linhas (db-max-rows) — o .limit(2000)
+    // antigo vinha capado e, com o 3C despejando ~1.3k ligações/dia, o dashboard
+    // "Ligações do Dia" perdia gente (caso Yuri, 11/08). Pagina uma janela de 7 dias.
+    const desde = new Date(Date.now() - 7 * 86400000).toISOString();
+    const page = 1000;
+    let all: Ligacao4com[] = [];
+    for (let off = 0; off < 30000; off += page) {
+      const { data } = await supabase.from('ligacoes_4com').select('*')
+        .gte('started_at', desde)
+        .order('started_at', { ascending: false })
+        .range(off, off + page - 1);
+      if (!data?.length) break;
+      all = all.concat(data as Ligacao4com[]);
+      if (data.length < page) break;
+    }
+    setLigacoes(all);
   }, []);
 
   // ===================== POST-MEETING AUTOMATIONS =====================
