@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { DEAL_STATUS_LABELS, DEAL_STATUS_ATIVOS, CANAL_LABELS, ROLE_LABELS, isDealAtivado, type Deal, type Reuniao, type Meta } from "../types";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_ATIVOS, CANAL_LABELS, ROLE_LABELS, isDealAtivado, isDealFechado, type Deal, type Reuniao, type Meta } from "../types";
 import { AlertCircle, TrendingUp, TrendingDown, ChevronDown, ChevronRight, Phone, PhoneOff, PhoneIncoming, RefreshCw, Tv } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, ComposedChart } from 'recharts';
 import { getPacePercentage, getBusinessDaysInMonth, getBusinessDaysSoFar, calculatePace, generateDailyPaceLine } from "../lib/paceUtils";
@@ -118,6 +118,11 @@ export const DashboardView: React.FC = () => {
   const dealsGanhosMes = dealsDoMes.filter(d => isDealAtivado(d.status));   // indicador principal = ATIVADOS
   const mrrMes = dealsGanhosMes.reduce((a, d) => a + (d.valor_recorrente || d.valor_mrr || 0), 0);
   const otMes = dealsGanhosMes.reduce((a, d) => a + (d.valor_escopo || d.valor_ot || 0), 0);
+
+  // ASSINADO = tudo que fechou contrato no mês: ativados + assinados que ainda não pagaram
+  const dealsFechadosMes = dealsDoMes.filter(d => isDealFechado(d.status));
+  const assinadoTotalMes = dealsFechadosMes.reduce((a, d) =>
+    a + (d.valor_recorrente || d.valor_mrr || 0) + (d.valor_escopo || d.valor_ot || 0), 0);
 
   const reunioesDoMes = reunioes.filter(r => {
     const dr = r.data_reuniao ? new Date(r.data_reuniao) : null;
@@ -340,6 +345,12 @@ export const DashboardView: React.FC = () => {
               meta={totalMetaMrr + totalMetaOt}
               gap={(generalPace.expectedMrr + generalPace.expectedOt) - (mrrMes + otMes)}
               onTrack={mrrMes + otMes >= generalPace.expectedMrr + generalPace.expectedOt} />
+            <PaceBar label="Total Assinado (ganho + a ativar)"
+              realizado={assinadoTotalMes}
+              expected={generalPace.expectedMrr + generalPace.expectedOt}
+              meta={totalMetaMrr + totalMetaOt}
+              gap={(generalPace.expectedMrr + generalPace.expectedOt) - assinadoTotalMes}
+              onTrack={assinadoTotalMes >= generalPace.expectedMrr + generalPace.expectedOt} />
             <PaceBar label="MRR Ganho" realizado={mrrMes} expected={generalPace.expectedMrr} meta={totalMetaMrr} gap={generalPace.gapMrr} onTrack={generalPace.mrrOnTrack} />
             <PaceBar label="OT Ganho" realizado={otMes} expected={generalPace.expectedOt} meta={totalMetaOt} gap={generalPace.gapOt} onTrack={generalPace.otOnTrack} />
             <PaceBar label="Reuniões Realizadas" realizado={reunioesDoMes.length} expected={generalPace.expectedReunioes} meta={totalMetaReunioes} gap={generalPace.gapReunioes} onTrack={generalPace.reunioesOnTrack} isCurrency={false} />
