@@ -171,6 +171,7 @@ async function acaoSetup(b: Record<string, any>) {
         name: FUNIL_NOME,
         sort: 100,
         is_main: false,
+        is_unsorted_on: false,
         _embedded: { statuses: ETAPAS_FUNIL.map((nome, i) => ({ name: nome, sort: (i + 1) * 10 })) },
       }])
       out.funil_criado = { status: r.status, id: r.body?._embedded?.pipelines?.[0]?.id ?? null, erro: r.ok ? null : JSON.stringify(r.body).slice(0, 300) }

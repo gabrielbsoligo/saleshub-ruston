@@ -194,8 +194,26 @@ medida o lead não entra (mensagem sem fato concreto é spam). A detecção roda
 - **Envios/respostas**: tabelas `enriquecedor_cadencia_envios`/`_respostas` prontas pro
   n8n registrar disparo e retorno (medição agregada por falha/canal/passo).
 
-Operação externa pendente (fora do código): submeter os 6 templates na Meta, criar o funil
-`Outbound Cadência SDNA` + campos custom no Kommo e ligar o Salesbot/n8n no `preparar`.
+### Orquestração no Kommo (edge function `enriquecedor-cadencia`)
+
+O SalesHub cria a infra e orquestra os disparos direto no Kommo — sem n8n. Edge function
+`enriquecedor-cadencia` (secret `x-enriq-secret`, mesma `ENRIQ_KOMMO_SECRET`), ações:
+
+| Ação | O que faz |
+|---|---|
+| `setup` | cria campos custom (`CAD *`, `Enriquecedor URL`), funil `Outbound Cadência SDNA` (id 14331184) e os templates WABA via `POST /api/v4/chats/templates` (placeholders `{{lead.cf.<id>}}` — mesma sintaxe dos templates já aprovados da conta). Idempotente, `dry_run` default |
+| `submeter` | manda os templates pra revisão da Meta (`/review`) |
+| `sync-review` | atualiza `review_status` a partir do Kommo |
+| `vincular-bot` | liga um Salesbot (criado na UI) a um template (`{template, bot_id}`) |
+| `disparar` | um ciclo do carteiro: P1 (novos aptos) + P2 (48h sem resposta) + P3 (96h), cap 30/dia, `dry_run` default. Preenche os campos `CAD *` no card, move pro estágio do passo e roda o bot do template |
+| `webhook` | retorno dos bots (`?acao=webhook&s=<secret>` na URL): quick reply é determinístico; texto livre vai pro classificador do motor. Optout marca lead + campo + move card; interesse cria tarefa "ligar AGORA" pro responsável |
+| `status` | fila, templates e envios por passo |
+
+**Estado atual:** campos + funil criados; 6 templates criados no Kommo (ids 63335–63345) e
+**submetidos à revisão da Meta**. Falta (manual, uma vez): criar os 6 Salesbots na UI
+(1 por template: enviar template → esperar resposta → enviar webhook pra URL acima) e
+vincular com `vincular-bot`. O cron diário só é ativado sob ordem explícita — até lá,
+rodar `disparar` com `dry_run:false` é o gatilho manual de cada ciclo.
 
 ## Integração futura (fora de escopo por enquanto)
 
