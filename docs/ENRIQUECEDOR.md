@@ -169,6 +169,34 @@ Links diretos: qualquer lead tem URL própria — `/enriquecedor/#lead=<id>` (bo
 "Copiar link" na página do lead). As fases F2/F3/F4 também podem ser rodadas de dentro
 da página do lead (F3 força re-geração do briefing).
 
+## Cadência outbound (WABA + Kommo)
+
+A mensagem 1 da cadência usa uma **falha verificada na auditoria** como gancho; sem falha
+medida o lead não entra (mensagem sem fato concreto é spam). A detecção roda no MOTOR —
+única fonte de verdade — em `/api/cadencia/preparar` e automaticamente no fim da esteira.
+
+- **Catálogo** (`enriquecedor_cadencia_falhas`): 6 falhas com prioridade fixa (1 = mais
+  visível pro dono): `https` > `whatsapp` > `destino` > `semanuncio` > `gmn` > `pixel`.
+  As frases (variáveis {{4}}/{{5}} do template) vivem no banco — editar lá, sem deploy.
+- **Templates WABA** (`enriquecedor_cadencia_templates`): 6 corpos (P1 v1/v2 com rotação
+  50/50 por lead, P2 segunda-falha/aprofunda, P3 breakup v1/v2). `status_meta` começa em
+  `pendente` — atualizar pra `aprovado` quando a Meta aprovar.
+- **Campos no lead** (migration 141): `falha_primaria`, `falha_secundaria`,
+  `falhas_detectadas`, `apto_cadencia`, `optout`. Persistidos pelo motor.
+- **Rotas do motor**:
+  - `POST /api/cadencia/preparar {leadId, sdrNome?}` → pacote pronto: falhas, template
+    escolhido, 5 variáveis interpoladas (tetos 140/180/1024 validados), botões. É isso que
+    o n8n/Salesbot consome.
+  - `POST /api/cadencia/email {leadId, passo, sdrNome, sdrCargo}` → assunto + corpo por IA.
+  - `POST /api/cadencia/classificar {texto}` → 7 classes; opt-out sai por regex antes da IA.
+- **No app**: página do lead → botão "Cadência" mostra as falhas e gera o preview das 3
+  mensagens com copiar. A nota final da esteira no Kommo ganhou a linha "GANCHO DE CADENCIA".
+- **Envios/respostas**: tabelas `enriquecedor_cadencia_envios`/`_respostas` prontas pro
+  n8n registrar disparo e retorno (medição agregada por falha/canal/passo).
+
+Operação externa pendente (fora do código): submeter os 6 templates na Meta, criar o funil
+`Outbound Cadência SDNA` + campos custom no Kommo e ligar o Salesbot/n8n no `preparar`.
+
 ## Integração futura (fora de escopo por enquanto)
 
 Ideias registradas para quando chegar a hora: hospedar o motor, unificar login, empurrar leads

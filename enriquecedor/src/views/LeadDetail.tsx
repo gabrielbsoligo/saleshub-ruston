@@ -51,6 +51,7 @@ import { decisionMakersRepo } from '../lib/decisionMakersRepo';
 import { resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone } from '../lib/contactSelection';
 import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
+import { motorFetch } from '../lib/motorClient';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
 import { QUALITY_COLORS, QUALITY_LABELS, STATUS_LABELS } from '../lib/labels';
@@ -481,6 +482,12 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
         {briefing && ((briefing.dores?.length ?? 0) > 0 || (briefing.ganchos?.length ?? 0) > 0) && (
           <MenuBtn active={section === 'oportunidades'} onClick={() => toggle('oportunidades')} icon={Lightbulb} label="Oportunidades" />
         )}
+        <MenuBtn
+          active={section === 'cadencia'}
+          onClick={() => toggle('cadencia')}
+          icon={MessageSquare}
+          label={(lead.falhasDetectadas?.length ?? 0) > 0 ? `Cadência · ${lead.falhasDetectadas!.length}` : 'Cadência'}
+        />
       </div>
 
       {/* CONTEÚDO DA SEÇÃO — aparece logo abaixo dos botões ao clicar */}
@@ -627,6 +634,9 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
 
       {/* Seção: Oportunidades (Dores + Ganchos) */}
       {section === 'oportunidades' && briefing && <OportunidadesSection briefing={briefing} sinais={dores} />}
+
+      {/* Seção: Cadência outbound (falhas verificáveis + pacote WABA) */}
+      {section === 'cadencia' && <CadenciaSection lead={lead} onReload={reloadAll} />}
 
       {/* Seção: Empreendimentos — por status */}
       {section === 'empreendimentos' && emp.length > 0 && (
@@ -2440,6 +2450,148 @@ function ScriptCard({
         <CopyBtn text={text} />
       </div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-v4-text-muted">{text}</p>
+    </div>
+  );
+}
+
+// --- Cadência outbound ------------------------------------------------------
+// Mostra as falhas verificáveis detectadas e gera o pacote de mensagens WABA
+// (motor /api/cadencia/preparar). O disparo em si é externo (Kommo/Salesbot/n8n);
+// aqui é a operação manual: conferir, copiar, ajustar SDR.
+const FALHA_LABEL: Record<string, string> = {
+  https: 'Site sem HTTPS / fora do ar',
+  whatsapp: 'WhatsApp ausente ou quebrado',
+  destino: 'Anuncia com página lenta',
+  semanuncio: 'Nenhum anúncio ativo',
+  gmn: 'Google Meu Negócio fraco',
+  pixel: 'Sem pixel de rastreamento',
+};
+
+type PacoteMsg = { template: string; statusMeta: string; variaveis: string[]; botoes: string[]; corpoPreview: string } | null;
+type PacoteCadencia = {
+  ok: boolean;
+  aptoCadencia?: boolean;
+  motivo?: string;
+  error?: string;
+  falhas?: { codigo: string }[];
+  falhaPrimaria?: { codigo: string; falha: string; impacto: string } | null;
+  whatsapp?: { p1: PacoteMsg; p2: PacoteMsg; p3: PacoteMsg };
+  avisos?: string[];
+};
+
+function CadenciaSection({ lead, onReload }: { lead: Lead; onReload: () => Promise<void> }) {
+  const [sdrNome, setSdrNome] = useState('');
+  const [pacote, setPacote] = useState<PacoteCadencia | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const gerar = async () => {
+    setLoading(true);
+    try {
+      const res = await motorFetch('/api/cadencia/preparar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadId: lead.id, sdrNome: sdrNome.trim() || undefined }),
+      });
+      const j = (await res.json()) as PacoteCadencia;
+      setPacote(j);
+      if (j.ok === false) toast.error(j.error ?? 'Falha ao preparar a cadência.');
+      await onReload(); // falhas persistidas no lead — atualiza os chips
+    } catch {
+      toast.error('Motor indisponível — verifique se está logado.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const falhas = pacote?.falhas ?? lead.falhasDetectadas ?? [];
+
+  return (
+    <div className="mb-6 rounded-2xl border border-v4-border bg-v4-card p-5">
+      <h3 className="mb-1 flex items-center gap-2 font-display text-base font-semibold text-v4-text">
+        <MessageSquare size={18} /> Cadência outbound
+        {lead.optout && (
+          <span className="rounded bg-[rgba(239,68,68,0.15)] px-2 py-0.5 text-xs font-bold text-v4-red">OPT-OUT — não contatar</span>
+        )}
+      </h3>
+      <p className="mb-3 text-xs text-v4-text-muted">
+        A mensagem 1 usa uma falha VERIFICADA na auditoria como gancho. Sem falha medida, o lead não entra na cadência.
+      </p>
+
+      {falhas.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {falhas.map((f, i) => (
+            <span
+              key={f.codigo}
+              className={`rounded-lg px-2 py-1 text-xs font-medium ${
+                i === 0 ? 'bg-[rgba(239,68,68,0.15)] text-v4-red' : 'bg-v4-surface text-v4-text-muted'
+              }`}
+            >
+              {i === 0 ? 'PRIMÁRIA · ' : i === 1 ? 'SECUNDÁRIA · ' : ''}
+              {FALHA_LABEL[f.codigo] ?? f.codigo}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input
+          value={sdrNome}
+          onChange={(e) => setSdrNome(e.target.value)}
+          placeholder="Nome do SDR (variável 2)"
+          className="rounded-lg border border-v4-border bg-v4-surface px-3 py-2 text-sm text-v4-text placeholder:text-v4-text-muted"
+        />
+        <button
+          onClick={gerar}
+          disabled={loading}
+          className="flex items-center gap-2 rounded-lg bg-v4-red px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        >
+          {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+          {loading ? 'Gerando…' : 'Gerar pacote de mensagens'}
+        </button>
+      </div>
+
+      {pacote && pacote.ok && pacote.aptoCadencia === false && (
+        <p className="rounded-lg border border-v4-border bg-v4-surface p-3 text-sm text-v4-warning">{pacote.motivo}</p>
+      )}
+
+      {(pacote?.avisos?.length ?? 0) > 0 && (
+        <ul className="mb-3 list-disc pl-5 text-xs text-v4-warning">
+          {pacote!.avisos!.map((a, i) => (
+            <li key={i}>{a}</li>
+          ))}
+        </ul>
+      )}
+
+      {pacote?.aptoCadencia && pacote.whatsapp && (
+        <div className="grid gap-4 md:grid-cols-3">
+          {([['Passo 1 — abertura', pacote.whatsapp.p1], ['Passo 2 — follow-up (48h)', pacote.whatsapp.p2], ['Passo 3 — breakup (96h)', pacote.whatsapp.p3]] as const).map(
+            ([titulo, m]) =>
+              m && (
+                <div key={m.template} className="rounded-xl border border-v4-border bg-v4-surface p-4">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-v4-text">{titulo}</p>
+                      <p className="text-[11px] text-v4-text-muted">
+                        {m.template} · Meta: {m.statusMeta}
+                      </p>
+                    </div>
+                    <CopyBtn text={m.corpoPreview} />
+                  </div>
+                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-v4-text-muted">{m.corpoPreview}</p>
+                  {m.botoes.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {m.botoes.map((b) => (
+                        <span key={b} className="rounded border border-v4-border px-2 py-0.5 text-[11px] text-v4-text-muted">
+                          {b}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ),
+          )}
+        </div>
+      )}
     </div>
   );
 }

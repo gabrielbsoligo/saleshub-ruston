@@ -83,6 +83,12 @@ export interface Lead {
   validationNotes: string[]; // divergências encontradas
   enrichIssues?: EnrichIssue[]; // plataformas que falharam no último enriquecimento
   anuncios?: AnunciosData | null; // anúncios ativos (Meta Ad Library via headless)
+  // --- Cadência outbound (detecção server-side no motor; ver /api/cadencia/preparar) ---
+  falhaPrimaria?: FalhaCadencia | null;
+  falhaSecundaria?: FalhaCadencia | null;
+  falhasDetectadas?: FalhaDetectada[];
+  aptoCadencia?: boolean;
+  optout?: boolean;
   status: LeadStatus;
   score: number | null;
   kommoLeadId: string | null; // preenchido na integração (Fase 4)
@@ -93,6 +99,14 @@ export interface Lead {
 export interface Socio {
   nome: string;
   qualificacao: string | null; // ex.: "Sócio-Administrador"
+}
+
+// Cadência outbound — código da falha verificável (catálogo enriquecedor_cadencia_falhas)
+export type FalhaCadencia = 'https' | 'whatsapp' | 'destino' | 'semanuncio' | 'gmn' | 'pixel';
+
+export interface FalhaDetectada {
+  codigo: FalhaCadencia;
+  evidencia?: { situacao?: 'ausente' | 'quebrado'; nota?: number; avaliacoes?: number; semPerfil?: boolean };
 }
 
 // Anúncios (headless Meta Ad Library) com validação cruzada por pontuação.

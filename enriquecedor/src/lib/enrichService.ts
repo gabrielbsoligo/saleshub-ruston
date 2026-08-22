@@ -1012,6 +1012,13 @@ export async function runAnuncios(lead: Lead): Promise<FaseResult> {
     fresh.updatedAt = new Date().toISOString();
     await leadsRepo.update(fresh);
     resumo = `${meta.validados.length} validados · ${meta.aValidar.length} a validar · briefing atualizado`;
+    // Cadência: com F4 medido, o motor detecta e persiste as falhas verificáveis
+    // (falha_primaria/apto_cadencia). Fire-and-forget: não segura a fase.
+    void motorFetch('/api/cadencia/preparar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadId: lead.id }),
+    }).catch(() => {});
   }
   return {
     ok: r.ok && medido,

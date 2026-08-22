@@ -1964,6 +1964,280 @@ function payloadBriefing(row, audit, decisores, anunciosMeta) {
   };
 }
 
+// ═══ Cadência outbound (SDNA) ════════════════════════════════════════════════
+// Detecção de falhas verificáveis + montagem do pacote de mensagens WABA.
+// ÚNICA fonte de verdade da detecção: roda no /api/cadencia/preparar (sob demanda)
+// e no fim da esteira (persistindo no lead). Trabalha com as LINHAS DO BANCO
+// (snake_case: enriquecedor_leads + enriquecedor_site_audits), não com os shapes
+// camelCase do app — quem chama lê as linhas via PostgREST com o token do usuário.
+
+const FALHA_ORDEM = ['https', 'whatsapp', 'destino', 'semanuncio', 'gmn', 'pixel'];
+
+function detectarFalhas(leadRow, auditRow) {
+  const falhas = [];
+  const add = (codigo, evidencia) => falhas.push(evidencia ? { codigo, evidencia } : { codigo });
+
+  // "mediu anúncios" = jsonb anuncios tem a chave meta (só é gravado quando a varredura rodou)
+  const meta = leadRow?.anuncios?.meta ?? null;
+  const ativos = meta ? (meta.validados?.length ?? 0) + (meta.aValidar?.length ?? 0) : null;
+  const perf = auditRow?.pagespeed?.performance ?? null;
+
+  // 1 · https — precisa de auditoria feita; sem linha de audit não dá pra afirmar
+  //     que o site não existe (pode ser só F3 que não rodou).
+  if (auditRow && (!auditRow.is_online || auditRow.https_valid === false || (auditRow.http_status ?? 200) >= 400)) {
+    add('https');
+  }
+  // 2 · whatsapp — ausente (sem botão E sem widget) ou quebrado (há botões, nenhum
+  //     com número utilizável). Widget JS presente = ambíguo, não vira falha.
+  if (auditRow?.is_online) {
+    const botoes = Array.isArray(auditRow.whatsapp_buttons) ? auditRow.whatsapp_buttons : [];
+    const quebrado = botoes.length > 0 && botoes.every((b) => !b?.working);
+    const ausente = botoes.length === 0 && !auditRow.has_whatsapp_widget;
+    if (quebrado || ausente) add('whatsapp', { situacao: quebrado ? 'quebrado' : 'ausente' });
+  }
+  // 3 · destino — anuncia E o PSI mobile mediu abaixo de 50 (performance null = não afirma)
+  if (ativos != null && ativos > 0 && perf != null && perf < 50) add('destino', { nota: perf });
+  // 4 · semanuncio — a varredura rodou e nada ativo (meta_bloqueado não grava meta, então não cai aqui)
+  if (ativos === 0) add('semanuncio');
+  // 5 · gmn — busca feita: sem perfil, ou perfil com poucas avaliações / nota baixa
+  const gb = leadRow?.google_business ?? null;
+  if (gb) {
+    if (gb.found === false) add('gmn', { avaliacoes: 0, semPerfil: true });
+    else if ((gb.reviews ?? 0) < 10 || (gb.rating != null && Number(gb.rating) < 4.0)) {
+      add('gmn', { avaliacoes: gb.reviews ?? 0 });
+    }
+  }
+  // 6 · pixel
+  if (auditRow?.is_online && !auditRow.has_meta_pixel) add('pixel');
+
+  falhas.sort((a, b) => FALHA_ORDEM.indexOf(a.codigo) - FALHA_ORDEM.indexOf(b.codigo));
+  return falhas;
+}
+
+// Resolve as frases do catálogo pra UMA falha detectada, interpolando [nota]/[n].
+// A falha 'whatsapp' tem frase própria pro caso "ausente" (a do catálogo descreve
+// botão quebrado) e 'gmn' pro caso "sem perfil" — variação vive aqui, não na Meta:
+// pro WABA tudo é conteúdo de variável, o template aprovado não muda.
+function frasesDaFalha(f, catalogo) {
+  const cat = catalogo.find((c) => c.codigo === f.codigo);
+  if (!cat) return null;
+  let falha = cat.frase_falha;
+  let impacto = cat.frase_impacto;
+  let rotulo = cat.rotulo_curto;
+  if (f.codigo === 'whatsapp' && f.evidencia?.situacao === 'ausente') {
+    falha = 'não achei botão de WhatsApp no site de vocês';
+    impacto = 'quem entra no site decidido a chamar acaba tendo que caçar o número por fora — e é nesse desvio que a maioria desiste';
+    rotulo = 'o site sem botão de WhatsApp';
+  }
+  if (f.codigo === 'gmn' && f.evidencia?.semPerfil) {
+    falha = 'não achei o perfil da empresa no Google Maps';
+    impacto = 'quem procura o serviço na região só encontra os concorrentes — vocês nem entram na comparação';
+    rotulo = 'a empresa fora do Google Maps';
+  }
+  falha = falha.replace('[nota]', String(f.evidencia?.nota ?? '')).replace('[n]', String(f.evidencia?.avaliacoes ?? ''));
+  return { falha, impacto, rotulo };
+}
+
+const primeiroNome = (nome) => {
+  const n = String(nome || '').trim().split(/\s+/)[0] || '';
+  return n ? n.charAt(0).toUpperCase() + n.slice(1).toLowerCase() : '';
+};
+
+// Decisor pro {{1}}: decision_makers primeiro (cargo de dono/decisão na frente),
+// senão sócio-administrador do QSA, senão primeiro sócio.
+function nomeDecisor(row, decisores) {
+  const peso = (cargo) => (/soci|dono|propriet|founder|fundador|ceo|diretor|presidente|adminis/i.test(cargo || '') ? 0 : 1);
+  const d = [...(decisores ?? [])].sort((a, b) => peso(a.cargo) - peso(b.cargo))[0];
+  if (d?.nome) return d.nome;
+  const socios = Array.isArray(row?.socios) ? row.socios : [];
+  const adm = socios.find((s) => /adminis/i.test(s?.qualificacao || ''));
+  return adm?.nome ?? socios[0]?.nome ?? '';
+}
+
+// Corta no fim da última palavra inteira que cabe em max.
+function cortaPalavra(s, max) {
+  const t = String(s ?? '');
+  if (t.length <= max) return t;
+  const corte = t.slice(0, max + 1);
+  const i = corte.lastIndexOf(' ');
+  return (i > 0 ? corte.slice(0, i) : t.slice(0, max)).trim();
+}
+
+const montarCorpo = (corpo, vars) =>
+  String(corpo ?? '').replace(/\{\{(\d)\}\}/g, (_, i) => vars[Number(i) - 1] ?? '');
+
+// Monta o pacote completo da cadência de um lead: detecta as falhas, persiste
+// no lead (falha_primaria/secundaria/falhas_detectadas/apto_cadencia) e devolve
+// as 3 mensagens de WhatsApp com template escolhido + variáveis interpoladas,
+// prontas pro n8n/Salesbot. Tetos validados (140/180 nas frases, 1024 no corpo).
+async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
+  const rows = await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`);
+  const row = rows?.[0];
+  if (!row) return { ok: false, error: 'lead não encontrado' };
+  const audit = (await sbSelect(token, 'enriquecedor_site_audits', `lead_id=eq.${leadId}&select=*`))?.[0] ?? null;
+  const catalogo = (await sbSelect(token, 'enriquecedor_cadencia_falhas', 'ativo=eq.true&select=*&order=prioridade')) ?? [];
+  const templates = (await sbSelect(token, 'enriquecedor_cadencia_templates', 'canal=eq.whatsapp&ativo=eq.true&select=*')) ?? [];
+
+  const falhas = detectarFalhas(row, audit);
+  const primaria = falhas[0] ?? null;
+  const secundaria = falhas[1] ?? null;
+  const apto = !!primaria && !row.optout;
+
+  if (persistir) {
+    await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
+      falha_primaria: primaria?.codigo ?? null,
+      falha_secundaria: secundaria?.codigo ?? null,
+      falhas_detectadas: falhas,
+      apto_cadencia: apto,
+      updated_at: new Date().toISOString(),
+    }).catch(() => {});
+  }
+
+  if (!apto) {
+    return {
+      ok: true,
+      aptoCadencia: false,
+      falhas,
+      motivo: row.optout
+        ? 'lead pediu pra não receber (optout)'
+        : 'nenhuma falha verificável medida — rode F2/F3/F4 antes; mensagem sem falha concreta é spam',
+    };
+  }
+
+  const avisos = [];
+  const tpl = (nome) => templates.find((t) => t.nome === nome) ?? null;
+  // Rotação 50/50 determinística por lead (não depende de estado externo).
+  const rot = [...String(leadId)].reduce((a, c) => a + c.charCodeAt(0), 0) % 2;
+
+  const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
+  let nome1 = primeiroNome(nomeDecisor(row, decisores));
+  if (!nome1) { nome1 = 'tudo bem?'; avisos.push('decisor não identificado — {{1}} caiu no genérico "tudo bem?"'); }
+  nome1 = cortaPalavra(nome1, 20);
+  let sdr = cortaPalavra(String(sdrNome || '').trim(), 20);
+  if (!sdr) { sdr = '[SDR]'; avisos.push('sdrNome não informado — preencha {{2}} antes do disparo'); }
+  const fantasia = cortaPalavra(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || ''), 40);
+
+  const fr1 = frasesDaFalha(primaria, catalogo);
+  if (!fr1) return { ok: false, error: `falha '${primaria.codigo}' sem registro no catálogo` };
+  const teto = (texto, max, rotulo) => {
+    if (String(texto).length > max) {
+      avisos.push(`${rotulo} estourou ${max} caracteres e foi cortado na última palavra`);
+      void logErroToken(token, '/api/cadencia/preparar', `${rotulo} estourou o teto de ${max}`, { leadId, texto });
+      return cortaPalavra(texto, max);
+    }
+    return texto;
+  };
+  const v4 = teto(fr1.falha, 140, 'frase da falha ({{4}})');
+  const v5 = teto(fr1.impacto, 180, 'frase do impacto ({{5}})');
+
+  const msg = (t, vars) => {
+    if (!t) return null;
+    const corpo = montarCorpo(t.corpo, vars);
+    if (corpo.length > 1024) avisos.push(`corpo do ${t.nome} passou de 1024 caracteres (${corpo.length}) — a Meta rejeita`);
+    return {
+      template: t.nome,
+      templateId: t.id,
+      statusMeta: t.status_meta,
+      variaveis: vars,
+      botoes: t.botoes ?? [],
+      corpoPreview: corpo,
+    };
+  };
+
+  const p1 = msg(tpl(rot === 0 ? 'sdna_p1_auditoria_v1' : 'sdna_p1_auditoria_v2'), [nome1, sdr, fantasia, v4, v5]);
+  const fr2 = secundaria ? frasesDaFalha(secundaria, catalogo) : null;
+  const p2 = fr2
+    ? msg(tpl('sdna_p2_segunda_falha_v1'), [nome1, fantasia, fr2.rotulo])
+    : msg(tpl('sdna_p2_aprofunda_v1'), [nome1, fantasia]);
+  const p3 = msg(tpl(rot === 0 ? 'sdna_p3_breakup_v1' : 'sdna_p3_breakup_v2'), [nome1, fantasia]);
+
+  return {
+    ok: true,
+    aptoCadencia: true,
+    leadId,
+    kommoLeadId: row.kommo_lead_id ?? null,
+    empresa: row.nome_fantasia ?? row.razao_social ?? row.company_name_raw ?? null,
+    falhas,
+    falhaPrimaria: { ...primaria, ...fr1 },
+    falhaSecundaria: fr2 ? { ...secundaria, ...fr2 } : null,
+    whatsapp: { p1, p2, p3 },
+    avisos,
+  };
+}
+
+// E-mail da cadência — corpo 100% gerado por IA a partir do briefing + falha.
+async function gerarEmailCadencia({ leadId, passo, sdrNome, sdrCargo, token }) {
+  const row = (await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`))?.[0];
+  if (!row) return { ok: false, error: 'lead não encontrado' };
+  const audit = (await sbSelect(token, 'enriquecedor_site_audits', `lead_id=eq.${leadId}&select=*`))?.[0] ?? null;
+  const catalogo = (await sbSelect(token, 'enriquecedor_cadencia_falhas', 'ativo=eq.true&select=*&order=prioridade')) ?? [];
+  const falhas = detectarFalhas(row, audit);
+  if (!falhas.length) return { ok: false, error: 'nenhuma falha verificável — sem gancho não sai e-mail' };
+  const fr = frasesDaFalha(falhas[0], catalogo);
+
+  const regras = {
+    1: 'PASSO 1 (abertura): assunto com no máximo 6 palavras e SEM o nome da empresa; corpo de 120 a 160 palavras; o primeiro parágrafo traz um dado duro da auditoria; CTA de RESPOSTA (pergunta simples), não de reunião.',
+    2: 'PASSO 2 (prova): 100 a 140 palavras; aprofunda a falha com o que ela custa na prática; sem inventar case ou leitura de concorrente que não está nos dados.',
+    3: 'PASSO 3 (breakup): no máximo 80 palavras; despedida sem pressão; termina oferecendo sair da lista.',
+  };
+  const prompt =
+    `Você escreve e-mails de prospecção outbound B2B em português brasileiro pra V4 Ruston (assessoria de marketing). ` +
+    `Remetente: ${sdrNome || 'SDR'}${sdrCargo ? `, ${sdrCargo}` : ''}.\n\n` +
+    `EMPRESA-ALVO: ${row.nome_fantasia ?? row.razao_social ?? row.company_name_raw}\n` +
+    `FALHA VERIFICADA NA AUDITORIA: ${fr?.falha ?? falhas[0].codigo}\n` +
+    `IMPACTO PRÁTICO: ${fr?.impacto ?? ''}\n` +
+    `TODAS AS FALHAS DETECTADAS: ${falhas.map((f) => f.codigo).join(', ')}\n` +
+    `BRIEFING (dados já apurados): ${JSON.stringify({ dores: row.briefing?.dores ?? [], ganchos: row.briefing?.ganchos ?? [], segmento: row.segmento, cidade: row.cidade, uf: row.uf }).slice(0, 2500)}\n\n` +
+    `${regras[passo] ?? regras[1]}\n\n` +
+    `PROIBIDO: "espero que esteja bem", "gostaria de apresentar", superlativos, emoji, mencionar anexo, inventar números que não estão acima.\n` +
+    `Responda APENAS um JSON: {"assunto": string, "corpoTexto": string} — corpoTexto com parágrafos separados por linha em branco, sem HTML.`;
+
+  try {
+    const text = await anthropicText(BRIEFING_MODEL, 2000, prompt);
+    if (text == null) return { ok: false, error: 'IA desativada (sem ANTHROPIC_API_KEY)' };
+    const m = text.match(/\{[\s\S]*\}/);
+    const j = m ? JSON.parse(m[0]) : null;
+    if (!j?.assunto || !j?.corpoTexto) return { ok: false, error: 'IA não devolveu assunto/corpo' };
+    const assunto = cortaPalavra(j.assunto, 60);
+    const corpoHtml = String(j.corpoTexto)
+      .split(/\n{2,}/)
+      .map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+      .join('\n');
+    return { ok: true, passo, assunto, corpoTexto: j.corpoTexto, corpoHtml, falha: falhas[0].codigo };
+  } catch (err) {
+    return { ok: false, error: `geração falhou: ${String(err?.message || err).slice(0, 200)}` };
+  }
+}
+
+// Classifica resposta em TEXTO LIVRE (quick reply é determinístico e não passa aqui).
+// Opt-out sai por regex antes do modelo — barato e sem falso negativo do lado que importa.
+// O regex do spec tinha \bpara\b — preposição comum ("pode ligar para mim") viraria
+// opt-out. Ficam só formas imperativas/infinitivas e combinações inequívocas.
+const OPTOUT_RE = /\b(sair da lista|pare|parar|descadastr\w*|remove\w*|(tira|tirar|me tire)\b.{0,20}\blista|n[aã]o quero (receber|mais)|n[aã]o (me )?(mande|manda|envie|envia) mais)\b/i;
+async function classificarResposta({ texto }) {
+  const t = String(texto ?? '').trim();
+  if (!t) return { ok: false, error: 'texto vazio' };
+  if (OPTOUT_RE.test(t)) {
+    return { ok: true, classificacao: 'optout', confianca: 0.99, resumo_1_linha: 'pediu pra sair da lista (regex)', proxima_acao: 'marcar optout=true e bloquear reentrada', classificado_por: 'regex' };
+  }
+  const prompt =
+    `Classifique a resposta de um lead B2B a uma mensagem de prospecção por WhatsApp/e-mail.\n` +
+    `RESPOSTA DO LEAD: """${t.slice(0, 1500)}"""\n\n` +
+    `Classes possíveis (escolha UMA): interesse | pedido_info | objecao_preco | objecao_momento | nao_decisor | sem_fit | optout\n` +
+    `Responda APENAS um JSON: {"classificacao": string, "confianca": number entre 0 e 1, "resumo_1_linha": string, "proxima_acao": string}`;
+  try {
+    const text = await anthropicText('claude-haiku-4-5-20251001', 500, prompt);
+    if (text == null) return { ok: false, error: 'IA desativada' };
+    const m = text.match(/\{[\s\S]*\}/);
+    const j = m ? JSON.parse(m[0]) : null;
+    const classes = ['interesse', 'pedido_info', 'objecao_preco', 'objecao_momento', 'nao_decisor', 'sem_fit', 'optout'];
+    if (!j || !classes.includes(j.classificacao)) return { ok: false, error: 'classificação fora das 7 classes' };
+    return { ok: true, ...j, classificado_por: 'ia' };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200) };
+  }
+}
+
 async function runEsteira({ leadId, kommoLeadId, token }) {
   const setStatus = (status) =>
     sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { status, updated_at: new Date().toISOString() }).catch(() => {});
@@ -2141,13 +2415,21 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
 
     await setStatus('enriquecido');
 
+    // ── Cadência: detecta e persiste as falhas verificáveis (falha_primaria etc.)
+    let cad = null;
+    try { cad = await prepararCadencia({ leadId, token, persistir: true }); } catch { /* não trava a esteira */ }
+
     // ── Nota final na Kommo: ganchos de abordagem ────────────────────────────
     if (kommoLeadId) {
       const ganchos = briefing?.ganchos ?? [];
       const dores = briefing?.dores ?? [];
+      const linhaCadencia = cad?.aptoCadencia && cad.falhaPrimaria
+        ? `\n\nGANCHO DE CADENCIA (falha verificada): ${cad.falhaPrimaria.falha}`
+        : '';
       const texto = ganchos.length
         ? `ENRIQUECEDOR — GANCHOS DE ABORDAGEM\n\n${ganchos.map((g, i) => `${i + 1}. ${g}`).join('\n')}` +
           (dores.length ? `\n\nDORES IDENTIFICADAS\n${dores.map((d) => `- ${d}`).join('\n')}` : '') +
+          linhaCadencia +
           `\n\nLead completo (scripts por canal, decisores, auditoria):\n${linkDoLead(leadId)}`
         : `ENRIQUECEDOR — enriquecimento concluído, mas o briefing por IA não foi gerado. ` +
           `Veja o que foi coletado: ${linkDoLead(leadId)}`;
@@ -2357,6 +2639,42 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const r = await generateBriefing(body);
       if (r?.ok === false) void logErroMotor(req, '/api/briefing', 'briefing falhou após todas as tentativas', { empresa: body?.empresa });
+      return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/cadencia/preparar' && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const r = await prepararCadencia({
+        leadId: body.leadId,
+        token,
+        sdrNome: body.sdrNome ?? null,
+        persistir: body.persistir !== false,
+      });
+      if (r?.ok === false) void logErroMotor(req, '/api/cadencia/preparar', r.error, { leadId: body?.leadId });
+      return send(res, r?.ok === false ? 422 : 200, r);
+    }
+
+    if (url.pathname === '/api/cadencia/email' && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const r = await gerarEmailCadencia({
+        leadId: body.leadId,
+        passo: Number(body.passo) || 1,
+        sdrNome: body.sdrNome ?? null,
+        sdrCargo: body.sdrCargo ?? null,
+        token,
+      });
+      if (r?.ok === false) void logErroMotor(req, '/api/cadencia/email', r.error, { leadId: body?.leadId, passo: body?.passo });
+      return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/cadencia/classificar' && req.method === 'POST') {
+      const body = await readJson(req);
+      const r = await classificarResposta({ texto: body?.texto });
+      if (r?.ok === false) void logErroMotor(req, '/api/cadencia/classificar', r.error, { leadId: body?.leadId });
       return send(res, 200, r);
     }
 
