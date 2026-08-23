@@ -218,7 +218,22 @@ async function acaoSetup(b: Record<string, any>) {
   return json(200, { ok: true, ...out })
 }
 
-// ── submeter pra revisão da Meta ─────────────────────────────────────────────
+// ── revisão da Meta ──────────────────────────────────────────────────────────
+// O status verdadeiro vem em _embedded.reviews[].status (review|approved|rejected|
+// paused) por source (número WABA). Resposta SEM reviews = a submissão não pegou
+// (em geral, número WABA não vinculado ao template) — reportar, não mascarar.
+const MAPA_REVIEW: Record<string, string> = {
+  approved: 'aprovado', rejected: 'rejeitado', review: 'em_revisao', pending: 'em_revisao', paused: 'rejeitado',
+}
+function statusDeReviews(reviews: any[]): { status: string | null; detalhe: any[] } {
+  const detalhe = (reviews ?? []).map((x) => ({ source_id: x.source_id, status: x.status, reject_reason: x.reject_reason || null }))
+  if (!detalhe.length) return { status: null, detalhe }
+  // Pior status manda: rejeitado > em_revisao > aprovado (só aprovado se TODOS aprovados).
+  const mapeados = detalhe.map((d) => MAPA_REVIEW[String(d.status).toLowerCase()] ?? 'em_revisao')
+  const status = mapeados.includes('rejeitado') ? 'rejeitado' : mapeados.includes('em_revisao') ? 'em_revisao' : 'aprovado'
+  return { status, detalhe }
+}
+
 async function acaoSubmeter(b: Record<string, any>) {
   const db = sb()
   let q = db.from('enriquecedor_cadencia_templates').select('*').eq('canal', 'whatsapp').not('kommo_template_id', 'is', null)
@@ -227,8 +242,16 @@ async function acaoSubmeter(b: Record<string, any>) {
   const resultados: unknown[] = []
   for (const t of tpls ?? []) {
     const r = await kommo('POST', `/api/v4/chats/templates/${t.kommo_template_id}/review`, {})
-    if (r.ok) await db.from('enriquecedor_cadencia_templates').update({ review_status: 'em_revisao' }).eq('id', t.id)
-    resultados.push({ nome: t.nome, status: r.status, erro: r.ok ? null : JSON.stringify(r.body).slice(0, 300) })
+    const { status, detalhe } = statusDeReviews(r.body?._embedded?.reviews ?? [])
+    if (r.ok && status) await db.from('enriquecedor_cadencia_templates').update({ review_status: status }).eq('id', t.id)
+    resultados.push({
+      nome: t.nome,
+      http: r.status,
+      review: status,
+      reviews: detalhe,
+      aviso: r.ok && !status ? 'submissão aceita mas SEM registro de revisão — checar vínculo do número WABA' : null,
+      erro: r.ok ? null : JSON.stringify(r.body).slice(0, 300),
+    })
   }
   return json(200, { ok: true, templates: resultados })
 }
@@ -236,20 +259,17 @@ async function acaoSubmeter(b: Record<string, any>) {
 async function acaoSyncReview() {
   const db = sb()
   const { data: tpls } = await db.from('enriquecedor_cadencia_templates').select('*').not('kommo_template_id', 'is', null)
-  const r = await kommo('GET', '/api/v4/chats/templates?limit=250')
-  const remotos = r.body?._embedded?.chat_templates ?? r.body?._embedded?.templates ?? []
+  const r = await kommo('GET', '/api/v4/chats/templates?limit=250&with=reviews')
+  const remotos = r.body?._embedded?.chat_templates ?? []
   const porId = new Map(remotos.map((x: any) => [String(x.id), x]))
   const resultados: unknown[] = []
   for (const t of tpls ?? []) {
     const remoto = porId.get(String(t.kommo_template_id))
-    // Formato do status varia; guarda o bruto e mapeia o que der.
-    const bruto = remoto?.waba_review_status ?? remoto?.review_status ?? remoto?.reviews?.[0]?.status ?? null
-    const map: Record<string, string> = { approved: 'aprovado', rejected: 'rejeitado', review: 'em_revisao', pending: 'em_revisao', paused: 'rejeitado' }
-    const novo = bruto ? (map[String(bruto).toLowerCase()] ?? String(bruto)) : null
-    if (novo && novo !== t.review_status) {
-      await db.from('enriquecedor_cadencia_templates').update({ review_status: novo }).eq('id', t.id)
+    const { status, detalhe } = statusDeReviews(remoto?._embedded?.reviews ?? [])
+    if (status && status !== t.review_status) {
+      await db.from('enriquecedor_cadencia_templates').update({ review_status: status }).eq('id', t.id)
     }
-    resultados.push({ nome: t.nome, kommo_id: t.kommo_template_id, status_bruto: bruto, status: novo ?? t.review_status })
+    resultados.push({ nome: t.nome, kommo_id: t.kommo_template_id, status: status ?? t.review_status, reviews: detalhe })
   }
   return json(200, { ok: true, templates: resultados })
 }
@@ -264,8 +284,8 @@ async function acaoVincularBot(b: Record<string, any>) {
 
 // ── disparar: um ciclo do carteiro ───────────────────────────────────────────
 async function runBot(botId: number, kommoLeadId: number) {
-  // Endpoint clássico de disparo de Salesbot (v2). entity_type 2 = lead.
-  const r = await kommo('POST', '/api/v2/salesbot/run', [{ bot_id: botId, entity_id: kommoLeadId, entity_type: 2 }])
+  // Endpoint atual (v4) de disparo de Salesbot num lead.
+  const r = await kommo('POST', `/api/v4/bots/${botId}/run`, { entity_id: kommoLeadId, entity_type: 'leads' })
   return r
 }
 

@@ -209,11 +209,22 @@ O SalesHub cria a infra e orquestra os disparos direto no Kommo — sem n8n. Edg
 | `webhook` | retorno dos bots (`?acao=webhook&s=<secret>` na URL): quick reply é determinístico; texto livre vai pro classificador do motor. Optout marca lead + campo + move card; interesse cria tarefa "ligar AGORA" pro responsável |
 | `status` | fila, templates e envios por passo |
 
-**Estado atual:** campos + funil criados; 6 templates criados no Kommo (ids 63335–63345) e
-**submetidos à revisão da Meta**. Falta (manual, uma vez): criar os 6 Salesbots na UI
-(1 por template: enviar template → esperar resposta → enviar webhook pra URL acima) e
-vincular com `vincular-bot`. O cron diário só é ativado sob ordem explícita — até lá,
-rodar `disparar` com `dry_run:false` é o gatilho manual de cada ciclo.
+**Estado atual:** campos + funil criados; 6 templates criados no Kommo (ids 63335–63345).
+**Limite descoberto:** a submissão pra Meta via API (`/review`) responde 200 mas NÃO cria
+a revisão — o número WABA pertence à integração nativa de WhatsApp do Kommo (nossa
+integração não tem source de chat: `GET /api/v4/sources` → 204), e só a dona do número
+consegue submeter. Ou seja, dois passos são manuais na UI do Kommo, uma vez:
+
+1. **Enviar os 6 templates pra aprovação**: Automações → Modelos (Templates) → abrir cada
+   `sdna_*` → "Enviar para aprovação" escolhendo o número WABA. Conferir depois com
+   `sync-review` (lê `?with=reviews`).
+2. **Criar os 6 Salesbots** (não existe API de criação de bot nem de envio direto de
+   template — o Salesbot é o único disparador acionável por API, via
+   `POST /api/v4/bots/{id}/run`): 1 bot por template com os passos *enviar template →
+   aguardar resposta → enviar webhook* pra URL acima. Vincular com `vincular-bot`.
+
+O cron diário só é ativado sob ordem explícita — até lá, rodar `disparar` com
+`dry_run:false` é o gatilho manual de cada ciclo.
 
 ## Integração futura (fora de escopo por enquanto)
 
