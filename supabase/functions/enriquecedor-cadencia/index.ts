@@ -545,6 +545,79 @@ async function acaoWebhook(body: Record<string, any>) {
   return json(200, { ok: true, classificacao, confianca, classificado_por: classificadoPor })
 }
 
+// ── coletar-respostas: polling de eventos de chat ────────────────────────────
+// O widget_request importado não roda sem widget, então a captura é: os bots
+// gravam a resposta no campo "CAD Resposta" (branch de botão = rótulo fixo;
+// else = {{message_text}}), e aqui a gente varre os eventos incoming_chat_message
+// desde o último cursor, lê o campo, classifica via acaoWebhook e limpa o campo.
+async function acaoColetarRespostas() {
+  const db = sb()
+  const { data: estadoRow } = await db.from('enriquecedor_cadencia_estado').select('valor').eq('chave', 'coletor').maybeSingle()
+  const agora = Math.floor(Date.now() / 1000)
+  const cursor = Number(estadoRow?.valor?.cursor ?? agora - 24 * 3600)
+  const vistos: string[] = Array.isArray(estadoRow?.valor?.vistos) ? estadoRow.valor.vistos : []
+
+  // eventos novos (com 60s de sobreposição pra não perder borda; dedupe por id de mensagem)
+  const eventos: any[] = []
+  for (let page = 1; page <= 4; page++) {
+    const r = await kommo('GET', `/api/v4/events?filter[type]=incoming_chat_message&filter[created_at][from]=${cursor - 60}&limit=100&page=${page}`)
+    if (r.status === 204 || !r.ok) break
+    const items = r.body?._embedded?.events ?? []
+    eventos.push(...items)
+    if (items.length < 100) break
+  }
+
+  const campos = await listarCamposCustom()
+  const campoResposta = campos.get('CAD Resposta')
+  const resultados: any[] = []
+  let maxTs = cursor
+  const novosVistos = [...vistos]
+
+  for (const ev of eventos) {
+    maxTs = Math.max(maxTs, Number(ev.created_at ?? 0))
+    const msgId = String(ev.value_after?.[0]?.message?.id ?? ev.id)
+    if (novosVistos.includes(msgId)) continue
+    novosVistos.push(msgId)
+
+    const kommoLeadId = String(ev.entity_id ?? '')
+    if (!kommoLeadId) continue
+    const { data: lead } = await db.from('enriquecedor_leads').select('id').eq('kommo_lead_id', kommoLeadId).maybeSingle()
+    if (!lead) continue // mensagem de lead fora da cadência
+
+    // resposta que o bot gravou no campo
+    let texto = ''
+    if (campoResposta) {
+      const rl = await kommo('GET', `/api/v4/leads/${kommoLeadId}`)
+      const cf = (rl.body?.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === campoResposta.id)
+      texto = String(cf?.values?.[0]?.value ?? '').trim()
+    }
+
+    if (texto) {
+      const resp = await acaoWebhook({ kommo_lead_id: kommoLeadId, texto })
+      const jr = await resp.json().catch(() => null)
+      resultados.push({ kommo_lead_id: kommoLeadId, texto: texto.slice(0, 80), classificacao: jr?.classificacao ?? null })
+      // limpa o campo pra próxima resposta não reaproveitar valor velho
+      await kommo('PATCH', `/api/v4/leads/${kommoLeadId}`, {
+        custom_fields_values: [{ field_id: campoResposta!.id, values: [{ value: '' }] }],
+      })
+    } else {
+      // evento sem texto capturado (bot não rodou o branch?) — registra pra auditoria
+      await db.from('enriquecedor_cadencia_respostas').insert({
+        lead_id: lead.id, canal: 'whatsapp', tipo_retorno: 'texto_livre',
+        payload_bruto: null, classificacao: null, classificado_por: 'coletor_sem_texto',
+      })
+      resultados.push({ kommo_lead_id: kommoLeadId, texto: null, aviso: 'resposta sem texto no campo CAD Resposta' })
+    }
+  }
+
+  await db.from('enriquecedor_cadencia_estado').upsert({
+    chave: 'coletor',
+    valor: { cursor: maxTs, vistos: novosVistos.slice(-200) },
+    updated_at: new Date().toISOString(),
+  })
+  return json(200, { ok: true, eventos_lidos: eventos.length, respostas_processadas: resultados.length, resultados })
+}
+
 async function acaoStatus() {
   const db = sb()
   const { count: aptos } = await db.from('enriquecedor_leads').select('id', { count: 'exact', head: true })
@@ -588,9 +661,14 @@ Deno.serve(async (req) => {
     if (acao === 'submeter') return await acaoSubmeter(body)
     if (acao === 'sync-review') return await acaoSyncReview()
     if (acao === 'vincular-bot') return await acaoVincularBot(body)
-    if (acao === 'disparar') return await acaoDisparar(body)
+    if (acao === 'disparar') {
+      // colhe respostas pendentes ANTES de decidir P2/P3 (gating "sem resposta")
+      try { await acaoColetarRespostas() } catch { /* coleta não trava o disparo */ }
+      return await acaoDisparar(body)
+    }
+    if (acao === 'coletar-respostas') return await acaoColetarRespostas()
     if (acao === 'status') return await acaoStatus()
-    return json(400, { error: "acao deve ser setup|submeter|sync-review|vincular-bot|disparar|status|webhook" })
+    return json(400, { error: "acao deve ser setup|submeter|sync-review|vincular-bot|disparar|coletar-respostas|status|webhook" })
   } catch (e) {
     return json(500, { error: String((e as Error)?.message ?? e) })
   }
