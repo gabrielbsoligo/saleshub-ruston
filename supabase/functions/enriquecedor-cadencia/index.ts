@@ -601,12 +601,21 @@ async function acaoColetarRespostas() {
         custom_fields_values: [{ field_id: campoResposta!.id, values: [{ value: '' }] }],
       })
     } else {
-      // evento sem texto capturado (bot não rodou o branch?) — registra pra auditoria
-      await db.from('enriquecedor_cadencia_respostas').insert({
-        lead_id: lead.id, canal: 'whatsapp', tipo_retorno: 'texto_livre',
-        payload_bruto: null, classificacao: null, classificado_por: 'coletor_sem_texto',
-      })
-      resultados.push({ kommo_lead_id: kommoLeadId, texto: null, aviso: 'resposta sem texto no campo CAD Resposta' })
+      // Sem texto no campo: se o último envio JÁ foi respondido, é só a conversa
+      // seguindo com o SDR (o bot encerra após a 1ª resposta) — ignora. Só vira
+      // registro de auditoria quando ainda esperávamos a resposta da cadência.
+      const { data: ultimoEnvio } = await db.from('enriquecedor_cadencia_envios')
+        .select('status').eq('lead_id', lead.id).eq('canal', 'whatsapp')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (ultimoEnvio && ultimoEnvio.status !== 'respondido') {
+        await db.from('enriquecedor_cadencia_respostas').insert({
+          lead_id: lead.id, canal: 'whatsapp', tipo_retorno: 'texto_livre',
+          payload_bruto: null, classificacao: null, classificado_por: 'coletor_sem_texto',
+        })
+        resultados.push({ kommo_lead_id: kommoLeadId, texto: null, aviso: 'resposta sem texto no campo CAD Resposta' })
+      } else {
+        resultados.push({ kommo_lead_id: kommoLeadId, ignorado: 'conversa em andamento pós-resposta' })
+      }
     }
   }
 
