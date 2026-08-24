@@ -1964,6 +1964,125 @@ function payloadBriefing(row, audit, decisores, anunciosMeta) {
   };
 }
 
+// Chamada genérica à API da Kommo (mesmo token/subdomínio da nota).
+async function kommoApi(method, path, body) {
+  const sub = process.env.KOMMO_SUBDOMAIN;
+  const tok = process.env.KOMMO_API_TOKEN;
+  if (!sub || !tok) return { ok: false, status: 0, body: null };
+  const r = await fetch(`https://${sub}.kommo.com${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${tok}`, 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const txt = await r.text();
+  let parsed = null;
+  try { parsed = txt ? JSON.parse(txt) : null; } catch { parsed = txt; }
+  return { ok: r.ok, status: r.status, body: parsed };
+}
+
+// Funil da cadência (Outbound Cadência SDNA) — ids resolvidos por nome e cacheados.
+const FUNIL_CADENCIA_NOME = 'Outbound Cadência SDNA';
+let _funilCadencia = null;
+async function funilCadencia() {
+  if (_funilCadencia) return _funilCadencia;
+  const r = await kommoApi('GET', '/api/v4/leads/pipelines');
+  const p = (r.body?._embedded?.pipelines ?? []).find((x) => String(x.name).trim() === FUNIL_CADENCIA_NOME);
+  if (!p) return null;
+  const etapas = {};
+  for (const s of p._embedded?.statuses ?? []) etapas[String(s.name).trim()] = Number(s.id);
+  _funilCadencia = { id: Number(p.id), etapas };
+  return _funilCadencia;
+}
+
+// Telefone pro contato do card: decisor (WhatsApp > pessoal) > planilha > Lemit.
+function foneParaKommo(row, decisores) {
+  const norm = (v) => {
+    const d = String(v ?? '').replace(/\D/g, '');
+    if (d.length < 10 || d.length > 13) return null;
+    return `+${d.length <= 11 ? '55' + d : d}`;
+  };
+  const dec = [...(decisores ?? [])].sort((a, b) => Number(b.is_primary) - Number(a.is_primary));
+  for (const d of dec) {
+    const f = norm(d.phone_whatsapp) ?? norm(d.phone_personal);
+    if (f) return { fone: f, dono: d.nome ?? null };
+  }
+  const daPlanilha = norm(row.phone_raw);
+  if (daPlanilha) return { fone: daPlanilha, dono: null };
+  for (const t of row.lemit_company?.telefones ?? []) {
+    const f = norm(t?.numero ?? t?.telefone ?? t);
+    if (f) return { fone: f, dono: null };
+  }
+  return { fone: null, dono: null };
+}
+
+// Importa leads enriquecidos pro Kommo: card no funil da cadência (etapa Fila),
+// contato com telefone do decisor, nota com o link, espelho em public.leads
+// (controle do SalesHub, canal outbound). Idempotente: pula quem já tem card.
+async function importarLeadsKommo({ leadIds, token }) {
+  const funil = await funilCadencia();
+  if (!funil || !funil.etapas['Fila']) return { ok: false, error: `funil "${FUNIL_CADENCIA_NOME}" não encontrado no Kommo` };
+  const sub = process.env.KOMMO_SUBDOMAIN;
+  const resultados = [];
+  let criados = 0;
+
+  for (const leadId of leadIds ?? []) {
+    try {
+      const row = (await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`))?.[0];
+      if (!row) { resultados.push({ leadId, pulado: 'não encontrado' }); continue; }
+      if (row.kommo_lead_id) { resultados.push({ leadId, empresa: row.razao_social, pulado: `já no Kommo (${row.kommo_lead_id})` }); continue; }
+
+      const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,is_primary,phone_whatsapp,phone_personal`)) ?? [];
+      const { fone, dono } = foneParaKommo(row, decisores);
+      const nomeCard = row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw;
+      const nomeContato = dono || decisores.find((d) => d.is_primary)?.nome || decisores[0]?.nome || nomeCard;
+
+      const contato = { name: String(nomeContato).slice(0, 250) };
+      if (fone) contato.custom_fields_values = [{ field_code: 'PHONE', values: [{ value: fone, enum_code: 'WORK' }] }];
+
+      const rc = await kommoApi('POST', '/api/v4/leads/complex', [{
+        name: String(nomeCard).slice(0, 250),
+        pipeline_id: funil.id,
+        status_id: funil.etapas['Fila'],
+        _embedded: { contacts: [contato] },
+      }]);
+      const kommoId = rc.body?.[0]?.id ?? rc.body?._embedded?.leads?.[0]?.id ?? null;
+      if (!rc.ok || !kommoId) {
+        resultados.push({ leadId, empresa: row.razao_social, erro: `Kommo HTTP ${rc.status}: ${JSON.stringify(rc.body).slice(0, 150)}` });
+        continue;
+      }
+
+      await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { kommo_lead_id: String(kommoId), updated_at: new Date().toISOString() });
+      await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
+
+      // Espelho no controle de leads do SalesHub (canal outbound) — 1 por CNPJ.
+      const cnpj = row.cnpj ?? onlyDigits(row.cnpj_raw);
+      const jaTem = cnpj ? await sbSelect(token, 'leads', `cnpj=eq.${cnpj}&select=id&limit=1`) : null;
+      if (!jaTem?.length) {
+        await sbUpsert(token, 'leads', [{
+          empresa: nomeCard,
+          nome_contato: nomeContato === nomeCard ? null : nomeContato,
+          telefone: fone,
+          cnpj: cnpj || null,
+          canal: 'outbound',
+          fonte: 'enriquecedor',
+          kommo_id: String(kommoId),
+          kommo_link: `https://${sub}.kommo.com/leads/detail/${kommoId}`,
+          kommo_pipeline_id: funil.id,
+          kommo_status_id: funil.etapas['Fila'],
+          data_cadastro: new Date().toISOString().slice(0, 10),
+        }]).catch((e) => console.warn('[importar] public.leads falhou:', String(e?.message || e).slice(0, 120)));
+      }
+
+      criados += 1;
+      resultados.push({ leadId, empresa: nomeCard, kommo_lead_id: String(kommoId), fone: fone ?? 'SEM TELEFONE — completar no card' });
+      await sleep(250); // folga de rate na Kommo
+    } catch (err) {
+      resultados.push({ leadId, erro: String(err?.message || err).slice(0, 200) });
+    }
+  }
+  return { ok: true, criados, total: (leadIds ?? []).length, resultados };
+}
+
 // ═══ Cadência outbound (SDNA) ════════════════════════════════════════════════
 // Detecção de falhas verificáveis + montagem do pacote de mensagens WABA.
 // ÚNICA fonte de verdade da detecção: roda no /api/cadencia/preparar (sob demanda)
@@ -2640,6 +2759,17 @@ const server = http.createServer(async (req, res) => {
       const r = await generateBriefing(body);
       if (r?.ok === false) void logErroMotor(req, '/api/briefing', 'briefing falhou após todas as tentativas', { empresa: body?.empresa });
       return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/cadencia/importar-kommo' && req.method === 'POST') {
+      const body = await readJson(req);
+      const leadIds = Array.isArray(body?.leadIds) ? body.leadIds : [];
+      if (!leadIds.length) return send(res, 400, { error: 'leadIds obrigatório (array de ids do enriquecedor)' });
+      if (leadIds.length > 200) return send(res, 400, { error: 'máximo de 200 leads por importação' });
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const r = await importarLeadsKommo({ leadIds, token });
+      if (r?.ok === false) void logErroMotor(req, '/api/cadencia/importar-kommo', r.error, { qtd: leadIds.length });
+      return send(res, r?.ok === false ? 422 : 200, r);
     }
 
     if (url.pathname === '/api/cadencia/preparar' && req.method === 'POST') {

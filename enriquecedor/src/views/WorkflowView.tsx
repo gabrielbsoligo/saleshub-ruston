@@ -17,6 +17,7 @@ import {
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
 import { buildLeadsFromRows } from '../lib/importPipeline';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
+import { motorFetch } from '../lib/motorClient';
 import { leadsRepo } from '../lib/leadsRepo';
 import { registrarErro } from '../lib/errorLog';
 import { formatCnpj } from '../lib/validation';
@@ -204,6 +205,7 @@ export function WorkflowView({
   const [autoFase, setAutoFase] = useState<number | null>(null); // fase em modo automático (1 por vez)
   const [openLead, setOpenLead] = useState<string | null>(null); // menu suspenso do lead (dados auditados)
   const [voltarMenu, setVoltarMenu] = useState<string | null>(null); // lead com o seletor "voltar p/ fase" aberto
+  const [importandoKommo, setImportandoKommo] = useState(false);
   // status da execução por fase — chave `${fase}:${id}`; persiste no projeto.
   const [execStatus, setExecStatus] = useState<Record<string, AuditStatus>>({});
 
@@ -401,11 +403,56 @@ export function WorkflowView({
           {PERFIS[projeto.perfil]?.label ?? projeto.perfil}
         </span>
       </h1>
-      <p className="mb-6 max-w-3xl text-sm text-v4-text-muted">
+      <p className="mb-3 max-w-3xl text-sm text-v4-text-muted">
         Funil de aprovação — <b className="text-v4-text">{leads.length}</b> leads importados. Clique num{' '}
         <b>F</b> para abrir a lista da fase e no <b>play</b> lateral para auditar em tempo real. A cada{' '}
         <b>aprovação</b>, os leads avançam pro próximo F — chegando menos leads, porém mais certos, nas fases caras.
       </p>
+
+      {/* Exportação pro Kommo: cria os cards no funil Outbound Cadência SDNA (etapa
+          Fila) + registra no controle de leads do SalesHub (canal outbound). O
+          disparo do passo 1 é manual: mover o card de Fila pra "Passo 1 enviado". */}
+      <div className="mb-6 flex items-center gap-3">
+        <button
+          onClick={async () => {
+            const alvo = leads.filter((l) => !l.descartado);
+            if (!alvo.length) { toast.error('Nenhum lead não-descartado pra importar.'); return; }
+            if (!window.confirm(`Importar ${alvo.length} lead(s) pro Kommo (funil Outbound Cadência SDNA, etapa Fila)? Quem já tem card é pulado.`)) return;
+            setImportandoKommo(true);
+            try {
+              const res = await motorFetch('/api/cadencia/importar-kommo', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ leadIds: alvo.map((l) => l.id) }),
+              });
+              const j = await res.json();
+              if (!res.ok || j.ok === false) throw new Error(j.error ?? `HTTP ${res.status}`);
+              const semFone = (j.resultados ?? []).filter((r: any) => String(r.fone ?? '').startsWith('SEM TELEFONE')).length;
+              const pulados = (j.resultados ?? []).filter((r: any) => r.pulado).length;
+              const erros = (j.resultados ?? []).filter((r: any) => r.erro).length;
+              toast.success(
+                `Kommo: ${j.criados} card(s) criado(s) na Fila` +
+                (pulados ? ` · ${pulados} já existiam` : '') +
+                (semFone ? ` · ${semFone} sem telefone (completar no card)` : '') +
+                (erros ? ` · ${erros} com erro` : ''),
+                { duration: 9000 },
+              );
+            } catch (e) {
+              toast.error(`Importação falhou: ${e instanceof Error ? e.message : e}`);
+            } finally {
+              setImportandoKommo(false);
+            }
+          }}
+          disabled={importandoKommo}
+          className="flex items-center gap-2 rounded-lg bg-v4-red px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+        >
+          {importandoKommo ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />}
+          {importandoKommo ? 'Importando pro Kommo…' : 'Importar tudo pro Kommo (Outbound)'}
+        </button>
+        <span className="text-xs text-v4-text-muted">
+          Cria os cards na <b>Fila</b> do funil da cadência — mover pra “Passo 1 enviado” dispara a mensagem.
+        </span>
+      </div>
 
       <div className="space-y-2">
         {ETAPAS.map((e, i) => {

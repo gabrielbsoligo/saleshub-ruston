@@ -301,33 +301,131 @@ async function nomeResponsavel(kommoLeadId: string, cacheUsers: Map<number, stri
   return { sdrNome: nome, uid }
 }
 
-async function acaoDisparar(b: Record<string, any>) {
-  const dryRun = b.dry_run !== false
-  const limite = Math.min(Number(b.limite ?? 30), 60)
+// Contexto compartilhado de disparo (carregado uma vez por requisição).
+async function contextoDisparo() {
   const db = sb()
-  const avisos: string[] = []
-
   const { data: tpls } = await db.from('enriquecedor_cadencia_templates').select('*').eq('canal', 'whatsapp')
   const tplPorNome = new Map((tpls ?? []).map((t) => [String(t.nome), t]))
-  const prontos = (tpls ?? []).filter((t) => t.review_status === 'aprovado' && t.kommo_bot_id)
-  if (!dryRun && prontos.length === 0) {
-    return json(422, { error: 'nenhum template com review_status=aprovado e bot vinculado — rode setup/submeter e vincular-bot antes' })
-  }
-
   const campos = await listarCamposCustom()
   const funil = await acharFunil()
-  if (!dryRun && !funil) return json(422, { error: `funil "${FUNIL_NOME}" não existe — rode setup` })
-
   const token = await tokenIntegracao()
-  if (!token) return json(500, { error: 'auth do usuário de integração falhou' })
-
   const cacheUsers = new Map<number, string>()
-  const plano: any[] = []
+  return { db, tplPorNome, campos, funil, token, cacheUsers }
+}
 
-  // Candidatos por passo. P1: aptos sem envio p1. P2/P3: envio anterior velho e sem resposta.
+// Dispara UM passo pra UM lead: prepara no motor, registra o envio ANTES de
+// mexer no Kommo (dedupe do webhook e de retries), grava os campos CAD, move
+// o card (se `mover`) e roda o Salesbot do template.
+async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mover: boolean; dryRun: boolean; envioId?: string }) {
+  const { db, tplPorNome, campos, funil, token, cacheUsers } = ctx
+  const finaliza = async (patch: Record<string, unknown>) => {
+    if (opts.envioId) await db.from('enriquecedor_cadencia_envios').update(patch).eq('id', opts.envioId)
+  }
+
+  const { sdrNome } = await nomeResponsavel(String(lead.kommo_lead_id), cacheUsers)
+  const rp = await fetch(`${MOTOR_URL}/api/cadencia/preparar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ leadId: lead.id, sdrNome, persistir: true }),
+  })
+  const pac = await rp.json().catch(() => null)
+  if (!rp.ok || !pac?.aptoCadencia) {
+    const motivo = pac?.motivo ?? pac?.error ?? `motor HTTP ${rp.status}`
+    await finaliza({ status: 'falhou', erro: String(motivo).slice(0, 300) })
+    return { lead: lead.razao_social ?? lead.nome_fantasia, passo, pulado: motivo }
+  }
+  const msg = pac.whatsapp?.[`p${passo}`]
+  const tpl = msg ? tplPorNome.get(String(msg.template)) : null
+  if (!msg || !tpl) {
+    await finaliza({ status: 'falhou', erro: 'template do passo indisponível' })
+    return { lead: lead.razao_social, passo, pulado: 'template do passo indisponível' }
+  }
+
+  const valores: Record<string, string> = {}
+  const ordem = VARS_POR_TEMPLATE[String(msg.template)] ?? []
+  ordem.forEach((nomeCampo: string, i: number) => { valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
+  valores['CAD Template'] = String(msg.template)
+  valores['CAD Passo'] = String(passo)
+  valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '')
+  valores['Enriquecedor URL'] = `${APP_URL}/enriquecedor/#lead=${lead.id}`
+
+  const linha: any = {
+    lead: lead.razao_social ?? lead.nome_fantasia,
+    kommo_lead_id: lead.kommo_lead_id,
+    passo,
+    template: msg.template,
+    variaveis: msg.variaveis,
+    bot_id: tpl.kommo_bot_id ?? null,
+    review: tpl.review_status,
+  }
+  if (opts.dryRun) return linha
+
+  if (tpl.review_status !== 'aprovado' || !tpl.kommo_bot_id) {
+    await finaliza({ status: 'falhou', erro: 'template sem aprovação/bot' })
+    return { ...linha, pulado: 'template sem aprovação da Meta ou sem bot vinculado' }
+  }
+
+  // Registro do envio ANTES do Kommo (se ainda não existe placeholder).
+  let envioId = opts.envioId
+  if (!envioId) {
+    const { data: env } = await db.from('enriquecedor_cadencia_envios').insert({
+      lead_id: lead.id,
+      kommo_lead_id: String(lead.kommo_lead_id),
+      canal: 'whatsapp',
+      passo,
+      status: 'processando',
+    }).select('id').single()
+    envioId = env?.id
+  }
+
+  const cfv = Object.entries(valores)
+    .map(([nomeCampo, valor]) => {
+      const f = campos.get(nomeCampo)
+      if (!f) return null
+      return { field_id: f.id, values: [{ value: f.type === 'numeric' ? Number(valor) : valor }] }
+    })
+    .filter(Boolean)
+  const patch: Record<string, unknown> = { custom_fields_values: cfv }
+  if (opts.mover) {
+    const statusId = funil?.etapas.get(`Passo ${passo} enviado`)
+    if (statusId) { patch.status_id = statusId; patch.pipeline_id = funil.id }
+  }
+  const rl = await kommo('PATCH', `/api/v4/leads/${lead.kommo_lead_id}`, patch)
+  if (!rl.ok) {
+    await db.from('enriquecedor_cadencia_envios').update({ status: 'falhou', erro: `PATCH lead HTTP ${rl.status}` }).eq('id', envioId)
+    return { ...linha, erro: `PATCH lead HTTP ${rl.status}` }
+  }
+
+  const rb = await runBot(Number(tpl.kommo_bot_id), Number(lead.kommo_lead_id))
+  const okBot = rb.ok || rb.status === 202
+  await db.from('enriquecedor_cadencia_envios').update({
+    template_id: tpl.id,
+    falha_codigo: pac.falhaPrimaria?.codigo ?? null,
+    sdr_nome: sdrNome,
+    variaveis_enviadas: msg.variaveis,
+    kommo_campos: valores,
+    status: okBot ? 'enviado' : 'falhou',
+    enviado_em: okBot ? new Date().toISOString() : null,
+    erro: okBot ? null : `bot run HTTP ${rb.status}: ${JSON.stringify(rb.body).slice(0, 200)}`,
+  }).eq('id', envioId)
+  return { ...linha, envio_id: envioId ?? null, bot_ok: okBot }
+}
+
+// disparar = SÓ follow-ups automáticos (P2 48h / P3 96h sem resposta).
+// O P1 é decisão humana: mover o card de "Fila" pra "Passo 1 enviado" no Kommo
+// (o kommo-webhook capta a mudança e dispara). Sem cap — o volume é do operador.
+async function acaoDisparar(b: Record<string, any>) {
+  const dryRun = b.dry_run !== false
+  const limite = Math.min(Number(b.limite ?? 200), 500)
+  const ctx = await contextoDisparo()
+  if (!ctx.token) return json(500, { error: 'auth do usuário de integração falhou' })
+  if (!dryRun && !ctx.funil) return json(422, { error: `funil "${FUNIL_NOME}" não existe — rode setup` })
+
+  const { db } = ctx
   const { data: aptos } = await db.from('enriquecedor_leads')
-    .select('id, kommo_lead_id, nome_fantasia, razao_social, falha_primaria, falha_secundaria, optout, apto_cadencia')
-    .eq('apto_cadencia', true).eq('optout', false).not('kommo_lead_id', 'is', null).limit(500)
+    .select('id, kommo_lead_id, nome_fantasia, razao_social, optout')
+    .eq('optout', false).not('kommo_lead_id', 'is', null).limit(1000)
+  const porId = new Map((aptos ?? []).map((l) => [l.id, l]))
   const { data: envios } = await db.from('enriquecedor_cadencia_envios')
     .select('id, lead_id, passo, enviado_em, status, respondido_em').eq('canal', 'whatsapp')
   const enviosPorLead = new Map<string, any[]>()
@@ -337,111 +435,83 @@ async function acaoDisparar(b: Record<string, any>) {
     enviosPorLead.set(e.lead_id, arr)
   }
   const horas = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3_600_000
-  const respondeu = (arr: any[]) => arr.some((e) => e.respondido_em || e.status === 'respondido')
-
-  for (const l of aptos ?? []) {
+  const plano: any[] = []
+  for (const [leadId, arr] of enviosPorLead) {
     if (plano.length >= limite) break
-    const arr = enviosPorLead.get(l.id) ?? []
-    if (respondeu(arr)) continue
-    const p1 = arr.find((e) => e.passo === 1)
+    const lead = porId.get(leadId)
+    if (!lead) continue
+    if (arr.some((e) => e.respondido_em || e.status === 'respondido')) continue
+    const p1 = arr.find((e) => e.passo === 1 && e.status === 'enviado')
     const p2 = arr.find((e) => e.passo === 2)
     const p3 = arr.find((e) => e.passo === 3)
     let passo: number | null = null
-    if (!p1) passo = 1
-    else if (!p2 && p1.enviado_em && horas(p1.enviado_em) >= 48) passo = 2
-    else if (p2 && !p3 && p2.enviado_em && horas(p2.enviado_em) >= 96) passo = 3
+    if (p1 && !p2 && p1.enviado_em && horas(p1.enviado_em) >= 48) passo = 2
+    else if (p2 && !p3 && p2.status === 'enviado' && p2.enviado_em && horas(p2.enviado_em) >= 96) passo = 3
     if (!passo) continue
-    plano.push({ lead: l, passo })
+    plano.push({ lead, passo })
   }
 
   const resultados: any[] = []
   for (const item of plano) {
-    const { lead, passo } = item
-    // Pacote do motor: variáveis interpoladas + template escolhido pro passo.
-    const { sdrNome } = await nomeResponsavel(String(lead.kommo_lead_id), cacheUsers)
-    const rp = await fetch(`${MOTOR_URL}/api/cadencia/preparar`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ leadId: lead.id, sdrNome, persistir: true }),
-    })
-    const pac = await rp.json().catch(() => null)
-    if (!rp.ok || !pac?.aptoCadencia) {
-      resultados.push({ lead: lead.razao_social, passo, pulado: pac?.motivo ?? pac?.error ?? `motor HTTP ${rp.status}` })
-      continue
-    }
-    const msg = pac.whatsapp?.[`p${passo}`]
-    const tpl = msg ? tplPorNome.get(String(msg.template)) : null
-    if (!msg || !tpl) { resultados.push({ lead: lead.razao_social, passo, pulado: 'template do passo indisponível' }); continue }
-
-    const valores: Record<string, string> = {}
-    const ordem = VARS_POR_TEMPLATE[String(msg.template)] ?? []
-    ordem.forEach((nomeCampo: string, i: number) => { valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
-    valores['CAD Template'] = String(msg.template)
-    valores['CAD Passo'] = String(passo)
-    valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '')
-    valores['Enriquecedor URL'] = `${APP_URL}/enriquecedor/#lead=${lead.id}`
-
-    const linha: any = {
-      lead: lead.razao_social ?? lead.nome_fantasia,
-      kommo_lead_id: lead.kommo_lead_id,
-      passo,
-      template: msg.template,
-      variaveis: msg.variaveis,
-      bot_id: tpl.kommo_bot_id ?? null,
-      review: tpl.review_status,
-    }
-    if (dryRun) { resultados.push(linha); continue }
-
-    if (tpl.review_status !== 'aprovado' || !tpl.kommo_bot_id) {
-      resultados.push({ ...linha, pulado: 'template sem aprovação da Meta ou sem bot vinculado' })
-      continue
-    }
-
-    // 1) Campos custom + move pro estágio do passo no funil da cadência.
-    const cfv = Object.entries(valores)
-      .map(([nomeCampo, valor]) => {
-        const f = campos.get(nomeCampo)
-        if (!f) return null
-        return { field_id: f.id, values: [{ value: f.type === 'numeric' ? Number(valor) : valor }] }
-      })
-      .filter(Boolean)
-    const etapaNome = `Passo ${passo} enviado`
-    const statusId = funil!.etapas.get(etapaNome)
-    const patch: Record<string, unknown> = { custom_fields_values: cfv }
-    if (statusId) { patch.status_id = statusId; patch.pipeline_id = funil!.id }
-    const rl = await kommo('PATCH', `/api/v4/leads/${lead.kommo_lead_id}`, patch)
-    if (!rl.ok) { resultados.push({ ...linha, erro: `PATCH lead HTTP ${rl.status}` }); continue }
-
-    // 2) Dispara o Salesbot do template (que envia o WABA e espera resposta).
-    const rb = await runBot(Number(tpl.kommo_bot_id), Number(lead.kommo_lead_id))
-    const okBot = rb.ok || rb.status === 202
-
-    // 3) Registra o envio.
-    const { data: env } = await db.from('enriquecedor_cadencia_envios').insert({
-      lead_id: lead.id,
-      kommo_lead_id: String(lead.kommo_lead_id),
-      template_id: tpl.id,
-      canal: 'whatsapp',
-      passo,
-      falha_codigo: pac.falhaPrimaria?.codigo ?? null,
-      sdr_nome: sdrNome,
-      variaveis_enviadas: msg.variaveis,
-      kommo_campos: valores,
-      status: okBot ? 'enviado' : 'falhou',
-      enviado_em: okBot ? new Date().toISOString() : null,
-      erro: okBot ? null : `bot run HTTP ${rb.status}: ${JSON.stringify(rb.body).slice(0, 200)}`,
-    }).select('id').single()
-    resultados.push({ ...linha, envio_id: env?.id ?? null, bot_ok: okBot })
+    resultados.push(await dispararLeadPasso(ctx, item.lead, item.passo, { mover: true, dryRun }))
   }
-
   return json(200, {
     ok: true,
     dry_run: dryRun,
     total_plano: plano.length,
-    por_passo: [1, 2, 3].map((p) => ({ passo: p, leads: plano.filter((x) => x.passo === p).length })),
+    por_passo: [2, 3].map((p) => ({ passo: p, leads: plano.filter((x) => x.passo === p).length })),
     resultados,
-    avisos,
   })
+}
+
+// Webhook de mudança de etapa do Kommo (form-encoded): mover um card do funil
+// da cadência pra "Passo N enviado" dispara o passo N — o gatilho HUMANO do P1.
+async function acaoKommoWebhook(body: Record<string, any>) {
+  const eventos: { id: string; status_id: number; pipeline_id: number }[] = []
+  for (let i = 0; i < 60; i++) {
+    const id = body[`leads[status][${i}][id]`]
+    if (!id) break
+    eventos.push({
+      id: String(id),
+      status_id: Number(body[`leads[status][${i}][status_id]`] ?? 0),
+      pipeline_id: Number(body[`leads[status][${i}][pipeline_id]`] ?? 0),
+    })
+  }
+  if (!eventos.length) return json(200, { ok: true, ignorado: 'sem eventos de status' })
+
+  const funil = await acharFunil()
+  if (!funil) return json(200, { ok: true, ignorado: 'funil da cadência não existe' })
+  const passoDaEtapa = new Map<number, number>()
+  for (const p of [1, 2, 3]) {
+    const sid = funil.etapas.get(`Passo ${p} enviado`)
+    if (sid) passoDaEtapa.set(sid, p)
+  }
+  const relevantes = eventos.filter((e) => e.pipeline_id === funil.id && passoDaEtapa.has(e.status_id))
+  if (!relevantes.length) return json(200, { ok: true, ignorado: 'fora do funil/etapas da cadência' })
+
+  const ctx = await contextoDisparo()
+  if (!ctx.token) return json(200, { ok: false, erro: 'auth integração falhou' })
+  const { db } = ctx
+  const resultados: any[] = []
+  for (const ev of relevantes) {
+    const passo = passoDaEtapa.get(ev.status_id)!
+    const { data: lead } = await db.from('enriquecedor_leads')
+      .select('id, kommo_lead_id, nome_fantasia, razao_social, optout')
+      .eq('kommo_lead_id', ev.id).maybeSingle()
+    if (!lead) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'card não é do enriquecedor' }); continue }
+    if (lead.optout) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'optout' }); continue }
+    // Dedupe: se o passo já tem envio (inclusive 'processando' de outro worker), não repete.
+    const { data: ja } = await db.from('enriquecedor_cadencia_envios')
+      .select('id, status').eq('lead_id', lead.id).eq('canal', 'whatsapp').eq('passo', passo)
+      .in('status', ['processando', 'enviado', 'respondido']).limit(1)
+    if (ja?.length) { resultados.push({ kommo_lead_id: ev.id, passo, ignorado: `passo ${passo} já disparado` }); continue }
+    // Placeholder de envio JÁ AQUI — trava retries do webhook durante o processamento.
+    const { data: env } = await db.from('enriquecedor_cadencia_envios').insert({
+      lead_id: lead.id, kommo_lead_id: String(lead.kommo_lead_id), canal: 'whatsapp', passo, status: 'processando',
+    }).select('id').single()
+    resultados.push(await dispararLeadPasso(ctx, lead, passo, { mover: false, dryRun: false, envioId: env?.id }))
+  }
+  return json(200, { ok: true, disparos: resultados })
 }
 
 // ── webhook: retorno dos Salesbots ───────────────────────────────────────────
@@ -651,17 +721,28 @@ Deno.serve(async (req) => {
   const url = new URL(req.url)
   const secret = Deno.env.get('ENRIQ_KOMMO_SECRET')
   const viaHeader = req.headers.get('x-enriq-secret') === secret
-  const viaQuery = url.searchParams.get('s') === secret
+  // O Kommo às vezes armazena o destino com '&' virando '&amp;' — aceita os dois.
+  const viaQuery = url.searchParams.get('s') === secret || url.searchParams.get('amp;s') === secret
 
-  let body: Record<string, any>
-  try { body = await req.json() } catch { body = {} }
+  // Kommo manda webhooks form-encoded; nossas ações usam JSON. Aceita os dois.
+  const raw = await req.text()
+  let body: Record<string, any> = {}
+  try {
+    body = raw ? JSON.parse(raw) : {}
+  } catch {
+    body = Object.fromEntries(new URLSearchParams(raw).entries())
+  }
   const acao = String(body.acao ?? url.searchParams.get('acao') ?? '')
 
-  // Webhook dos Salesbots: o passo "enviar webhook" não manda header custom —
-  // autentica pelo ?s=. Todas as outras ações exigem o header.
+  // Webhooks (Salesbot e Kommo) não mandam header custom — autenticam pelo ?s=.
+  // Todas as outras ações exigem o header.
   if (acao === 'webhook') {
     if (!viaQuery && !viaHeader) return json(401, { error: 'segredo inválido' })
     return await acaoWebhook(body)
+  }
+  if (acao === 'kommo-webhook') {
+    if (!viaQuery && !viaHeader) return json(401, { error: 'segredo inválido' })
+    return await acaoKommoWebhook(body)
   }
   if (!viaHeader) return json(401, { error: 'segredo inválido' })
 
