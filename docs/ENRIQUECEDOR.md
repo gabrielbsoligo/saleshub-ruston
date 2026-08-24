@@ -209,22 +209,42 @@ O SalesHub cria a infra e orquestra os disparos direto no Kommo — sem n8n. Edg
 | `webhook` | retorno dos bots (`?acao=webhook&s=<secret>` na URL): quick reply é determinístico; texto livre vai pro classificador do motor. Optout marca lead + campo + move card; interesse cria tarefa "ligar AGORA" pro responsável |
 | `status` | fila, templates e envios por passo |
 
-**Estado atual:** campos + funil criados; 6 templates criados no Kommo (ids 63335–63345).
-**Limite descoberto:** a submissão pra Meta via API (`/review`) responde 200 mas NÃO cria
-a revisão — o número WABA pertence à integração nativa de WhatsApp do Kommo (nossa
-integração não tem source de chat: `GET /api/v4/sources` → 204), e só a dona do número
-consegue submeter. Ou seja, dois passos são manuais na UI do Kommo, uma vez:
+**Estado (operacional desde 24/08/2026):** os 6 templates estão APROVADOS pela Meta e cada
+um tem seu Salesbot importado e vinculado:
 
-1. **Enviar os 6 templates pra aprovação**: Automações → Modelos (Templates) → abrir cada
-   `sdna_*` → "Enviar para aprovação" escolhendo o número WABA. Conferir depois com
-   `sync-review` (lê `?with=reviews`).
-2. **Criar os 6 Salesbots** (não existe API de criação de bot nem de envio direto de
-   template — o Salesbot é o único disparador acionável por API, via
-   `POST /api/v4/bots/{id}/run`): 1 bot por template com os passos *enviar template →
-   aguardar resposta → enviar webhook* pra URL acima. Vincular com `vincular-bot`.
+| Template (id Kommo) | Bot |
+|---|---|
+| sdna_p1_auditoria_v1 (63351) | 81791 |
+| sdna_p1_auditoria_v2 (63353) | 81793 |
+| sdna_p2_segunda_falha_v1 (63359) | 81795 |
+| sdna_p2_aprofunda_v1 (63357) | 81797 |
+| sdna_p3_breakup_v1 (63347) | 81789 |
+| sdna_p3_breakup_v2 (63361) | 81799 |
 
-O cron diário só é ativado sob ordem explícita — até lá, rodar `disparar` com
-`dry_run:false` é o gatilho manual de cada ciclo.
+Aprendizados que moldaram o desenho (não repetir os becos sem saída):
+
+- **Submissão de template pra Meta é na UI do Kommo** — a API (`/review`) responde 200 mas
+  não cria revisão: o número WABA pertence à integração nativa do Kommo (nossa integração
+  não tem source de chat). Templates novos: criar via `setup` e clicar "Enviar para
+  aprovação" na UI; conferir com `sync-review`.
+- **Bot importado precisa de `model.positions`/`name`/`type`** além do `text` (formato do
+  export do editor visual). O passo de template é `send_message` com `template_id` +
+  `chat_sources` + `create_chat_if_not_exists`.
+- **`widget_request` NÃO executa sem widget** (importa mas é peça morta). A captura de
+  resposta é NATIVA: os branches dos botões e o "outra resposta" gravam o texto no campo
+  de lead **"CAD Resposta"** (`set_custom_fields`, com `{{message_text}}` no texto livre);
+  a ação **`coletar-respostas`** da function varre os eventos `incoming_chat_message`,
+  lê o campo, classifica (via `webhook` internamente), aplica efeitos e limpa o campo.
+  O `disparar` sempre roda a coleta antes (gating dos passos 2/3).
+- O bot encerra após a 1ª resposta — mensagens seguintes são a conversa do SDR e o
+  coletor as ignora de propósito.
+- Os campos `CAD *` estão **ocultos em todas as etapas de todos os funis** (só
+  "Enriquecedor URL" fica visível pro SDR). Gerador dos bots: scratchpad da sessão
+  (`gerar-bots-finais.mjs`); os arquivos contêm o secret do webhook — não commitar.
+
+**Operação de um ciclo:** `disparar` com `dry_run:true` → conferir o plano → repetir com
+`dry_run:false` (cap 30/dia). P1 pega aptos novos; P2 sai 48h após P1 sem resposta; P3
+96h após P2. O cron diário só é ativado sob ordem explícita — até lá o gatilho é manual.
 
 ## Integração futura (fora de escopo por enquanto)
 
