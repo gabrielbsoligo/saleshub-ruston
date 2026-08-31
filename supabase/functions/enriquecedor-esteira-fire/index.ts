@@ -142,6 +142,24 @@ Deno.serve(async (req) => {
     return json(200, { ok: true, campos: out, debug })
   }
 
+  // Atribui responsável em massa (bulk PATCH da v4, 40 cards por chamada).
+  // {secret, acao:'atribuir', pares:[{kommoLeadId, userId}]}
+  if (body.acao === 'atribuir') {
+    const pares = Array.isArray(body.pares) ? body.pares : []
+    if (!pares.length) return json(400, { error: 'pares obrigatório' })
+    const resultados: Array<{ lote: number; ok: boolean; status: number }> = []
+    for (let i = 0; i < pares.length; i += 40) {
+      const lote = pares.slice(i, i + 40).map((p: any) => ({
+        id: Number(p.kommoLeadId),
+        responsible_user_id: Number(p.userId),
+      }))
+      const r = await kommoApi('PATCH', '/api/v4/leads', lote)
+      resultados.push({ lote: i / 40 + 1, ok: r.ok, status: r.status })
+      await new Promise((res) => setTimeout(res, 400))
+    }
+    return json(200, { ok: resultados.every((r) => r.ok), resultados })
+  }
+
   if (body.acao === 'card-prep') {
     const kommoLeadId = Number(body.kommoLeadId)
     if (!kommoLeadId) return json(400, { error: 'kommoLeadId obrigatório' })
