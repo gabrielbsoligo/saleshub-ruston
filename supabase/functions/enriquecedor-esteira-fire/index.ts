@@ -14,6 +14,11 @@
 //   {secret, acao:'importar', leadIds[]} → POST /api/cadencia/importar-kommo (cria card no
 //                                          funil Outbound Cadência SDNA, etapa Fila — nada
 //                                          é enviado: o Passo 1 é manual, arrastando o card)
+//   {secret, acao:'campos'}              → lista os custom fields de lead do Kommo (nome→id)
+//   {secret, acao:'card-prep', kommoLeadId, nome?, tags?[], campos?[{field_id,value,enum_id?}],
+//            nota?}                       → completa UM card: renomeia, aplica tags, preenche
+//                                          custom fields e posta nota (paths fixos da API v4;
+//                                          o KOMMO_API_TOKEN só existe no env das functions)
 // Deploy: verify_jwt OFF.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -54,6 +59,118 @@ Deno.serve(async (req) => {
         tem_anuncios: l.anuncios != null,
       })),
     })
+  }
+
+  const KOMMO_SUB = Deno.env.get('KOMMO_SUBDOMAIN') || 'financeirorustonengenhariacombr'
+  const kommoApi = async (method: string, path: string, payload?: unknown) => {
+    const r = await fetch(`https://${KOMMO_SUB}.kommo.com${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}`, 'content-type': 'application/json' },
+      body: payload != null ? JSON.stringify(payload) : undefined,
+    })
+    const txt = await r.text()
+    let parsed: unknown = null
+    try { parsed = txt ? JSON.parse(txt) : null } catch { parsed = txt }
+    return { ok: r.ok, status: r.status, body: parsed as any }
+  }
+
+  // Renova o OAuth do Kommo server-side (mesmo fluxo do src/lib/kommoChat.ts, que só
+  // roda no navegador) e grava os tokens novos no integracao_config. Os tokens nunca
+  // saem daqui — a resposta só traz statuses. Uso: incidente de token expirado/rotacionado.
+  if (body.acao === 'kommo-refresh') {
+    const { data: rt } = await sb.from('integracao_config').select('value').eq('key', 'kommo_refresh_token').maybeSingle()
+    if (!rt?.value) return json(500, { error: 'kommo_refresh_token ausente no integracao_config' })
+    const r = await fetch(`https://${KOMMO_SUB}.kommo.com/oauth2/access_token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_id: Deno.env.get('KOMMO_CLIENT_ID'),
+        client_secret: Deno.env.get('KOMMO_CLIENT_SECRET'),
+        grant_type: 'refresh_token',
+        refresh_token: rt.value,
+        redirect_uri: 'https://gestao-comercial-rosy.vercel.app',
+      }),
+    })
+    const tokens = await r.json().catch(() => null)
+    if (!r.ok || !tokens?.access_token) {
+      return json(502, { ok: false, kommo_status: r.status, detalhe: tokens ? { hint: tokens.hint, title: tokens.title, status: tokens.status } : null })
+    }
+    const { error: upErr } = await sb.from('integracao_config').upsert([
+      { key: 'kommo_access_token', value: tokens.access_token },
+      { key: 'kommo_refresh_token', value: tokens.refresh_token },
+    ], { onConflict: 'key' })
+    const chk = await fetch(`https://${KOMMO_SUB}.kommo.com/api/v4/account`, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    })
+    return json(200, { ok: true, gravado: !upErr, erro_gravacao: upErr?.message ?? null, account_check: chk.status, expires_in: tokens.expires_in })
+  }
+
+  // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
+  // das edges não for reposto, as operações de card saem por lá. Auth = login do
+  // usuário de integração, igual à esteira.
+  if (body.acao === 'motor-campos' || body.acao === 'motor-card-prep' || body.acao === 'motor-token-heal') {
+    const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
+      email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
+      password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
+    })
+    if (authErr || !sess?.session) return json(500, { error: `auth integração falhou: ${authErr?.message}` })
+    const rota = body.acao === 'motor-campos' ? '/api/kommo/campos'
+      : body.acao === 'motor-card-prep' ? '/api/kommo/card-prep'
+      : '/api/kommo/token-heal'
+    const payload = body.acao === 'motor-card-prep'
+      ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
+      : {}
+    const r = await fetch(`${MOTOR_URL}${rota}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const rb = await r.json().catch(() => null)
+    return json(r.ok ? 200 : 502, { ok: r.ok, motor_status: r.status, resultado: rb })
+  }
+
+  if (body.acao === 'campos') {
+    const out: Array<{ id: number; name: string; type: string; enums?: unknown }> = []
+    let debug: unknown = null
+    for (let page = 1; page <= 4; page++) {
+      const r = await kommoApi('GET', `/api/v4/leads/custom_fields?limit=250&page=${page}`)
+      const items = r.body?._embedded?.custom_fields ?? []
+      if (!items.length && !out.length) debug = { status: r.status, corpo: JSON.stringify(r.body).slice(0, 300) }
+      for (const f of items) out.push({ id: f.id, name: f.name, type: f.type, enums: f.enums ?? undefined })
+      if (items.length < 250) break
+    }
+    return json(200, { ok: true, campos: out, debug })
+  }
+
+  if (body.acao === 'card-prep') {
+    const kommoLeadId = Number(body.kommoLeadId)
+    if (!kommoLeadId) return json(400, { error: 'kommoLeadId obrigatório' })
+    const resultado: Record<string, unknown> = {}
+
+    const patch: Record<string, unknown> = {}
+    if (body.nome) patch.name = String(body.nome).slice(0, 250)
+    if (Array.isArray(body.tags) && body.tags.length) {
+      patch._embedded = { tags: body.tags.map((t: unknown) => ({ name: String(t).slice(0, 60) })) }
+    }
+    if (Array.isArray(body.campos) && body.campos.length) {
+      patch.custom_fields_values = body.campos.map((c: any) => ({
+        field_id: Number(c.field_id),
+        values: [c.enum_id != null ? { enum_id: Number(c.enum_id) } : { value: c.value }],
+      }))
+    }
+    if (Object.keys(patch).length) {
+      const r = await kommoApi('PATCH', `/api/v4/leads/${kommoLeadId}`, patch)
+      resultado.patch = { ok: r.ok, status: r.status, detalhe: r.ok ? undefined : r.body }
+    }
+
+    if (body.nota) {
+      const r = await kommoApi('POST', `/api/v4/leads/${kommoLeadId}/notes`, [
+        { note_type: 'common', params: { text: String(body.nota).slice(0, 15000) } },
+      ])
+      resultado.nota = { ok: r.ok, status: r.status, detalhe: r.ok ? undefined : r.body }
+    }
+
+    return json(200, { ok: true, resultado })
   }
 
   if (body.acao === 'importar') {

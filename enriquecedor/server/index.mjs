@@ -2808,6 +2808,63 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
 
+    // ── Ops Kommo pelo token do MOTOR (31/08: a integração OAuth do SalesHub foi
+    // desativada/reativada no painel e TODOS os tokens dela morreram — config, env
+    // das edges e refresh. O token daqui é de outra integração e sobreviveu; estas
+    // rotas deixam o sistema operar e se curar por ele. Auth: JWT padrão do motor.)
+
+    // Lista os custom fields de lead (nome→id→enums) — p/ preencher cards por API.
+    if (url.pathname === '/api/kommo/campos' && req.method === 'POST') {
+      const out = [];
+      for (let page = 1; page <= 4; page++) {
+        const r = await kommoApi('GET', `/api/v4/leads/custom_fields?limit=250&page=${page}`);
+        const items = r.body?._embedded?.custom_fields ?? [];
+        for (const f of items) out.push({ id: f.id, name: f.name, type: f.type, enums: f.enums ?? undefined });
+        if (items.length < 250) break;
+      }
+      return send(res, 200, { ok: true, campos: out });
+    }
+
+    // Completa UM card: renomeia, tags, custom fields e nota (paths fixos da v4).
+    if (url.pathname === '/api/kommo/card-prep' && req.method === 'POST') {
+      const body = await readJson(req);
+      const kommoLeadId = Number(body?.kommoLeadId);
+      if (!kommoLeadId) return send(res, 400, { error: 'kommoLeadId obrigatório' });
+      const resultado = {};
+      const patch = {};
+      if (body.nome) patch.name = String(body.nome).slice(0, 250);
+      if (Array.isArray(body.tags) && body.tags.length) {
+        patch._embedded = { tags: body.tags.map((t) => ({ name: String(t).slice(0, 60) })) };
+      }
+      if (Array.isArray(body.campos) && body.campos.length) {
+        patch.custom_fields_values = body.campos.map((c) => ({
+          field_id: Number(c.field_id),
+          values: [c.enum_id != null ? { enum_id: Number(c.enum_id) } : { value: c.value }],
+        }));
+      }
+      if (Object.keys(patch).length) {
+        const r = await kommoApi('PATCH', `/api/v4/leads/${kommoLeadId}`, patch);
+        resultado.patch = { ok: r.ok, status: r.status, detalhe: r.ok ? undefined : r.body };
+      }
+      if (body.nota) resultado.nota = { ok: await kommoNote(kommoLeadId, String(body.nota).slice(0, 15000)) };
+      return send(res, 200, { ok: true, resultado });
+    }
+
+    // Autocura: valida o próprio token na Kommo e grava no integracao_config
+    // (kommo_access_token) — o token NUNCA sai daqui; a resposta só traz statuses.
+    // Com o config são o kommo-sync, a criação de lead via SQL e o front voltam.
+    if (url.pathname === '/api/kommo/token-heal' && req.method === 'POST') {
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const chk = await kommoApi('GET', '/api/v4/account');
+      if (!chk.ok) return send(res, 502, { ok: false, account_check: chk.status });
+      try {
+        await sbUpsert(token, 'integracao_config', [{ key: 'kommo_access_token', value: process.env.KOMMO_API_TOKEN }], 'key');
+      } catch (err) {
+        return send(res, 500, { ok: false, account_check: chk.status, erro_gravacao: String(err?.message || err).slice(0, 200) });
+      }
+      return send(res, 200, { ok: true, account_check: chk.status, gravado: true });
+    }
+
     if (url.pathname === '/api/esteira' && req.method === 'POST') {
       const body = await readJson(req);
       if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
