@@ -142,6 +142,58 @@ Deno.serve(async (req) => {
     return json(200, { ok: true, campos: out, debug })
   }
 
+  // Tarefas do Kommo em massa (paths fixos da v4):
+  //  {secret, acao:'tarefas', op:'listar', entityIds[]}          → tarefas ABERTAS dos leads
+  //  {secret, acao:'tarefas', op:'concluir', ids[], resultado?}  → fecha tarefas (bulk PATCH)
+  //  {secret, acao:'tarefas', op:'criar', itens:[{entityId, texto, tipo?, prazo, userId?}]}
+  if (body.acao === 'tarefas') {
+    if (body.op === 'listar') {
+      const ids = (Array.isArray(body.entityIds) ? body.entityIds : []).map(Number).filter(Boolean).slice(0, 50)
+      if (!ids.length) return json(400, { error: 'entityIds obrigatório' })
+      const qs = ids.map((i) => `filter[entity_id][]=${i}`).join('&')
+      const out: unknown[] = []
+      for (let page = 1; page <= 6; page++) {
+        const r = await kommoApi('GET', `/api/v4/tasks?filter[entity_type]=leads&filter[is_completed]=0&${qs}&limit=250&page=${page}`)
+        const items = r.body?._embedded?.tasks ?? []
+        for (const t of items) out.push({ id: t.id, entity_id: t.entity_id, text: t.text, complete_till: t.complete_till, responsible_user_id: t.responsible_user_id, task_type_id: t.task_type_id })
+        if (items.length < 250) break
+      }
+      return json(200, { ok: true, tarefas: out })
+    }
+    if (body.op === 'concluir') {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map(Number).filter(Boolean)
+      if (!ids.length) return json(400, { error: 'ids obrigatório' })
+      const resultados: unknown[] = []
+      for (let i = 0; i < ids.length; i += 40) {
+        const lote = ids.slice(i, i + 40).map((id) => ({ id, is_completed: true, result: { text: String(body.resultado ?? 'Encerrada em limpeza de carteira') } }))
+        const r = await kommoApi('PATCH', '/api/v4/tasks', lote)
+        resultados.push({ ok: r.ok, status: r.status, detalhe: r.ok ? undefined : JSON.stringify(r.body).slice(0, 200) })
+        await new Promise((res) => setTimeout(res, 400))
+      }
+      return json(200, { ok: true, resultados })
+    }
+    if (body.op === 'criar') {
+      const itens = Array.isArray(body.itens) ? body.itens : []
+      if (!itens.length) return json(400, { error: 'itens obrigatório' })
+      const resultados: unknown[] = []
+      for (let i = 0; i < itens.length; i += 40) {
+        const lote = itens.slice(i, i + 40).map((t: any) => ({
+          entity_id: Number(t.entityId),
+          entity_type: 'leads',
+          text: String(t.texto).slice(0, 4000),
+          task_type_id: Number(t.tipo ?? 1),
+          complete_till: Number(t.prazo),
+          ...(t.userId ? { responsible_user_id: Number(t.userId) } : {}),
+        }))
+        const r = await kommoApi('POST', '/api/v4/tasks', lote)
+        resultados.push({ ok: r.ok, status: r.status, criadas: r.body?._embedded?.tasks?.length ?? 0, detalhe: r.ok ? undefined : JSON.stringify(r.body).slice(0, 200) })
+        await new Promise((res) => setTimeout(res, 400))
+      }
+      return json(200, { ok: true, resultados })
+    }
+    return json(400, { error: 'op desconhecida' })
+  }
+
   // Atribui responsável em massa (bulk PATCH da v4, 40 cards por chamada).
   // {secret, acao:'atribuir', pares:[{kommoLeadId, userId}]}
   if (body.acao === 'atribuir') {
