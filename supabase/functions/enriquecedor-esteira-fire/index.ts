@@ -9,8 +9,11 @@
 // esteira roda inteira e não escreve nota nenhuma no Kommo.
 //
 // Ações (POST JSON, auth por body.secret === ESTEIRA_FIRE_SECRET):
-//   {secret, acao:'fire',   leadId}    → login integração + POST /api/esteira no motor (202)
-//   {secret, acao:'status', leadIds[]} → status atual dos leads (p/ o runner serializar o lote)
+//   {secret, acao:'fire',     leadId}    → login integração + POST /api/esteira no motor (202)
+//   {secret, acao:'status',   leadIds[]} → status atual dos leads (p/ o runner serializar o lote)
+//   {secret, acao:'importar', leadIds[]} → POST /api/cadencia/importar-kommo (cria card no
+//                                          funil Outbound Cadência SDNA, etapa Fila — nada
+//                                          é enviado: o Passo 1 é manual, arrastando o card)
 // Deploy: verify_jwt OFF.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -51,6 +54,23 @@ Deno.serve(async (req) => {
         tem_anuncios: l.anuncios != null,
       })),
     })
+  }
+
+  if (body.acao === 'importar') {
+    const ids = Array.isArray(body.leadIds) ? body.leadIds.map(String).slice(0, 200) : []
+    if (!ids.length) return json(400, { error: 'leadIds obrigatório' })
+    const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
+      email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
+      password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
+    })
+    if (authErr || !sess?.session) return json(500, { error: `auth integração falhou: ${authErr?.message}` })
+    const r = await fetch(`${MOTOR_URL}/api/cadencia/importar-kommo`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ leadIds: ids }),
+    })
+    const rb = await r.json().catch(() => null)
+    return json(r.ok ? 200 : 502, { ok: r.ok, motor_status: r.status, resultado: rb })
   }
 
   if (body.acao === 'fire') {
