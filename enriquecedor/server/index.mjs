@@ -1533,8 +1533,8 @@ async function anunciosHeadless(payload) {
   // destino. A busca por palavra-chave abaixo vira fallback.
   if (metaPageId) {
     const s = await metaAdSearch(company || String(metaPageId), useProxy, forceDireto, { pageId: metaPageId });
-    if (!s.ok) return { ok: false, note: s.note ?? avisoProxy ?? undefined, meta: null };
-    if (s.note === 'meta_bloqueado' || s.note === 'meta_cap') return { ok: true, note: avisoProxy || s.note, meta: null };
+    if (!s.ok) return { ok: false, note: s.note ?? avisoProxy ?? undefined, meta: null, diag: s.diag };
+    if (s.note === 'meta_bloqueado' || s.note === 'meta_cap') return { ok: true, note: avisoProxy || s.note, meta: null, viaProxy: useProxy, diag: s.diag };
     const scored = s.cards.map((c) => {
       const sc = scoreAd(c, ctx);
       sc.signals = ['página oficial', ...(sc.signals || []).filter((x) => x !== 'conta oficial')];
@@ -1601,7 +1601,7 @@ async function anunciosHeadless(payload) {
     // Nenhum termo respondeu. Se o direto bloqueou e o proxy estava sem tráfego,
     // avisa o gap do proxy; senão, informa bloqueio ou simplesmente sem resultado.
     const note = algumBloqueio ? (avisoProxy || 'meta_bloqueado') : (avisoProxy || 'meta_sem_resultado');
-    return { ok: true, note, meta: null };
+    return { ok: true, note, meta: null, viaProxy: useProxy, diag: resultados.find((r) => r?.diag)?.diag };
   }
 
   const scored = [...cardsById.values()].map((c) => scoreAd(c, ctx));
@@ -1826,8 +1826,11 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
           const h = a.getAttribute('href') || '';
           const m = h.match(/\/advertiser\/([A-Z0-9]+)\/creative\/([A-Z0-9]+)/i);
           if (!m || criativos.has(m[2])) continue;
-          const fmt = a.querySelector('video') ? 'video' : a.querySelector('img') ? 'imagem' : 'texto';
-          criativos.set(m[2], { id: m[2], anunciante: m[1], url: abs(h.split('?')[0]) + '?region=BR', formato: fmt, texto: (a.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 160) });
+          const raw = (a.innerText || '').trim();
+          // Imagens/vídeos são abortados (banda do proxy): o formato vem do ícone Material que sobra como texto.
+          const fmt = a.querySelector('video') || /\bvideocam\b|\bplay_arrow\b/i.test(raw) ? 'video' : a.querySelector('img') || /\bimage\b|\bphoto\b/i.test(raw) ? 'imagem' : 'texto';
+          const texto = raw.split('\n').map((x) => x.trim()).filter((x) => x && !ICONE.test(x)).join(' ').replace(/\s+/g, ' ').slice(0, 160);
+          criativos.set(m[2], { id: m[2], anunciante: m[1], url: abs(h.split('?')[0]) + '?region=BR', formato: fmt, texto });
         }
         const body = (document.body.innerText || '').replace(/\s+/g, ' ');
         const tm = body.match(/(\d[\d.,]*)\s*(an[úu]ncios?|ads?)\b/i);
