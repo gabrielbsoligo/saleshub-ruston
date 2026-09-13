@@ -743,7 +743,7 @@ export function WorkflowView({
                                 <tr>
                                   <td colSpan={8} className="px-2 pb-3">
                                     <div className="rounded-xl border border-v4-red/40 bg-v4-surface p-3">
-                                      <LeadDetail leadId={l.id} embedded />
+                                      <LeadDetail leadId={l.id} embedded fase={i} />
                                     </div>
                                   </td>
                                 </tr>

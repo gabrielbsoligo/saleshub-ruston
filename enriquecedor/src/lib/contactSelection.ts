@@ -65,6 +65,35 @@ export function resumoSelecao(people: DecisionMaker[]): { decisores: number; pho
   return { decisores, phones, emails };
 }
 
+// ---------------------------------------------------------------------------
+// Validação do Instagram do decisor (F2). A busca é heurística; o operador
+// confirma ("manter") ou descarta ("apagar"). Apagar guarda o @ em
+// instagramRejeitados para a re-busca nunca trazer o mesmo perfil de volta.
+// ---------------------------------------------------------------------------
+export function instagramHandle(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return u.pathname.split('/').filter(Boolean)[0]?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function manterInstagram(people: DecisionMaker[], id: string): DecisionMaker[] {
+  return people.map((p) => (p.id === id && p.instagram ? { ...p, instagramValidacao: 'validado' } : p));
+}
+
+export function apagarInstagram(people: DecisionMaker[], id: string): DecisionMaker[] {
+  return people.map((p) => {
+    if (p.id !== id || !p.instagram) return p;
+    const handle = instagramHandle(p.instagram);
+    const rejeitados = new Set(p.instagramRejeitados ?? []);
+    if (handle) rejeitados.add(handle);
+    return { ...p, instagram: null, instagramConfianca: null, instagramValidacao: null, instagramRejeitados: [...rejeitados] };
+  });
+}
+
 // O que segue pro funil/Kommo: só decisores selecionados, cada um só com os
 // contatos selecionados. Se NINGUÉM foi selecionado, devolve tudo (sem filtro
 // explícito, vale o comportamento padrão — as sugestões mais validadas).

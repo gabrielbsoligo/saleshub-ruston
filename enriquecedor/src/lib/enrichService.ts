@@ -6,6 +6,7 @@ import { motorFetch } from './motorClient';
 import { computeDores, whatsappAudit } from './dores';
 import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
+import { instagramHandle } from './contactSelection';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -241,7 +242,7 @@ function isPersonSocio(nome: string): boolean {
 interface SociosSocialResponse {
   companyInstagram: string | null;
   companyFacebook: string | null;
-  people: Array<{ nome: string; linkedin: string | null; instagram: string | null }>;
+  people: Array<{ nome: string; linkedin: string | null; instagram: string | null; instagramConfianca?: 'alta' | 'media' | null }>;
   searchFailed?: boolean;
 }
 interface LemitResponse {
@@ -277,6 +278,13 @@ export async function discoverPeople(
         Number(/administrador/i.test(a.qualificacao ?? '')),
     );
 
+  // Decisores já gravados: preservam validação humana do Instagram e informam à
+  // busca os handles que o operador apagou (nunca voltam).
+  const existing = await decisionMakersRepo.listByLead(lead.id);
+  const exByName = new Map(existing.map((p) => [normName(p.nome), p]));
+  const rejeitados: Record<string, string[]> = {};
+  for (const p of existing) if (p.instagramRejeitados?.length) rejeitados[normName(p.nome)] = p.instagramRejeitados;
+
   // --- Brave (redes) ---
   let social: SociosSocialResponse = {
     companyInstagram: null,
@@ -289,7 +297,7 @@ export async function discoverPeople(
     const res = await motorFetch('/api/socios-social', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome) }),
+      body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome), cidade: lead.cidade, rejeitados }),
     });
     if (res.ok) {
       social = await res.json();
@@ -359,8 +367,6 @@ export async function discoverPeople(
   }
 
   // Mapas por nome normalizado.
-  const existing = await decisionMakersRepo.listByLead(lead.id);
-  const exByName = new Map(existing.map((p) => [normName(p.nome), p]));
   const braveByName = new Map((social.people ?? []).map((p) => [normName(p.nome), p]));
   const lemitByName = new Map((lemit.people ?? []).map((p) => [normName(p.nome), p]));
   const dsByName = new Map(dsPeople.map((p) => [normName(p.nome), p]));
@@ -390,7 +396,14 @@ export async function discoverPeople(
     const dp = dsFailed ? undefined : dsByCpf.get(onlyDigits(cpf ?? '')) ?? dsByName.get(key);
     // redes: se Brave falhou, mantém o que já havia
     const linkedin = braveFailed ? ex?.linkedin ?? null : bp?.linkedin ?? null;
-    const instagram = braveFailed ? ex?.instagram ?? null : bp?.instagram ?? null;
+    // Instagram: validado pelo operador NUNCA é sobrescrito pela busca; handle
+    // apagado nunca volta; senão vale a sugestão nova (com o grau de confiança).
+    const igRejeitados = ex?.instagramRejeitados ?? [];
+    const igValidado = ex?.instagramValidacao === 'validado' && !!ex?.instagram;
+    const igNovo = bp?.instagram && !igRejeitados.includes(instagramHandle(bp.instagram) ?? '') ? bp.instagram : null;
+    const instagram = igValidado ? ex!.instagram : braveFailed ? ex?.instagram ?? null : igNovo;
+    const instagramConfianca = igValidado || braveFailed ? ex?.instagramConfianca ?? null : igNovo ? bp?.instagramConfianca ?? null : null;
+    const instagramValidacao = igValidado ? 'validado' as const : null;
 
     // Contatos com VALIDAÇÃO CRUZADA (Lemit + DataStone).
     const merged = {
@@ -440,6 +453,9 @@ export async function discoverPeople(
       phoneWhatsapp: whatsapp,
       emailPersonal: email,
       instagram,
+      instagramConfianca,
+      instagramValidacao,
+      instagramRejeitados: igRejeitados,
       facebook: null,
       linkedin,
       confidence:

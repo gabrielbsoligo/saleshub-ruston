@@ -44,11 +44,13 @@ import {
   Monitor,
   Play,
   Link2,
+  X,
+  Eye,
 } from 'lucide-react';
 import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAudit, Lead, Organograma, SiteAudit } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
-import { resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone } from '../lib/contactSelection';
+import { apagarInstagram, manterInstagram, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone } from '../lib/contactSelection';
 import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { motorFetch } from '../lib/motorClient';
@@ -74,6 +76,20 @@ const ESTEIRA_LABEL: Record<string, string> = {
   esteira_f4: 'F4 · Anúncios Meta + briefing final',
 };
 
+// O que cada fase do FUNIL valida. No painel embutido do Workflow (`fase`
+// informada) o lead mostra SÓ isso — quem está no F2 aprovando decisores não
+// precisa ver site/cadência que ainda nem existem. Índices = ETAPAS do Workflow
+// (0=F1 … 6=F7). Fora do funil (página do lead) tudo continua visível.
+const FASE_FOCO: Record<number, { titulo: string; kpis: boolean; menus: string[]; padrao: string | null; execF: number | null }> = {
+  0: { titulo: 'Triagem — dados oficiais da Receita e qualidade da linha importada', kpis: false, menus: ['empresa'], padrao: 'empresa', execF: null },
+  1: { titulo: 'Qualificação — decisores, contatos (2 fontes) e organograma', kpis: false, menus: ['decisores', 'organograma'], padrao: 'decisores', execF: 2 },
+  2: { titulo: 'Diagnóstico digital — site, Google, empreendimentos e briefing', kpis: true, menus: ['diagnostico', 'empreendimentos', 'analise', 'oportunidades'], padrao: 'diagnostico', execF: 3 },
+  3: { titulo: 'Anúncios & mídia paga — Meta, Google e LPs', kpis: true, menus: ['anuncios', 'empreendimentos'], padrao: 'anuncios', execF: 4 },
+  4: { titulo: 'Redes sociais — módulo ainda não construído', kpis: false, menus: [], padrao: null, execF: null },
+  5: { titulo: 'Cliente oculto — módulo ainda não construído', kpis: false, menus: [], padrao: null, execF: null },
+  6: { titulo: 'Pronto p/ arquiteto — scripts, cadência e contatos escolhidos', kpis: true, menus: ['scripts', 'oportunidades', 'cadencia', 'decisores'], padrao: 'scripts', execF: null },
+};
+
 const SITE_SOURCE_LABELS: Record<string, string> = {
   informado: 'informado',
   email: 'domínio do e-mail',
@@ -90,7 +106,20 @@ function fmtRenda(v: number | null): string | null {
   return v == null ? null : `R$ ${v.toLocaleString('pt-BR')}`;
 }
 
-export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: string; onBack?: () => void; embedded?: boolean }) {
+export function LeadDetail({
+  leadId,
+  onBack,
+  embedded = false,
+  fase,
+}: {
+  leadId: string;
+  onBack?: () => void;
+  embedded?: boolean;
+  /** Fase do funil (índice das ETAPAS do Workflow) — restringe o painel ao que a fase valida. */
+  fase?: number;
+}) {
+  const foco = embedded && fase != null ? FASE_FOCO[fase] ?? null : null;
+  const mostra = (menu: string) => !foco || foco.menus.includes(menu);
   const [lead, setLead] = useState<Lead | null>(null);
   const [audit, setAudit] = useState<SiteAudit | null>(null);
   const [people, setPeople] = useState<DecisionMaker[]>([]);
@@ -99,7 +128,12 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
   const [contact, setContact] = useState({ phone: '', email: '' });
   const [savingContact, setSavingContact] = useState(false);
   const [reenriching, setReenriching] = useState(false);
-  const [section, setSection] = useState<string | null>(null);
+  // No funil, já abre na seção que a fase valida (sem clique extra).
+  const [section, setSection] = useState<string | null>(foco?.padrao ?? null);
+  useEffect(() => {
+    if (foco) setSection(foco.padrao);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fase]);
   const [measuringAds, setMeasuringAds] = useState(false);
 
   useEffect(() => {
@@ -319,7 +353,10 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
             [2, 'F2 Qualificação'],
             [3, 'F3 Diagnóstico'],
             [4, 'F4 Anúncios'],
-          ] as Array<[number, string]>).map(([f, rotulo]) => (
+          ] as Array<[number, string]>)
+            // no funil, só o botão da fase em que o lead está
+            .filter(([f]) => !foco || foco.execF === f)
+            .map(([f, rotulo]) => (
             <button
               key={f}
               onClick={() => handleRunFase(f)}
@@ -418,7 +455,20 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
         </div>
       )}
 
-      {/* QUADRO FIXO — visão rápida (KPIs). Sempre visível. */}
+      {/* No funil: diz o que esta fase valida — o painel abaixo só traz isso. */}
+      {foco && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-v4-red/40 bg-[rgba(230,57,70,0.06)] px-4 py-2.5 text-sm">
+          <Eye size={15} className="shrink-0 text-v4-red" />
+          <span className="text-v4-text-muted">Nesta fase você valida:</span>
+          <b className="text-v4-text">{foco.titulo}</b>
+          {foco.menus.length === 0 && (
+            <span className="ml-auto text-xs text-v4-text-disabled">Nada a auditar aqui ainda — avance ou envie ao arquiteto.</span>
+          )}
+        </div>
+      )}
+
+      {/* QUADRO FIXO — visão rápida (KPIs). Sempre visível fora do funil; no funil só nas fases de diagnóstico em diante. */}
+      {(!foco || foco.kpis) && (
       <div className="mb-5 rounded-2xl border border-v4-border-strong bg-v4-card p-5">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
           <KpiTile value={waValue} label="WhatsApp" sub={wa.problemas.length ? `${wa.problemas.length} alerta(s)` : null} tone={waTone} small />
@@ -458,36 +508,46 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
           </p>
         )}
       </div>
+      )}
 
-      {/* MENU CLICÁVEL — logo abaixo dos KPIs, abre cada bloco sob demanda */}
+      {/* MENU CLICÁVEL — logo abaixo dos KPIs, abre cada bloco sob demanda.
+          No funil, só os blocos da fase (mostra()). */}
       <div className="mb-5 flex flex-wrap gap-2">
-        {audit && (
+        {mostra('diagnostico') && audit && (
           <MenuBtn active={section === 'diagnostico'} onClick={() => toggle('diagnostico')} icon={Globe} label="Diagnóstico digital" />
         )}
-        {briefing && (
+        {mostra('analise') && briefing && (
           <MenuBtn active={section === 'analise'} onClick={() => toggle('analise')} icon={Target} label="Análise estratégica" />
         )}
-        {briefing?.scripts && (
+        {mostra('scripts') && briefing?.scripts && (
           <MenuBtn active={section === 'scripts'} onClick={() => toggle('scripts')} icon={Send} label="Scripts de abordagem" />
         )}
-        {emp.length > 0 && (
+        {mostra('empreendimentos') && emp.length > 0 && (
           <MenuBtn active={section === 'empreendimentos'} onClick={() => toggle('empreendimentos')} icon={Building2} label={`Empreendimentos · ${emp.length}`} />
         )}
-        <MenuBtn active={section === 'anuncios'} onClick={() => toggle('anuncios')} icon={Megaphone} label="Anúncios" />
-        {orgCount > 0 && (
+        {mostra('anuncios') && (
+          <MenuBtn active={section === 'anuncios'} onClick={() => toggle('anuncios')} icon={Megaphone} label="Anúncios" />
+        )}
+        {mostra('organograma') && orgCount > 0 && (
           <MenuBtn active={section === 'organograma'} onClick={() => toggle('organograma')} icon={Network} label={`Organograma · ${orgCount}`} />
         )}
-        <MenuBtn active={section === 'decisores'} onClick={() => toggle('decisores')} icon={Users} label={`Decisores · ${people.length}`} />
-        <MenuBtn active={section === 'empresa'} onClick={() => toggle('empresa')} icon={Building2} label="Empresa" />
-        {briefing && ((briefing.dores?.length ?? 0) > 0 || (briefing.ganchos?.length ?? 0) > 0) && (
+        {mostra('decisores') && (
+          <MenuBtn active={section === 'decisores'} onClick={() => toggle('decisores')} icon={Users} label={`Decisores · ${people.length}`} />
+        )}
+        {mostra('empresa') && (
+          <MenuBtn active={section === 'empresa'} onClick={() => toggle('empresa')} icon={Building2} label="Empresa" />
+        )}
+        {mostra('oportunidades') && briefing && ((briefing.dores?.length ?? 0) > 0 || (briefing.ganchos?.length ?? 0) > 0) && (
           <MenuBtn active={section === 'oportunidades'} onClick={() => toggle('oportunidades')} icon={Lightbulb} label="Oportunidades" />
         )}
-        <MenuBtn
-          active={section === 'cadencia'}
-          onClick={() => toggle('cadencia')}
-          icon={MessageSquare}
-          label={(lead.falhasDetectadas?.length ?? 0) > 0 ? `Cadência · ${lead.falhasDetectadas!.length}` : 'Cadência'}
-        />
+        {mostra('cadencia') && (
+          <MenuBtn
+            active={section === 'cadencia'}
+            onClick={() => toggle('cadencia')}
+            icon={MessageSquare}
+            label={(lead.falhasDetectadas?.length ?? 0) > 0 ? `Cadência · ${lead.falhasDetectadas!.length}` : 'Cadência'}
+          />
+        )}
       </div>
 
       {/* CONTEÚDO DA SEÇÃO — aparece logo abaixo dos botões ao clicar */}
@@ -797,10 +857,50 @@ export function LeadDetail({ leadId, onBack, embedded = false }: { leadId: strin
                   </div>
                 )}
               </div>
-              {(p.linkedin || p.instagram) && (
-                <div className="mt-2 flex flex-wrap gap-2">
+              {(p.linkedin || p.instagram || (p.instagramRejeitados?.length ?? 0) > 0) && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   {p.linkedin && <SocialLink href={p.linkedin} icon={Linkedin} label="LinkedIn" />}
-                  {p.instagram && <SocialLink href={p.instagram} icon={Instagram} label="Instagram" />}
+                  {p.instagram && (
+                    <span className="flex flex-wrap items-center gap-1.5 rounded-lg border border-v4-border bg-v4-surface pl-1 pr-1.5 py-1">
+                      <SocialLink href={p.instagram} icon={Instagram} label={`@${p.instagram.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/.*$/, '')}`} />
+                      {p.instagramValidacao === 'validado' ? (
+                        <Tag className="bg-[rgba(34,197,94,0.15)] text-v4-success">confirmado</Tag>
+                      ) : (
+                        <>
+                          <Tag
+                            className={
+                              p.instagramConfianca === 'alta'
+                                ? 'bg-[rgba(34,197,94,0.15)] text-v4-success'
+                                : p.instagramConfianca === 'media'
+                                  ? 'bg-[rgba(250,204,21,0.15)] text-v4-warning'
+                                  : 'bg-v4-surface text-v4-text-muted'
+                            }
+                          >
+                            {p.instagramConfianca === 'alta' ? 'confiança alta' : p.instagramConfianca === 'media' ? 'confiança média' : 'não verificado'}
+                          </Tag>
+                          <button
+                            onClick={() => persistPeople(manterInstagram(people, p.id))}
+                            title="É a pessoa certa — manter este Instagram (a re-busca não sobrescreve)"
+                            className="flex items-center gap-1 rounded-md border border-v4-success px-2 py-0.5 text-[11px] font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)]"
+                          >
+                            <Check size={11} /> Manter
+                          </button>
+                          <button
+                            onClick={() => persistPeople(apagarInstagram(people, p.id))}
+                            title="Não é a pessoa — apagar (este @ nunca mais volta na busca)"
+                            className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
+                          >
+                            <X size={11} /> Apagar
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  )}
+                  {!p.instagram && (p.instagramRejeitados?.length ?? 0) > 0 && (
+                    <span className="text-[11px] text-v4-text-disabled" title={`Descartados: ${p.instagramRejeitados!.map((h) => `@${h}`).join(', ')}`}>
+                      Instagram: {p.instagramRejeitados!.length} sugestão(ões) descartada(s)
+                    </span>
+                  )}
                 </div>
               )}
               {p.lemit && <LemitPersonDetails data={p.lemit} />}

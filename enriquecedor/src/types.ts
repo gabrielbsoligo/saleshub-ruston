@@ -324,6 +324,11 @@ export interface DecisionMaker {
   phoneWhatsapp: boolean; // o telefone pessoal é WhatsApp? (Lemit)
   emailPersonal: string | null;
   instagram: string | null;
+  // Validação humana do Instagram (F2): grau devolvido pela busca, decisão do
+  // operador e handles apagados (a re-busca nunca os devolve).
+  instagramConfianca?: 'alta' | 'media' | null;
+  instagramValidacao?: 'validado' | null;
+  instagramRejeitados?: string[];
   facebook: string | null;
   linkedin: string | null;
   confidence: number; // 0-100

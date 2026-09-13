@@ -346,35 +346,73 @@ async function findPersonLinkedin(name, company) {
   return { url: hit ? stripQuery(hit.url) : null, ok };
 }
 
-// O @ (handle) do perfil contém o sobrenome da pessoa? Sinal forte e preciso.
-function handleHasSurname(url, name) {
-  const toks = personTokens(name);
-  if (toks.length < 2) return false;
-  const surname = toks[toks.length - 1];
-  if (surname.length < 4) return false;
+// @ (handle) do perfil, só letras/números — base das regras de nome abaixo.
+function instagramHandle(url) {
   try {
-    const handle = new URL(url).pathname.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return handle.includes(surname);
+    return new URL(url).pathname.split('/').filter(Boolean)[0]?.toLowerCase() ?? '';
   } catch {
-    return false;
+    return '';
   }
 }
 
-async function findPersonInstagram(name) {
-  const { results, ok } = await rawSearch(`${name} instagram`);
-  // Aceita se o título bate (nome+sobrenome) OU o @ contém o sobrenome.
-  const hit = results.find(
-    (r) =>
-      /instagram\.com\//i.test(r.url) &&
-      !/instagram\.com\/(p|reel|reels|explore|stories)\//i.test(r.url) &&
-      (resultMatchesPerson(r, name) || handleHasSurname(r.url, name)),
-  );
-  return { url: hit ? stripQuery(hit.url) : null, ok };
+// Handle com cara de EMPRESA/loja/página — nunca é o perfil pessoal do decisor
+// (o caso "gois.construtora" para Aurino Gonçalves de Gois).
+const HANDLE_NEGOCIO_RE =
+  /(constru|incorp|imove|imob|engenh|empreend|store|shop|loja|oficial|ltda|eireli|clinic|odonto|advoc|advog|contab|consult|agencia|agency|studio|estudio|solucoes|servicos|comercio|distribui|atacad|descart|company|group|grupo|brasil|\bsa\b|holding|negocio|industria|logistic|transport|energia|solar|tech|digital|marketing|midia|design|arquitet|reformas|materiais|eletric|hidraul|pecas|auto|motos|veiculo|farma|saude|hospital|lab|escola|colegio|curso|academ|fit|gym|pizza|burger|restaur|bar\b|cafe|padaria|doces|bolos|festas|eventos|decor|moveis|planejad|vidro|vidrac|esquadr|aluminio|ferro|aco\b|tintas|piscina|jardim|pet\b|vet\b)/i;
+
+// Regras de nome sobre o @: primeiro nome e sobrenome (sem stopwords) contidos.
+function handleTemPrimeiroNome(handle, name) {
+  const toks = personTokens(name);
+  return toks.length >= 1 && toks[0].length >= 4 && handle.replace(/[^a-z0-9]/g, '').includes(toks[0]);
+}
+function handleTemSobrenome(handle, name) {
+  const toks = personTokens(name);
+  if (toks.length < 2) return false;
+  const surname = toks[toks.length - 1];
+  return surname.length >= 4 && handle.replace(/[^a-z0-9]/g, '').includes(surname);
+}
+
+// Classifica UM resultado de busca como perfil pessoal da pessoa. Devolve o grau
+// de confiança ou null (rejeitado). Regra (endurecida em 13/09 — antes bastava o
+// sobrenome no @, o que trazia parentes, homônimos e páginas de empresa):
+//   alta  = título/descrição traz nome E sobrenome  +  @ traz primeiro nome OU sobrenome
+//   media = título/descrição traz nome E sobrenome  OU  @ traz primeiro nome E sobrenome
+//   null  = só sobrenome no @, só primeiro nome, ou @ de empresa/loja
+function classificarPerfilInstagram(r, name) {
+  if (!/instagram\.com\//i.test(r.url)) return null;
+  if (/instagram\.com\/(p|reel|reels|explore|stories|tv|accounts)\//i.test(r.url)) return null;
+  const handle = instagramHandle(r.url);
+  if (!handle || HANDLE_NEGOCIO_RE.test(handle)) return null;
+  const titulo = resultMatchesPerson(r, name);
+  const pn = handleTemPrimeiroNome(handle, name);
+  const sn = handleTemSobrenome(handle, name);
+  if (titulo && (pn || sn)) return 'alta';
+  if (titulo || (pn && sn)) return 'media';
+  return null;
+}
+
+// Busca o Instagram PESSOAL do decisor. `cidade` ancora a busca (o Brave devolve
+// resultados bem mais ligados à pessoa certa); `rejeitados` são handles que o
+// operador já apagou na tela — nunca voltam. Devolve {url, ok, confianca}.
+async function findPersonInstagram(name, { cidade = null, rejeitados = [] } = {}) {
+  const q = [`"${name}"`, cidade, 'instagram'].filter(Boolean).join(' ');
+  const { results, ok } = await rawSearch(q);
+  const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
+  let melhor = null;
+  for (const r of results) {
+    const conf = classificarPerfilInstagram(r, name);
+    if (!conf) continue;
+    if (bloqueados.has(instagramHandle(r.url))) continue;
+    if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
+    if (melhor.confianca === 'alta') break;
+  }
+  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok };
 }
 
 // Descoberta social completa: institucional (empresa) + por sócio-pessoa.
 // searchFailed=true se QUALQUER busca falhou (para reprocessar depois).
-async function discoverSociosSocial({ company, socios }) {
+// `rejeitados` = { [nome normalizado]: [handles apagados pelo operador] }.
+async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {} }) {
   let anyFail = false;
   const mark = (r) => {
     if (!r.ok) anyFail = true;
@@ -389,8 +427,9 @@ async function discoverSociosSocial({ company, socios }) {
   const people = [];
   for (const nome of pessoas) {
     const linkedin = mark(await findPersonLinkedin(nome, company));
-    const instagram = mark(await findPersonInstagram(nome));
-    people.push({ nome, linkedin, instagram });
+    const ig = await findPersonInstagram(nome, { cidade, rejeitados: rejeitados?.[normText(nome)] ?? [] });
+    if (!ig.ok) anyFail = true;
+    people.push({ nome, linkedin, instagram: ig.url, instagramConfianca: ig.confianca });
   }
   return { companyInstagram, companyFacebook, people, searchFailed: anyFail };
 }
@@ -2408,6 +2447,7 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       social = await discoverSociosSocial({
         company: row.razao_social ?? row.company_name_raw,
         socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
+        cidade: row.cidade ?? null,
       });
     } catch { /* busca indisponível */ }
     if (social?.companyInstagram) patch2.company_instagram = social.companyInstagram;
