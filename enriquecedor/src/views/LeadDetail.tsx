@@ -43,6 +43,7 @@ import {
   Smartphone,
   Monitor,
   Play,
+  Pencil,
   Link2,
   X,
   Eye,
@@ -55,9 +56,11 @@ import { CHAVES_POR_FASE, TODAS_CHAVES, googleAdvertiserAtual, googleAnuncianteU
 import { ChavesBusca } from '../components/ChavesBusca';
 import { auditLeadSite, descreverNotaMeta, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, resolverAnunciantes, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
-import { motorFetch } from '../lib/motorClient';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
+import { useAuth } from '../lib/auth';
+import { FALHA_LABEL, LIMITES, configEfetiva, limparConfig, pendenciasValidacao, prepararCadencia, previaLocal, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
+import type { CadenciaConfig } from '../types';
 import { QUALITY_COLORS, QUALITY_LABELS, STATUS_LABELS } from '../lib/labels';
 import { checkEmail, checkPhone, formatCnpj } from '../lib/validation';
 
@@ -89,7 +92,8 @@ const FASE_FOCO: Record<number, { titulo: string; kpis: boolean; menus: string[]
   3: { titulo: 'Anúncios & mídia paga — Meta, Google e LPs', kpis: true, menus: ['anuncios', 'empreendimentos'], padrao: 'anuncios', execF: 4 },
   4: { titulo: 'Redes sociais — módulo ainda não construído', kpis: false, menus: [], padrao: null, execF: null },
   5: { titulo: 'Cliente oculto — módulo ainda não construído', kpis: false, menus: [], padrao: null, execF: null },
-  6: { titulo: 'Pronto p/ arquiteto — scripts, cadência e contatos escolhidos', kpis: true, menus: ['scripts', 'oportunidades', 'cadencia', 'decisores'], padrao: 'scripts', execF: null },
+  6: { titulo: 'Pronto p/ arquiteto — scripts por decisor e cadência WABA (escolha o que abordar e valide)', kpis: true, menus: ['scripts', 'oportunidades', 'cadencia', 'decisores'], padrao: 'cadencia', execF: null },
+  7: { titulo: 'Pronto p/ importar — cadência validada; confira e importe pro Kommo', kpis: false, menus: ['cadencia', 'scripts', 'decisores'], padrao: 'cadencia', execF: null },
 };
 
 const SITE_SOURCE_LABELS: Record<string, string> = {
@@ -113,12 +117,15 @@ export function LeadDetail({
   onBack,
   embedded = false,
   fase,
+  onAvancar,
 }: {
   leadId: string;
   onBack?: () => void;
   embedded?: boolean;
   /** Fase do funil (índice das ETAPAS do Workflow) — restringe o painel ao que a fase valida. */
   fase?: number;
+  /** F7: chamado quando o SDR valida a cadência → o Workflow move o lead pro F8. */
+  onAvancar?: () => void;
 }) {
   const foco = embedded && fase != null ? FASE_FOCO[fase] ?? null : null;
   const mostra = (menu: string) => !foco || foco.menus.includes(menu);
@@ -726,7 +733,7 @@ export function LeadDetail({
       {section === 'oportunidades' && briefing && <OportunidadesSection briefing={briefing} sinais={dores} />}
 
       {/* Seção: Cadência outbound (falhas verificáveis + pacote WABA) */}
-      {section === 'cadencia' && <CadenciaSection lead={lead} onReload={reloadAll} />}
+      {section === 'cadencia' && <CadenciaSection lead={lead} people={people} onReload={reloadAll} onAvancar={onAvancar} somenteLeitura={fase === 7} />}
 
       {/* Seção: Empreendimentos — por status */}
       {section === 'empreendimentos' && emp.length > 0 && (
@@ -2709,142 +2716,307 @@ function ScriptCard({
 }
 
 // --- Cadência outbound ------------------------------------------------------
-// Mostra as falhas verificáveis detectadas e gera o pacote de mensagens WABA
-// (motor /api/cadencia/preparar). O disparo em si é externo (Kommo/Salesbot/n8n);
-// aqui é a operação manual: conferir, copiar, ajustar SDR.
-const FALHA_LABEL: Record<string, string> = {
-  https: 'Site sem HTTPS / fora do ar',
-  whatsapp: 'WhatsApp ausente ou quebrado',
-  destino: 'Anuncia com página lenta',
-  semanuncio: 'Nenhum anúncio ativo',
-  gmn: 'Google Meu Negócio fraco',
-  pixel: 'Sem pixel de rastreamento',
-};
+// O SDR ESCOLHE o que será abordado: qual falha verificada vira o gancho da
+// mensagem 1 ({{4}}/{{5}}), qual vira o da mensagem 2, qual decisor recebe
+// ({{1}}), o próprio nome ({{2}}), a marca ({{3}}); pode ajustar as frases
+// dentro dos tetos da Meta e escolher a variante do template aprovado. A prévia
+// é local (templates vêm do motor); "Validar" grava a config no lead e move
+// pro F8 (Pronto p/ importar). O carteiro (enriquecedor-cadencia) usa esta
+// config na hora do disparo — nada é reinterpretado. Lógica em lib/cadencia.ts.
+function CadenciaSection({
+  lead,
+  people,
+  onReload,
+  onAvancar,
+  somenteLeitura = false,
+}: {
+  lead: Lead;
+  people: DecisionMaker[];
+  onReload: () => Promise<void>;
+  onAvancar?: () => void;
+  somenteLeitura?: boolean;
+}) {
+  const { profile } = useAuth();
+  const [pac, setPac] = useState<PacoteCadencia | null>(null);
+  const [cfg, setCfg] = useState<CadenciaConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [editando, setEditando] = useState(!somenteLeitura);
 
-type PacoteMsg = { template: string; statusMeta: string; variaveis: string[]; botoes: string[]; corpoPreview: string } | null;
-type PacoteCadencia = {
-  ok: boolean;
-  aptoCadencia?: boolean;
-  motivo?: string;
-  error?: string;
-  falhas?: { codigo: string }[];
-  falhaPrimaria?: { codigo: string; falha: string; impacto: string } | null;
-  whatsapp?: { p1: PacoteMsg; p2: PacoteMsg; p3: PacoteMsg };
-  avisos?: string[];
-};
-
-function CadenciaSection({ lead, onReload }: { lead: Lead; onReload: () => Promise<void> }) {
-  const [sdrNome, setSdrNome] = useState('');
-  const [pacote, setPacote] = useState<PacoteCadencia | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const gerar = async () => {
+  // Carrega opções (falhas detectadas + templates) e a config salva; o motor
+  // persiste as falhas no lead (chips do menu). Não sobrescreve a config aqui.
+  const carregar = async () => {
     setLoading(true);
     try {
-      const res = await motorFetch('/api/cadencia/preparar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadId: lead.id, sdrNome: sdrNome.trim() || undefined }),
-      });
-      const j = (await res.json()) as PacoteCadencia;
-      setPacote(j);
+      const j = await prepararCadencia(lead.id, lead.cadenciaConfig ?? null, { persistir: true });
+      setPac(j);
       if (j.ok === false) toast.error(j.error ?? 'Falha ao preparar a cadência.');
-      await onReload(); // falhas persistidas no lead — atualiza os chips
+      const base = configEfetiva(lead, people, j);
+      // Nome do SDR: o salvo, senão o usuário logado (primeiro nome).
+      if (!base.sdrNome && profile?.name) base.sdrNome = profile.name.split(/\s+/)[0];
+      setCfg(base);
     } catch {
       toast.error('Motor indisponível — verifique se está logado.');
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => {
+    void carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead.id]);
 
-  const falhas = pacote?.falhas ?? lead.falhasDetectadas ?? [];
+  const falhas = pac?.opcoes?.falhas ?? [];
+  const templates = pac?.opcoes?.templates ?? [];
+  const previa = cfg ? previaLocal(lead, people, cfg, pac?.opcoes) : null;
+  const vars = cfg ? variaveisDe(lead, people, cfg, pac?.opcoes) : null;
+  const pendencias = cfg ? pendenciasValidacao(lead, people, cfg, pac) : [];
+  const validado = !!lead.cadenciaConfig?.validadoEm;
+  const set = (patch: Partial<CadenciaConfig>) => setCfg((c) => (c ? { ...c, ...patch } : c));
+
+  const gravar = async (extra: Partial<CadenciaConfig> = {}) => {
+    if (!cfg) return null;
+    setSalvando(true);
+    try {
+      const next: Lead = { ...lead, cadenciaConfig: limparConfig({ ...cfg, ...extra }), updatedAt: new Date().toISOString() };
+      await leadsRepo.update(next);
+      await onReload();
+      return next;
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const salvarRascunho = async () => {
+    const n = await gravar({ validadoEm: null, validadoPor: null });
+    if (n) toast.success('Rascunho da cadência salvo.');
+  };
+  const validar = async () => {
+    if (pendencias.length) { toast.error(`Resolva antes: ${pendencias[0]}`); return; }
+    const n = await gravar({ validadoEm: new Date().toISOString(), validadoPor: profile?.name ?? null });
+    if (!n) return;
+    toast.success('Cadência validada — lead pronto pra importar.');
+    setEditando(false);
+    onAvancar?.();
+  };
+
+  const Contador = ({ n, max }: { n: number; max: number }) => (
+    <span className={`text-[10px] ${n > max ? 'font-semibold text-v4-error' : n > max * 0.9 ? 'text-v4-warning' : 'text-v4-text-disabled'}`}>{n}/{max}</span>
+  );
+  const inputCls = 'w-full rounded-lg border border-v4-border bg-v4-surface px-3 py-2 text-sm text-v4-text placeholder:text-v4-text-disabled focus:border-v4-red focus:outline-none';
 
   return (
     <div className="mb-6 rounded-2xl border border-v4-border bg-v4-card p-5">
-      <h3 className="mb-1 flex items-center gap-2 font-display text-base font-semibold text-v4-text">
-        <MessageSquare size={18} /> Cadência outbound
-        {lead.optout && (
-          <span className="rounded bg-[rgba(239,68,68,0.15)] px-2 py-0.5 text-xs font-bold text-v4-red">OPT-OUT — não contatar</span>
-        )}
-      </h3>
-      <p className="mb-3 text-xs text-v4-text-muted">
-        A mensagem 1 usa uma falha VERIFICADA na auditoria como gancho. Sem falha medida, o lead não entra na cadência.
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 font-display text-base font-semibold text-v4-text">
+          <MessageSquare size={18} /> Cadência outbound <span className="text-sm font-normal text-v4-text-muted">(WhatsApp oficial · templates aprovados)</span>
+          {lead.optout && <span className="rounded bg-[rgba(239,68,68,0.15)] px-2 py-0.5 text-xs font-bold text-v4-red">OPT-OUT — não contatar</span>}
+          {validado && (
+            <span className="rounded-full bg-[rgba(34,197,94,0.15)] px-2 py-0.5 text-[11px] font-medium text-v4-success" title={`Validada em ${new Date(lead.cadenciaConfig!.validadoEm!).toLocaleString('pt-BR')}`}>
+              validada{lead.cadenciaConfig?.validadoPor ? ` por ${lead.cadenciaConfig.validadoPor.split(/\s+/)[0]}` : ''}
+            </span>
+          )}
+        </h3>
+        <div className="flex items-center gap-2">
+          {!editando && !loading && (
+            <button onClick={() => setEditando(true)} className="flex items-center gap-1 rounded-lg border border-v4-border px-2.5 py-1.5 text-xs font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red">
+              <Pencil size={12} /> Editar escolhas
+            </button>
+          )}
+          <button onClick={() => void carregar()} disabled={loading} className="flex items-center gap-1 rounded-lg border border-v4-border px-2.5 py-1.5 text-xs font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red disabled:opacity-50" title="Re-detectar as falhas e recarregar os templates">
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Re-detectar
+          </button>
+        </div>
+      </div>
+      <p className="mb-4 text-xs text-v4-text-muted">
+        O corpo das mensagens é o template já aprovado pela Meta — o que você escolhe aqui são as <b>variáveis</b>: o gancho (falha verificada), quem recebe, quem assina e a marca. Sem falha medida, o lead não entra na cadência.
       </p>
 
-      {falhas.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          {falhas.map((f, i) => (
-            <span
-              key={f.codigo}
-              className={`rounded-lg px-2 py-1 text-xs font-medium ${
-                i === 0 ? 'bg-[rgba(239,68,68,0.15)] text-v4-red' : 'bg-v4-surface text-v4-text-muted'
-              }`}
-            >
-              {i === 0 ? 'PRIMÁRIA · ' : i === 1 ? 'SECUNDÁRIA · ' : ''}
-              {FALHA_LABEL[f.codigo] ?? f.codigo}
-            </span>
-          ))}
-        </div>
-      )}
+      {loading && !pac ? (
+        <p className="flex items-center gap-2 text-sm text-v4-text-muted"><Loader2 size={14} className="animate-spin" /> Detectando falhas e carregando templates…</p>
+      ) : !cfg ? null : (
+        <>
+          {pac && pac.ok !== false && pac.aptoCadencia === false && (
+            <p className="mb-3 rounded-lg border border-v4-warning/60 bg-[rgba(250,204,21,0.08)] p-3 text-sm text-v4-warning">{pac.motivo}</p>
+          )}
+          {(pac?.avisos?.length ?? 0) > 0 && (
+            <ul className="mb-3 list-disc pl-5 text-xs text-v4-warning">{pac!.avisos!.map((a, i) => <li key={i}>{a}</li>)}</ul>
+          )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          value={sdrNome}
-          onChange={(e) => setSdrNome(e.target.value)}
-          placeholder="Nome do SDR (variável 2)"
-          className="rounded-lg border border-v4-border bg-v4-surface px-3 py-2 text-sm text-v4-text placeholder:text-v4-text-muted"
-        />
-        <button
-          onClick={gerar}
-          disabled={loading}
-          className="flex items-center gap-2 rounded-lg bg-v4-red px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-          {loading ? 'Gerando…' : 'Gerar pacote de mensagens'}
-        </button>
-      </div>
+          <div className="grid gap-4 lg:grid-cols-5">
+            {/* ESQUERDA (3/5): escolhas */}
+            <div className="space-y-4 lg:col-span-3">
+              {/* 1 · Gancho principal */}
+              <div className="rounded-xl border border-v4-border bg-v4-surface p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">1 · O que abordar na mensagem 1 (gancho principal)</p>
+                {falhas.length === 0 ? (
+                  <p className="text-sm text-v4-text-disabled">Nenhuma falha verificável medida ainda.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {falhas.map((f, i) => {
+                      const on = cfg.falhaPrimaria === f.codigo;
+                      return (
+                        <label key={f.codigo} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm transition ${on ? 'border-v4-red bg-[rgba(230,57,70,0.08)]' : 'border-v4-border hover:border-v4-red/60'} ${!editando ? 'pointer-events-none' : ''}`}>
+                          <input type="radio" name={`fp-${lead.id}`} checked={on} onChange={() => set({ falhaPrimaria: f.codigo, fraseFalha: null, fraseImpacto: null, falhaSecundaria: cfg.falhaSecundaria === f.codigo ? null : cfg.falhaSecundaria })} className="mt-0.5 accent-v4-red" />
+                          <span className="min-w-0 flex-1">
+                            <span className="font-medium text-v4-text">{FALHA_LABEL[f.codigo] ?? f.codigo}</span>
+                            {i === 0 && <span className="ml-2 rounded bg-v4-bg px-1.5 py-0.5 text-[10px] text-v4-text-muted">mais forte medida</span>}
+                            <span className="block text-xs text-v4-text-muted">{f.falha}</span>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {vars?.f1 && (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <div>
+                      <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{4}}'} · frase da falha</span><Contador n={(cfg.fraseFalha ?? '').trim().length || vars.fraseFalha.length} max={LIMITES.fraseFalha} /></div>
+                      <textarea disabled={!editando} rows={3} value={cfg.fraseFalha ?? ''} placeholder={vars.f1.falha} onChange={(e) => set({ fraseFalha: e.target.value })} className={inputCls} />
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{5}}'} · efeito prático</span><Contador n={(cfg.fraseImpacto ?? '').trim().length || vars.fraseImpacto.length} max={LIMITES.fraseImpacto} /></div>
+                      <textarea disabled={!editando} rows={3} value={cfg.fraseImpacto ?? ''} placeholder={vars.f1.impacto} onChange={(e) => set({ fraseImpacto: e.target.value })} className={inputCls} />
+                    </div>
+                    {(cfg.fraseFalha || cfg.fraseImpacto) && editando && (
+                      <button onClick={() => set({ fraseFalha: null, fraseImpacto: null })} className="text-left text-[11px] text-v4-text-muted hover:text-v4-red">↺ voltar às frases do catálogo</button>
+                    )}
+                  </div>
+                )}
+              </div>
 
-      {pacote && pacote.ok && pacote.aptoCadencia === false && (
-        <p className="rounded-lg border border-v4-border bg-v4-surface p-3 text-sm text-v4-warning">{pacote.motivo}</p>
-      )}
+              {/* 2 · Segundo gancho */}
+              <div className="rounded-xl border border-v4-border bg-v4-surface p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">2 · Mensagem 2 (follow-up 48h)</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button disabled={!editando} onClick={() => set({ falhaSecundaria: null, rotuloSecundaria: null })} className={`rounded-lg border px-2.5 py-1 text-xs transition ${cfg.falhaSecundaria == null ? 'border-v4-red bg-[rgba(230,57,70,0.08)] text-v4-text' : 'border-v4-border text-v4-text-muted hover:border-v4-red/60'}`}>
+                    Aprofundar o mesmo ponto (sem segunda falha)
+                  </button>
+                  {falhas.filter((f) => f.codigo !== cfg.falhaPrimaria).map((f) => (
+                    <button key={f.codigo} disabled={!editando} onClick={() => set({ falhaSecundaria: f.codigo, rotuloSecundaria: null })} title={f.rotulo} className={`rounded-lg border px-2.5 py-1 text-xs transition ${cfg.falhaSecundaria === f.codigo ? 'border-v4-red bg-[rgba(230,57,70,0.08)] text-v4-text' : 'border-v4-border text-v4-text-muted hover:border-v4-red/60'}`}>
+                      + {FALHA_LABEL[f.codigo] ?? f.codigo}
+                    </button>
+                  ))}
+                </div>
+                {vars?.f2 && (
+                  <div className="mt-3">
+                    <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{3}}'} da mensagem 2 · como citar a segunda falha</span><Contador n={(cfg.rotuloSecundaria ?? '').trim().length || (vars.rotuloSecundaria ?? '').length} max={LIMITES.rotulo} /></div>
+                    <input disabled={!editando} value={cfg.rotuloSecundaria ?? ''} placeholder={vars.f2.rotulo} onChange={(e) => set({ rotuloSecundaria: e.target.value })} className={inputCls} />
+                  </div>
+                )}
+              </div>
 
-      {(pacote?.avisos?.length ?? 0) > 0 && (
-        <ul className="mb-3 list-disc pl-5 text-xs text-v4-warning">
-          {pacote!.avisos!.map((a, i) => (
-            <li key={i}>{a}</li>
-          ))}
-        </ul>
-      )}
+              {/* 3 · Quem recebe / quem assina / marca */}
+              <div className="rounded-xl border border-v4-border bg-v4-surface p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">3 · Quem recebe, quem assina, marca</p>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="md:col-span-3">
+                    <span className="mb-1 block text-[11px] text-v4-text-muted">Decisor que recebe ({'{{1}}'} = primeiro nome)</span>
+                    {people.length === 0 ? (
+                      <p className="text-xs text-v4-text-disabled">Nenhum decisor no F2 — informe o primeiro nome abaixo.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {people.map((p) => {
+                          const on = cfg.decisorId === p.id;
+                          return (
+                            <button key={p.id} disabled={!editando} onClick={() => set({ decisorId: p.id, nome1: null })} className={`rounded-lg border px-2.5 py-1 text-left text-xs transition ${on ? 'border-v4-red bg-[rgba(230,57,70,0.08)] text-v4-text' : 'border-v4-border text-v4-text-muted hover:border-v4-red/60'}`} title={p.cargo ?? ''}>
+                              <span className="font-medium">{p.nome}</span>
+                              {p.cargo && <span className="ml-1 text-v4-text-disabled">· {p.cargo}</span>}
+                              {p.selecionado && <span className="ml-1 text-v4-success">✓ F2</span>}
+                              {!p.phonePersonal && <span className="ml-1 text-v4-warning" title="sem telefone pessoal — o card vai sem WhatsApp do decisor">sem fone</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{1}}'} · primeiro nome</span><Contador n={vars?.nome1.length ?? 0} max={LIMITES.nome1} /></div>
+                    <input disabled={!editando} value={cfg.nome1 ?? ''} placeholder={vars?.nome1 ?? ''} onChange={(e) => set({ nome1: e.target.value })} className={inputCls} />
+                  </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{2}}'} · nome do SDR (quem assina)</span><Contador n={(cfg.sdrNome ?? '').length} max={LIMITES.sdr} /></div>
+                    <input disabled={!editando} value={cfg.sdrNome ?? ''} placeholder="ex.: Lary" onChange={(e) => set({ sdrNome: e.target.value })} className={inputCls} />
+                  </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{3}}'} · marca (como o dono chama)</span><Contador n={vars?.fantasia.length ?? 0} max={LIMITES.fantasia} /></div>
+                    <input disabled={!editando} value={cfg.fantasia ?? ''} placeholder={vars?.fantasia ?? ''} onChange={(e) => set({ fantasia: e.target.value })} className={inputCls} />
+                  </div>
+                </div>
+              </div>
 
-      {pacote?.aptoCadencia && pacote.whatsapp && (
-        <div className="grid gap-4 md:grid-cols-3">
-          {([['Passo 1 — abertura', pacote.whatsapp.p1], ['Passo 2 — follow-up (48h)', pacote.whatsapp.p2], ['Passo 3 — breakup (96h)', pacote.whatsapp.p3]] as const).map(
-            ([titulo, m]) =>
-              m && (
-                <div key={m.template} className="rounded-xl border border-v4-border bg-v4-surface p-4">
+              {/* 4 · Variante do template */}
+              <div className="rounded-xl border border-v4-border bg-v4-surface p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">4 · Variante do template (texto aprovado pela Meta)</p>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {([1, 2, 3] as const).map((passo) => {
+                    const ops = templates.filter((t) => t.passo === passo && (passo !== 2 || t.nome !== 'sdna_p2_segunda_falha_v1' || !!vars?.f2));
+                    const atual = previa?.[`p${passo}`]?.template ?? cfg.templates?.[`p${passo}`] ?? '';
+                    return (
+                      <div key={passo}>
+                        <span className="mb-1 block text-[11px] text-v4-text-muted">Passo {passo}</span>
+                        <select disabled={!editando} value={atual} onChange={(e) => set({ templates: { ...(cfg.templates ?? {}), [`p${passo}`]: e.target.value } })} className={inputCls}>
+                          {ops.map((t) => (
+                            <option key={t.nome} value={t.nome}>
+                              {t.nome.replace(/^sdna_p\d_/, '').replace(/_/g, ' ')} · Meta: {t.review ?? t.statusMeta}{t.temBot ? '' : ' · sem bot'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* DIREITA (2/5): prévia ao vivo */}
+            <div className="space-y-3 lg:col-span-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">Prévia — exatamente o que sai</p>
+              {([['Passo 1 — abertura', previa?.p1], ['Passo 2 — follow-up (48h)', previa?.p2], ['Passo 3 — breakup (96h)', previa?.p3]] as const).map(([titulo, m]) => (
+                <div key={titulo} className={`rounded-xl border bg-v4-surface p-4 ${m && m.corpoPreview.length > LIMITES.corpo ? 'border-v4-error' : 'border-v4-border'}`}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div>
                       <p className="text-sm font-semibold text-v4-text">{titulo}</p>
-                      <p className="text-[11px] text-v4-text-muted">
-                        {m.template} · Meta: {m.statusMeta}
-                      </p>
+                      {m && <p className="text-[11px] text-v4-text-muted">{m.template} · Meta: {m.statusMeta} · <span className={m.corpoPreview.length > LIMITES.corpo ? 'text-v4-error' : ''}>{m.corpoPreview.length}/{LIMITES.corpo}</span></p>}
                     </div>
-                    <CopyBtn text={m.corpoPreview} />
+                    {m && <CopyBtn text={m.corpoPreview} />}
                   </div>
-                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-v4-text-muted">{m.corpoPreview}</p>
-                  {m.botoes.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {m.botoes.map((b) => (
-                        <span key={b} className="rounded border border-v4-border px-2 py-0.5 text-[11px] text-v4-text-muted">
-                          {b}
-                        </span>
-                      ))}
-                    </div>
+                  {m ? (
+                    <>
+                      <p className="whitespace-pre-wrap text-xs leading-relaxed text-v4-text-muted">{m.corpoPreview}</p>
+                      {m.botoes.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">{m.botoes.map((b) => <span key={b} className="rounded border border-v4-border px-2 py-0.5 text-[11px] text-v4-text-muted">{b}</span>)}</div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-v4-text-disabled">sem template ativo</p>
                   )}
                 </div>
-              ),
-          )}
-        </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Rodapé: pendências + ações */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-v4-border pt-4">
+            <div className="text-xs">
+              {pendencias.length ? (
+                <ul className="list-disc pl-5 text-v4-warning">{pendencias.map((p) => <li key={p}>{p}</li>)}</ul>
+              ) : (
+                <span className="flex items-center gap-1 text-v4-success"><Check size={13} /> Tudo preenchido — pode validar.</span>
+              )}
+            </div>
+            {editando && (
+              <div className="flex items-center gap-2">
+                <button onClick={() => void salvarRascunho()} disabled={salvando} className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-2 text-sm font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red disabled:opacity-50">
+                  <Save size={14} /> Salvar rascunho
+                </button>
+                <button onClick={() => void validar()} disabled={salvando || pendencias.length > 0} title={pendencias.length ? pendencias[0] : 'Grava as escolhas e move o lead pra F8 · Pronto p/ importar'} className="flex items-center gap-2 rounded-lg bg-v4-red px-4 py-2 text-sm font-semibold text-white transition hover:bg-v4-red-hover disabled:opacity-50">
+                  {salvando ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                  {validado ? 'Revalidar cadência' : 'Validar cadência → Pronto p/ importar'}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

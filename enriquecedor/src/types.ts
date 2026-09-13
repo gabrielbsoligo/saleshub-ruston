@@ -91,6 +91,8 @@ export interface Lead {
   falhaSecundaria?: FalhaCadencia | null;
   falhasDetectadas?: FalhaDetectada[];
   aptoCadencia?: boolean;
+  // Escolhas do SDR pra cadência (arquiteto, F7). Ver src/lib/cadencia.ts.
+  cadenciaConfig?: CadenciaConfig | null;
   optout?: boolean;
   status: LeadStatus;
   score: number | null;
@@ -127,6 +129,22 @@ export type ChavesBusca = Partial<Record<ChaveBuscaId, ChaveBuscaEstado>>;
 // Cadência outbound — código da falha verificável (catálogo enriquecedor_cadencia_falhas)
 export type FalhaCadencia = 'https' | 'whatsapp' | 'destino' | 'semanuncio' | 'gmn' | 'pixel';
 
+// Configuração validada pelo SDR no arquiteto: o que será ABORDADO nas mensagens
+// WABA pré-aprovadas (só as variáveis mudam; o corpo do template é fixo).
+export interface CadenciaConfig {
+  falhaPrimaria?: FalhaCadencia | null; // gancho da mensagem 1 ({{4}}/{{5}})
+  falhaSecundaria?: FalhaCadencia | null; // gancho da mensagem 2 (null = "aprofunda" sem segunda falha)
+  decisorId?: string | null; // decisor que recebe ({{1}} = primeiro nome dele)
+  nome1?: string | null; // override do primeiro nome ({{1}}, ≤20)
+  sdrNome?: string | null; // {{2}} (≤20)
+  fantasia?: string | null; // {{3}} (≤40)
+  fraseFalha?: string | null; // {{4}} ajustada (≤140)
+  fraseImpacto?: string | null; // {{5}} ajustada (≤180)
+  rotuloSecundaria?: string | null; // {{3}} do passo 2 "segunda falha" (≤60)
+  templates?: { p1?: string | null; p2?: string | null; p3?: string | null }; // variante escolhida por passo
+  validadoEm?: string | null; // ISO — validado pelo SDR → lead vai pra "Pronto p/ importar"
+  validadoPor?: string | null;
+}
 export interface FalhaDetectada {
   codigo: FalhaCadencia;
   evidencia?: { situacao?: 'ausente' | 'quebrado'; nota?: number; avaliacoes?: number; semPerfil?: boolean };

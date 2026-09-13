@@ -401,7 +401,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   await db.from('enriquecedor_cadencia_envios').update({
     template_id: tpl.id,
     falha_codigo: pac.falhaPrimaria?.codigo ?? null,
-    sdr_nome: sdrNome,
+    sdr_nome: pac.variaveis?.sdr ?? sdrNome, // o SDR que validou a cadência (config) manda sobre o responsável do card
     variaveis_enviadas: msg.variaveis,
     kommo_campos: valores,
     status: okBot ? 'enviado' : 'falhou',

@@ -2449,7 +2449,11 @@ async function importarLeadsKommo({ leadIds, token }) {
       }
 
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { kommo_lead_id: String(kommoId), updated_at: new Date().toISOString() });
-      await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
+      const cc = row.cadencia_config && typeof row.cadencia_config === 'object' ? row.cadencia_config : null;
+      const linhaCad = cc?.validadoEm
+        ? `\nCadencia validada${cc.validadoPor ? ` por ${cc.validadoPor}` : ''}${cc.sdrNome ? ` - SDR: ${cc.sdrNome}` : ''}. Gancho principal: ${cc.falhaPrimaria ?? row.falha_primaria ?? '-'}${cc.falhaSecundaria ? ` / secundario: ${cc.falhaSecundaria}` : ''}.`
+        : '';
+      await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).${linhaCad}\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
 
       // Espelho no controle de leads do SalesHub (canal outbound) — 1 por CNPJ.
       const cnpj = row.cnpj ?? onlyDigits(row.cnpj_raw);
@@ -2586,7 +2590,12 @@ const montarCorpo = (corpo, vars) =>
 // no lead (falha_primaria/secundaria/falhas_detectadas/apto_cadencia) e devolve
 // as 3 mensagens de WhatsApp com template escolhido + variáveis interpoladas,
 // prontas pro n8n/Salesbot. Tetos validados (140/180 nas frases, 1024 no corpo).
-async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
+// `config` (13/09): escolhas do SDR feitas no arquiteto (F7) — vem do body
+// (prévia ao vivo) ou de enriquecedor_leads.cadencia_config (validado). Quando
+// existe, MANDA: falha principal/secundária, decisor, nome do SDR, marca,
+// frases dentro dos tetos e variante do template. A detecção automática vira
+// só o padrão/opções. A resposta traz `opcoes` pra UI montar o editor.
+async function prepararCadencia({ leadId, token, sdrNome, persistir = true, config = null }) {
   const rows = await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`);
   const row = rows?.[0];
   if (!row) return { ok: false, error: 'lead não encontrado' };
@@ -2594,10 +2603,29 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
   const catalogo = (await sbSelect(token, 'enriquecedor_cadencia_falhas', 'ativo=eq.true&select=*&order=prioridade')) ?? [];
   const templates = (await sbSelect(token, 'enriquecedor_cadencia_templates', 'canal=eq.whatsapp&ativo=eq.true&select=*')) ?? [];
 
+  const cfg = (config && typeof config === 'object' ? config : null) ?? (row.cadencia_config && typeof row.cadencia_config === 'object' && Object.keys(row.cadencia_config).length ? row.cadencia_config : null);
   const falhas = detectarFalhas(row, audit);
-  const primaria = falhas[0] ?? null;
-  const secundaria = falhas[1] ?? null;
+  const avisos = [];
+  // Falha principal: a escolhida pelo SDR, se ainda estiver entre as detectadas;
+  // senão a mais forte detectada (e avisa que a escolha caiu).
+  const porCodigo = (c) => (c ? falhas.find((f) => f.codigo === c) ?? null : null);
+  let primaria = porCodigo(cfg?.falhaPrimaria);
+  if (cfg?.falhaPrimaria && !primaria) avisos.push(`a falha escolhida (${cfg.falhaPrimaria}) não está mais entre as detectadas — usando a mais forte medida`);
+  if (!primaria) primaria = falhas[0] ?? null;
+  // Secundária: escolhida (≠ primária) | null explícito (passo 2 "aprofunda") | padrão = próxima detectada.
+  let secundaria;
+  if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'falhaSecundaria')) {
+    secundaria = cfg.falhaSecundaria ? porCodigo(cfg.falhaSecundaria) : null;
+    if (secundaria && primaria && secundaria.codigo === primaria.codigo) secundaria = null;
+  } else {
+    secundaria = falhas.find((f) => f.codigo !== primaria?.codigo) ?? null;
+  }
   const apto = !!primaria && !row.optout;
+  const opcoes = {
+    falhas: falhas.map((f) => ({ ...f, ...(frasesDaFalha(f, catalogo) ?? {}), rotuloLongo: catalogo.find((c) => c.codigo === f.codigo)?.rotulo_curto ?? f.codigo })),
+    templates: templates.map((t) => ({ nome: t.nome, passo: t.passo, versao: t.versao, corpo: t.corpo, variaveis: t.variaveis ?? [], botoes: t.botoes ?? [], statusMeta: t.status_meta, review: t.review_status ?? null, temBot: !!t.kommo_bot_id })),
+    limites: { nome1: 20, sdr: 20, fantasia: 40, fraseFalha: 140, fraseImpacto: 180, rotulo: 60, corpo: 1024 },
+  };
 
   if (persistir) {
     await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
@@ -2614,27 +2642,35 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
       ok: true,
       aptoCadencia: false,
       falhas,
+      opcoes,
+      config: cfg,
       motivo: row.optout
         ? 'lead pediu pra não receber (optout)'
         : 'nenhuma falha verificável medida — rode F2/F3/F4 antes; mensagem sem falha concreta é spam',
     };
   }
 
-  const avisos = [];
   const tpl = (nome) => templates.find((t) => t.nome === nome) ?? null;
   // Rotação 50/50 determinística por lead (não depende de estado externo).
   const rot = [...String(leadId)].reduce((a, c) => a + c.charCodeAt(0), 0) % 2;
 
-  const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
-  let nome1 = primeiroNome(nomeDecisor(row, decisores));
+  const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=id,nome,cargo`)) ?? [];
+  const decisorEscolhido = cfg?.decisorId ? decisores.find((d) => String(d.id) === String(cfg.decisorId)) ?? null : null;
+  let nome1 = String(cfg?.nome1 ?? '').trim() || primeiroNome(decisorEscolhido?.nome ?? nomeDecisor(row, decisores));
   if (!nome1) { nome1 = 'tudo bem?'; avisos.push('decisor não identificado — {{1}} caiu no genérico "tudo bem?"'); }
   nome1 = cortaPalavra(nome1, 20);
-  let sdr = cortaPalavra(String(sdrNome || '').trim(), 20);
+  // {{2}}: o SDR que validou a cadência manda; senão o responsável do card (carteiro) ou o informado.
+  let sdr = cortaPalavra(String(cfg?.sdrNome || sdrNome || '').trim(), 20);
   if (!sdr) { sdr = '[SDR]'; avisos.push('sdrNome não informado — preencha {{2}} antes do disparo'); }
-  const fantasia = cortaPalavra(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || ''), 40);
+  const fantasia = cortaPalavra(String(cfg?.fantasia ?? '').trim() || row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || ''), 40);
 
   const fr1 = frasesDaFalha(primaria, catalogo);
   if (!fr1) return { ok: false, error: `falha '${primaria.codigo}' sem registro no catálogo` };
+  // Ajustes do SDR nas frases (só quando a falha escolhida é a que está valendo).
+  if (cfg?.falhaPrimaria === primaria.codigo) {
+    if (String(cfg.fraseFalha ?? '').trim()) fr1.falha = String(cfg.fraseFalha).trim();
+    if (String(cfg.fraseImpacto ?? '').trim()) fr1.impacto = String(cfg.fraseImpacto).trim();
+  }
   const teto = (texto, max, rotulo) => {
     if (String(texto).length > max) {
       avisos.push(`${rotulo} estourou ${max} caracteres e foi cortado na última palavra`);
@@ -2660,12 +2696,21 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
     };
   };
 
-  const p1 = msg(tpl(rot === 0 ? 'sdna_p1_auditoria_v1' : 'sdna_p1_auditoria_v2'), [nome1, sdr, fantasia, v4, v5]);
+  // Variante do template: a escolhida pelo SDR (se existir/ativa) ou a rotação padrão.
+  const escolhe = (passo, padrao) => {
+    const nome = cfg?.templates?.[`p${passo}`];
+    if (nome && tpl(nome) && tpl(nome).passo === passo) return tpl(nome);
+    if (nome) avisos.push(`template ${nome} indisponível — usando ${padrao}`);
+    return tpl(padrao);
+  };
   const fr2 = secundaria ? frasesDaFalha(secundaria, catalogo) : null;
-  const p2 = fr2
-    ? msg(tpl('sdna_p2_segunda_falha_v1'), [nome1, fantasia, fr2.rotulo])
-    : msg(tpl('sdna_p2_aprofunda_v1'), [nome1, fantasia]);
-  const p3 = msg(tpl(rot === 0 ? 'sdna_p3_breakup_v1' : 'sdna_p3_breakup_v2'), [nome1, fantasia]);
+  if (fr2 && cfg?.falhaSecundaria === secundaria.codigo && String(cfg.rotuloSecundaria ?? '').trim()) fr2.rotulo = cortaPalavra(String(cfg.rotuloSecundaria).trim(), 60);
+  const p1 = msg(escolhe(1, rot === 0 ? 'sdna_p1_auditoria_v1' : 'sdna_p1_auditoria_v2'), [nome1, sdr, fantasia, v4, v5]);
+  const t2 = escolhe(2, fr2 ? 'sdna_p2_segunda_falha_v1' : 'sdna_p2_aprofunda_v1');
+  const p2 = t2 && t2.nome === 'sdna_p2_segunda_falha_v1'
+    ? (fr2 ? msg(t2, [nome1, fantasia, fr2.rotulo]) : msg(tpl('sdna_p2_aprofunda_v1'), [nome1, fantasia]))
+    : msg(t2, [nome1, fantasia]);
+  const p3 = msg(escolhe(3, rot === 0 ? 'sdna_p3_breakup_v1' : 'sdna_p3_breakup_v2'), [nome1, fantasia]);
 
   return {
     ok: true,
@@ -2677,6 +2722,11 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true }) {
     falhaPrimaria: { ...primaria, ...fr1 },
     falhaSecundaria: fr2 ? { ...secundaria, ...fr2 } : null,
     whatsapp: { p1, p2, p3 },
+    variaveis: { nome1, sdr, fantasia, fraseFalha: v4, fraseImpacto: v5, rotuloSecundaria: fr2?.rotulo ?? null },
+    decisorId: decisorEscolhido?.id ?? null,
+    validado: !!cfg?.validadoEm,
+    opcoes,
+    config: cfg,
     avisos,
   };
 }
@@ -3223,6 +3273,7 @@ const server = http.createServer(async (req, res) => {
         token,
         sdrNome: body.sdrNome ?? null,
         persistir: body.persistir !== false,
+        config: body.config ?? null, // prévia com as escolhas do SDR (não grava; quem grava é o front no lead)
       });
       if (r?.ok === false) void logErroMotor(req, '/api/cadencia/preparar', r.error, { leadId: body?.leadId });
       return send(res, r?.ok === false ? 422 : 200, r);

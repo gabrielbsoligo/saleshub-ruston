@@ -45,8 +45,11 @@ const ETAPAS: Etapa[] = [
   { f: 'F4', nome: 'Anúncios & mídia paga', auditado: 'Meta + Google: criativos, destino, análise do GT' },
   { f: 'F5', nome: 'Redes sociais', auditado: 'Instagram/YouTube: seguidores, engajamento, resposta' },
   { f: 'F6', nome: 'Cliente oculto', auditado: 'atendimento real via WhatsApp' },
-  { f: 'F7', nome: 'Pronto p/ arquiteto', auditado: 'narrativa, cadências e envio pro Kommo' },
+  { f: 'F7', nome: 'Pronto p/ arquiteto', auditado: 'scripts por decisor e cadência WABA — o SDR escolhe o que abordar e valida' },
+  { f: 'F8', nome: 'Pronto p/ importar', auditado: 'cadência validada pelo SDR — conferir e importar pro Kommo (Fila)' },
 ];
+// Índice do F8: chegam aqui os leads cuja cadência o SDR validou no arquiteto.
+const IMPORTAR = ETAPAS.length - 1;
 
 // Status de auditoria de cada lead: verde (auditado) · amarelo (em andamento) ·
 // vermelho (erro ao auditar) · cinza/undefined (na fila). O "play" atualiza em
@@ -376,6 +379,54 @@ export function WorkflowView({
   const enviarArquiteto = (id: string) => {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, auditadoAte: l.etapa, etapa: ARQ, parcial: true } : l)));
   };
+  // Importa pro Kommo (funil Outbound Cadência SDNA, etapa Fila) os leads do F8
+  // informados — cria card + contato + nota com a cadência validada; quem já tem
+  // card é pulado. O disparo do passo 1 continua manual no Kommo.
+  const importarKommo = async (alvo: WfLead[]) => {
+    if (!alvo.length) { toast.error('Nenhum lead pra importar.'); return; }
+    if (!window.confirm(`Importar ${alvo.length} lead(s) pro Kommo (funil Outbound Cadência SDNA, etapa Fila)? Quem já tem card é pulado.`)) return;
+    setImportandoKommo(true);
+    try {
+      const res = await motorFetch('/api/cadencia/importar-kommo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds: alvo.map((l) => l.id) }),
+      });
+      const j = await res.json();
+      if (!res.ok || j.ok === false) throw new Error(j.error ?? `HTTP ${res.status}`);
+      const semFone = (j.resultados ?? []).filter((r: any) => String(r.fone ?? '').startsWith('SEM TELEFONE')).length;
+      const pulados = (j.resultados ?? []).filter((r: any) => r.pulado).length;
+      const erros = (j.resultados ?? []).filter((r: any) => r.erro).length;
+      toast.success(
+        `Kommo: ${j.criados} card(s) criado(s) na Fila` +
+        (pulados ? ` · ${pulados} já existiam` : '') +
+        (semFone ? ` · ${semFone} sem telefone (completar no card)` : '') +
+        (erros ? ` · ${erros} com erro` : ''),
+        { duration: 9000 },
+      );
+      setImportadosTick((t) => t + 1);
+    } catch (e) {
+      toast.error(`Importação falhou: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setImportandoKommo(false);
+    }
+  };
+  const [importadosTick, setImportadosTick] = useState(0);
+  // Quem já está no Kommo (kommo_lead_id) — pra marcar na lista do F8.
+  const [noKommo, setNoKommo] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const ids = leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id);
+    if (!ids.length) { setNoKommo({}); return; }
+    let vivo = true;
+    void Promise.all(ids.map((id) => leadsRepo.get(id).catch(() => null))).then((rows) => {
+      if (!vivo) return;
+      const m: Record<string, string> = {};
+      for (const r of rows) if (r?.kommoLeadId) m[r.id] = r.kommoLeadId;
+      setNoKommo(m);
+    });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id).join(','), importadosTick]);
   const enviarFaseArquiteto = (fase: number) => {
     setLeads((prev) => prev.map((l) => (l.etapa === fase && !l.descartado ? { ...l, auditadoAte: fase, etapa: ARQ, parcial: true } : l)));
   };
@@ -412,47 +463,8 @@ export function WorkflowView({
       {/* Exportação pro Kommo: cria os cards no funil Outbound Cadência SDNA (etapa
           Fila) + registra no controle de leads do SalesHub (canal outbound). O
           disparo do passo 1 é manual: mover o card de Fila pra "Passo 1 enviado". */}
-      <div className="mb-6 flex items-center gap-3">
-        <button
-          onClick={async () => {
-            const alvo = leads.filter((l) => !l.descartado);
-            if (!alvo.length) { toast.error('Nenhum lead não-descartado pra importar.'); return; }
-            if (!window.confirm(`Importar ${alvo.length} lead(s) pro Kommo (funil Outbound Cadência SDNA, etapa Fila)? Quem já tem card é pulado.`)) return;
-            setImportandoKommo(true);
-            try {
-              const res = await motorFetch('/api/cadencia/importar-kommo', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ leadIds: alvo.map((l) => l.id) }),
-              });
-              const j = await res.json();
-              if (!res.ok || j.ok === false) throw new Error(j.error ?? `HTTP ${res.status}`);
-              const semFone = (j.resultados ?? []).filter((r: any) => String(r.fone ?? '').startsWith('SEM TELEFONE')).length;
-              const pulados = (j.resultados ?? []).filter((r: any) => r.pulado).length;
-              const erros = (j.resultados ?? []).filter((r: any) => r.erro).length;
-              toast.success(
-                `Kommo: ${j.criados} card(s) criado(s) na Fila` +
-                (pulados ? ` · ${pulados} já existiam` : '') +
-                (semFone ? ` · ${semFone} sem telefone (completar no card)` : '') +
-                (erros ? ` · ${erros} com erro` : ''),
-                { duration: 9000 },
-              );
-            } catch (e) {
-              toast.error(`Importação falhou: ${e instanceof Error ? e.message : e}`);
-            } finally {
-              setImportandoKommo(false);
-            }
-          }}
-          disabled={importandoKommo}
-          className="flex items-center gap-2 rounded-lg bg-v4-red px-4 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
-        >
-          {importandoKommo ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={15} />}
-          {importandoKommo ? 'Importando pro Kommo…' : 'Importar tudo pro Kommo (Outbound)'}
-        </button>
-        <span className="text-xs text-v4-text-muted">
-          Cria os cards na <b>Fila</b> do funil da cadência — mover pra “Passo 1 enviado” dispara a mensagem.
-        </span>
-      </div>
+      {/* A importação pro Kommo vive no F8 (Pronto p/ importar): só entra lá quem
+          teve a cadência validada pelo SDR no arquiteto. */}
 
       <div className="space-y-2">
         {ETAPAS.map((e, i) => {
@@ -543,7 +555,28 @@ export function WorkflowView({
                             <Sparkles size={13} /> Enviar fase pro arquiteto
                           </button>
                         )}
-                        {!ultima && (
+                        {i === IMPORTAR && (
+                          <>
+                            <button
+                              onClick={() => void importarKommo(aqui.filter((l) => marcados[l.id] && !noKommo[l.id]))}
+                              disabled={importandoKommo || nSel === 0}
+                              title={nSel === 0 ? 'Marque leads no checkbox pra importar em grupo' : `Importar ${nSel} lead(s) selecionado(s) pro Kommo`}
+                              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${nSel === 0 || importandoKommo ? 'cursor-not-allowed border-v4-border text-v4-text-disabled' : 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]'}`}
+                            >
+                              <UploadCloud size={13} /> Importar selecionados{nSel > 0 ? ` (${nSel})` : ''}
+                            </button>
+                            <button
+                              onClick={() => void importarKommo(aqui.filter((l) => !noKommo[l.id]))}
+                              disabled={importandoKommo || aqui.every((l) => noKommo[l.id])}
+                              title="Importar todos os leads desta fase que ainda não têm card no Kommo"
+                              className="flex items-center gap-1.5 rounded-lg bg-v4-red px-3 py-1.5 text-xs font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                            >
+                              {importandoKommo ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />}
+                              {importandoKommo ? 'Importando…' : 'Importar todos pro Kommo (Fila)'}
+                            </button>
+                          </>
+                        )}
+                        {!ultima && i !== ARQ && (
                           <button
                             onClick={() => avancarSelecionados(i)}
                             disabled={nSel === 0}
@@ -557,7 +590,7 @@ export function WorkflowView({
                             <ArrowRight size={13} /> Avançar selecionados{nSel > 0 ? ` (${nSel})` : ''}
                           </button>
                         )}
-                        {!ultima && (
+                        {!ultima && i !== ARQ && (
                           <button
                             onClick={() => aprovarFase(i)}
                             className="flex items-center gap-1.5 rounded-lg border border-v4-success px-3 py-1.5 text-xs font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)]"
@@ -620,6 +653,18 @@ export function WorkflowView({
                                         parcial
                                       </span>
                                     )}
+                                    {i === IMPORTAR && noKommo[l.id] && (
+                                      <a
+                                        href={`https://financeirorustonengenhariacombr.kommo.com/leads/detail/${noKommo[l.id]}`}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        onClick={(ev) => ev.stopPropagation()}
+                                        className="rounded bg-[rgba(34,197,94,0.15)] px-1.5 py-0.5 text-[10px] font-semibold text-v4-success hover:underline"
+                                        title="Já tem card no Kommo — abrir"
+                                      >
+                                        no Kommo · {noKommo[l.id]}
+                                      </a>
+                                    )}
                                   </p>
                                   <p className="text-[11px] text-v4-text-disabled">{l.cnpj}</p>
                                 </td>
@@ -661,7 +706,7 @@ export function WorkflowView({
                                       </button>
                                     );
                                   })()}
-                                  {!ultima && (
+                                  {!ultima && i !== ARQ && (
                                     <button
                                       onClick={(ev) => {
                                         ev.stopPropagation();
@@ -743,7 +788,12 @@ export function WorkflowView({
                                 <tr>
                                   <td colSpan={8} className="px-2 pb-3">
                                     <div className="rounded-xl border border-v4-red/40 bg-v4-surface p-3">
-                                      <LeadDetail leadId={l.id} embedded fase={i} />
+                                      <LeadDetail
+                                        leadId={l.id}
+                                        embedded
+                                        fase={i}
+                                        onAvancar={i === ARQ ? () => { avancar(l.id); setOpenLead(null); toast.success(`${l.empresa} → F8 · Pronto p/ importar`); } : undefined}
+                                      />
                                     </div>
                                   </td>
                                 </tr>
