@@ -1280,7 +1280,7 @@ async function metaAdSearch(term, useProxy = null, force = false, { pageId = nul
       // Sinais de "carregou" em pt-BR E em inglês (IP do proxy pode receber a UI
       // em inglês): total de resultados, "Identificação da biblioteca"/"Library ID",
       // sem resultado, ou (modo página) "não está exibindo anúncios".
-      const RE_LOADED = /\d\s*(resultados?|results?)\b|Identifica[çc][ãa]o da biblioteca|Library ID|nenhum resultado|no results|n[ãa]o est[áa] (exibindo|veiculando) an[úu]ncios|isn'?t running ads|not running ads|não há anúncios/i;
+      const RE_LOADED = /\d\s*(resultados?|results?)\b|Identifica[çc][ãa]o da biblioteca|Library ID|nenhum resultado|no results|Nenhum an[úu]ncio corresponde|No ads match|n[ãa]o est[áa] (exibindo|veiculando) an[úu]ncios|isn'?t running ads|not running ads|não há anúncios/i;
       // Casca da Ad Library renderizada (menu + campo de busca) = NÃO é bloqueio;
       // no modo página, a lista pode demorar ou a página simplesmente não ter
       // anúncio ativo (a Meta mostra só o cabeçalho "Anúncios | Sobre").
@@ -1565,7 +1565,7 @@ async function anunciosHeadless(payload) {
     for (const v of scored) if (v.empreendimento) porEmpreendimento[v.empreendimento] = (porEmpreendimento[v.empreendimento] || 0) + 1;
     return {
       ok: true,
-      note: s.note === 'pagina_sem_anuncios' ? 'meta_sem_resultado' : undefined,
+      note: s.note === 'pagina_sem_anuncios' || !scored.length ? 'meta_sem_resultado' : undefined,
       diag: s.note === 'pagina_sem_anuncios' ? s.diag : undefined,
       meta: {
         modo: 'pagina',
