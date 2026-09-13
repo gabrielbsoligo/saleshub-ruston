@@ -1281,15 +1281,33 @@ async function metaAdSearch(term, useProxy = null, force = false, { pageId = nul
       // em inglês): total de resultados, "Identificação da biblioteca"/"Library ID",
       // sem resultado, ou (modo página) "não está exibindo anúncios".
       const RE_LOADED = /\d\s*(resultados?|results?)\b|Identifica[çc][ãa]o da biblioteca|Library ID|nenhum resultado|no results|n[ãa]o est[áa] (exibindo|veiculando) an[úu]ncios|isn'?t running ads|not running ads|não há anúncios/i;
+      // Casca da Ad Library renderizada (menu + campo de busca) = NÃO é bloqueio;
+      // no modo página, a lista pode demorar ou a página simplesmente não ter
+      // anúncio ativo (a Meta mostra só o cabeçalho "Anúncios | Sobre").
+      const RE_SHELL = /Pesquisar por palavra-chave ou anunciante|Search by keyword or advertiser/i;
       let loaded = false;
-      const deadline = Date.now() + 20000; // ~20s no máximo pra aparecer resultado
+      let shell = false;
+      const deadline = Date.now() + (pageId ? 26000 : 20000);
       while (!loaded && Date.now() < deadline) {
         await page.waitForTimeout(900);
         try {
-          loaded = await page.evaluate((re) => new RegExp(re, 'i').test(document.body.innerText), RE_LOADED.source);
+          const r = await page.evaluate(([re, reShell]) => {
+            const t = document.body.innerText || '';
+            return { loaded: new RegExp(re, 'i').test(t), shell: new RegExp(reShell, 'i').test(t) };
+          }, [RE_LOADED.source, RE_SHELL.source]);
+          loaded = r.loaded;
+          shell = r.shell;
+          if (!loaded && shell && pageId) await page.mouse.wheel(0, 2500).catch(() => {}); // lista lazy
         } catch {
           /* renavegação (IP novo redireciona) — tenta de novo no próximo ciclo */
         }
+      }
+      if (!loaded && shell && pageId) {
+        // Casca ok e nenhum anúncio listado após a espera: página sem anúncio ativo.
+        if (!usingProxy) _metaCooldownUntil = 0;
+        const diag = await page.evaluate(() => ({ url: location.href, title: document.title, texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 1200) })).catch(() => null);
+        console.warn('[meta] página sem anúncios listados', JSON.stringify(diag).slice(0, 600));
+        return { ok: true, cards: [], total: 0, note: 'pagina_sem_anuncios', diag };
       }
       if (!loaded) {
         // Não carregou (bloqueio transitório OU carga lenta). Sem proxy: cooldown
@@ -1535,6 +1553,7 @@ async function anunciosHeadless(payload) {
     const s = await metaAdSearch(company || String(metaPageId), useProxy, forceDireto, { pageId: metaPageId });
     if (!s.ok) return { ok: false, note: s.note ?? avisoProxy ?? undefined, meta: null, diag: s.diag };
     if (s.note === 'meta_bloqueado' || s.note === 'meta_cap') return { ok: true, note: avisoProxy || s.note, meta: null, viaProxy: useProxy, diag: s.diag };
+    // 'pagina_sem_anuncios' = mediu e a página não tem anúncio ativo → meta com zero (é medição válida).
     const scored = s.cards.map((c) => {
       const sc = scoreAd(c, ctx);
       sc.signals = ['página oficial', ...(sc.signals || []).filter((x) => x !== 'conta oficial')];
@@ -1546,6 +1565,8 @@ async function anunciosHeadless(payload) {
     for (const v of scored) if (v.empreendimento) porEmpreendimento[v.empreendimento] = (porEmpreendimento[v.empreendimento] || 0) + 1;
     return {
       ok: true,
+      note: s.note === 'pagina_sem_anuncios' ? 'meta_sem_resultado' : undefined,
+      diag: s.note === 'pagina_sem_anuncios' ? s.diag : undefined,
       meta: {
         modo: 'pagina',
         pageId: String(metaPageId),
