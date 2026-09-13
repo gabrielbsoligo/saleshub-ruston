@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import toast from 'react-hot-toast';
 import { Check, ExternalLink, KeyRound, Pencil, RotateCcw, Save, X } from 'lucide-react';
 import type { ChaveBuscaId, Lead, SiteAudit } from '../types';
-import { CHAVE_INFO, apagarChave, chaveAtual, chavesPendentes, definirChave, validarChave } from '../lib/chavesBusca';
+import { CHAVE_INFO, apagarChave, chaveAtual, chavesPendentes, definirChave, faseParaRefazer, validarChave } from '../lib/chavesBusca';
 
 // Bloco "Chaves de busca": o que a PRÓXIMA execução vai usar como identificador
 // (marca, site, redes da empresa, ficha do Google, termo da Meta), com origem e
@@ -12,11 +13,14 @@ export function ChavesBusca({
   audit,
   chaves,
   onSave,
+  onRefazer,
 }: {
   lead: Lead;
   audit: SiteAudit | null;
   chaves: ChaveBuscaId[];
   onSave: (next: Lead) => Promise<void>;
+  /** Chamado após Corrigir/Apagar: refaz a fase que depende da chave (3 ou 4). */
+  onRefazer?: (fase: 3 | 4) => void;
 }) {
   const [editando, setEditando] = useState<ChaveBuscaId | null>(null);
   const [valor, setValor] = useState('');
@@ -31,6 +35,16 @@ export function ChavesBusca({
       setEditando(null);
     } finally {
       setSalvando(false);
+    }
+  };
+  // Corrigir/Apagar mudam o insumo da auditoria: grava, zera o derivado e
+  // dispara a fase de novo — sem depender de o operador lembrar de clicar.
+  const salvarERefazer = async (next: Lead, chave: ChaveBuscaId) => {
+    await salvar(next);
+    if (onRefazer) {
+      const f = faseParaRefazer(chave);
+      toast(`${CHAVE_INFO[chave].label} alterado — refazendo F${f} com a chave nova…`);
+      onRefazer(f);
     }
   };
 
@@ -63,7 +77,7 @@ export function ChavesBusca({
                     value={valor}
                     onChange={(e) => setValor(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') void salvar(definirChave(lead, id, valor));
+                      if (e.key === 'Enter' && valor.trim()) void salvarERefazer(definirChave(lead, id, valor), id);
                       if (e.key === 'Escape') setEditando(null);
                     }}
                     placeholder={id === 'gmn' ? 'Nome exato pra buscar no Google (ex.: "Du Vale Descartáveis")' : id === 'site' ? 'https://…' : id === 'instagram' || id === 'facebook' ? '@handle ou URL' : 'texto'}
@@ -88,7 +102,7 @@ export function ChavesBusca({
                 {emEdicao ? (
                   <>
                     <button
-                      onClick={() => void salvar(definirChave(lead, id, valor))}
+                      onClick={() => void salvarERefazer(definirChave(lead, id, valor), id)}
                       disabled={salvando || !valor.trim()}
                       className="flex items-center gap-1 rounded-md border border-v4-success px-2 py-0.5 text-[11px] font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)] disabled:opacity-50"
                     >
@@ -123,7 +137,7 @@ export function ChavesBusca({
                     </button>
                     {c.valor && (
                       <button
-                        onClick={() => void salvar(apagarChave(lead, id))}
+                        onClick={() => void salvarERefazer(apagarChave(lead, id), id)}
                         title={c.padrao ? 'Já é o padrão' : id === 'marca' || id === 'meta_termo' ? 'Voltar ao padrão derivado' : 'Não é isso — apagar (nunca mais volta na busca)'}
                         disabled={c.padrao}
                         className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error disabled:opacity-40"

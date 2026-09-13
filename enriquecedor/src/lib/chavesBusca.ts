@@ -141,9 +141,23 @@ export function validarChave(lead: Lead, chave: ChaveBuscaId): Lead {
   return comEstado(lead, chave, { validacao: 'validado' });
 }
 
+// Mudou a chave → o que foi DERIVADO dela ficou velho e sai da tela até a fase
+// rodar de novo: briefing (site/marca/redes/Google entram nele) e, para o termo
+// da Meta, a medição de anúncios. A auditoria de site é sobrescrita pelo F3.
+export function invalidarDependentes(lead: Lead, chave: ChaveBuscaId): Lead {
+  if (chave === 'meta_termo') return { ...lead, anuncios: null };
+  return { ...lead, briefing: null };
+}
+
+// Qual fase refazer depois de corrigir/apagar a chave (índice F: 3 ou 4).
+export function faseParaRefazer(chave: ChaveBuscaId): 3 | 4 {
+  return chave === 'meta_termo' ? 4 : 3;
+}
+
 // Apaga o valor atual e guarda o identificador em rejeitados (nunca volta).
 // marca/meta_termo: só limpa o override (volta ao padrão derivado).
-export function apagarChave(lead: Lead, chave: ChaveBuscaId): Lead {
+export function apagarChave(lead0: Lead, chave: ChaveBuscaId): Lead {
+  const lead = invalidarDependentes(lead0, chave);
   const e = estado(lead, chave);
   const rej = new Set(e.rejeitados ?? []);
   switch (chave) {
@@ -175,9 +189,10 @@ export function apagarChave(lead: Lead, chave: ChaveBuscaId): Lead {
 
 // Define o valor manualmente (vira validado, origem manual). Para gmn, `valor` é
 // o termo de busca no Google: limpa a ficha atual e o F3 busca de novo com ele.
-export function definirChave(lead: Lead, chave: ChaveBuscaId, valor: string): Lead {
+export function definirChave(lead0: Lead, chave: ChaveBuscaId, valor: string): Lead {
   const v = valor.trim();
-  if (!v) return lead;
+  if (!v) return lead0;
+  const lead = invalidarDependentes(lead0, chave);
   const url = (s: string) => (s.startsWith('http') ? s : `https://${s}`);
   switch (chave) {
     case 'marca':

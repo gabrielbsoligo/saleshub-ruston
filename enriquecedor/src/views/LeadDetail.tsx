@@ -481,6 +481,7 @@ export function LeadDetail({
               await leadsRepo.update(next);
               await reloadAll();
             }}
+            onRefazer={(f) => void handleRunFase(f)}
           />
         ) : null;
       })()}
