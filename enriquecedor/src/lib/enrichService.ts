@@ -7,7 +7,7 @@ import { computeDores, whatsappAudit } from './dores';
 import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
 import { redeHandle } from './contactSelection';
-import { facebookHandle, marcaAtual, metaTermoAtual, overridesBusca } from './chavesBusca';
+import { facebookHandle, hostOf as hostDe, marcaAtual, metaTermoAtual, overridesBusca, registrarAnuncianteResolvido } from './chavesBusca';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -28,6 +28,39 @@ function normName(s: string | null | undefined): string {
 
 const onlyDigits = (s: string | null | undefined): string => (s ?? '').replace(/\D/g, '');
 
+// Motivo REAL da medição de anúncios na Meta, em português de operador — usado
+// no toast, no aviso do lead e no lugar do antigo "ainda não medidos".
+export function descreverNotaMeta(note: string | null | undefined): string {
+  switch (note) {
+    case 'meta_bloqueado':
+      return 'a Meta bloqueou o acesso (anti-bot) — o motor espera 15 min antes de tentar o IP direto de novo; com proxy ativo a próxima tentativa troca de IP';
+    case 'meta_cap':
+      return 'teto diário de consultas no IP direto atingido — continua amanhã (ou com proxy)';
+    case 'meta_parcial':
+      return 'parte dos termos bloqueou na Meta — o resultado está incompleto; re-medir completa';
+    case 'meta_sem_resultado':
+      return 'a Meta respondeu, mas não há anúncio ativo para a página/termos buscados';
+    case 'proxy_sem_trafego':
+      return 'proxy (Decodo) sem tráfego — a franquia de GB acabou; recarregue o plano para medir anúncios';
+    case 'proxy_auth':
+      return 'proxy (Decodo) recusou usuário/senha — confira as credenciais no motor';
+    case 'proxy_conexao':
+      return 'proxy (Decodo) sem resposta — verifique o serviço/rede';
+    case 'proxy_falhou':
+      return 'a consulta via proxy falhou (rede) — tente de novo em instantes';
+    case 'headless_indisponivel':
+      return 'navegador headless indisponível no motor — a medição não roda';
+    case 'sem_termo_busca':
+      return 'sem página nem termo de busca — valide a chave "Página na Meta Ad Library" ou o termo';
+    case 'timeout':
+      return 'a busca demorou demais e foi interrompida — re-medir (proxy lento agora)';
+    case 'meta_nao_medido':
+      return 'a medição não gravou resultado — re-medir';
+    default:
+      return note ? `falha no motor: ${note}` : 'falha desconhecida ao medir — re-medir';
+  }
+}
+
 // Converte o resultado de uma fonte (ok + note do backend) num aviso amigável.
 // `note` de "desativado" não é falha (a fonte foi pulada de propósito).
 function issueFor(source: string, ok: boolean, note?: string | null): EnrichIssue | null {
@@ -44,9 +77,12 @@ function issueFor(source: string, ok: boolean, note?: string | null): EnrichIssu
     case 'quota':
       return { source, reason: 'limite/cota atingido' };
     case 'meta_bloqueado':
-      return { source: 'Anúncios (Meta)', reason: 'Meta em pausa de segurança (anti-bot) — a fila retenta automaticamente' };
     case 'meta_cap':
-      return { source: 'Anúncios (Meta)', reason: 'teto diário de consultas atingido — continua amanhã' };
+    case 'meta_parcial':
+    case 'sem_termo_busca':
+    case 'timeout':
+    case 'proxy_falhou':
+      return { source: 'Anúncios (Meta)', reason: descreverNotaMeta(note) };
     case 'proxy_sem_trafego':
       return { source: 'Anúncios (Meta)', reason: 'proxy (Decodo) sem tráfego — recarregue a franquia de GB para medir anúncios' };
     case 'proxy_auth':
@@ -714,6 +750,7 @@ async function fetchAnuncios(lead: Lead, audit: SiteAudit): Promise<SourceResult
     }
   };
   try {
+    const ov = overridesBusca(lead);
     const fbHandle = lead.companyFacebook
       ? lead.companyFacebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null
       : null;
@@ -737,23 +774,191 @@ async function fetchAnuncios(lead: Lead, audit: SiteAudit): Promise<SourceResult
           siteDomain,
           cidade: lead.cidade,
           empreendimentos: empAtivos, // lançamentos + obras (busca também por eles)
+          metaPageId: ov.metaPageId, // página oficial validada/resolvida → medição EXATA (modo página)
         }),
       });
     } catch (e) {
-      return { ok: false, note: (e as Error)?.name === 'AbortError' ? 'timeout' : undefined };
+      const note = (e as Error)?.name === 'AbortError' ? 'timeout' : 'motor_indisponivel';
+      registrarFalhaMeta(lead, note);
+      return { ok: false, note };
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) return { ok: false };
+    if (!res.ok) {
+      registrarFalhaMeta(lead, `http_${res.status}`);
+      return { ok: false, note: `http_${res.status}` };
+    }
     const j = await res.json();
     if (j.meta) {
       // Realimenta empreendimentos com as LPs descobertas nos anúncios do cliente.
       j.meta.lpsDescobertas = reconcileLpsFromAds(lead, j.meta.validados ?? []);
-      lead.anuncios = { meta: j.meta, checkedAt: new Date().toISOString() };
+      // Preserva a medição do Google (outra fonte) — só a parte Meta é trocada.
+      lead.anuncios = { ...(lead.anuncios ?? {}), meta: j.meta, metaFalha: null, checkedAt: new Date().toISOString() };
+    } else {
+      registrarFalhaMeta(lead, j.note ?? (j.ok === false ? 'falha_motor' : 'meta_nao_medido'));
     }
     // Só é sucesso quando a medição veio de verdade (meta preenchido) — resposta
     // "ok" sem meta significa que NADA foi medido (não pode virar "Auditado").
     return { ok: j.ok !== false && !!j.meta, note: j.note };
+  } catch {
+    registrarFalhaMeta(lead, 'falha_motor');
+    return { ok: false };
+  }
+}
+
+// Guarda o MOTIVO real da última falha da Meta no lead (sem apagar a medição
+// anterior, se houver) — a UI mostra isso em vez de "ainda não medidos".
+function registrarFalhaMeta(lead: Lead, note: string): void {
+  const prev = lead.anuncios ?? null;
+  lead.anuncios = {
+    meta: prev?.meta ?? null,
+    google: prev?.google ?? null,
+    checkedAt: prev?.checkedAt ?? new Date().toISOString(),
+    metaFalha: { note, at: new Date().toISOString() },
+  };
+}
+
+/**
+ * Resolve as IDENTIDADES de anunciante do lead (motor /api/anunciantes/resolver):
+ * página na Meta Ad Library (pelo Facebook validado) e anunciante no Google Ads
+ * Transparency Center (pelo domínio do site). Grava nas chaves de busca
+ * (meta_pagina / google_anunciante) sem sobrescrever o que o operador validou.
+ * Muta o lead. Retorna o que foi resolvido nesta rodada.
+ */
+export async function resolverAnunciantes(
+  lead: Lead,
+  audit?: SiteAudit | null,
+  opts: { force?: boolean } = {},
+): Promise<{ meta: string | null; google: string | null; notes: string[] }> {
+  const ov = overridesBusca(lead);
+  const cb = lead.chavesBusca ?? {};
+  const notes: string[] = [];
+  const precisaMeta = opts.force ? cb.meta_pagina?.validacao !== 'validado' : !ov.metaPageId && cb.meta_pagina?.validacao !== 'validado';
+  const precisaGoogle = opts.force ? cb.google_anunciante?.validacao !== 'validado' : !ov.googleAdvertiser && cb.google_anunciante?.validacao !== 'validado';
+  const fbUrl = precisaMeta && lead.companyFacebook && facebookHandle(lead.companyFacebook) ? lead.companyFacebook : null;
+  const siteDomain = precisaGoogle ? hostDe(audit?.siteUrl ?? lead.siteUrl) : null;
+  if (!fbUrl && !siteDomain) return { meta: ov.metaPageId, google: ov.googleAdvertiser, notes };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90_000);
+    let res: Response;
+    try {
+      res = await motorFetch('/api/anunciantes/resolver', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify({ fbUrl, siteDomain }),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      notes.push(`http_${res.status}`);
+      return { meta: ov.metaPageId, google: ov.googleAdvertiser, notes };
+    }
+    const j = await res.json();
+    if (fbUrl) {
+      const m = j.meta;
+      if (m?.pageId) {
+        // Se o id resolvido foi rejeitado antes, tenta o próximo candidato da Ad Library.
+        const rej = new Set(ov.metaPaginaRejeitados);
+        const cand = [{ id: String(m.pageId), nome: m.pageName ?? null }, ...((m.candidatos ?? []) as Array<{ id: string; nome: string }>)].find((c) => !rej.has(String(c.id)));
+        Object.assign(lead, registrarAnuncianteResolvido(lead, 'meta_pagina', cand ? { id: String(cand.id), nome: cand.nome, origem: m.via ?? 'adlib' } : null));
+      } else {
+        Object.assign(lead, registrarAnuncianteResolvido(lead, 'meta_pagina', null));
+        if (m?.note) notes.push(`meta:${m.note}`);
+      }
+    }
+    if (siteDomain) {
+      const g = j.google;
+      const rej = new Set(ov.googleAnuncianteRejeitados);
+      const advs = ((g?.anunciantes ?? []) as Array<{ id: string; nome: string }>).filter((a) => !rej.has(a.id));
+      if (g?.ok && advs.length) {
+        Object.assign(lead, registrarAnuncianteResolvido(lead, 'google_anunciante', { id: advs[0].id, nome: advs[0].nome || null, origem: 'dominio' }));
+        // A consulta por domínio já é a medição do Google — aproveita e grava.
+        lead.anuncios = {
+          ...(lead.anuncios ?? { meta: null }),
+          checkedAt: lead.anuncios?.checkedAt ?? new Date().toISOString(),
+          google: googleDe(g, { domain: siteDomain, advertiserId: null }),
+        };
+      } else {
+        Object.assign(lead, registrarAnuncianteResolvido(lead, 'google_anunciante', null));
+        if (g?.ok && g.semAnuncios) {
+          lead.anuncios = {
+            ...(lead.anuncios ?? { meta: null }),
+            checkedAt: lead.anuncios?.checkedAt ?? new Date().toISOString(),
+            google: googleDe(g, { domain: siteDomain, advertiserId: null }),
+          };
+        }
+        if (g?.note) notes.push(`google:${g.note}`);
+      }
+    }
+  } catch (e) {
+    notes.push((e as Error)?.name === 'AbortError' ? 'timeout' : 'motor_indisponivel');
+  }
+  lead.updatedAt = new Date().toISOString();
+  const ov2 = overridesBusca(lead);
+  return { meta: ov2.metaPageId, google: ov2.googleAdvertiser, notes };
+}
+
+type GoogleRaw = {
+  url?: string;
+  viaProxy?: boolean;
+  anunciantes?: Array<{ id: string; nome: string; url: string }>;
+  criativos?: number;
+  totalTexto?: number | null;
+  formatos?: { video: number; imagem: number; texto: number };
+  amostra?: Array<{ id: string; anunciante: string; url: string; formato: 'video' | 'imagem' | 'texto'; texto: string }>;
+  semAnuncios?: boolean;
+};
+function googleDe(g: GoogleRaw, ids: { domain: string | null; advertiserId: string | null }): NonNullable<Lead['anuncios']>['google'] {
+  return {
+    url: g.url ?? '',
+    advertiserId: ids.advertiserId,
+    domain: ids.domain,
+    anunciantes: g.anunciantes ?? [],
+    criativos: g.criativos ?? 0,
+    totalTexto: g.totalTexto ?? null,
+    formatos: g.formatos ?? { video: 0, imagem: 0, texto: 0 },
+    amostra: g.amostra ?? [],
+    semAnuncios: !!g.semAnuncios,
+    viaProxy: !!g.viaProxy,
+  };
+}
+
+/**
+ * Anúncios no Google Ads Transparency Center: pelo ANUNCIANTE (AR…) validado/
+ * resolvido; sem anunciante, pelo domínio do site. Muta lead.anuncios.google.
+ */
+export async function fetchAnunciosGoogle(lead: Lead, audit?: SiteAudit | null): Promise<SourceResult> {
+  const ov = overridesBusca(lead);
+  const domain = hostDe(audit?.siteUrl ?? lead.siteUrl);
+  if (!ov.googleAdvertiser && !domain) return { ok: false, note: 'sem_dominio' };
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 90_000);
+    let res: Response;
+    try {
+      res = await motorFetch('/api/anuncios-google', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        signal: ctrl.signal,
+        body: JSON.stringify(ov.googleAdvertiser ? { advertiserId: ov.googleAdvertiser } : { domain }),
+      });
+    } catch (e) {
+      return { ok: false, note: (e as Error)?.name === 'AbortError' ? 'timeout' : 'motor_indisponivel' };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) return { ok: false, note: `http_${res.status}` };
+    const g = (await res.json()) as GoogleRaw & { ok?: boolean; note?: string };
+    if (g.ok === false) return { ok: false, note: g.note };
+    lead.anuncios = {
+      ...(lead.anuncios ?? { meta: null }),
+      checkedAt: new Date().toISOString(),
+      google: googleDe(g, { domain: ov.googleAdvertiser ? null : domain, advertiserId: ov.googleAdvertiser }),
+    };
+    return { ok: true, note: g.note };
   } catch {
     return { ok: false };
   }
@@ -1050,13 +1255,23 @@ async function auditPendingLps(lead: Lead): Promise<number> {
   return feitas;
 }
 
-/** Mede os anúncios de UM lead sob demanda (botão "Medir agora"). */
-export async function measureLeadAds(lead: Lead): Promise<{ ok: boolean; note?: string }> {
+/**
+ * Mede os anúncios de UM lead sob demanda (botão "Medir agora" / F4):
+ * 1) resolve as identidades (página Meta + anunciante Google) se ainda não
+ *    estão nas chaves; 2) Meta por página (ou fallback por termo); 3) Google
+ * Transparency por anunciante (ou domínio). `ok` = medição Meta gravada.
+ */
+export async function measureLeadAds(lead: Lead): Promise<{ ok: boolean; note?: string; google?: SourceResult }> {
   const audit = await leadsRepo.getAudit(lead.id);
-  const r = await fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit));
+  await resolverAnunciantes(lead, audit);
+  await leadsRepo.update(lead); // as chaves resolvidas aparecem mesmo que a medição falhe
+  const [r, g] = await Promise.all([
+    fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit)),
+    fetchAnunciosGoogle(lead, audit),
+  ]);
   await auditPendingLps(lead); // audita as LPs recém-descobertas nos anúncios
   await leadsRepo.update(lead);
-  return r;
+  return { ...r, google: g };
 }
 
 /**
@@ -1076,7 +1291,8 @@ export async function runAnuncios(lead: Lead): Promise<FaseResult> {
     await fetchBriefing(fresh, audit); // re-gera com anúncios no contexto
     fresh.updatedAt = new Date().toISOString();
     await leadsRepo.update(fresh);
-    resumo = `${meta.validados.length} validados · ${meta.aValidar.length} a validar · briefing atualizado`;
+    const g = fresh.anuncios?.google;
+    resumo = `${meta.modo === 'pagina' ? 'Meta (página oficial): ' : 'Meta (termo): '}${meta.validados.length} validados · ${meta.aValidar.length} a validar${g ? ` · Google: ${g.criativos} criativo(s)` : ''} · briefing atualizado`;
     // Cadência: com F4 medido, o motor detecta e persiste as falhas verificáveis
     // (falha_primaria/apto_cadencia). Fire-and-forget: não segura a fase.
     void motorFetch('/api/cadencia/preparar', {
@@ -1103,11 +1319,15 @@ const adsQueue = new PQueue({ concurrency: 1, interval: ADS_QUEUE_INTERVAL_MS, i
  * cadência (~40s) para nunca tomar bloqueio. Só um processamento por vez.
  */
 export async function runAdsQueue(leads: Lead[]): Promise<void> {
-  const fila = leads.filter((l) => !l.anuncios); // pula quem já tem
+  const fila = leads.filter((l) => !l.anuncios?.meta); // pula quem já tem medição Meta (falha registrada = tenta de novo)
   await adsQueue.addAll(
     fila.map((lead) => async () => {
       const audit = await leadsRepo.getAudit(lead.id);
-      const an = await fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit));
+      await resolverAnunciantes(lead, audit);
+      const [an] = await Promise.all([
+        fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit)),
+        fetchAnunciosGoogle(lead, audit),
+      ]);
       await auditPendingLps(lead); // audita as LPs recém-descobertas nos anúncios (mesmo padrão do measureLeadAds)
       // guarda o aviso da plataforma junto dos demais (sem duplicar)
       const aI = issueFor('Anúncios (Meta)', an.ok, an.note);

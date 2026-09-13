@@ -1158,7 +1158,11 @@ const META_SAFETY_MS = Number(process.env.META_SAFETY_MS || 20000); // intervalo
 const META_DIRECT_MS = Number(process.env.META_DIRECT_MS || 6000); // intervalo no IP direto (uso interativo)
 const META_JITTER_MS = Number(process.env.META_JITTER_MS || 8000); // variação aleatória
 const META_DAILY_CAP = Number(process.env.META_DAILY_CAP || 250); // teto diário sem proxy
-const META_COOLDOWN_MS = Number(process.env.META_COOLDOWN_MS || 90 * 1000); // pausa curta após bloqueio (Ad Library é pública; bloqueio é transitório)
+// Pausa do IP DIRETO após bloqueio. Era 90s: com a fila do F4 a cada 40s, o IP
+// do Railway (bloqueado pela Meta) saía do cooldown antes do próximo lead e
+// tomava bloqueio de novo — o proxy quase nunca entrava. 15 min dá tempo de a
+// fila inteira sair pelo proxy (13/09).
+const META_COOLDOWN_MS = Number(process.env.META_COOLDOWN_MS || 15 * 60 * 1000);
 let _metaLastTs = 0;
 let _metaCooldownUntil = 0;
 let _metaDayStamp = '';
@@ -1214,7 +1218,10 @@ function checkProxy() {
 
 // Extrai os CARDS de anúncio do Meta Ad Library (BR, ativos) para um termo:
 // { id, advertiser (handle da página), dest (domínios de destino), copy }.
-async function metaAdSearch(term, useProxy = null, force = false) {
+// `pageId` (opcional) troca a busca por palavra-chave pela PÁGINA do anunciante
+// (view_all_page_id): devolve exatamente os anúncios ativos daquela página, sem
+// ruído de homônimos — é o modo preferido do F4 quando a página foi resolvida.
+async function metaAdSearch(term, useProxy = null, force = false, { pageId = null } = {}) {
   return runHeadless(async () => {
     // useProxy explícito manda; se null, usa o proxy se configurado.
     const proxy = useProxy === false ? null : useProxy === true ? proxyConfig() : proxyConfig();
@@ -1262,9 +1269,11 @@ async function metaAdSearch(term, useProxy = null, force = false) {
         if (/googletagmanager|google-analytics|doubleclick|facebook\.com\/tr|connect\.facebook\.net\/signals/i.test(req.url())) return route.abort();
         return route.continue();
       });
-      const url =
-        `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR` +
-        `&q=${encodeURIComponent(term)}&search_type=keyword_unordered&media_type=all`;
+      const url = pageId
+        ? `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR` +
+          `&view_all_page_id=${encodeURIComponent(pageId)}&search_type=page&media_type=all`
+        : `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR` +
+          `&q=${encodeURIComponent(term)}&search_type=keyword_unordered&media_type=all`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       // Aguarda os resultados, tolerando renavegação do Meta (IP novo do proxy
       // costuma fazer a página redirecionar → "execution context destroyed").
@@ -1472,27 +1481,28 @@ async function anunciosHeadless(payload) {
   // busca é FALHA (ok:false), para o funil nunca marcar "Auditado" sem medir.
   const browser = await getBrowser();
   if (!browser) return { ok: false, note: 'headless_indisponivel', meta: null };
-  const { company, fbHandle, siteDomain, cidade, empreendimentos } = payload || {};
-  if (!company) return { ok: false, note: 'sem_termo_busca', meta: null };
+  const { company, fbHandle, siteDomain, cidade, empreendimentos, metaPageId } = payload || {};
+  if (!company && !metaPageId) return { ok: false, note: 'sem_termo_busca', meta: null };
 
-  // Estratégia de IP: por padrão usa o IP DIRETO (rápido e, fora de rajada, não
-  // bloqueia). Se o direto estiver em cooldown, tenta o PROXY — mas só se tiver
-  // tráfego. Se o proxy também não der, FORÇA o direto (melhor tentar que falhar).
+  // Estratégia de IP (13/09): PROXY PRIMEIRO quando configurado e com tráfego —
+  // o IP direto do Railway é bloqueado pela Meta com frequência e, no desenho
+  // antigo ("direto primeiro, proxy só em cooldown"), o proxy quase nunca era
+  // usado. Sem proxy (ou proxy sem tráfego/auth), cai pro direto; se o direto
+  // estiver em cooldown, FORÇA mesmo assim (melhor tentar que falhar em silêncio)
+  // e o operador vê o motivo real no aviso.
   const diretoEmCooldown = Date.now() < _metaCooldownUntil;
   let useProxy = false;
   let forceDireto = false;
   let avisoProxy = null;
-  if (diretoEmCooldown) {
-    if (proxyConfig()) {
-      const pc = await checkProxy();
-      if (pc.ok) useProxy = true;
-      else {
-        avisoProxy = pc.reason === 'sem_trafego' ? 'proxy_sem_trafego' : pc.reason === 'auth' ? 'proxy_auth' : 'proxy_conexao';
-        forceDireto = true; // proxy indisponível → tenta o direto mesmo em cooldown
-      }
-    } else {
-      forceDireto = true; // sem proxy configurado → tenta o direto de qualquer forma
+  if (proxyConfig()) {
+    const pc = await checkProxy();
+    if (pc.ok) useProxy = true;
+    else {
+      avisoProxy = pc.reason === 'sem_trafego' ? 'proxy_sem_trafego' : pc.reason === 'auth' ? 'proxy_auth' : 'proxy_conexao';
+      forceDireto = diretoEmCooldown;
     }
+  } else {
+    forceDireto = diretoEmCooldown;
   }
 
   const ctx = {
@@ -1511,9 +1521,43 @@ async function anunciosHeadless(payload) {
     })),
   };
 
-  // Termos de busca: a EMPRESA + o NOME de cada empreendimento (lançamentos e
-  // obras). Assim achamos anúncios que rodam no nome do empreendimento, não só
-  // no da construtora. Cada termo é uma consulta ao Meta (cadência anti-ban).
+  // MODO PÁGINA (preferido): a chave "Página na Meta Ad Library" foi resolvida/
+  // validada → uma única consulta por view_all_page_id devolve exatamente os
+  // anúncios ativos daquela página. Todos são do cliente por definição
+  // (sinal "página oficial"); o scoreAd só entra para atribuir empreendimento/
+  // destino. A busca por palavra-chave abaixo vira fallback.
+  if (metaPageId) {
+    const s = await metaAdSearch(company || String(metaPageId), useProxy, forceDireto, { pageId: metaPageId });
+    if (!s.ok) return { ok: false, note: s.note ?? avisoProxy ?? undefined, meta: null };
+    if (s.note === 'meta_bloqueado' || s.note === 'meta_cap') return { ok: true, note: avisoProxy || s.note, meta: null };
+    const scored = s.cards.map((c) => {
+      const sc = scoreAd(c, ctx);
+      sc.signals = ['página oficial', ...(sc.signals || []).filter((x) => x !== 'conta oficial')];
+      sc.score = sc.signals.length;
+      sc.bucket = 'validado';
+      return sc;
+    });
+    const porEmpreendimento = {};
+    for (const v of scored) if (v.empreendimento) porEmpreendimento[v.empreendimento] = (porEmpreendimento[v.empreendimento] || 0) + 1;
+    return {
+      ok: true,
+      meta: {
+        modo: 'pagina',
+        pageId: String(metaPageId),
+        total: s.total ?? scored.length,
+        validados: scored,
+        aValidar: [],
+        descartados: [],
+        porEmpreendimento,
+        termo: `página ${metaPageId}`,
+        termosBuscados: [],
+        termosIgnorados: [],
+      },
+    };
+  }
+
+  // Termos de busca (FALLBACK sem página resolvida): a EMPRESA + o NOME de cada
+  // empreendimento (lançamentos e obras). Cada termo é uma consulta ao Meta.
   const termos = [company, ...(empreendimentos || []).map((e) => e.nome)]
     .map((t) => String(t || '').trim())
     .filter(Boolean);
@@ -1572,6 +1616,7 @@ async function anunciosHeadless(payload) {
     ok: true,
     note: algumBloqueio ? 'meta_parcial' : undefined, // algum termo bloqueou, mas houve resultado
     meta: {
+      modo: 'keyword',
       total: scored.length, // anúncios únicos analisados (todos os termos juntos)
       validados,
       aValidar,
@@ -1582,6 +1627,169 @@ async function anunciosHeadless(payload) {
       termosIgnorados, // termos além do teto anti-ban (não buscados)
     },
   };
+}
+
+// ============================================================================
+// ANUNCIANTES (F4 por identidade, não por palavra-chave) — 13/09
+// Resolve a PÁGINA do lead na Meta Ad Library (page id) a partir do Facebook
+// validado, e o(s) ANUNCIANTE(s) no Google Ads Transparency Center a partir do
+// domínio do site validado. Ambos viram "chaves de busca" que o operador confere.
+// ============================================================================
+
+// Page id do Facebook a partir do @/URL da página. Ordem: (1) HTML público da
+// página — tag al:android:url = fb://page/<id> (sem headless, barato);
+// (2) busca "por página" na Ad Library (headless, proxy quando disponível).
+async function resolverMetaPageId(fbUrlOuHandle) {
+  const bruto = String(fbUrlOuHandle || '').trim();
+  const handle = bruto.match(/facebook\.com\/([^/?#]+)/i)?.[1] || bruto.replace(/^@/, '');
+  if (!handle) return { ok: false, pageId: null, note: 'sem_handle' };
+  if (/^\d{5,}$/.test(handle)) return { ok: true, pageId: handle, pageName: null, via: 'id', handle };
+
+  try {
+    const r = await fetchWithTimeout(`https://www.facebook.com/${encodeURIComponent(handle)}`, {
+      headers: { 'user-agent': UA, 'accept-language': 'pt-BR,pt;q=0.9' },
+      redirect: 'follow',
+    }, 12000);
+    const html = await r.text();
+    const m = html.match(/fb:\/\/page\/(\d{5,})/) || html.match(/"pageID":"(\d{5,})"/) || html.match(/"page_id":"?(\d{5,})"?/) || html.match(/[?&]page_id=(\d{5,})/);
+    if (m) {
+      const title = (html.match(/<title[^>]*>([^<]{2,160})<\/title>/i)?.[1] ?? '').replace(/\s*[|·-]\s*Facebook.*$/i, '').trim();
+      return { ok: true, pageId: m[1], pageName: title || null, via: 'html', handle };
+    }
+  } catch { /* segue pro headless */ }
+
+  return runHeadless(async () => {
+    const browser = await getBrowser();
+    if (!browser) return { ok: false, pageId: null, note: 'headless_indisponivel', handle };
+    const proxy = proxyConfig();
+    let useProxy = false;
+    if (proxy) useProxy = (await checkProxy()).ok;
+    let ctx;
+    try {
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 800 }, ...(useProxy ? { proxy } : {}) });
+      const page = await ctx.newPage();
+      await page.route('**/*', (route) => {
+        const t = route.request().resourceType();
+        if (t === 'image' || t === 'media' || t === 'font' || t === 'stylesheet') return route.abort();
+        return route.continue();
+      });
+      const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=BR&q=${encodeURIComponent(handle.replace(/[._-]+/g, ' '))}&search_type=page`;
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+      const deadline = Date.now() + 15000;
+      let paginas = [];
+      while (Date.now() < deadline && !paginas.length) {
+        await page.waitForTimeout(1000);
+        paginas = await page.evaluate(() => {
+          const out = [];
+          const seen = new Set();
+          for (const a of document.querySelectorAll('a[href*="view_all_page_id="]')) {
+            const m = (a.getAttribute('href') || '').match(/view_all_page_id=(\d{5,})/);
+            if (!m || seen.has(m[1])) continue;
+            seen.add(m[1]);
+            out.push({ id: m[1], nome: (a.innerText || a.textContent || '').trim().split('\n')[0].slice(0, 120) });
+          }
+          return out;
+        }).catch(() => []);
+      }
+      if (!paginas.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
+      const hk = normText(handle).replace(/[^a-z0-9]/g, '');
+      const melhor = paginas.find((p) => normText(p.nome).replace(/[^a-z0-9]/g, '').includes(hk) || hk.includes(normText(p.nome).replace(/[^a-z0-9]/g, ''))) || paginas[0];
+      return { ok: true, pageId: melhor.id, pageName: melhor.nome || null, via: 'adlib', handle, candidatos: paginas.slice(0, 5) };
+    } catch (e) {
+      return { ok: false, pageId: null, note: String(e?.message || e).slice(0, 120), handle };
+    } finally {
+      if (ctx) await ctx.close().catch(() => {});
+    }
+  });
+}
+
+// Google Ads Transparency Center: por DOMÍNIO (lista anunciantes que apontam pro
+// site) ou por ANUNCIANTE (AR…): conta criativos visíveis e amostra. App JS —
+// headless, proxy quando disponível. Best-effort: seletores por href (/advertiser/
+// e /creative/), que são estáveis na UI pública.
+async function googleTransparency({ domain = null, advertiserId = null }) {
+  if (!domain && !advertiserId) return { ok: false, note: 'sem_dominio' };
+  return runHeadless(async () => {
+    const browser = await getBrowser();
+    if (!browser) return { ok: false, note: 'headless_indisponivel' };
+    const proxy = proxyConfig();
+    let useProxy = false;
+    if (proxy) useProxy = (await checkProxy()).ok;
+    let ctx;
+    const url = advertiserId
+      ? `https://adstransparency.google.com/advertiser/${encodeURIComponent(advertiserId)}?region=BR`
+      : `https://adstransparency.google.com/?region=BR&domain=${encodeURIComponent(String(domain).replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0])}`;
+    try {
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 900 }, ...(useProxy ? { proxy } : {}) });
+      const page = await ctx.newPage();
+      await page.route('**/*', (route) => {
+        const t = route.request().resourceType();
+        if (t === 'image' || t === 'media' || t === 'font') return route.abort();
+        return route.continue();
+      });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const deadline = Date.now() + 18000;
+      let pronto = false;
+      while (!pronto && Date.now() < deadline) {
+        await page.waitForTimeout(1000);
+        pronto = await page.evaluate(() =>
+          !!document.querySelector('a[href*="/advertiser/"], a[href*="/creative/"]') ||
+          /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios/i.test(document.body.innerText || ''),
+        ).catch(() => false);
+      }
+      for (let i = 0; i < 3; i++) {
+        await page.mouse.wheel(0, 3500).catch(() => {});
+        await page.waitForTimeout(800);
+      }
+      const data = await page.evaluate(() => {
+        const abs = (h) => { try { return new URL(h, location.href).href; } catch { return h; } };
+        const advs = new Map();
+        for (const a of document.querySelectorAll('a[href*="/advertiser/"]')) {
+          const h = a.getAttribute('href') || '';
+          const m = h.match(/\/advertiser\/([A-Z0-9]{6,})/i);
+          if (!m) continue;
+          const id = m[1];
+          const nome = (a.innerText || a.textContent || '').trim().split('\n')[0].slice(0, 120);
+          if (!advs.has(id)) advs.set(id, { id, nome, url: abs(h.split('?')[0]) + '?region=BR' });
+          else if (!advs.get(id).nome && nome) advs.get(id).nome = nome;
+        }
+        const criativos = new Map();
+        for (const a of document.querySelectorAll('a[href*="/creative/"]')) {
+          const h = a.getAttribute('href') || '';
+          const m = h.match(/\/advertiser\/([A-Z0-9]+)\/creative\/([A-Z0-9]+)/i);
+          if (!m || criativos.has(m[2])) continue;
+          const fmt = a.querySelector('video') ? 'video' : a.querySelector('img') ? 'imagem' : 'texto';
+          criativos.set(m[2], { id: m[2], anunciante: m[1], url: abs(h.split('?')[0]) + '?region=BR', formato: fmt, texto: (a.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 160) });
+        }
+        const body = (document.body.innerText || '').replace(/\s+/g, ' ');
+        const tm = body.match(/(\d[\d.]*)\s*an[úu]ncios?/i);
+        return {
+          anunciantes: [...advs.values()].slice(0, 10),
+          criativos: [...criativos.values()],
+          totalTexto: tm ? parseInt(tm[1].replace(/\./g, ''), 10) : null,
+          semAnuncios: /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios/i.test(body),
+        };
+      });
+      const formatos = { video: 0, imagem: 0, texto: 0 };
+      for (const c of data.criativos) formatos[c.formato] = (formatos[c.formato] || 0) + 1;
+      return {
+        ok: true,
+        url,
+        viaProxy: useProxy,
+        anunciantes: data.anunciantes,
+        criativos: data.criativos.length,
+        totalTexto: data.totalTexto,
+        formatos,
+        amostra: data.criativos.slice(0, 12),
+        semAnuncios: data.semAnuncios && !data.criativos.length,
+        found: data.anunciantes.length > 0 || data.criativos.length > 0,
+      };
+    } catch (e) {
+      return { ok: false, note: String(e?.message || e).slice(0, 120), url };
+    } finally {
+      if (ctx) await ctx.close().catch(() => {});
+    }
+  });
 }
 
 // --- DataStone: organograma (diretoria + gerência) + porte ------------------
@@ -2594,24 +2802,63 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
     }
 
-    // ── F4 · Anúncios (Meta headless) + briefing ATUALIZADO com a mídia ─────
+    // ── F4 · Anúncios por IDENTIDADE (página Meta + anunciante Google) ───────
+    // Mesmo desenho do front: resolve as chaves (respeitando validado/rejeitado
+    // em chaves_busca), mede a Meta pela página (fallback: termo) e o Google
+    // Transparency pelo anunciante (fallback: domínio); briefing ATUALIZADO.
     await setStatus('esteira_f4');
     let anunciosMeta = null;
     try {
       const hostDe = (u) => { try { return new URL(u.startsWith('http') ? u : `https://${u}`).hostname.replace(/^www\./, ''); } catch { return null; } };
-      const an = await anunciosHeadless({
-        company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
-        fbHandle: row.company_facebook ? (row.company_facebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null) : null,
-        siteDomain: row.site_url ? hostDe(row.site_url) : null,
-        cidade: row.cidade,
-        empreendimentos: (row.empreendimentos ?? [])
-          .filter((e) => e.status === 'lancamento' || e.status === 'em_obra')
-          .map((e) => ({ nome: e.nome, domain: e.lp ? hostDe(e.lp) : null })),
-      });
+      const siteDomain = row.site_url ? hostDe(row.site_url) : null;
+      const chaves = { ...(row.chaves_busca ?? {}) };
+      const idDe = (c, re) => { const m = String(c?.valor ?? '').match(re); return m && !(c?.rejeitados ?? []).includes(m[1]) ? m[1] : null; };
+      let metaPageId = idDe(chaves.meta_pagina, /(\d{5,})/);
+      let googleAdvertiser = idDe(chaves.google_anunciante, /(AR\d{6,})/i);
+      let googleDominio = null;
+      const precisaMeta = !metaPageId && chaves.meta_pagina?.validacao !== 'validado' && row.company_facebook;
+      const precisaGoogle = !googleAdvertiser && chaves.google_anunciante?.validacao !== 'validado' && siteDomain;
+      if (precisaMeta || precisaGoogle) {
+        const [rm, rg] = await Promise.all([
+          precisaMeta ? resolverMetaPageId(row.company_facebook).catch(() => null) : null,
+          precisaGoogle ? googleTransparency({ domain: siteDomain }).catch(() => null) : null,
+        ]);
+        if (precisaMeta) {
+          const rej = new Set(chaves.meta_pagina?.rejeitados ?? []);
+          const cand = rm?.pageId ? [{ id: String(rm.pageId), nome: rm.pageName ?? null }, ...(rm.candidatos ?? [])].find((c) => !rej.has(String(c.id))) : null;
+          chaves.meta_pagina = { ...(chaves.meta_pagina ?? {}), valor: cand ? String(cand.id) : null, nome: cand?.nome ?? null, validacao: null, origem: cand ? (rm.via ?? 'adlib') : 'nao_encontrado' };
+          metaPageId = cand ? String(cand.id) : null;
+        }
+        if (precisaGoogle) {
+          const rej = new Set(chaves.google_anunciante?.rejeitados ?? []);
+          const adv = (rg?.anunciantes ?? []).find((a) => !rej.has(a.id)) ?? null;
+          chaves.google_anunciante = { ...(chaves.google_anunciante ?? {}), valor: adv?.id ?? null, nome: adv?.nome ?? null, validacao: null, origem: adv ? 'dominio' : 'nao_encontrado' };
+          googleAdvertiser = adv?.id ?? null;
+          if (rg?.ok) googleDominio = rg; // já é a medição por domínio
+        }
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { chaves_busca: chaves });
+        row.chaves_busca = chaves;
+      }
+      const [an, ag] = await Promise.all([
+        anunciosHeadless({
+          company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
+          fbHandle: row.company_facebook ? (row.company_facebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null) : null,
+          siteDomain,
+          cidade: row.cidade,
+          metaPageId,
+          empreendimentos: (row.empreendimentos ?? [])
+            .filter((e) => e.status === 'lancamento' || e.status === 'em_obra')
+            .map((e) => ({ nome: e.nome, domain: e.lp ? hostDe(e.lp) : null })),
+        }),
+        googleAdvertiser ? googleTransparency({ advertiserId: googleAdvertiser }).catch(() => null) : Promise.resolve(googleDominio),
+      ]);
+      const google = ag?.ok
+        ? { url: ag.url, advertiserId: googleAdvertiser, domain: googleAdvertiser ? null : siteDomain, anunciantes: ag.anunciantes ?? [], criativos: ag.criativos ?? 0, totalTexto: ag.totalTexto ?? null, formatos: ag.formatos ?? { video: 0, imagem: 0, texto: 0 }, amostra: ag.amostra ?? [], semAnuncios: !!ag.semAnuncios, viaProxy: !!ag.viaProxy }
+        : (row.anuncios?.google ?? null);
       if (an?.meta) {
         anunciosMeta = an.meta;
         await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
-          anuncios: { meta: an.meta, checkedAt: new Date().toISOString() },
+          anuncios: { meta: an.meta, google, checkedAt: new Date().toISOString(), metaFalha: null },
         });
         // Fases seguintes ATUALIZAM o discurso: re-gera o briefing com a mídia.
         const b2 = await generateBriefing(payloadBriefing(row, audit, decisores, an.meta));
@@ -2619,6 +2866,11 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
           briefing = { ...b2.briefing, model: b2.model ?? null, generatedAt: new Date().toISOString() };
           await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
         }
+      } else {
+        // Motivo real fica no lead (a UI mostra em vez de "ainda não medidos").
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
+          anuncios: { meta: row.anuncios?.meta ?? null, google, checkedAt: row.anuncios?.checkedAt ?? new Date().toISOString(), metaFalha: { note: an?.note ?? 'meta_nao_medido', at: new Date().toISOString() } },
+        });
       }
     } catch (err) {
       console.warn('[esteira] anúncios falharam:', String(err?.message || err).slice(0, 150));
@@ -2955,6 +3207,26 @@ const server = http.createServer(async (req, res) => {
         return send(res, 500, { ok: false, account_check: chk.status, erro_gravacao: String(err?.message || err).slice(0, 200) });
       }
       return send(res, 200, { ok: true, account_check: chk.status, gravado: true });
+    }
+
+    // F4 por identidade: resolve página da Meta (pelo Facebook) e anunciante no
+    // Google Transparency (pelo domínio) → viram chaves de busca do lead.
+    if (url.pathname === '/api/anunciantes/resolver' && req.method === 'POST') {
+      const body = await readJson(req);
+      const [meta, google] = await Promise.all([
+        body?.fbUrl ? resolverMetaPageId(body.fbUrl).catch((e) => ({ ok: false, pageId: null, note: String(e?.message || e).slice(0, 120) })) : Promise.resolve(null),
+        body?.siteDomain ? googleTransparency({ domain: body.siteDomain }).catch((e) => ({ ok: false, note: String(e?.message || e).slice(0, 120) })) : Promise.resolve(null),
+      ]);
+      return send(res, 200, { ok: true, meta, google });
+    }
+
+    // Anúncios no Google Ads Transparency Center (por anunciante AR… ou por domínio).
+    if (url.pathname === '/api/anuncios-google' && req.method === 'POST') {
+      const body = await readJson(req);
+      if (!body?.advertiserId && !body?.domain) return send(res, 400, { error: 'advertiserId ou domain obrigatório' });
+      const r = await googleTransparency({ advertiserId: body.advertiserId ?? null, domain: body.domain ?? null });
+      if (r?.ok === false) void logErroMotor(req, '/api/anuncios-google', r.note || 'falha no Transparency Center', { advertiserId: body?.advertiserId, domain: body?.domain });
+      return send(res, 200, r);
     }
 
     if (url.pathname === '/api/esteira' && req.method === 'POST') {

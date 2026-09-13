@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
   // das edges não for reposto, as operações de card saem por lá. Auth = login do
   // usuário de integração, igual à esteira.
-  if (body.acao === 'motor-campos' || body.acao === 'motor-card-prep' || body.acao === 'motor-token-heal' || body.acao === 'motor-socios') {
+  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios'].includes(String(body.acao))) {
     const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
       email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
       password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
@@ -117,12 +117,21 @@ Deno.serve(async (req) => {
     const rota = body.acao === 'motor-campos' ? '/api/kommo/campos'
       : body.acao === 'motor-card-prep' ? '/api/kommo/card-prep'
       : body.acao === 'motor-socios' ? '/api/socios-social'   // teste/ops da busca social (redes da empresa + sócios)
+      : body.acao === 'motor-anunciantes' ? '/api/anunciantes/resolver' // teste/ops: página Meta + anunciante Google
+      : body.acao === 'motor-anuncios-google' ? '/api/anuncios-google'
+      : body.acao === 'motor-anuncios' ? '/api/anuncios'
       : '/api/kommo/token-heal'
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
       : body.acao === 'motor-socios'
         ? { company: body.company, socios: body.socios, cidade: body.cidade ?? null, rejeitados: body.rejeitados ?? {}, rejeitadosLinkedin: body.rejeitadosLinkedin ?? {}, rejeitadosEmpresa: body.rejeitadosEmpresa ?? {} }
-        : {}
+        : body.acao === 'motor-anunciantes'
+          ? { fbUrl: body.fbUrl ?? null, siteDomain: body.siteDomain ?? null }
+          : body.acao === 'motor-anuncios-google'
+            ? { advertiserId: body.advertiserId ?? null, domain: body.domain ?? null }
+            : body.acao === 'motor-anuncios'
+              ? { company: body.company, fbHandle: body.fbHandle ?? null, siteDomain: body.siteDomain ?? null, cidade: body.cidade ?? null, empreendimentos: body.empreendimentos ?? [], metaPageId: body.metaPageId ?? null }
+              : {}
     const r = await fetch(`${MOTOR_URL}${rota}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },

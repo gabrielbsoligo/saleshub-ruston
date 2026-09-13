@@ -51,9 +51,9 @@ import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAud
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
 import { apagarRede, manterRede, redeHandle, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone, type RedeValidavel } from '../lib/contactSelection';
-import { CHAVES_POR_FASE, TODAS_CHAVES } from '../lib/chavesBusca';
+import { CHAVES_POR_FASE, TODAS_CHAVES, googleAdvertiserAtual, googleAnuncianteUrl, googleDominioUrl, hostOf as hostDe, metaPageIdAtual, metaPaginaUrl } from '../lib/chavesBusca';
 import { ChavesBusca } from '../components/ChavesBusca';
-import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
+import { auditLeadSite, descreverNotaMeta, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, resolverAnunciantes, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { motorFetch } from '../lib/motorClient';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
@@ -219,16 +219,11 @@ export function LeadDetail({
     try {
       const r = await measureLeadAds(lead);
       await reloadAll();
-      if (r.note === 'proxy_sem_trafego') toast.error('Proxy (Decodo) sem tráfego — a franquia de GB acabou. Recarregue o plano para medir anúncios.', { duration: 8000 });
-      else if (r.note === 'proxy_auth') toast.error('Proxy (Decodo) recusou usuário/senha. Confira as credenciais.', { duration: 8000 });
-      else if (r.note === 'proxy_conexao') toast.error('Proxy (Decodo) sem resposta agora. Tente de novo em instantes.');
-      else if (r.note === 'timeout') toast.error('A busca demorou demais e foi interrompida. Tente re-medir (o proxy pode estar lento agora).');
-      else if (r.note === 'meta_bloqueado') toast('Meta bloqueou todos os termos agora. Tente re-medir em instantes (o proxy troca de IP).');
-      else if (r.note === 'meta_parcial') toast('Parte dos anúncios veio; alguns termos bloquearam. Re-medir para completar.');
-      else if (r.note === 'meta_sem_resultado') toast('Nenhum anúncio ativo encontrado para a empresa/empreendimentos.');
-      else if (r.note === 'meta_cap') toast('Teto diário de consultas atingido.');
-      else if (r.ok === false) toast.error('Não consegui medir os anúncios agora. Tente re-medir.');
-      else toast.success('Anúncios medidos.');
+      const g = r.google;
+      const gTxt = g ? (g.ok ? ' · Google Transparency medido' : ` · Google falhou (${g.note ?? 'motor'})`) : '';
+      if (r.ok && (!r.note || r.note === 'meta_parcial')) toast[r.note ? 'error' : 'success'](`Meta medida${r.note ? ` — ${descreverNotaMeta(r.note)}` : ''}${gTxt}.`, { duration: r.note ? 8000 : 4000 });
+      else if (r.note === 'meta_sem_resultado') toast(`Meta: ${descreverNotaMeta(r.note)}${gTxt}.`);
+      else toast.error(`Meta não medida — ${descreverNotaMeta(r.note)}${gTxt}.`, { duration: 9000 });
     } finally {
       setMeasuringAds(false);
     }
@@ -482,6 +477,22 @@ export function LeadDetail({
               await reloadAll();
             }}
             onRefazer={(f) => void handleRunFase(f)}
+            onResolver={
+              ids.includes('meta_pagina') || ids.includes('google_anunciante')
+                ? async () => {
+                    const fresh = (await leadsRepo.get(leadId)) ?? lead;
+                    const r = await resolverAnunciantes(fresh, audit, { force: true });
+                    await leadsRepo.update(fresh);
+                    await reloadAll();
+                    const partes = [
+                      r.meta ? `página Meta ${r.meta}` : 'página Meta não encontrada',
+                      r.google ? `anunciante Google ${r.google}` : 'nenhum anunciante Google pro domínio',
+                    ];
+                    if (r.notes.length) toast.error(`Resolvido: ${partes.join(' · ')} (${r.notes.join(', ')})`, { duration: 7000 });
+                    else toast.success(`Resolvido: ${partes.join(' · ')}`);
+                  }
+                : undefined
+            }
           />
         ) : null;
       })()}
@@ -1249,7 +1260,16 @@ function AnunciosSection({
         <div className="rounded-2xl border border-v4-red bg-v4-card p-5 shadow-[0_0_16px_rgba(230,57,70,0.15)]">
           <div className="mb-1 flex items-center justify-between gap-2">
             <h3 className="flex items-center gap-2 font-display text-base font-semibold text-v4-text">
-              <Megaphone size={18} /> Anúncios no Meta <span className="text-sm font-normal text-v4-text-muted">(validação cruzada)</span>
+              <Megaphone size={18} /> Anúncios no Meta{' '}
+              {am.modo === 'pagina' ? (
+                <span className="rounded-full bg-[rgba(34,197,94,0.15)] px-2 py-0.5 text-[11px] font-medium text-v4-success" title="Medido pela página oficial da empresa na Ad Library — todos os anúncios são dela, sem ruído de palavra-chave">
+                  página oficial · exato
+                </span>
+              ) : (
+                <span className="rounded-full bg-[rgba(250,204,21,0.15)] px-2 py-0.5 text-[11px] font-medium text-v4-warning" title="Medido por busca de palavra-chave (a página não foi resolvida) — a validação cruzada separa o que é da empresa">
+                  busca por termo · validação cruzada
+                </span>
+              )}
             </h3>
             <button
               onClick={onMeasure}
@@ -1270,6 +1290,17 @@ function AnunciosSection({
             <span className="text-v4-text-muted"><span className="font-display text-2xl font-bold text-v4-text-muted">{descartadosFinais.length}</span> baixa confiança</span>
             {am.total != null && <span className="text-v4-text-disabled">· {am.total} analisados</span>}
           </div>
+          {am.modo === 'pagina' && am.pageId && (
+            <p className="mb-3 text-[11px] text-v4-text-disabled">
+              Fonte: <a href={metaPaginaUrl(am.pageId)} target="_blank" rel="noreferrer" className="text-v4-text-muted underline hover:text-v4-red">página {am.pageId} na Meta Ad Library</a>
+              {' '}· errou a página? corrija em <b>Chaves de busca → Página na Meta Ad Library</b>.
+            </p>
+          )}
+          {am.modo !== 'pagina' && !metaPageIdAtual(lead) && (
+            <p className="mb-3 text-[11px] text-v4-warning">
+              Página oficial não resolvida — o resultado veio de busca por termo e pode ter ruído. Valide/cole a página em <b>Chaves de busca</b> e re-meça para medir exato.
+            </p>
+          )}
           {am.termosBuscados && am.termosBuscados.length > 0 && (
             <p className="mb-3 text-[11px] text-v4-text-disabled">
               Buscado por: {am.termosBuscados.map((t) => <span key={t} className="mr-1 rounded bg-v4-bg px-1.5 py-0.5 text-v4-text-muted">{t}</span>)}
@@ -1433,10 +1464,23 @@ function AnunciosSection({
           </div>
         </div>
       ) : (
-        <div className="flex flex-col items-start gap-3 rounded-2xl border border-dashed border-v4-border p-5">
-          <p className="text-sm text-v4-text-muted">
-            Anúncios do Meta ainda não medidos. A fila em background mede aos poucos — ou clique para medir este lead agora.
-          </p>
+        <div className={`flex flex-col items-start gap-3 rounded-2xl border border-dashed p-5 ${lead.anuncios?.metaFalha ? 'border-v4-warning bg-[rgba(250,204,21,0.06)]' : 'border-v4-border'}`}>
+          {lead.anuncios?.metaFalha ? (
+            <div className="text-sm">
+              <p className="flex items-center gap-2 font-semibold text-v4-warning">
+                <AlertTriangle size={15} /> Meta não medida — {descreverNotaMeta(lead.anuncios.metaFalha.note)}
+              </p>
+              <p className="mt-1 text-[11px] text-v4-text-disabled">
+                Última tentativa: {new Date(lead.anuncios.metaFalha.at).toLocaleString('pt-BR')} · código <code>{lead.anuncios.metaFalha.note}</code>
+                {metaPageIdAtual(lead) ? ' · vai medir pela página oficial' : ' · sem página resolvida (busca por termo)'}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-v4-text-muted">
+              Anúncios do Meta ainda não medidos. A fila em background mede aos poucos — ou clique para medir este lead agora
+              {metaPageIdAtual(lead) ? ' (pela página oficial resolvida)' : ' (a página oficial ainda não foi resolvida — o F4 resolve antes de medir)'}.
+            </p>
+          )}
           <button
             onClick={onMeasure}
             disabled={measuring}
@@ -1503,13 +1547,22 @@ function AnunciosSection({
             )}
           </div>
 
-          {/* Abrir no Meta (deep-links) */}
+          {/* Abrir no Meta: página oficial (exato) quando resolvida; senão, os deep-links crus */}
+          {metaPageIdAtual(lead) ? (
+            <div className="rounded-2xl border border-v4-border bg-v4-card p-5">
+              <h3 className="mb-1 flex items-center gap-2 font-display text-base font-semibold text-v4-text">
+                <Megaphone size={18} /> Abrir no Meta <span className="text-sm font-normal text-v4-text-muted">(página oficial)</span>
+              </h3>
+              <p className="mb-3 text-xs text-v4-text-muted">Abre exatamente os anúncios ativos da página da empresa na Ad Library — a mesma fonte da medição.</p>
+              <MatLink href={metaPaginaUrl(metaPageIdAtual(lead)!)} label="Meta Ad Library — página da empresa" />
+            </div>
+          ) : (
           <div className="rounded-2xl border border-v4-border bg-v4-card p-5">
             <h3 className="mb-1 flex items-center gap-2 font-display text-base font-semibold text-v4-text">
               <Megaphone size={18} /> Abrir no Meta <span className="text-sm font-normal text-v4-text-muted">(busca bruta)</span>
             </h3>
             <p className="mb-3 text-xs text-v4-warning">
-              ⚠️ Abre a busca CRUA por palavra-chave — pode conter ruído. A lista validada (sem ruído) é a de cima.
+              ⚠️ Abre a busca CRUA por palavra-chave — pode conter ruído. Resolva a página oficial em <b>Chaves de busca</b> para medir exato.
             </p>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 border-b border-v4-border pb-2">
@@ -1524,11 +1577,15 @@ function AnunciosSection({
               ))}
             </div>
           </div>
+          )}
         </div>
       )}
 
       {sub === 'google' && (
         <div className="space-y-4">
+          {/* Anúncios ATIVOS no Google Ads Transparency Center (por anunciante / domínio) */}
+          <GoogleTransparencyCard lead={lead} audit={audit} onMeasure={onMeasure} measuring={measuring} />
+
           {/* Anúncios no Google (2/3) + Google Meu Negócio ao lado (1/3) */}
           {lead.googleBusiness ? (
             <div className="grid gap-4 lg:grid-cols-3">
@@ -1732,6 +1789,111 @@ function GmnCard({ gmn }: { gmn: NonNullable<Lead['googleBusiness']> }) {
 }
 
 // Container "Anúncios no Google" + resumo de contexto das LPs auditadas.
+// Medição no Google Ads Transparency Center: pelo ANUNCIANTE validado/resolvido
+// (chave google_anunciante) ou, na falta, pelo domínio do site. Mostra anunciantes,
+// criativos ativos, formatos e amostra com link — e o motivo quando não mediu.
+function GoogleTransparencyCard({
+  lead,
+  audit,
+  onMeasure,
+  measuring,
+}: {
+  lead: Lead;
+  audit: SiteAudit | null;
+  onMeasure: () => void;
+  measuring: boolean;
+}) {
+  const g = lead.anuncios?.google ?? null;
+  const adv = googleAdvertiserAtual(lead);
+  const dominio = hostDe(audit?.siteUrl ?? lead.siteUrl);
+  const linkConsulta = adv ? googleAnuncianteUrl(adv) : dominio ? googleDominioUrl(dominio) : null;
+  const total = g ? (g.totalTexto ?? g.criativos) : null;
+  return (
+    <div className={`rounded-2xl border bg-v4-card p-5 ${g && !g.semAnuncios ? 'border-v4-red shadow-[0_0_16px_rgba(230,57,70,0.15)]' : 'border-v4-border'}`}>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 font-display text-base font-semibold text-v4-text">
+          <Megaphone size={18} /> Anúncios ativos no Google{' '}
+          <span className="text-sm font-normal text-v4-text-muted">(Ads Transparency Center)</span>
+          {g && (
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${g.advertiserId ? 'bg-[rgba(34,197,94,0.15)] text-v4-success' : 'bg-[rgba(250,204,21,0.15)] text-v4-warning'}`} title={g.advertiserId ? 'Medido pelo anunciante (exato)' : 'Medido pelo domínio do site — lista os anunciantes que apontam pra ele'}>
+              {g.advertiserId ? `anunciante ${g.advertiserId}` : `domínio ${g.domain}`}
+            </span>
+          )}
+        </h3>
+        <button
+          onClick={onMeasure}
+          disabled={measuring}
+          className="flex items-center gap-1.5 rounded-lg border border-v4-border px-2.5 py-1.5 text-xs font-medium text-v4-text transition hover:border-v4-red hover:text-v4-red disabled:opacity-60"
+        >
+          {measuring ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+          {measuring ? 'Medindo…' : g ? 'Re-medir' : 'Medir agora'}
+        </button>
+      </div>
+      {g ? (
+        <>
+          <div className="mb-3 flex flex-wrap gap-4 text-sm">
+            <span className="text-v4-text">
+              <span className={`font-display text-2xl font-bold ${total ? 'text-v4-success' : 'text-v4-text-disabled'}`}>{total ?? 0}</span> criativo(s) ativo(s)
+            </span>
+            {g.criativos > 0 && (
+              <span className="text-v4-text-muted">
+                {g.formatos.video ? `${g.formatos.video} vídeo · ` : ''}{g.formatos.imagem ? `${g.formatos.imagem} imagem · ` : ''}{g.formatos.texto ? `${g.formatos.texto} texto` : ''}
+              </span>
+            )}
+            {g.semAnuncios && <span className="text-v4-text-disabled">nenhum anúncio ativo no Transparency Center</span>}
+          </div>
+          {g.anunciantes.length > 0 && (
+            <div className="mb-3 space-y-1 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">Anunciante(s) encontrado(s)</p>
+              {g.anunciantes.map((a) => (
+                <div key={a.id} className="flex flex-wrap items-center gap-2">
+                  <a href={a.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-v4-text hover:text-v4-red">
+                    {a.nome || a.id} <ExternalLink size={12} className="text-v4-text-muted" />
+                  </a>
+                  <span className="text-[11px] text-v4-text-disabled">{a.id}</span>
+                  {adv === a.id && <span className="rounded-full bg-[rgba(34,197,94,0.15)] px-2 py-0.5 text-[10px] text-v4-success">chave do F4</span>}
+                </div>
+              ))}
+              {!adv && g.anunciantes.length > 1 && (
+                <p className="text-[11px] text-v4-warning">Mais de um anunciante aponta pro domínio — valide o certo em <b>Chaves de busca → Anunciante no Google</b>.</p>
+              )}
+            </div>
+          )}
+          {g.amostra.length > 0 && (
+            <div className="mb-2">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">Amostra de criativos</p>
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {g.amostra.map((c) => (
+                  <a key={c.id} href={c.url} target="_blank" rel="noreferrer" className="flex items-start gap-2 rounded-lg border border-v4-border px-3 py-2 text-xs text-v4-text-muted transition hover:border-v4-red hover:text-v4-text">
+                    <span className="shrink-0 rounded bg-v4-bg px-1.5 py-0.5 text-[10px] uppercase">{c.formato}</span>
+                    <span className="min-w-0 flex-1 truncate">{c.texto || `criativo ${c.id}`}</span>
+                    <ExternalLink size={11} className="shrink-0" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-[11px] text-v4-text-disabled">
+            Fonte: <a href={g.url} target="_blank" rel="noreferrer" className="underline hover:text-v4-red">Transparency Center</a>
+            {g.viaProxy ? ' · via proxy' : ''}
+          </p>
+        </>
+      ) : (
+        <div className="text-sm text-v4-text-muted">
+          {linkConsulta ? (
+            <>
+              Ainda não medido. O F4 consulta {adv ? <>o anunciante <b>{adv}</b></> : <>o domínio <b>{dominio}</b></>} no Transparency Center e grava os criativos ativos.{' '}
+              <a href={linkConsulta} target="_blank" rel="noreferrer" className="underline hover:text-v4-red">abrir consulta</a>
+            </>
+          ) : (
+            <>Sem site validado nem anunciante informado — o Transparency Center precisa de um dos dois. Valide o site (F3) ou cole o anunciante em <b>Chaves de busca</b>.</>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GoogleAdsContainer({
   lead,
   googleAds,
@@ -1997,6 +2159,24 @@ function GtAnalysisContainer({ lead }: { lead: Lead }) {
       </h3>
       <p className="mb-3 text-[11px] text-v4-text-disabled">
         Leitura de conversão das LPs que recebem verba, por gravidade: rastreio ausente e CTA quebrado são críticos; mobile pesa mais que desktop; e o peso do erro é amplificado pela verba (anúncios apontando pra LP).
+      </p>
+      <p className="mb-3 text-[11px]">
+        <span className="text-v4-text-disabled">Base da análise: </span>
+        {lead.anuncios?.meta?.modo === 'pagina' ? (
+          <span className="text-v4-success">Meta medida pela página oficial (dados exatos)</span>
+        ) : lead.anuncios?.meta ? (
+          <span className="text-v4-warning">Meta por busca de termo (validação cruzada — pode faltar/sobrar anúncio; resolva a página em Chaves de busca)</span>
+        ) : (
+          <span className="text-v4-text-disabled">Meta não medida</span>
+        )}
+        <span className="text-v4-text-disabled"> · </span>
+        {lead.anuncios?.google ? (
+          <span className={lead.anuncios.google.advertiserId ? 'text-v4-success' : 'text-v4-text-muted'}>
+            Google: {lead.anuncios.google.totalTexto ?? lead.anuncios.google.criativos} criativo(s) ativo(s) no Transparency Center{lead.anuncios.google.advertiserId ? ' (anunciante exato)' : ' (pelo domínio)'}
+          </span>
+        ) : (
+          <span className="text-v4-text-disabled">Google Transparency não medido</span>
+        )}
       </p>
 
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">

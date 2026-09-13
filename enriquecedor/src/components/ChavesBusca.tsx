@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { Check, ExternalLink, KeyRound, Pencil, RotateCcw, Save, X } from 'lucide-react';
+import { Check, ExternalLink, KeyRound, Loader2, Pencil, RotateCcw, Save, Search, X } from 'lucide-react';
 import type { ChaveBuscaId, Lead, SiteAudit } from '../types';
 import { CHAVE_INFO, apagarChave, chaveAtual, chavesPendentes, definirChave, faseParaRefazer, validarChave } from '../lib/chavesBusca';
 
@@ -14,6 +14,7 @@ export function ChavesBusca({
   chaves,
   onSave,
   onRefazer,
+  onResolver,
 }: {
   lead: Lead;
   audit: SiteAudit | null;
@@ -21,10 +22,23 @@ export function ChavesBusca({
   onSave: (next: Lead) => Promise<void>;
   /** Chamado após Corrigir/Apagar: refaz a fase que depende da chave (3 ou 4). */
   onRefazer?: (fase: 3 | 4) => void;
+  /** F4: resolve página Meta / anunciante Google a partir do Facebook e do site validados. */
+  onResolver?: () => Promise<void>;
 }) {
   const [editando, setEditando] = useState<ChaveBuscaId | null>(null);
   const [valor, setValor] = useState('');
   const [salvando, setSalvando] = useState(false);
+  const [resolvendo, setResolvendo] = useState(false);
+  const resolver = async () => {
+    if (!onResolver) return;
+    setResolvendo(true);
+    try {
+      await onResolver();
+    } finally {
+      setResolvendo(false);
+    }
+  };
+  const temResolviveis = chaves.some((c) => c === 'meta_pagina' || c === 'google_anunciante');
   if (!chaves.length) return null;
   const pendentes = chavesPendentes(lead, audit, chaves);
 
@@ -55,8 +69,20 @@ export function ChavesBusca({
           <KeyRound size={15} className="text-v4-red" /> Chaves de busca desta fase
           <span className="text-xs font-normal text-v4-text-muted">— confira antes de rodar: a auditoria usa exatamente isto</span>
         </p>
-        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${pendentes ? 'bg-[rgba(250,204,21,0.15)] text-v4-warning' : 'bg-[rgba(34,197,94,0.15)] text-v4-success'}`}>
-          {pendentes ? `${pendentes} sem validação` : 'todas validadas'}
+        <span className="flex items-center gap-2">
+          {temResolviveis && onResolver && (
+            <button
+              onClick={() => void resolver()}
+              disabled={resolvendo}
+              title="Busca a página da empresa na Meta Ad Library (pelo Facebook validado) e o anunciante no Google Transparency Center (pelo domínio do site). Não sobrescreve o que já foi validado."
+              className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red disabled:opacity-60"
+            >
+              {resolvendo ? <Loader2 size={11} className="animate-spin" /> : <Search size={11} />} {resolvendo ? 'Resolvendo…' : 'Resolver anunciantes'}
+            </button>
+          )}
+          <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${pendentes ? 'bg-[rgba(250,204,21,0.15)] text-v4-warning' : 'bg-[rgba(34,197,94,0.15)] text-v4-success'}`}>
+            {pendentes ? `${pendentes} sem validação` : 'todas validadas'}
+          </span>
         </span>
       </div>
       <div className="divide-y divide-v4-border">
@@ -80,7 +106,14 @@ export function ChavesBusca({
                       if (e.key === 'Enter' && valor.trim()) void salvarERefazer(definirChave(lead, id, valor), id);
                       if (e.key === 'Escape') setEditando(null);
                     }}
-                    placeholder={id === 'gmn' ? 'Nome exato pra buscar no Google (ex.: "Du Vale Descartáveis")' : id === 'site' ? 'https://…' : id === 'instagram' || id === 'facebook' ? '@handle ou URL' : 'texto'}
+                    placeholder={
+                      id === 'gmn' ? 'Nome exato pra buscar no Google (ex.: "Du Vale Descartáveis")'
+                      : id === 'site' ? 'https://…'
+                      : id === 'instagram' || id === 'facebook' ? '@handle ou URL'
+                      : id === 'meta_pagina' ? 'URL da Ad Library (…view_all_page_id=123…) ou o id da página'
+                      : id === 'google_anunciante' ? 'URL do Transparency Center (…/advertiser/AR…) ou o id AR…'
+                      : 'texto'
+                    }
                     className="w-full rounded-lg border border-v4-red bg-v4-surface px-3 py-1.5 text-sm text-v4-text outline-none"
                   />
                 ) : c.valor ? (
@@ -93,8 +126,11 @@ export function ChavesBusca({
                   )
                 ) : (
                   <span className="text-v4-text-disabled">
-                    — não encontrado{c.rejeitados.length ? ` · ${c.rejeitados.length} descartado(s)` : ''}
+                    — {c.origem === 'não encontrada' || c.origem === 'nenhum anunciante pro domínio' ? c.origem : id === 'meta_pagina' || id === 'google_anunciante' ? 'ainda não resolvido' : 'não encontrado'}
+                    {c.rejeitados.length ? ` · ${c.rejeitados.length} descartado(s)` : ''}
                     {id === 'gmn' && c.consulta ? ` · vai buscar por "${c.consulta}"` : ''}
+                    {id === 'meta_pagina' && !c.rejeitados.length ? ' · sem ela o F4 cai na busca por termo (com ruído)' : ''}
+                    {id === 'google_anunciante' && !c.rejeitados.length ? ' · sem ele o F4 consulta pelo domínio do site' : ''}
                   </span>
                 )}
               </div>
@@ -130,7 +166,7 @@ export function ChavesBusca({
                         setEditando(id);
                         setValor(id === 'gmn' ? c.consulta ?? '' : c.padrao ? '' : c.link ?? c.valor ?? '');
                       }}
-                      title={id === 'gmn' ? 'Informar o nome exato pra buscar a ficha certa' : 'Corrigir manualmente (vira validado)'}
+                      title={id === 'gmn' ? 'Informar o nome exato pra buscar a ficha certa' : id === 'meta_pagina' ? 'Colar a URL da página na Ad Library (vira validado e o F4 mede por ela)' : id === 'google_anunciante' ? 'Colar a URL do anunciante no Transparency Center (vira validado)' : 'Corrigir manualmente (vira validado)'}
                       className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red"
                     >
                       <Pencil size={11} /> {id === 'gmn' ? 'Buscar por…' : 'Corrigir'}

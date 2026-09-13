@@ -110,11 +110,14 @@ export interface Socio {
 //   instagram/facebook — redes institucionais (F2/F3; o handle do FB é a "conta
 //                oficial" que valida anúncios no F4)
 //   gmn        — ficha do Google Meu Negócio (cid)
-//   meta_termo — termo de busca na Meta Ad Library (F4)
-export type ChaveBuscaId = 'marca' | 'site' | 'instagram' | 'facebook' | 'gmn' | 'meta_termo';
+//   meta_termo — termo de busca na Meta Ad Library (F4, fallback por palavra-chave)
+//   meta_pagina — page id da empresa na Meta Ad Library (F4 mede POR PÁGINA)
+//   google_anunciante — id AR… do anunciante no Google Ads Transparency Center (F4)
+export type ChaveBuscaId = 'marca' | 'site' | 'instagram' | 'facebook' | 'gmn' | 'meta_termo' | 'meta_pagina' | 'google_anunciante';
 export interface ChaveBuscaEstado {
-  valor?: string | null; // marca / meta_termo: valor manual (null = padrão derivado)
+  valor?: string | null; // marca / meta_termo: valor manual (null = padrão derivado); meta_pagina: page id; google_anunciante: AR…
   consulta?: string | null; // gmn: termo de busca manual no Google
+  nome?: string | null; // meta_pagina / google_anunciante: nome legível da página/anunciante resolvido
   validacao?: 'validado' | null; // validado pelo operador → a re-busca não sobrescreve
   origem?: string | null; // planilha | receita | email | busca | gmn | site | manual | validado
   rejeitados?: string[]; // domínio / @ / slug / cid descartados — nunca voltam
@@ -143,6 +146,8 @@ export interface AdItem {
   trecho: string; // trecho legível do criativo
 }
 export interface AnunciosMeta {
+  modo?: 'pagina' | 'keyword'; // pagina = medido pela página oficial (exato); keyword = busca por termo (fallback)
+  pageId?: string | null; // page id usado no modo página
   total: number | null; // total de anúncios únicos analisados (todos os termos)
   validados: AdItem[]; // alta confiança — 1+ sinal forte e 2+ no total
   aValidar: AdItem[]; // média confiança — 1 sinal forte
@@ -157,9 +162,37 @@ export interface AnunciosMeta {
   // { [adId]: 'validado' | 'a_validar' | 'descartado' }
   decisoes?: Record<string, 'validado' | 'a_validar' | 'descartado'>;
 }
+// Google Ads Transparency Center (headless): anunciante(s) e criativos ativos.
+export interface AnunciosGoogleAnunciante {
+  id: string; // AR…
+  nome: string;
+  url: string;
+}
+export interface AnunciosGoogleCriativo {
+  id: string;
+  anunciante: string;
+  url: string;
+  formato: 'video' | 'imagem' | 'texto';
+  texto: string;
+}
+export interface AnunciosGoogle {
+  url: string; // URL consultada no Transparency Center
+  advertiserId: string | null; // AR… quando medido por anunciante
+  domain: string | null; // domínio quando medido por domínio
+  anunciantes: AnunciosGoogleAnunciante[];
+  criativos: number; // criativos ativos visíveis
+  totalTexto: number | null; // total declarado pela página ("N anúncios"), se lido
+  formatos: { video: number; imagem: number; texto: number };
+  amostra: AnunciosGoogleCriativo[];
+  semAnuncios: boolean;
+  viaProxy?: boolean;
+}
 export interface AnunciosData {
   meta: AnunciosMeta | null;
+  google?: AnunciosGoogle | null;
   checkedAt: string;
+  // Última falha da medição Meta (motivo real) — mostrada no lugar de "ainda não medidos".
+  metaFalha?: { note: string; at: string } | null;
 }
 
 // Falha de uma plataforma/fonte durante o enriquecimento (mostrada como aviso).

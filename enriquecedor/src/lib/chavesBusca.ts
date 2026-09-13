@@ -15,7 +15,9 @@ export const CHAVE_INFO: Record<ChaveBuscaId, { label: string; ajuda: string; ed
   instagram: { label: 'Instagram da empresa', ajuda: 'Perfil institucional. Vem do link no próprio site (mais confiável) ou da busca.', editavel: true },
   facebook: { label: 'Facebook da empresa', ajuda: 'Página institucional. O @ dela é a "conta oficial" que valida os anúncios no F4.', editavel: true },
   gmn: { label: 'Google Meu Negócio', ajuda: 'Ficha do Google (nota, avaliações, telefone). Se veio a ficha errada, apague e informe o nome exato pra buscar.', editavel: true },
-  meta_termo: { label: 'Termo de busca na Meta', ajuda: 'O que o F4 digita na Meta Ad Library. Padrão: @ do Facebook ou a marca.', editavel: true },
+  meta_termo: { label: 'Termo de busca na Meta', ajuda: 'Fallback do F4: o que se digita na Meta Ad Library quando a página não foi resolvida. Padrão: @ do Facebook ou a marca.', editavel: true },
+  meta_pagina: { label: 'Página na Meta Ad Library', ajuda: 'A página oficial da empresa na Meta Ad Library (view_all_page_id). Com ela o F4 mede EXATAMENTE os anúncios ativos da empresa — sem ruído de palavra-chave. Resolvida a partir do Facebook validado; corrija colando a URL da Ad Library ou o id da página.', editavel: true },
+  google_anunciante: { label: 'Anunciante no Google (Transparency)', ajuda: 'O anunciante (AR…) no Google Ads Transparency Center que aponta pro domínio do site. Com ele o F4 conta os criativos ativos no Google. Resolvido pelo domínio do site validado; corrija colando a URL do Transparency Center.', editavel: true },
 };
 
 // Chaves relevantes por fase do funil (índices das ETAPAS do Workflow).
@@ -23,12 +25,12 @@ export const CHAVES_POR_FASE: Record<number, ChaveBuscaId[]> = {
   0: ['marca'],
   1: ['marca', 'instagram', 'facebook'],
   2: ['marca', 'site', 'instagram', 'facebook', 'gmn'],
-  3: ['meta_termo', 'facebook', 'site', 'gmn'],
+  3: ['meta_pagina', 'google_anunciante', 'facebook', 'site', 'meta_termo'],
   4: [],
   5: [],
   6: ['site', 'instagram', 'facebook', 'gmn'],
 };
-export const TODAS_CHAVES: ChaveBuscaId[] = ['marca', 'site', 'instagram', 'facebook', 'gmn', 'meta_termo'];
+export const TODAS_CHAVES: ChaveBuscaId[] = ['marca', 'site', 'instagram', 'facebook', 'gmn', 'meta_pagina', 'google_anunciante', 'meta_termo'];
 
 const estado = (lead: Lead, chave: ChaveBuscaId): ChaveBuscaEstado => lead.chavesBusca?.[chave] ?? {};
 const comEstado = (lead: Lead, chave: ChaveBuscaId, patch: ChaveBuscaEstado): Lead => ({
@@ -80,6 +82,30 @@ export function metaTermoPadrao(lead: Lead): string {
 }
 export function metaTermoAtual(lead: Lead): string {
   return estado(lead, 'meta_termo').valor?.trim() || metaTermoPadrao(lead);
+}
+
+// Page id da Meta a partir de URL da Ad Library (view_all_page_id=) ou id cru.
+export function metaPageIdDe(valor: string | null | undefined): string | null {
+  const v = (valor ?? '').trim();
+  if (!v) return null;
+  const m = v.match(/view_all_page_id=(\d{5,})/) ?? v.match(/facebook\.com\/(\d{5,})/) ?? v.match(/^(\d{5,})$/);
+  return m ? m[1] : null;
+}
+export function metaPaginaUrl(pageId: string): string {
+  return `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR&view_all_page_id=${pageId}&search_type=page&media_type=all`;
+}
+// Id do anunciante (AR…) no Google Ads Transparency Center a partir de URL ou id.
+export function googleAdvertiserIdDe(valor: string | null | undefined): string | null {
+  const v = (valor ?? '').trim();
+  if (!v) return null;
+  const m = v.match(/\/advertiser\/(AR[0-9]{6,})/i) ?? v.match(/^(AR[0-9]{6,})$/i);
+  return m ? m[1].toUpperCase() : null;
+}
+export function googleAnuncianteUrl(advertiserId: string): string {
+  return `https://adstransparency.google.com/advertiser/${advertiserId}?region=BR`;
+}
+export function googleDominioUrl(domain: string): string {
+  return `https://adstransparency.google.com/?region=BR&domain=${encodeURIComponent(domain)}`;
 }
 
 export interface ChaveAtual {
@@ -134,6 +160,22 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
       const manual = e.valor?.trim();
       return { chave, valor: manual || metaTermoPadrao(lead), link: null, validado, rejeitados, origem: manual ? 'manual' : facebookHandle(lead.companyFacebook) ? '@ do Facebook' : 'marca', padrao: !manual };
     }
+    case 'meta_pagina': {
+      const id = metaPageIdDe(e.valor);
+      const rot: Record<string, string> = { html: 'página do Facebook', adlib: 'busca por página na Ad Library', id: 'id informado', manual: 'manual' };
+      return {
+        chave, valor: id ? (e.nome ? `${e.nome} (${id})` : `página ${id}`) : null, link: id ? metaPaginaUrl(id) : null, validado, rejeitados,
+        origem: id ? (e.origem && rot[e.origem]) ?? e.origem ?? '—' : e.origem === 'nao_encontrado' ? 'não encontrada' : '—', padrao: false,
+      };
+    }
+    case 'google_anunciante': {
+      const id = googleAdvertiserIdDe(e.valor);
+      const rot: Record<string, string> = { dominio: 'Transparency Center pelo domínio do site', manual: 'manual' };
+      return {
+        chave, valor: id ? (e.nome ? `${e.nome} (${id})` : id) : null, link: id ? googleAnuncianteUrl(id) : null, validado, rejeitados,
+        origem: id ? (e.origem && rot[e.origem]) ?? e.origem ?? '—' : e.origem === 'nao_encontrado' ? 'nenhum anunciante pro domínio' : '—', padrao: false,
+      };
+    }
   }
 }
 
@@ -145,13 +187,15 @@ export function validarChave(lead: Lead, chave: ChaveBuscaId): Lead {
 // rodar de novo: briefing (site/marca/redes/Google entram nele) e, para o termo
 // da Meta, a medição de anúncios. A auditoria de site é sobrescrita pelo F3.
 export function invalidarDependentes(lead: Lead, chave: ChaveBuscaId): Lead {
-  if (chave === 'meta_termo') return { ...lead, anuncios: null };
+  if (chave === 'meta_termo' || chave === 'meta_pagina') return { ...lead, anuncios: lead.anuncios ? { ...lead.anuncios, meta: null, metaFalha: null } : null };
+  if (chave === 'google_anunciante') return { ...lead, anuncios: lead.anuncios ? { ...lead.anuncios, google: null } : null };
   return { ...lead, briefing: null };
 }
 
+const CHAVES_F4: ChaveBuscaId[] = ['meta_termo', 'meta_pagina', 'google_anunciante'];
 // Qual fase refazer depois de corrigir/apagar a chave (índice F: 3 ou 4).
 export function faseParaRefazer(chave: ChaveBuscaId): 3 | 4 {
-  return chave === 'meta_termo' ? 4 : 3;
+  return CHAVES_F4.includes(chave) ? 4 : 3;
 }
 
 // Apaga o valor atual e guarda o identificador em rejeitados (nunca volta).
@@ -184,6 +228,16 @@ export function apagarChave(lead0: Lead, chave: ChaveBuscaId): Lead {
       if (cid) rej.add(String(cid));
       return { ...comEstado(lead, chave, { validacao: null, origem: null, rejeitados: [...rej] }), googleBusiness: null };
     }
+    case 'meta_pagina': {
+      const id = metaPageIdDe(e.valor);
+      if (id) rej.add(id);
+      return comEstado(lead, chave, { valor: null, nome: null, validacao: null, origem: null, rejeitados: [...rej] });
+    }
+    case 'google_anunciante': {
+      const id = googleAdvertiserIdDe(e.valor);
+      if (id) rej.add(id);
+      return comEstado(lead, chave, { valor: null, nome: null, validacao: null, origem: null, rejeitados: [...rej] });
+    }
   }
 }
 
@@ -206,7 +260,45 @@ export function definirChave(lead0: Lead, chave: ChaveBuscaId, valor: string): L
       return { ...comEstado(lead, chave, { validacao: 'validado', origem: 'manual' }), companyFacebook: /facebook\.com/i.test(v) ? url(v) : `https://www.facebook.com/${v.replace(/^@/, '')}` };
     case 'gmn':
       return { ...comEstado(lead, chave, { consulta: v, validacao: null, origem: null }), googleBusiness: null };
+    case 'meta_pagina': {
+      const id = metaPageIdDe(v);
+      if (!id) return lead0;
+      return comEstado(lead, chave, { valor: id, nome: null, validacao: 'validado', origem: 'manual' });
+    }
+    case 'google_anunciante': {
+      const id = googleAdvertiserIdDe(v);
+      if (!id) return lead0;
+      return comEstado(lead, chave, { valor: id, nome: null, validacao: 'validado', origem: 'manual' });
+    }
   }
+}
+
+// Grava o resultado do resolvedor automático (motor /api/anunciantes/resolver):
+// não sobrescreve valor validado nem devolve id rejeitado.
+export function registrarAnuncianteResolvido(
+  lead: Lead,
+  chave: 'meta_pagina' | 'google_anunciante',
+  achado: { id: string | null; nome?: string | null; origem: string } | null,
+): Lead {
+  const e = estado(lead, chave);
+  if (e.validacao === 'validado' && e.valor) return lead;
+  const rej = new Set(e.rejeitados ?? []);
+  if (!achado?.id || rej.has(achado.id)) {
+    return comEstado(lead, chave, { valor: null, nome: null, validacao: null, origem: 'nao_encontrado' });
+  }
+  return comEstado(lead, chave, { valor: achado.id, nome: achado.nome ?? null, validacao: null, origem: achado.origem });
+}
+
+// Valor aceito pra medir: um id só existe se não foi rejeitado.
+export function metaPageIdAtual(lead: Lead): string | null {
+  const e = estado(lead, 'meta_pagina');
+  const id = metaPageIdDe(e.valor);
+  return id && !(e.rejeitados ?? []).includes(id) ? id : null;
+}
+export function googleAdvertiserAtual(lead: Lead): string | null {
+  const e = estado(lead, 'google_anunciante');
+  const id = googleAdvertiserIdDe(e.valor);
+  return id && !(e.rejeitados ?? []).includes(id) ? id : null;
 }
 
 export function chavesPendentes(lead: Lead, audit: SiteAudit | null, ids: ChaveBuscaId[]): number {
@@ -228,5 +320,9 @@ export function overridesBusca(lead: Lead) {
     gmnConsulta: cb.gmn?.consulta?.trim() || null,
     gmnRejeitados: cb.gmn?.rejeitados ?? [],
     metaTermo: metaTermoAtual(lead),
+    metaPageId: metaPageIdAtual(lead),
+    metaPaginaRejeitados: cb.meta_pagina?.rejeitados ?? [],
+    googleAdvertiser: googleAdvertiserAtual(lead),
+    googleAnuncianteRejeitados: cb.google_anunciante?.rejeitados ?? [],
   };
 }
