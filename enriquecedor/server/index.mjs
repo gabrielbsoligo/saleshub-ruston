@@ -1277,23 +1277,28 @@ async function metaAdSearch(term, useProxy = null, force = false, { pageId = nul
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       // Aguarda os resultados, tolerando renavegação do Meta (IP novo do proxy
       // costuma fazer a página redirecionar → "execution context destroyed").
+      // Sinais de "carregou" em pt-BR E em inglês (IP do proxy pode receber a UI
+      // em inglês): total de resultados, "Identificação da biblioteca"/"Library ID",
+      // sem resultado, ou (modo página) "não está exibindo anúncios".
+      const RE_LOADED = /\d\s*(resultados?|results?)\b|Identifica[çc][ãa]o da biblioteca|Library ID|nenhum resultado|no results|n[ãa]o est[áa] (exibindo|veiculando) an[úu]ncios|isn'?t running ads|not running ads|não há anúncios/i;
       let loaded = false;
-      const deadline = Date.now() + 16000; // ~16s no máximo pra aparecer resultado
+      const deadline = Date.now() + 20000; // ~20s no máximo pra aparecer resultado
       while (!loaded && Date.now() < deadline) {
         await page.waitForTimeout(900);
         try {
-          loaded = await page.evaluate(() =>
-            /\d\s*resultado|Identifica[çc][ãa]o da biblioteca|nenhum resultado/i.test(document.body.innerText),
-          );
+          loaded = await page.evaluate((re) => new RegExp(re, 'i').test(document.body.innerText), RE_LOADED.source);
         } catch {
           /* renavegação (IP novo redireciona) — tenta de novo no próximo ciclo */
         }
       }
       if (!loaded) {
         // Não carregou (bloqueio transitório OU carga lenta). Sem proxy: cooldown
-        // CURTO (90s) — não punir o IP por um termo lento. Com proxy: ignora o IP.
+        // (15 min) — com proxy: ignora o IP. Devolve um diagnóstico da página
+        // (título + começo do texto) pra ver a causa real no bridge/log.
         if (!usingProxy) _metaCooldownUntil = Date.now() + META_COOLDOWN_MS;
-        return { ok: true, cards: [], total: null, note: 'meta_bloqueado' };
+        const diag = await page.evaluate(() => ({ url: location.href, title: document.title, texto: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 400) })).catch(() => null);
+        console.warn('[meta] não carregou', usingProxy ? '(proxy)' : '(direto)', JSON.stringify(diag).slice(0, 500));
+        return { ok: true, cards: [], total: null, note: 'meta_bloqueado', diag };
       }
       // Carregou pelo IP direto → o IP está saudável: zera qualquer cooldown.
       if (!usingProxy) _metaCooldownUntil = 0;
@@ -1303,21 +1308,21 @@ async function metaAdSearch(term, useProxy = null, force = false, { pageId = nul
       }
       const data = await page.evaluate(() => {
         const bodyTxt = document.body.innerText.slice(0, 3000);
-        const tm = bodyTxt.match(/~?\s*([\d.]+)\s*resultado/i);
-        const total = tm ? parseInt(tm[1].replace(/\./g, ''), 10) : null;
+        const tm = bodyTxt.match(/~?\s*([\d.,]+)\s*(resultados?|results?)\b/i);
+        const total = tm ? parseInt(tm[1].replace(/[.,]/g, ''), 10) : null;
         const cards = [];
         const seen = new Set();
         const idNodes = [...document.querySelectorAll('div')].filter(
-          (d) => /Identifica[çc][ãa]o da biblioteca/i.test(d.textContent || '') && (d.innerText || '').length < 2500,
+          (d) => /Identifica[çc][ãa]o da biblioteca|Library ID/i.test(d.textContent || '') && (d.innerText || '').length < 2500,
         );
         for (const idNode of idNodes) {
           let el = idNode;
           for (let k = 0; k < 8 && el.parentElement; k++) {
-            if (/Patrocinad/i.test(el.innerText || '')) break;
+            if (/Patrocinad|Sponsored/i.test(el.innerText || '')) break;
             el = el.parentElement;
           }
           const text = (el.innerText || '').replace(/\s+/g, ' ');
-          const idm = text.match(/Identifica[çc][ãa]o da biblioteca:\s*(\d+)/i);
+          const idm = text.match(/(?:Identifica[çc][ãa]o da biblioteca|Library ID):\s*(\d+)/i);
           const id = idm ? idm[1] : null;
           if (!id || seen.has(id)) continue;
           seen.add(id);
@@ -1765,14 +1770,25 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
         return route.continue();
       });
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      const deadline = Date.now() + 18000;
+      // Tela de consentimento do Google (IP do proxy fora do BR cai nela): aceita e segue.
+      for (let i = 0; i < 2; i++) {
+        await page.waitForTimeout(1200);
+        const consent = /consent\.google/.test(page.url()) || (await page.evaluate(() => /Antes de continuar|Before you continue|Fazer login|Sign in/i.test((document.body.innerText || '').slice(0, 1500)) && !document.querySelector('a[href*="/creative/"]')).catch(() => false));
+        if (!consent) break;
+        const btn = await page.$('button:has-text("Aceitar tudo"), button:has-text("Accept all"), button:has-text("Concordo"), button:has-text("I agree"), form[action*="consent"] button');
+        if (!btn) break;
+        await btn.click().catch(() => {});
+        await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+        if (!/adstransparency\.google\.com/.test(page.url())) await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+      }
+      const deadline = Date.now() + (advertiserId ? 25000 : 18000);
       let pronto = false;
       while (!pronto && Date.now() < deadline) {
         await page.waitForTimeout(1000);
-        pronto = await page.evaluate(() =>
-          !!document.querySelector('a[href*="/advertiser/"], a[href*="/creative/"]') ||
-          /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios/i.test(document.body.innerText || ''),
-        ).catch(() => false);
+        pronto = await page.evaluate((porAnunciante) =>
+          !!document.querySelector(porAnunciante ? 'a[href*="/creative/"]' : 'a[href*="/advertiser/"], a[href*="/creative/"]') ||
+          /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios|n[ãa]o exibiu an[úu]ncios|hasn'?t shown ads/i.test(document.body.innerText || ''),
+        !!advertiserId).catch(() => false);
       }
       for (let i = 0; i < 3; i++) {
         await page.mouse.wheel(0, 3500).catch(() => {});
@@ -1782,7 +1798,7 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
         const abs = (h) => { try { return new URL(h, location.href).href; } catch { return h; } };
         // Ícones Material aparecem como texto ("videocam", "image"…): não são nome.
         const ICONE = /^(videocam|image|play_arrow|text_fields|more_vert|open_in_new|info|verified|arrow_\w+)$/i;
-        const limpaNome = (t) => (t || '').split('\n').map((x) => x.trim()).filter((x) => x && !ICONE.test(x) && !/^AR\d+$/.test(x))[0] || '';
+        const limpaNome = (t) => (t || '').split('\n').map((x) => x.trim()).filter((x) => x && !ICONE.test(x) && !/^AR\d+$/.test(x) && !/^(Fazer login|Sign in|Login|Entrar)$/i.test(x))[0] || '';
         const advs = new Map();
         const registra = (id, nome) => {
           if (!advs.has(id)) advs.set(id, { id, nome: nome || '', url: `https://adstransparency.google.com/advertiser/${id}?region=BR` });
@@ -1814,14 +1830,19 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
           criativos.set(m[2], { id: m[2], anunciante: m[1], url: abs(h.split('?')[0]) + '?region=BR', formato: fmt, texto: (a.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 160) });
         }
         const body = (document.body.innerText || '').replace(/\s+/g, ' ');
-        const tm = body.match(/(\d[\d.]*)\s*an[úu]ncios?/i);
+        const tm = body.match(/(\d[\d.,]*)\s*(an[úu]ncios?|ads?)\b/i);
         return {
           anunciantes: [...advs.values()].slice(0, 10),
           criativos: [...criativos.values()],
-          totalTexto: tm ? parseInt(tm[1].replace(/\./g, ''), 10) : null,
-          semAnuncios: /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios/i.test(body),
+          totalTexto: tm ? parseInt(tm[1].replace(/[.,]/g, ''), 10) : null,
+          semAnuncios: /nenhum an[úu]ncio|n[ãa]o (h[áa]|encontr)|no ads|sem an[úu]ncios|n[ãa]o exibiu an[úu]ncios|hasn'?t shown ads/i.test(body),
+          diag: { url: location.href, title: document.title, texto: body.slice(0, 300) },
         };
       });
+      // Na página do anunciante o próprio id é o anunciante medido.
+      if (advertiserId && !data.anunciantes.some((a) => a.id === advertiserId.toUpperCase())) {
+        data.anunciantes.unshift({ id: advertiserId.toUpperCase(), nome: '', url: `https://adstransparency.google.com/advertiser/${advertiserId.toUpperCase()}?region=BR` });
+      }
       const formatos = { video: 0, imagem: 0, texto: 0 };
       for (const c of data.criativos) formatos[c.formato] = (formatos[c.formato] || 0) + 1;
       return {
@@ -1834,7 +1855,8 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
         formatos,
         amostra: data.criativos.slice(0, 12),
         semAnuncios: data.semAnuncios && !data.criativos.length,
-        found: data.anunciantes.length > 0 || data.criativos.length > 0,
+        found: data.criativos.length > 0 || (!advertiserId && data.anunciantes.length > 0),
+        diag: data.criativos.length ? undefined : data.diag,
       };
     } catch (e) {
       return { ok: false, note: String(e?.message || e).slice(0, 120), url };
