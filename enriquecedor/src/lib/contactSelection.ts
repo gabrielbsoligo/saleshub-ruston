@@ -66,33 +66,54 @@ export function resumoSelecao(people: DecisionMaker[]): { decisores: number; pho
 }
 
 // ---------------------------------------------------------------------------
-// Validação do Instagram do decisor (F2). A busca é heurística; o operador
-// confirma ("manter") ou descarta ("apagar"). Apagar guarda o @ em
-// instagramRejeitados para a re-busca nunca trazer o mesmo perfil de volta.
+// Validação das redes do decisor (F2) — Instagram e LinkedIn. A busca é
+// heurística; o operador confirma ("manter") ou descarta ("apagar"). Apagar
+// guarda o identificador (@ ou slug) em *Rejeitados para a re-busca nunca
+// trazer o mesmo perfil de volta.
 // ---------------------------------------------------------------------------
-export function instagramHandle(url: string | null | undefined): string | null {
+export type RedeValidavel = 'instagram' | 'linkedin';
+
+// @ do Instagram (instagram.com/<handle>) ou slug do LinkedIn (linkedin.com/in/<slug>).
+export function redeHandle(rede: RedeValidavel, url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const u = new URL(url.startsWith('http') ? url : `https://${url}`);
-    return u.pathname.split('/').filter(Boolean)[0]?.toLowerCase() ?? null;
+    const partes = u.pathname.split('/').filter(Boolean);
+    if (rede === 'linkedin') {
+      const i = partes.findIndex((s) => s === 'in' || s === 'pub');
+      return i >= 0 ? decodeURIComponent(partes[i + 1] ?? '').toLowerCase() || null : null;
+    }
+    return partes[0]?.toLowerCase() ?? null;
   } catch {
     return null;
   }
 }
+export const instagramHandle = (url: string | null | undefined) => redeHandle('instagram', url);
 
-export function manterInstagram(people: DecisionMaker[], id: string): DecisionMaker[] {
-  return people.map((p) => (p.id === id && p.instagram ? { ...p, instagramValidacao: 'validado' } : p));
+// Campos de cada rede no DecisionMaker (mantém o tipo fechado).
+const CAMPOS: Record<RedeValidavel, { url: 'instagram' | 'linkedin'; conf: 'instagramConfianca' | 'linkedinConfianca'; val: 'instagramValidacao' | 'linkedinValidacao'; rej: 'instagramRejeitados' | 'linkedinRejeitados' }> = {
+  instagram: { url: 'instagram', conf: 'instagramConfianca', val: 'instagramValidacao', rej: 'instagramRejeitados' },
+  linkedin: { url: 'linkedin', conf: 'linkedinConfianca', val: 'linkedinValidacao', rej: 'linkedinRejeitados' },
+};
+
+export function manterRede(people: DecisionMaker[], id: string, rede: RedeValidavel): DecisionMaker[] {
+  const c = CAMPOS[rede];
+  return people.map((p) => (p.id === id && p[c.url] ? { ...p, [c.val]: 'validado' } : p));
 }
 
-export function apagarInstagram(people: DecisionMaker[], id: string): DecisionMaker[] {
+export function apagarRede(people: DecisionMaker[], id: string, rede: RedeValidavel): DecisionMaker[] {
+  const c = CAMPOS[rede];
   return people.map((p) => {
-    if (p.id !== id || !p.instagram) return p;
-    const handle = instagramHandle(p.instagram);
-    const rejeitados = new Set(p.instagramRejeitados ?? []);
+    if (p.id !== id || !p[c.url]) return p;
+    const handle = redeHandle(rede, p[c.url]);
+    const rejeitados = new Set(p[c.rej] ?? []);
     if (handle) rejeitados.add(handle);
-    return { ...p, instagram: null, instagramConfianca: null, instagramValidacao: null, instagramRejeitados: [...rejeitados] };
+    return { ...p, [c.url]: null, [c.conf]: null, [c.val]: null, [c.rej]: [...rejeitados] };
   });
 }
+
+export const manterInstagram = (people: DecisionMaker[], id: string) => manterRede(people, id, 'instagram');
+export const apagarInstagram = (people: DecisionMaker[], id: string) => apagarRede(people, id, 'instagram');
 
 // O que segue pro funil/Kommo: só decisores selecionados, cada um só com os
 // contatos selecionados. Se NINGUÉM foi selecionado, devolve tudo (sem filtro

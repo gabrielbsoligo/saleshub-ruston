@@ -337,13 +337,37 @@ async function findCompanySocial(company, network) {
   return { url: hit ? stripQuery(hit.url) : null, ok };
 }
 
-async function findPersonLinkedin(name, company) {
+// Slug do perfil pessoal do LinkedIn (linkedin.com/in/<slug>), só letras/números.
+function linkedinSlug(url) {
+  const m = String(url).match(/linkedin\.com\/(?:in|pub)\/([^/?#]+)/i);
+  return m ? decodeURIComponent(m[1]).toLowerCase() : '';
+}
+
+// Classifica UM resultado como perfil PESSOAL da pessoa (mesma escala do Instagram):
+//   alta  = título/descrição traz nome E sobrenome  +  slug traz primeiro nome OU sobrenome
+//   media = título/descrição traz nome E sobrenome (slug não ajuda — ex.: só números)
+//   null  = página de empresa, ou o nome não bate por inteiro
+function classificarPerfilLinkedin(r, name) {
+  if (!/linkedin\.com\/(in|pub)\//i.test(r.url)) return null;
+  if (!resultMatchesPerson(r, name)) return null;
+  const slug = linkedinSlug(r.url).replace(/[^a-z0-9]/g, '');
+  return handleTemPrimeiroNome(slug, name) || handleTemSobrenome(slug, name) ? 'alta' : 'media';
+}
+
+// Busca o LinkedIn PESSOAL do decisor. `rejeitados` = slugs que o operador apagou
+// na tela (nunca voltam). Devolve {url, ok, confianca}.
+async function findPersonLinkedin(name, company, { rejeitados = [] } = {}) {
   const { results, ok } = await rawSearch(`${name} ${company ?? ''} linkedin`);
-  // Só perfil PESSOAL (/in/ ou /pub/), nunca página de empresa.
-  const hit = results.find(
-    (r) => /linkedin\.com\/(in|pub)\//i.test(r.url) && resultMatchesPerson(r, name),
-  );
-  return { url: hit ? stripQuery(hit.url) : null, ok };
+  const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
+  let melhor = null;
+  for (const r of results) {
+    const conf = classificarPerfilLinkedin(r, name);
+    if (!conf) continue;
+    if (bloqueados.has(linkedinSlug(r.url))) continue;
+    if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
+    if (melhor.confianca === 'alta') break;
+  }
+  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok };
 }
 
 // @ (handle) do perfil, só letras/números — base das regras de nome abaixo.
@@ -411,8 +435,9 @@ async function findPersonInstagram(name, { cidade = null, rejeitados = [] } = {}
 
 // Descoberta social completa: institucional (empresa) + por sócio-pessoa.
 // searchFailed=true se QUALQUER busca falhou (para reprocessar depois).
-// `rejeitados` = { [nome normalizado]: [handles apagados pelo operador] }.
-async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {} }) {
+// `rejeitados` = { [nome normalizado]: [@ de Instagram apagados pelo operador] };
+// `rejeitadosLinkedin` = idem para slugs do LinkedIn.
+async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {}, rejeitadosLinkedin = {} }) {
   let anyFail = false;
   const mark = (r) => {
     if (!r.ok) anyFail = true;
@@ -426,10 +451,16 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
   const pessoas = (socios ?? []).filter(isPersonName);
   const people = [];
   for (const nome of pessoas) {
-    const linkedin = mark(await findPersonLinkedin(nome, company));
+    const li = await findPersonLinkedin(nome, company, { rejeitados: rejeitadosLinkedin?.[normText(nome)] ?? [] });
     const ig = await findPersonInstagram(nome, { cidade, rejeitados: rejeitados?.[normText(nome)] ?? [] });
-    if (!ig.ok) anyFail = true;
-    people.push({ nome, linkedin, instagram: ig.url, instagramConfianca: ig.confianca });
+    if (!li.ok || !ig.ok) anyFail = true;
+    people.push({
+      nome,
+      linkedin: li.url,
+      linkedinConfianca: li.confianca,
+      instagram: ig.url,
+      instagramConfianca: ig.confianca,
+    });
   }
   return { companyInstagram, companyFacebook, people, searchFailed: anyFail };
 }

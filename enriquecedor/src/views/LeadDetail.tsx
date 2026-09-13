@@ -50,7 +50,7 @@ import {
 import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAudit, Lead, Organograma, SiteAudit } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
-import { apagarInstagram, manterInstagram, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone } from '../lib/contactSelection';
+import { apagarRede, manterRede, redeHandle, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone, type RedeValidavel } from '../lib/contactSelection';
 import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { motorFetch } from '../lib/motorClient';
@@ -857,52 +857,7 @@ export function LeadDetail({
                   </div>
                 )}
               </div>
-              {(p.linkedin || p.instagram || (p.instagramRejeitados?.length ?? 0) > 0) && (
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {p.linkedin && <SocialLink href={p.linkedin} icon={Linkedin} label="LinkedIn" />}
-                  {p.instagram && (
-                    <span className="flex flex-wrap items-center gap-1.5 rounded-lg border border-v4-border bg-v4-surface pl-1 pr-1.5 py-1">
-                      <SocialLink href={p.instagram} icon={Instagram} label={`@${p.instagram.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/.*$/, '')}`} />
-                      {p.instagramValidacao === 'validado' ? (
-                        <Tag className="bg-[rgba(34,197,94,0.15)] text-v4-success">confirmado</Tag>
-                      ) : (
-                        <>
-                          <Tag
-                            className={
-                              p.instagramConfianca === 'alta'
-                                ? 'bg-[rgba(34,197,94,0.15)] text-v4-success'
-                                : p.instagramConfianca === 'media'
-                                  ? 'bg-[rgba(250,204,21,0.15)] text-v4-warning'
-                                  : 'bg-v4-surface text-v4-text-muted'
-                            }
-                          >
-                            {p.instagramConfianca === 'alta' ? 'confiança alta' : p.instagramConfianca === 'media' ? 'confiança média' : 'não verificado'}
-                          </Tag>
-                          <button
-                            onClick={() => persistPeople(manterInstagram(people, p.id))}
-                            title="É a pessoa certa — manter este Instagram (a re-busca não sobrescreve)"
-                            className="flex items-center gap-1 rounded-md border border-v4-success px-2 py-0.5 text-[11px] font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)]"
-                          >
-                            <Check size={11} /> Manter
-                          </button>
-                          <button
-                            onClick={() => persistPeople(apagarInstagram(people, p.id))}
-                            title="Não é a pessoa — apagar (este @ nunca mais volta na busca)"
-                            className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
-                          >
-                            <X size={11} /> Apagar
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  )}
-                  {!p.instagram && (p.instagramRejeitados?.length ?? 0) > 0 && (
-                    <span className="text-[11px] text-v4-text-disabled" title={`Descartados: ${p.instagramRejeitados!.map((h) => `@${h}`).join(', ')}`}>
-                      Instagram: {p.instagramRejeitados!.length} sugestão(ões) descartada(s)
-                    </span>
-                  )}
-                </div>
-              )}
+              <RedesDecisor p={p} people={people} onChange={persistPeople} />
               {p.lemit && <LemitPersonDetails data={p.lemit} />}
               {p.datastone && <DatastonePersonDetails data={p.datastone} />}
             </div>
@@ -3500,6 +3455,73 @@ function BrandSocial({
     >
       <Icon size={22} color={color} /> {label}
     </a>
+  );
+}
+
+// Redes do decisor (LinkedIn + Instagram) com validação humana: selo de confiança
+// da busca e botões Manter/Apagar. Uma linha por rede; lógica em contactSelection.
+const REDES: Array<{ rede: RedeValidavel; label: string; icon: React.ComponentType<{ size?: number }>; prefixo: string }> = [
+  { rede: 'linkedin', label: 'LinkedIn', icon: Linkedin, prefixo: 'in/' },
+  { rede: 'instagram', label: 'Instagram', icon: Instagram, prefixo: '@' },
+];
+function RedesDecisor({ p, people, onChange }: { p: DecisionMaker; people: DecisionMaker[]; onChange: (next: DecisionMaker[]) => void }) {
+  const linhas = REDES.filter(({ rede }) => {
+    const rej = rede === 'instagram' ? p.instagramRejeitados : p.linkedinRejeitados;
+    return !!p[rede] || (rej?.length ?? 0) > 0;
+  });
+  if (!linhas.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      {linhas.map(({ rede, label, icon, prefixo }) => {
+        const url = p[rede];
+        const conf = rede === 'instagram' ? p.instagramConfianca : p.linkedinConfianca;
+        const val = rede === 'instagram' ? p.instagramValidacao : p.linkedinValidacao;
+        const rej = (rede === 'instagram' ? p.instagramRejeitados : p.linkedinRejeitados) ?? [];
+        if (!url) {
+          return (
+            <span key={rede} className="text-[11px] text-v4-text-disabled" title={`Descartados: ${rej.map((h) => prefixo + h).join(', ')}`}>
+              {label}: {rej.length} sugestão(ões) descartada(s)
+            </span>
+          );
+        }
+        return (
+          <span key={rede} className="flex flex-wrap items-center gap-1.5 rounded-lg border border-v4-border bg-v4-surface py-1 pl-1 pr-1.5">
+            <SocialLink href={url} icon={icon} label={`${prefixo}${redeHandle(rede, url) ?? label}`} />
+            {val === 'validado' ? (
+              <Tag className="bg-[rgba(34,197,94,0.15)] text-v4-success">confirmado</Tag>
+            ) : (
+              <>
+                <Tag
+                  className={
+                    conf === 'alta'
+                      ? 'bg-[rgba(34,197,94,0.15)] text-v4-success'
+                      : conf === 'media'
+                        ? 'bg-[rgba(250,204,21,0.15)] text-v4-warning'
+                        : 'bg-v4-surface text-v4-text-muted'
+                  }
+                >
+                  {conf === 'alta' ? 'confiança alta' : conf === 'media' ? 'confiança média' : 'não verificado'}
+                </Tag>
+                <button
+                  onClick={() => onChange(manterRede(people, p.id, rede))}
+                  title={`É a pessoa certa — manter este ${label} (a re-busca não sobrescreve)`}
+                  className="flex items-center gap-1 rounded-md border border-v4-success px-2 py-0.5 text-[11px] font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)]"
+                >
+                  <Check size={11} /> Manter
+                </button>
+                <button
+                  onClick={() => onChange(apagarRede(people, p.id, rede))}
+                  title={`Não é a pessoa — apagar (este perfil nunca mais volta na busca)`}
+                  className="flex items-center gap-1 rounded-md border border-v4-border px-2 py-0.5 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
+                >
+                  <X size={11} /> Apagar
+                </button>
+              </>
+            )}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 

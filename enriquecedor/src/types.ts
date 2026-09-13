@@ -331,6 +331,10 @@ export interface DecisionMaker {
   instagramRejeitados?: string[];
   facebook: string | null;
   linkedin: string | null;
+  // Mesma validação humana para o LinkedIn (slug de linkedin.com/in/<slug>).
+  linkedinConfianca?: 'alta' | 'media' | null;
+  linkedinValidacao?: 'validado' | null;
+  linkedinRejeitados?: string[];
   confidence: number; // 0-100
   source: string | null;
   kommoContactId: string | null;
