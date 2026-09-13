@@ -198,7 +198,7 @@ export function LeadDetail({
     try {
       const fresh = (await leadsRepo.get(leadId)) ?? lead;
       const r =
-        f === 2 ? await enrichQualificacao(fresh)
+        f === 2 ? await enrichQualificacao(fresh, { force: true })
         : f === 3 ? await enrichDiagnostico(fresh, { force: true })
         : await runAnuncios(fresh);
       await reloadAll();

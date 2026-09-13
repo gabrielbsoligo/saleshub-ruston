@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
   // das edges não for reposto, as operações de card saem por lá. Auth = login do
   // usuário de integração, igual à esteira.
-  if (body.acao === 'motor-campos' || body.acao === 'motor-card-prep' || body.acao === 'motor-token-heal') {
+  if (body.acao === 'motor-campos' || body.acao === 'motor-card-prep' || body.acao === 'motor-token-heal' || body.acao === 'motor-socios') {
     const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
       email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
       password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
@@ -116,10 +116,13 @@ Deno.serve(async (req) => {
     if (authErr || !sess?.session) return json(500, { error: `auth integração falhou: ${authErr?.message}` })
     const rota = body.acao === 'motor-campos' ? '/api/kommo/campos'
       : body.acao === 'motor-card-prep' ? '/api/kommo/card-prep'
+      : body.acao === 'motor-socios' ? '/api/socios-social'   // teste/ops da busca social (redes da empresa + sócios)
       : '/api/kommo/token-heal'
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
-      : {}
+      : body.acao === 'motor-socios'
+        ? { company: body.company, socios: body.socios, cidade: body.cidade ?? null, rejeitados: body.rejeitados ?? {} }
+        : {}
     const r = await fetch(`${MOTOR_URL}${rota}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },

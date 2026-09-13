@@ -888,9 +888,11 @@ export interface FaseResult {
 }
 
 // F2 — Qualificação: organograma/porte (DataStone) + decisor + contatos (Lemit + DataStone).
-export async function enrichQualificacao(lead: Lead): Promise<FaseResult> {
+// `force` re-roda mesmo com dado existente (botão F2 da página do lead — ex.: refazer
+// a busca de Instagram depois de apagar um perfil errado).
+export async function enrichQualificacao(lead: Lead, opts?: { force?: boolean }): Promise<FaseResult> {
   const jaFeito = !!(lead.organograma || lead.datastone); // booleano evita o narrowing do TS
-  if (jaFeito) {
+  if (jaFeito && !opts?.force) {
     return { ok: true, note: 'ja_feito', resumo: 'já qualificado (dado existente)' };
   }
   const people = await discoverPeople(lead, { instagram: lead.companyInstagram, facebook: lead.companyFacebook });
