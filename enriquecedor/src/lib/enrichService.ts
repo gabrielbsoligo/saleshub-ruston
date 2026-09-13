@@ -7,6 +7,7 @@ import { computeDores, whatsappAudit } from './dores';
 import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
 import { redeHandle } from './contactSelection';
+import { facebookHandle, marcaAtual, metaTermoAtual, overridesBusca } from './chavesBusca';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -146,13 +147,19 @@ interface SiteAuditResponse {
 export async function auditLeadSite(
   lead: Lead,
 ): Promise<{ audit: SiteAudit; searchFailed: boolean }> {
+  // Chaves de busca: marca como nome de busca; site validado pelo operador é
+  // FORÇADO (sem descoberta); domínios apagados nunca voltam.
+  const ov = overridesBusca(lead);
   const body = {
     companyName: lead.razaoSocial ?? lead.companyNameRaw,
-    nomeFantasia: lead.nomeFantasia,
+    nomeFantasia: ov.marca,
     cidade: lead.cidade,
     uf: lead.uf,
     emailDomain: emailDomain(lead.emailRaw),
     siteUrl: lead.siteUrl,
+    forcar: ov.siteValidado ? lead.siteUrl : null,
+    rejeitados: ov.siteRejeitados,
+    gmnRejeitados: ov.gmnRejeitados,
   };
   const empty: SiteAudit = {
     id: lead.id,
@@ -275,7 +282,9 @@ export async function discoverPeople(
   lead: Lead,
   siteSocials?: { instagram: string | null; facebook: string | null },
 ): Promise<{ ok: boolean; issues: EnrichIssue[] }> {
-  const empresa = lead.razaoSocial ?? lead.companyNameRaw;
+  // Nome de busca = marca (fantasia/manual) — a razão social crua traz ruído.
+  const ov = overridesBusca(lead);
+  const empresa = ov.marca || lead.razaoSocial || lead.companyNameRaw;
   const sociosPessoas = lead.socios
     .filter((s) => isPersonSocio(s.nome))
     .sort(
@@ -307,7 +316,7 @@ export async function discoverPeople(
     const res = await motorFetch('/api/socios-social', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome), cidade: lead.cidade, rejeitados, rejeitadosLinkedin }),
+      body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome), cidade: lead.cidade, rejeitados, rejeitadosLinkedin, rejeitadosEmpresa: ov.redesRejeitadas }),
     });
     if (res.ok) {
       social = await res.json();
@@ -356,12 +365,25 @@ export async function discoverPeople(
 
   // Redes institucionais: o link no PRÓPRIO site tem prioridade (mais confiável
   // que busca). Só usa a busca como complemento quando o site não tem.
+  // Chaves de busca: validado pelo operador não é sobrescrito; handle apagado
+  // nunca volta (nem vindo do site); registra a origem do valor escolhido.
+  const marcaOrigem = (chave: 'instagram' | 'facebook', origem: string | null) => {
+    lead.chavesBusca = { ...(lead.chavesBusca ?? {}), [chave]: { ...(lead.chavesBusca?.[chave] ?? {}), origem } };
+  };
   const siteIg = siteSocials?.instagram ?? null;
   const siteFb = siteSocials?.facebook ?? null;
-  if (siteIg) lead.companyInstagram = siteIg;
-  else if (!braveFailed) lead.companyInstagram = social.companyInstagram ?? null;
-  if (siteFb) lead.companyFacebook = siteFb;
-  else if (!braveFailed) lead.companyFacebook = social.companyFacebook ?? null;
+  if (!ov.instagramValidado) {
+    const rej = ov.redesRejeitadas.instagram;
+    const doSite = siteIg && !rej.includes(redeHandle('instagram', siteIg) ?? '') ? siteIg : null;
+    if (doSite) { lead.companyInstagram = doSite; marcaOrigem('instagram', 'site'); }
+    else if (!braveFailed) { lead.companyInstagram = social.companyInstagram ?? null; marcaOrigem('instagram', social.companyInstagram ? 'busca' : null); }
+  }
+  if (!ov.facebookValidado) {
+    const rej = ov.redesRejeitadas.facebook;
+    const doSite = siteFb && !rej.includes(facebookHandle(siteFb) ?? '') ? siteFb : null;
+    if (doSite) { lead.companyFacebook = doSite; marcaOrigem('facebook', 'site'); }
+    else if (!braveFailed) { lead.companyFacebook = social.companyFacebook ?? null; marcaOrigem('facebook', social.companyFacebook ? 'busca' : null); }
+  }
 
   // Dados completos da empresa na Lemit (não sobrescreve com vazio se falhou).
   if (!lemitFailed && lemit.company) {
@@ -542,7 +564,7 @@ async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promis
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         company: lead.razaoSocial ?? lead.companyNameRaw,
-        nomeFantasia: lead.nomeFantasia,
+        nomeFantasia: marcaAtual(lead), // chave de busca (marca), não a fantasia crua
         cidade: lead.cidade,
         perfil: lead.perfil ?? 'construtoras',
         siteUrl: siteUrl ?? lead.siteUrl, // site descoberto → prioriza LP no domínio da empresa
@@ -560,11 +582,15 @@ async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promis
 }
 
 async function fetchGoogleBusiness(lead: Lead): Promise<SourceResult> {
+  // Chaves de busca: ficha validada pelo operador fica; a busca usa o termo
+  // manual (ou a marca) e pula os cids apagados.
+  const ov = overridesBusca(lead);
+  if (ov.gmnValidado) return { ok: true, note: 'validado' };
   try {
     const res = await motorFetch('/api/google-negocio', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ company: lead.razaoSocial ?? lead.companyNameRaw, cidade: lead.cidade }),
+      body: JSON.stringify({ company: ov.gmnConsulta ?? ov.marca, cidade: lead.cidade, rejeitados: ov.gmnRejeitados }),
     });
     if (!res.ok) return { ok: false };
     const j = await res.json();
@@ -577,6 +603,11 @@ async function fetchGoogleBusiness(lead: Lead): Promise<SourceResult> {
         address: j.address ?? null,
         phone: j.phone ?? null,
         website: j.website ?? null,
+        cid: j.cid ?? null, // identificador da ficha (link do Maps e chave de rejeição)
+        latitude: j.latitude ?? null,
+        longitude: j.longitude ?? null,
+        openingHours: j.openingHours ?? null,
+        thumbnail: j.thumbnail ?? null,
       };
     }
     return { ok: j.ok !== false, note: j.note }; // serper_desativado conta como ok (etapa pulada)
@@ -589,22 +620,10 @@ async function fetchGoogleBusiness(lead: Lead): Promise<SourceResult> {
 // CONSTRUTORA E INCORPORADORA LTDA") traz ruído; o Meta acha os anúncios pelo
 // nome como a empresa se anuncia. Prefere o handle do Facebook; senão limpa o
 // nome (tira pontos/sufixos jurídicos e junta siglas: "R D C" → "RDC").
+// A regra (handle do FB > marca limpa) e o override manual vivem em chavesBusca.ts
+// — é a chave "Termo de busca na Meta" que o operador valida no F4.
 function adSearchTerm(lead: Lead): string {
-  if (lead.companyFacebook) {
-    const h = lead.companyFacebook.match(/facebook\.com\/([^/?#]+)/i)?.[1];
-    if (h && !/^\d+$/.test(h) && h.length > 2) return h.replace(/[._-]+/g, ' ').trim();
-  }
-  const nome = (lead.nomeFantasia || lead.razaoSocial || lead.companyNameRaw || '').trim();
-  let t = nome.replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
-  t = t.replace(/\b(ltda|s\/?a|eireli|epp|mei|me)\b/gi, '').replace(/\s+/g, ' ').trim();
-  const out: string[] = [];
-  let acc = '';
-  for (const w of t.split(' ').filter(Boolean)) {
-    if (w.length === 1) acc += w;
-    else { if (acc) { out.push(acc); acc = ''; } out.push(w); }
-  }
-  if (acc) out.push(acc);
-  return out.join(' ').trim() || nome;
+  return metaTermoAtual(lead);
 }
 
 // Título a partir do domínio: "reserva-muriquis" → "Reserva Muriquis".

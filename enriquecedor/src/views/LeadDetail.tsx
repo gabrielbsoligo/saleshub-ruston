@@ -51,6 +51,8 @@ import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAud
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
 import { apagarRede, manterRede, redeHandle, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone, type RedeValidavel } from '../lib/contactSelection';
+import { CHAVES_POR_FASE, TODAS_CHAVES } from '../lib/chavesBusca';
+import { ChavesBusca } from '../components/ChavesBusca';
 import { auditLeadSite, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { motorFetch } from '../lib/motorClient';
@@ -466,6 +468,22 @@ export function LeadDetail({
           )}
         </div>
       )}
+
+      {/* CHAVES DE BUSCA — o que a próxima execução usa como identificador; valida/corrige antes do play. */}
+      {(() => {
+        const ids = foco && fase != null ? CHAVES_POR_FASE[fase] ?? [] : TODAS_CHAVES;
+        return ids.length ? (
+          <ChavesBusca
+            lead={lead}
+            audit={audit}
+            chaves={ids}
+            onSave={async (next) => {
+              await leadsRepo.update(next);
+              await reloadAll();
+            }}
+          />
+        ) : null;
+      })()}
 
       {/* QUADRO FIXO — visão rápida (KPIs). Sempre visível fora do funil; no funil só nas fases de diagnóstico em diante. */}
       {(!foco || foco.kpis) && (

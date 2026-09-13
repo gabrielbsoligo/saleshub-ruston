@@ -324,15 +324,19 @@ function isPersonName(nome) {
 }
 
 // Cada find* devolve {url, ok}. ok=false = a busca falhou (não é "não achou").
-async function findCompanySocial(company, network) {
+// `rejeitados` = handles institucionais que o operador apagou na tela (chaves de
+// busca do lead) — nunca voltam.
+async function findCompanySocial(company, network, rejeitados = []) {
   const { results, ok } = await rawSearch(`${company} ${network}`);
   const domainRe = network === 'instagram' ? /instagram\.com\//i : /facebook\.com\//i;
   const badPath =
     network === 'instagram'
       ? /instagram\.com\/(p|reel|reels|explore|stories)\//i
       : /facebook\.com\/(sharer|login|events|photo|groups|watch|people)/i;
+  const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
+  const handleDe = (u) => (u.match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
   const hit = results.find(
-    (r) => domainRe.test(r.url) && !badPath.test(r.url) && resultMatchesCompany(r, company),
+    (r) => domainRe.test(r.url) && !badPath.test(r.url) && !bloqueados.has(handleDe(r.url)) && resultMatchesCompany(r, company),
   );
   return { url: hit ? stripQuery(hit.url) : null, ok };
 }
@@ -437,15 +441,16 @@ async function findPersonInstagram(name, { cidade = null, rejeitados = [] } = {}
 // searchFailed=true se QUALQUER busca falhou (para reprocessar depois).
 // `rejeitados` = { [nome normalizado]: [@ de Instagram apagados pelo operador] };
 // `rejeitadosLinkedin` = idem para slugs do LinkedIn.
-async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {}, rejeitadosLinkedin = {} }) {
+// `rejeitadosEmpresa` = { instagram: [@...], facebook: [@...] } apagados na tela.
+async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {}, rejeitadosLinkedin = {}, rejeitadosEmpresa = {} }) {
   let anyFail = false;
   const mark = (r) => {
     if (!r.ok) anyFail = true;
     return r.url;
   };
 
-  const companyInstagram = company ? mark(await findCompanySocial(company, 'instagram')) : null;
-  const companyFacebook = company ? mark(await findCompanySocial(company, 'facebook')) : null;
+  const companyInstagram = company ? mark(await findCompanySocial(company, 'instagram', rejeitadosEmpresa?.instagram ?? [])) : null;
+  const companyFacebook = company ? mark(await findCompanySocial(company, 'facebook', rejeitadosEmpresa?.facebook ?? [])) : null;
 
   // Todos os sócios-pessoas do contrato social (assertividade > economia).
   const pessoas = (socios ?? []).filter(isPersonName);
@@ -489,10 +494,10 @@ const NAME_STOPWORDS = new Set([
 // Cache de Google Meu Negócio (Serper Places) por empresa+cidade — evita chamar
 // duas vezes (na descoberta do site e no card de GMN).
 const _placesCache = new Map();
-async function serperPlacesCached(company, cidade) {
-  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}`;
+async function serperPlacesCached(company, cidade, rejeitados = []) {
+  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}`;
   if (_placesCache.has(k)) return _placesCache.get(k);
-  const r = await serperPlaces(company, cidade).catch(() => ({ ok: false, found: false }));
+  const r = await serperPlaces(company, cidade, rejeitados).catch(() => ({ ok: false, found: false }));
   const val = r && r.found ? r : null;
   _placesCache.set(k, val);
   return val;
@@ -513,14 +518,27 @@ async function primeiraQueResponde(urlBruta) {
 // cruza Google Meu Negócio + e-mail corporativo + planilha + busca web (nome
 // fantasia) e valida qual candidato realmente RESPONDE. Ordem de confiança:
 // GMN > e-mail corporativo > planilha > busca. A planilha vira só um palpite.
-async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, cidade }) {
+// `forcar` = site VALIDADO pelo operador (chaves de busca): se responder, é ele e
+// pronto — sem descoberta. `rejeitados` = domínios apagados na tela (nunca voltam).
+async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, cidade, forcar = null, rejeitados = [], gmnRejeitados = [] }) {
+  if (forcar) {
+    const url = await primeiraQueResponde(forcar);
+    if (url) return { url, source: 'validado', searchFailed: false };
+    // não respondeu: segue a descoberta normal (o operador vê "não encontrado")
+  }
+  const bloqueados = new Set((rejeitados ?? []).map((d) => String(d).toLowerCase().replace(/^www\./, '')));
   const nome = nomeFantasia || companyName;
   const candidatos = []; // {url, source}
-  const push = (url, source) => url && candidatos.push({ url, source });
+  const push = (url, source) => {
+    if (!url) return;
+    const dom = String(url).replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
+    if (bloqueados.has(dom)) return;
+    candidatos.push({ url, source });
+  };
 
   // 1) Google Meu Negócio — site do perfil (fonte forte do site real)
   try {
-    const gmn = await serperPlacesCached(nome, cidade);
+    const gmn = await serperPlacesCached(nome, cidade, gmnRejeitados);
     if (gmn && gmn.website) push(gmn.website, 'gmn');
   } catch { /* segue */ }
   // 2) site da planilha (palpite — precisa validar)
@@ -804,9 +822,12 @@ async function lemitEnrich(cnpj) {
 }
 
 // --- Google Meu Negócio (via Serper Places) ---------------------------------
-async function serperPlaces(company, cidade) {
+// `rejeitados` = cids de fichas que o operador apagou (chave gmn do lead) —
+// pula pra próxima ficha da resposta; se só sobrar rejeitada, "não encontrado".
+async function serperPlaces(company, cidade, rejeitados = []) {
   const key = process.env.SERPER_API_KEY;
   if (!key) return { ok: true, found: false, note: 'serper_desativado' };
+  const bloqueados = new Set((rejeitados ?? []).map(String));
   try {
     const res = await fetchWithTimeout(
       'https://google.serper.dev/places',
@@ -819,7 +840,7 @@ async function serperPlaces(company, cidade) {
     );
     if (!res.ok) return { ok: false, found: false };
     const j = await res.json();
-    const p = (j.places ?? [])[0];
+    const p = (j.places ?? []).find((x) => !bloqueados.has(String(x.cid ?? '')));
     if (!p) return { ok: true, found: false };
     return {
       ok: true,
@@ -2775,7 +2796,7 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/google-negocio' && req.method === 'POST') {
       const body = await readJson(req);
-      const cached = await serperPlacesCached(body.company, body.cidade);
+      const cached = await serperPlacesCached(body.company, body.cidade, body.rejeitados ?? []);
       return send(res, 200, cached ?? { ok: true, found: false });
     }
 

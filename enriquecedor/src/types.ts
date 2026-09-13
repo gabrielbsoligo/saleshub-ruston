@@ -83,6 +83,9 @@ export interface Lead {
   validationNotes: string[]; // divergências encontradas
   enrichIssues?: EnrichIssue[]; // plataformas que falharam no último enriquecimento
   anuncios?: AnunciosData | null; // anúncios ativos (Meta Ad Library via headless)
+  // --- Chaves de busca (identificadores que alimentam as auditorias) — validação
+  // humana, origem e rejeitados por chave. Ver src/lib/chavesBusca.ts.
+  chavesBusca?: ChavesBusca;
   // --- Cadência outbound (detecção server-side no motor; ver /api/cadencia/preparar) ---
   falhaPrimaria?: FalhaCadencia | null;
   falhaSecundaria?: FalhaCadencia | null;
@@ -100,6 +103,23 @@ export interface Socio {
   nome: string;
   qualificacao: string | null; // ex.: "Sócio-Administrador"
 }
+
+// Chaves de busca: o que a ferramenta usa como identificador nas auditorias.
+//   marca      — nome de busca (fantasia/marca) usado em GMN, site, redes, Meta
+//   site       — URL institucional (auditada no F3)
+//   instagram/facebook — redes institucionais (F2/F3; o handle do FB é a "conta
+//                oficial" que valida anúncios no F4)
+//   gmn        — ficha do Google Meu Negócio (cid)
+//   meta_termo — termo de busca na Meta Ad Library (F4)
+export type ChaveBuscaId = 'marca' | 'site' | 'instagram' | 'facebook' | 'gmn' | 'meta_termo';
+export interface ChaveBuscaEstado {
+  valor?: string | null; // marca / meta_termo: valor manual (null = padrão derivado)
+  consulta?: string | null; // gmn: termo de busca manual no Google
+  validacao?: 'validado' | null; // validado pelo operador → a re-busca não sobrescreve
+  origem?: string | null; // planilha | receita | email | busca | gmn | site | manual | validado
+  rejeitados?: string[]; // domínio / @ / slug / cid descartados — nunca voltam
+}
+export type ChavesBusca = Partial<Record<ChaveBuscaId, ChaveBuscaEstado>>;
 
 // Cadência outbound — código da falha verificável (catálogo enriquecedor_cadencia_falhas)
 export type FalhaCadencia = 'https' | 'whatsapp' | 'destino' | 'semanuncio' | 'gmn' | 'pixel';
