@@ -162,7 +162,7 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
     }
     case 'meta_pagina': {
       const id = metaPageIdDe(e.valor);
-      const rot: Record<string, string> = { html: 'página do Facebook', adlib: 'busca por página na Ad Library', id: 'id informado', manual: 'manual' };
+      const rot: Record<string, string> = { plugin: 'página do Facebook (plugin público)', html: 'página do Facebook', adlib: 'busca por página na Ad Library', id: 'id informado', manual: 'manual' };
       return {
         chave, valor: id ? (e.nome ? `${e.nome} (${id})` : `página ${id}`) : null, link: id ? metaPaginaUrl(id) : null, validado, rejeitados,
         origem: id ? (e.origem && rot[e.origem]) ?? e.origem ?? '—' : e.origem === 'nao_encontrado' ? 'não encontrada' : '—', padrao: false,

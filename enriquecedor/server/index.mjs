@@ -1639,11 +1639,31 @@ async function anunciosHeadless(payload) {
 // Page id do Facebook a partir do @/URL da página. Ordem: (1) HTML público da
 // página — tag al:android:url = fb://page/<id> (sem headless, barato);
 // (2) busca "por página" na Ad Library (headless, proxy quando disponível).
+function decodeHtml(t) {
+  return String(t).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
 async function resolverMetaPageId(fbUrlOuHandle) {
   const bruto = String(fbUrlOuHandle || '').trim();
   const handle = bruto.match(/facebook\.com\/([^/?#]+)/i)?.[1] || bruto.replace(/^@/, '');
   if (!handle) return { ok: false, pageId: null, note: 'sem_handle' };
   if (/^\d{5,}$/.test(handle)) return { ok: true, pageId: handle, pageName: null, via: 'id', handle };
+
+  // (0) Page Plugin público (plugins/page.php): HTML estático com o link
+  // facebook.com/<pageId>?ref=embed_page e title="<nome da página>". Funciona
+  // sem login e sem headless; verificado 13/09 (starraceroutlet, MRV, cyrela).
+  try {
+    const r = await fetchWithTimeout(
+      `https://www.facebook.com/plugins/page.php?href=${encodeURIComponent(`https://www.facebook.com/${handle}`)}&tabs=&width=340&height=130&small_header=true`,
+      { headers: { 'user-agent': UA, 'accept-language': 'pt-BR,pt;q=0.9' }, redirect: 'follow' },
+      12000,
+    );
+    const html = await r.text();
+    const m = html.match(/facebook\.com\/(\d{5,})\?ref=embed_page/);
+    if (m) {
+      const nome = html.match(/title="([^"]{1,160})"\s+href="https:\/\/www\.facebook\.com\/\d{5,}\?ref=embed_page/)?.[1] ?? null;
+      return { ok: true, pageId: m[1], pageName: nome ? decodeHtml(nome) : null, via: 'plugin', handle };
+    }
+  } catch { /* segue */ }
 
   try {
     const r = await fetchWithTimeout(`https://www.facebook.com/${encodeURIComponent(handle)}`, {
@@ -1673,28 +1693,45 @@ async function resolverMetaPageId(fbUrlOuHandle) {
         if (t === 'image' || t === 'media' || t === 'font' || t === 'stylesheet') return route.abort();
         return route.continue();
       });
-      const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=BR&q=${encodeURIComponent(handle.replace(/[._-]+/g, ' '))}&search_type=page`;
+      // A busca "por página" da Ad Library é um typeahead: digita no campo e o
+      // dropdown lista páginas; clicar numa opção navega pra view_all_page_id=<id>.
+      const termo = handle.replace(/[._-]+/g, ' ');
+      const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=BR&search_type=page&media_type=all`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      const deadline = Date.now() + 15000;
-      let paginas = [];
-      while (Date.now() < deadline && !paginas.length) {
-        await page.waitForTimeout(1000);
-        paginas = await page.evaluate(() => {
+      await page.waitForTimeout(1500);
+      const input = await page.$('input[type="search"], input[placeholder*="anunciante" i], input[placeholder*="advertiser" i], input[aria-label*="Pesquisar" i], input[aria-label*="Search" i], input[type="text"]');
+      if (!input) return { ok: true, pageId: null, note: 'campo_busca_nao_encontrado', handle };
+      await input.click();
+      await input.fill('');
+      await input.type(termo, { delay: 60 });
+      const deadline = Date.now() + 12000;
+      let opcoes = [];
+      while (Date.now() < deadline && !opcoes.length) {
+        await page.waitForTimeout(800);
+        opcoes = await page.evaluate(() => {
           const out = [];
-          const seen = new Set();
-          for (const a of document.querySelectorAll('a[href*="view_all_page_id="]')) {
-            const m = (a.getAttribute('href') || '').match(/view_all_page_id=(\d{5,})/);
-            if (!m || seen.has(m[1])) continue;
-            seen.add(m[1]);
-            out.push({ id: m[1], nome: (a.innerText || a.textContent || '').trim().split('\n')[0].slice(0, 120) });
+          for (const el of document.querySelectorAll('[role="option"], [role="listbox"] [role="button"], [role="listbox"] li')) {
+            const t = (el.innerText || '').trim().replace(/\s+/g, ' ');
+            if (t && t.length < 200) out.push(t);
           }
           return out;
         }).catch(() => []);
       }
-      if (!paginas.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
+      if (!opcoes.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
       const hk = normText(handle).replace(/[^a-z0-9]/g, '');
-      const melhor = paginas.find((p) => normText(p.nome).replace(/[^a-z0-9]/g, '').includes(hk) || hk.includes(normText(p.nome).replace(/[^a-z0-9]/g, ''))) || paginas[0];
-      return { ok: true, pageId: melhor.id, pageName: melhor.nome || null, via: 'adlib', handle, candidatos: paginas.slice(0, 5) };
+      const alvo = opcoes.findIndex((t) => { const k = normText(t).replace(/[^a-z0-9]/g, ''); return k.includes(hk) || hk.includes(k.slice(0, Math.max(6, hk.length))); });
+      const idx = alvo >= 0 ? alvo : 0;
+      const els = await page.$$('[role="option"], [role="listbox"] [role="button"], [role="listbox"] li');
+      if (!els[idx]) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      await els[idx].click();
+      const fim = Date.now() + 10000;
+      let pageId = null;
+      while (Date.now() < fim && !pageId) {
+        await page.waitForTimeout(500);
+        pageId = page.url().match(/view_all_page_id=(\d{5,})/)?.[1] ?? null;
+      }
+      if (!pageId) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      return { ok: true, pageId, pageName: opcoes[idx].split(/\s{2,}|\n/)[0].slice(0, 120) || null, via: 'adlib', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
     } catch (e) {
       return { ok: false, pageId: null, note: String(e?.message || e).slice(0, 120), handle };
     } finally {
@@ -1743,16 +1780,31 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
       }
       const data = await page.evaluate(() => {
         const abs = (h) => { try { return new URL(h, location.href).href; } catch { return h; } };
+        // Ícones Material aparecem como texto ("videocam", "image"…): não são nome.
+        const ICONE = /^(videocam|image|play_arrow|text_fields|more_vert|open_in_new|info|verified|arrow_\w+)$/i;
+        const limpaNome = (t) => (t || '').split('\n').map((x) => x.trim()).filter((x) => x && !ICONE.test(x) && !/^AR\d+$/.test(x))[0] || '';
         const advs = new Map();
+        const registra = (id, nome) => {
+          if (!advs.has(id)) advs.set(id, { id, nome: nome || '', url: `https://adstransparency.google.com/advertiser/${id}?region=BR` });
+          else if (!advs.get(id).nome && nome) advs.get(id).nome = nome;
+        };
+        // Links diretos pro anunciante (sem /creative/) trazem o nome; os de criativo só o id.
         for (const a of document.querySelectorAll('a[href*="/advertiser/"]')) {
           const h = a.getAttribute('href') || '';
-          const m = h.match(/\/advertiser\/([A-Z0-9]{6,})/i);
+          const m = h.match(/\/advertiser\/(AR[0-9]{6,})/i);
           if (!m) continue;
-          const id = m[1];
-          const nome = (a.innerText || a.textContent || '').trim().split('\n')[0].slice(0, 120);
-          if (!advs.has(id)) advs.set(id, { id, nome, url: abs(h.split('?')[0]) + '?region=BR' });
-          else if (!advs.get(id).nome && nome) advs.get(id).nome = nome;
+          const id = m[1].toUpperCase();
+          registra(id, /\/creative\//.test(h) ? '' : limpaNome(a.innerText || a.textContent));
         }
+        // Nome do anunciante em elementos de cabeçalho/cartão (página por anunciante ou lista por domínio).
+        for (const el of document.querySelectorAll('[class*="advertiser-name" i], [class*="advertiserName" i], h1, h2, [role="heading"]')) {
+          const t = limpaNome(el.innerText || '');
+          if (!t || /transpar[êe]ncia|transparency|an[úu]ncios|ads/i.test(t)) continue;
+          for (const v of advs.values()) if (!v.nome) v.nome = t;
+          break;
+        }
+        const tituloDoc = (document.title || '').replace(/\s*[-|–·]\s*(Centro de )?Transpar[êe]ncia.*$/i, '').replace(/\s*[-|–·]\s*Google.*$/i, '').trim();
+        if (tituloDoc && !/transpar[êe]ncia|transparency/i.test(tituloDoc)) for (const v of advs.values()) if (!v.nome) v.nome = tituloDoc.slice(0, 120);
         const criativos = new Map();
         for (const a of document.querySelectorAll('a[href*="/creative/"]')) {
           const h = a.getAttribute('href') || '';
