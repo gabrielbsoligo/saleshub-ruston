@@ -92,28 +92,31 @@ export function cortaPalavra(s: string, max: number): string {
   return (i > 0 ? corte.slice(0, i) : t.slice(0, max)).trim();
 }
 
-// Decisor padrão pro {{1}}: o escolhido no F2 (selecionado) com cargo de dono, senão o primário, senão o primeiro.
-export function decisorPadrao(people: DecisionMaker[]): DecisionMaker | null {
-  const peso = (p: DecisionMaker) => (/soci|dono|propriet|founder|fundador|ceo|diretor|presidente|adminis/i.test(p.cargo ?? '') ? 0 : 1);
-  const ord = [...people].sort((a, b) => (a.selecionado ? 0 : 1) - (b.selecionado ? 0 : 1) || peso(a) - peso(b) || (a.isPrimary ? 0 : 1) - (b.isPrimary ? 0 : 1));
-  return ord[0] ?? null;
+// Destinatários da cadência = decisores ESCOLHIDOS no F2 (selecionado). Sem
+// escolha, o primário; sem primário, o primeiro. Mesma regra do motor
+// (destinatariosDe) — cada um vira um card no Kommo e recebe as mensagens.
+export function destinatarios(people: DecisionMaker[]): DecisionMaker[] {
+  const sel = people.filter((p) => p.selecionado);
+  if (sel.length) return sel;
+  const prim = people.find((p) => p.isPrimary);
+  return prim ? [prim] : people.slice(0, 1);
 }
+export const semEscolhaNoF2 = (people: DecisionMaker[]) => people.length > 0 && !people.some((p) => p.selecionado);
+export const nome1De = (cfg: CadenciaConfig, d: DecisionMaker): string => cortaPalavra((cfg.nomes1?.[d.id] ?? '').trim() || primeiroNome(d.nome), LIMITES.nome1);
 
 /** Config efetiva pra edição: o que está salvo + padrões derivados das opções (nada é inventado). */
-export function configEfetiva(lead: Lead, people: DecisionMaker[], pac: PacoteCadencia | null): CadenciaConfig {
+export function configEfetiva(lead: Lead, _people: DecisionMaker[], pac: PacoteCadencia | null): CadenciaConfig {
   const salvo = lead.cadenciaConfig ?? {};
   const falhas = pac?.opcoes?.falhas ?? [];
   const primaria = falhas.find((f) => f.codigo === salvo.falhaPrimaria)?.codigo ?? pac?.falhaPrimaria?.codigo ?? falhas[0]?.codigo ?? null;
   const temSec = Object.prototype.hasOwnProperty.call(salvo, 'falhaSecundaria');
   const secundaria = temSec ? (falhas.find((f) => f.codigo === salvo.falhaSecundaria && f.codigo !== primaria)?.codigo ?? null) : (falhas.find((f) => f.codigo !== primaria)?.codigo ?? null);
-  const decisor = people.find((p) => p.id === salvo.decisorId) ?? (pac?.decisorId ? people.find((p) => p.id === pac.decisorId) : null) ?? decisorPadrao(people);
   const tpls = pac?.opcoes?.templates ?? [];
   const tplPadrao = (passo: 1 | 2 | 3) => pac?.whatsapp?.[`p${passo}`]?.template ?? tpls.find((t) => t.passo === passo)?.nome ?? null;
   return {
     falhaPrimaria: primaria,
     falhaSecundaria: secundaria,
-    decisorId: decisor?.id ?? null,
-    nome1: salvo.nome1 ?? null,
+    nomes1: { ...(salvo.nomes1 ?? {}) },
     sdrNome: salvo.sdrNome ?? null,
     fantasia: salvo.fantasia ?? null,
     fraseFalha: salvo.falhaPrimaria === primaria ? salvo.fraseFalha ?? null : null,
@@ -126,11 +129,12 @@ export function configEfetiva(lead: Lead, people: DecisionMaker[], pac: PacoteCa
 }
 
 // Variáveis resolvidas localmente (prévia instantânea — mesma regra do motor).
-export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaConfig, opcoes: PacoteCadencia['opcoes'] | undefined) {
+export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaConfig, opcoes: PacoteCadencia['opcoes'] | undefined, decisorId?: string | null) {
   const f1 = opcoes?.falhas.find((f) => f.codigo === cfg.falhaPrimaria) ?? null;
   const f2 = cfg.falhaSecundaria ? opcoes?.falhas.find((f) => f.codigo === cfg.falhaSecundaria) ?? null : null;
-  const decisor = people.find((p) => p.id === cfg.decisorId) ?? null;
-  const nome1 = cortaPalavra((cfg.nome1 ?? '').trim() || primeiroNome(decisor?.nome) || 'tudo bem?', LIMITES.nome1);
+  const dests = destinatarios(people);
+  const decisor = (decisorId ? dests.find((p) => p.id === decisorId) : null) ?? dests[0] ?? null;
+  const nome1 = decisor ? nome1De(cfg, decisor) || 'tudo bem?' : 'tudo bem?';
   const sdr = cortaPalavra((cfg.sdrNome ?? '').trim() || '[SDR]', LIMITES.sdr);
   const fantasia = cortaPalavra((cfg.fantasia ?? '').trim() || lead.nomeFantasia || lead.razaoSocial || lead.companyNameRaw || '', LIMITES.fantasia);
   const fraseFalha = cortaPalavra((cfg.fraseFalha ?? '').trim() || f1?.falha || '', LIMITES.fraseFalha);
@@ -140,8 +144,8 @@ export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaCo
 }
 
 /** Prévia local das 3 mensagens a partir dos templates das opções (sem ida ao motor). */
-export function previaLocal(lead: Lead, people: DecisionMaker[], cfg: CadenciaConfig, opcoes: PacoteCadencia['opcoes'] | undefined) {
-  const v = variaveisDe(lead, people, cfg, opcoes);
+export function previaLocal(lead: Lead, people: DecisionMaker[], cfg: CadenciaConfig, opcoes: PacoteCadencia['opcoes'] | undefined, decisorId?: string | null) {
+  const v = variaveisDe(lead, people, cfg, opcoes, decisorId);
   const tpls = opcoes?.templates ?? [];
   const t = (passo: 1 | 2 | 3) => {
     const nome = cfg.templates?.[`p${passo}`];
@@ -165,7 +169,9 @@ export function pendenciasValidacao(lead: Lead, people: DecisionMaker[], cfg: Ca
   if (!pac?.opcoes?.falhas.length) out.push('nenhuma falha verificável medida — rode F3/F4 antes');
   if (!cfg.falhaPrimaria) out.push('escolha o gancho principal (falha da mensagem 1)');
   const v = variaveisDe(lead, people, cfg, pac?.opcoes);
-  if (!v.decisor && !(cfg.nome1 ?? '').trim()) out.push('escolha o decisor que recebe a mensagem (ou informe o primeiro nome)');
+  const dests = destinatarios(people);
+  if (!dests.length) out.push('nenhum decisor pra receber — marque quem vai pro Kommo no F2 (Decisores)');
+  for (const d of dests) if (!nome1De(cfg, d)) out.push(`primeiro nome vazio pra ${d.nome} — ajuste o {{1}}`);
   if (v.sdr === '[SDR]') out.push('informe o nome do SDR ({{2}})');
   if (!v.fantasia) out.push('informe a marca ({{3}})');
   if ((cfg.fraseFalha ?? '').length > LIMITES.fraseFalha) out.push(`frase da falha passa de ${LIMITES.fraseFalha} caracteres`);
@@ -184,8 +190,7 @@ export function limparConfig(cfg: CadenciaConfig): CadenciaConfig {
   return {
     falhaPrimaria: cfg.falhaPrimaria ?? null,
     falhaSecundaria: cfg.falhaSecundaria ?? null,
-    decisorId: cfg.decisorId ?? null,
-    nome1: t(cfg.nome1),
+    nomes1: Object.fromEntries(Object.entries(cfg.nomes1 ?? {}).filter(([, v]) => (v ?? '').trim()).map(([k, v]) => [k, v.trim()])),
     sdrNome: t(cfg.sdrNome),
     fantasia: t(cfg.fantasia),
     fraseFalha: t(cfg.fraseFalha),

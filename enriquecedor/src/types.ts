@@ -134,8 +134,11 @@ export type FalhaCadencia = 'https' | 'whatsapp' | 'destino' | 'semanuncio' | 'g
 export interface CadenciaConfig {
   falhaPrimaria?: FalhaCadencia | null; // gancho da mensagem 1 ({{4}}/{{5}})
   falhaSecundaria?: FalhaCadencia | null; // gancho da mensagem 2 (null = "aprofunda" sem segunda falha)
-  decisorId?: string | null; // decisor que recebe ({{1}} = primeiro nome dele)
-  nome1?: string | null; // override do primeiro nome ({{1}}, ≤20)
+  // Destinatários = decisores escolhidos no F2 (selecionado) — cada um vira um
+  // card no Kommo e recebe a cadência. Aqui só o ajuste do {{1}} por decisor.
+  nomes1?: Record<string, string>; // decisorId → primeiro nome (≤20)
+  decisorId?: string | null; // legado (antes da cadência por destinatário)
+  nome1?: string | null; // legado
   sdrNome?: string | null; // {{2}} (≤20)
   fantasia?: string | null; // {{3}} (≤40)
   fraseFalha?: string | null; // {{4}} ajustada (≤140)
@@ -409,6 +412,7 @@ export interface DecisionMaker {
   confidence: number; // 0-100
   source: string | null;
   kommoContactId: string | null;
+  kommoLeadId?: string | null; // card deste decisor no funil da cadência (F8 → Kommo)
   // Escolhido pelo operador (F2) para ser trabalhado nas próximas fases —
   // junto com selecionado dos phones/emails define o que vai pro Kommo.
   selecionado?: boolean;

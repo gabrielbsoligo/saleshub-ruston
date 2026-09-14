@@ -301,6 +301,19 @@ async function nomeResponsavel(kommoLeadId: string, cacheUsers: Map<number, stri
   return { sdrNome: nome, uid }
 }
 
+// Card do Kommo → lead do enriquecedor + decisor destinatário (13/09: 1 card por
+// decisor escolhido no F2; decision_makers.kommo_lead_id). Cards antigos (só
+// leads.kommo_lead_id) continuam funcionando sem decisor.
+async function resolverCard(db: any, kommoLeadId: string): Promise<{ lead: any; decisor: any | null } | null> {
+  const { data: dec } = await db.from('enriquecedor_decision_makers')
+    .select('id, nome, lead_id, kommo_lead_id').eq('kommo_lead_id', kommoLeadId).maybeSingle()
+  const leadId = dec?.lead_id ?? null
+  const q = db.from('enriquecedor_leads').select('id, kommo_lead_id, nome_fantasia, razao_social, optout')
+  const { data: lead } = leadId ? await q.eq('id', leadId).maybeSingle() : await q.eq('kommo_lead_id', kommoLeadId).maybeSingle()
+  if (!lead) return null
+  return { lead, decisor: dec ?? null }
+}
+
 // Contexto compartilhado de disparo (carregado uma vez por requisição).
 async function contextoDisparo() {
   const db = sb()
@@ -316,17 +329,19 @@ async function contextoDisparo() {
 // Dispara UM passo pra UM lead: prepara no motor, registra o envio ANTES de
 // mexer no Kommo (dedupe do webhook e de retries), grava os campos CAD, move
 // o card (se `mover`) e roda o Salesbot do template.
-async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mover: boolean; dryRun: boolean; envioId?: string }) {
+async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mover: boolean; dryRun: boolean; envioId?: string; decisor?: any | null }) {
   const { db, tplPorNome, campos, funil, token, cacheUsers } = ctx
   const finaliza = async (patch: Record<string, unknown>) => {
     if (opts.envioId) await db.from('enriquecedor_cadencia_envios').update(patch).eq('id', opts.envioId)
   }
+  // Card que recebe: o do decisor destinatário (novo) ou o do lead (legado).
+  const cardId = String(opts.decisor?.kommo_lead_id ?? lead.kommo_lead_id)
 
-  const { sdrNome } = await nomeResponsavel(String(lead.kommo_lead_id), cacheUsers)
+  const { sdrNome } = await nomeResponsavel(cardId, cacheUsers)
   const rp = await fetch(`${MOTOR_URL}/api/cadencia/preparar`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ leadId: lead.id, sdrNome, persistir: true }),
+    body: JSON.stringify({ leadId: lead.id, sdrNome, persistir: true, decisorId: opts.decisor?.id ?? null }),
   })
   const pac = await rp.json().catch(() => null)
   if (!rp.ok || !pac?.aptoCadencia) {
@@ -351,7 +366,8 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
 
   const linha: any = {
     lead: lead.razao_social ?? lead.nome_fantasia,
-    kommo_lead_id: lead.kommo_lead_id,
+    decisor: opts.decisor?.nome ?? null,
+    kommo_lead_id: cardId,
     passo,
     template: msg.template,
     variaveis: msg.variaveis,
@@ -370,7 +386,8 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   if (!envioId) {
     const { data: env } = await db.from('enriquecedor_cadencia_envios').insert({
       lead_id: lead.id,
-      kommo_lead_id: String(lead.kommo_lead_id),
+      decisor_id: opts.decisor?.id ?? null,
+      kommo_lead_id: cardId,
       canal: 'whatsapp',
       passo,
       status: 'processando',
@@ -390,13 +407,13 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     const statusId = funil?.etapas.get(`Passo ${passo} enviado`)
     if (statusId) { patch.status_id = statusId; patch.pipeline_id = funil.id }
   }
-  const rl = await kommo('PATCH', `/api/v4/leads/${lead.kommo_lead_id}`, patch)
+  const rl = await kommo('PATCH', `/api/v4/leads/${cardId}`, patch)
   if (!rl.ok) {
     await db.from('enriquecedor_cadencia_envios').update({ status: 'falhou', erro: `PATCH lead HTTP ${rl.status}` }).eq('id', envioId)
     return { ...linha, erro: `PATCH lead HTTP ${rl.status}` }
   }
 
-  const rb = await runBot(Number(tpl.kommo_bot_id), Number(lead.kommo_lead_id))
+  const rb = await runBot(Number(tpl.kommo_bot_id), Number(cardId))
   const okBot = rb.ok || rb.status === 202
   await db.from('enriquecedor_cadencia_envios').update({
     template_id: tpl.id,
@@ -424,22 +441,29 @@ async function acaoDisparar(b: Record<string, any>) {
   const { db } = ctx
   const { data: aptos } = await db.from('enriquecedor_leads')
     .select('id, kommo_lead_id, nome_fantasia, razao_social, optout')
-    .eq('optout', false).not('kommo_lead_id', 'is', null).limit(1000)
+    .eq('optout', false).limit(2000)
   const porId = new Map((aptos ?? []).map((l) => [l.id, l]))
+  // Cards dos decisores (1 por destinatário) — o planejamento é por CARD.
+  const { data: decs } = await db.from('enriquecedor_decision_makers')
+    .select('id, nome, lead_id, kommo_lead_id').not('kommo_lead_id', 'is', null).limit(5000)
+  const decisorPorCard = new Map((decs ?? []).map((d) => [String(d.kommo_lead_id), d]))
   const { data: envios } = await db.from('enriquecedor_cadencia_envios')
-    .select('id, lead_id, passo, enviado_em, status, respondido_em').eq('canal', 'whatsapp')
-  const enviosPorLead = new Map<string, any[]>()
+    .select('id, lead_id, kommo_lead_id, passo, enviado_em, status, respondido_em').eq('canal', 'whatsapp')
+  const enviosPorCard = new Map<string, any[]>()
   for (const e of envios ?? []) {
-    const arr = enviosPorLead.get(e.lead_id) ?? []
+    const card = String(e.kommo_lead_id ?? porId.get(e.lead_id)?.kommo_lead_id ?? '')
+    if (!card) continue
+    const arr = enviosPorCard.get(card) ?? []
     arr.push(e)
-    enviosPorLead.set(e.lead_id, arr)
+    enviosPorCard.set(card, arr)
   }
   const horas = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3_600_000
   const plano: any[] = []
-  for (const [leadId, arr] of enviosPorLead) {
+  for (const [card, arr] of enviosPorCard) {
     if (plano.length >= limite) break
-    const lead = porId.get(leadId)
-    if (!lead) continue
+    const decisor = decisorPorCard.get(card) ?? null
+    const lead = porId.get(decisor?.lead_id ?? arr[0]?.lead_id)
+    if (!lead || lead.optout) continue
     if (arr.some((e) => e.respondido_em || e.status === 'respondido')) continue
     const p1 = arr.find((e) => e.passo === 1 && e.status === 'enviado')
     const p2 = arr.find((e) => e.passo === 2)
@@ -448,12 +472,12 @@ async function acaoDisparar(b: Record<string, any>) {
     if (p1 && !p2 && p1.enviado_em && horas(p1.enviado_em) >= 48) passo = 2
     else if (p2 && !p3 && p2.status === 'enviado' && p2.enviado_em && horas(p2.enviado_em) >= 96) passo = 3
     if (!passo) continue
-    plano.push({ lead, passo })
+    plano.push({ lead, passo, decisor })
   }
 
   const resultados: any[] = []
   for (const item of plano) {
-    resultados.push(await dispararLeadPasso(ctx, item.lead, item.passo, { mover: true, dryRun }))
+    resultados.push(await dispararLeadPasso(ctx, item.lead, item.passo, { mover: true, dryRun, decisor: item.decisor }))
   }
   return json(200, {
     ok: true,
@@ -495,21 +519,20 @@ async function acaoKommoWebhook(body: Record<string, any>) {
   const resultados: any[] = []
   for (const ev of relevantes) {
     const passo = passoDaEtapa.get(ev.status_id)!
-    const { data: lead } = await db.from('enriquecedor_leads')
-      .select('id, kommo_lead_id, nome_fantasia, razao_social, optout')
-      .eq('kommo_lead_id', ev.id).maybeSingle()
-    if (!lead) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'card não é do enriquecedor' }); continue }
+    const alvo = await resolverCard(db, String(ev.id))
+    if (!alvo) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'card não é do enriquecedor' }); continue }
+    const { lead, decisor } = alvo
     if (lead.optout) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'optout' }); continue }
-    // Dedupe: se o passo já tem envio (inclusive 'processando' de outro worker), não repete.
+    // Dedupe POR CARD: se o passo já tem envio (inclusive 'processando' de outro worker), não repete.
     const { data: ja } = await db.from('enriquecedor_cadencia_envios')
-      .select('id, status').eq('lead_id', lead.id).eq('canal', 'whatsapp').eq('passo', passo)
+      .select('id, status').eq('kommo_lead_id', String(ev.id)).eq('canal', 'whatsapp').eq('passo', passo)
       .in('status', ['processando', 'enviado', 'respondido']).limit(1)
     if (ja?.length) { resultados.push({ kommo_lead_id: ev.id, passo, ignorado: `passo ${passo} já disparado` }); continue }
     // Placeholder de envio JÁ AQUI — trava retries do webhook durante o processamento.
     const { data: env } = await db.from('enriquecedor_cadencia_envios').insert({
-      lead_id: lead.id, kommo_lead_id: String(lead.kommo_lead_id), canal: 'whatsapp', passo, status: 'processando',
+      lead_id: lead.id, decisor_id: decisor?.id ?? null, kommo_lead_id: String(ev.id), canal: 'whatsapp', passo, status: 'processando',
     }).select('id').single()
-    resultados.push(await dispararLeadPasso(ctx, lead, passo, { mover: false, dryRun: false, envioId: env?.id }))
+    resultados.push(await dispararLeadPasso(ctx, lead, passo, { mover: false, dryRun: false, envioId: env?.id, decisor }))
   }
   return json(200, { ok: true, disparos: resultados })
 }
@@ -534,11 +557,12 @@ async function acaoWebhook(body: Record<string, any>) {
   const texto = String(body.texto ?? body.message ?? body.button ?? body.text ?? '').trim()
   if (!kommoLeadId || !texto) return json(400, { error: 'lead_id e texto obrigatórios', recebido: body })
 
-  const { data: lead } = await db.from('enriquecedor_leads').select('id, optout').eq('kommo_lead_id', kommoLeadId).maybeSingle()
-  if (!lead) return json(404, { error: `lead kommo ${kommoLeadId} não encontrado no enriquecedor` })
+  const alvo = await resolverCard(db, kommoLeadId)
+  if (!alvo) return json(404, { error: `lead kommo ${kommoLeadId} não encontrado no enriquecedor` })
+  const { lead } = alvo
 
   const { data: envio } = await db.from('enriquecedor_cadencia_envios')
-    .select('id, passo').eq('lead_id', lead.id).eq('canal', 'whatsapp')
+    .select('id, passo').eq('kommo_lead_id', kommoLeadId).eq('canal', 'whatsapp')
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
 
   // Quick reply = determinístico; texto livre = motor (regex opt-out + IA).

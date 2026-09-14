@@ -59,7 +59,7 @@ import { computeScore, decisorLevel } from '../lib/leadScore';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
 import { useAuth } from '../lib/auth';
-import { FALHA_LABEL, LIMITES, configEfetiva, limparConfig, pendenciasValidacao, prepararCadencia, previaLocal, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
+import { FALHA_LABEL, LIMITES, configEfetiva, destinatarios, limparConfig, nome1De, pendenciasValidacao, prepararCadencia, previaLocal, semEscolhaNoF2, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
 import type { CadenciaConfig } from '../types';
 import { QUALITY_COLORS, QUALITY_LABELS, STATUS_LABELS } from '../lib/labels';
 import { checkEmail, checkPhone, formatCnpj } from '../lib/validation';
@@ -2768,8 +2768,12 @@ function CadenciaSection({
 
   const falhas = pac?.opcoes?.falhas ?? [];
   const templates = pac?.opcoes?.templates ?? [];
-  const previa = cfg ? previaLocal(lead, people, cfg, pac?.opcoes) : null;
-  const vars = cfg ? variaveisDe(lead, people, cfg, pac?.opcoes) : null;
+  // Destinatários = decisores escolhidos no F2; a prévia mostra um por vez.
+  const dests = destinatarios(people);
+  const [previaDe, setPreviaDe] = useState<string | null>(null);
+  const destPrevia = dests.find((d) => d.id === previaDe) ?? dests[0] ?? null;
+  const previa = cfg ? previaLocal(lead, people, cfg, pac?.opcoes, destPrevia?.id) : null;
+  const vars = cfg ? variaveisDe(lead, people, cfg, pac?.opcoes, destPrevia?.id) : null;
   const pendencias = cfg ? pendenciasValidacao(lead, people, cfg, pac) : [];
   const validado = !!lead.cadenciaConfig?.validadoEm;
   const set = (patch: Partial<CadenciaConfig>) => setCfg((c) => (c ? { ...c, ...patch } : c));
@@ -2905,34 +2909,56 @@ function CadenciaSection({
                 )}
               </div>
 
-              {/* 3 · Quem recebe / quem assina / marca */}
+              {/* 3 · Quem recebe (escolhidos no F2) / quem assina / marca */}
               <div className="rounded-xl border border-v4-border bg-v4-surface p-4">
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">3 · Quem recebe, quem assina, marca</p>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="md:col-span-3">
-                    <span className="mb-1 block text-[11px] text-v4-text-muted">Decisor que recebe ({'{{1}}'} = primeiro nome)</span>
-                    {people.length === 0 ? (
-                      <p className="text-xs text-v4-text-disabled">Nenhum decisor no F2 — informe o primeiro nome abaixo.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1.5">
-                        {people.map((p) => {
-                          const on = cfg.decisorId === p.id;
+                <div className="mb-3">
+                  <span className="mb-1 block text-[11px] text-v4-text-muted">
+                    Destinatários — os decisores escolhidos no F2. Cada um vira um card no Kommo e recebe a cadência com o próprio {'{{1}}'}.
+                  </span>
+                  {dests.length === 0 ? (
+                    <p className="text-xs text-v4-warning">Nenhum decisor neste lead — sem destinatário não há cadência. Rode/complete o F2.</p>
+                  ) : (
+                    <>
+                      {semEscolhaNoF2(people) && (
+                        <p className="mb-2 text-[11px] text-v4-warning">Ninguém foi marcado no F2 (Decisores) — usando {dests[0].isPrimary ? 'o decisor principal' : 'o primeiro decisor'} como destinatário. Marque quem vai pro Kommo lá, se quiser outro(s).</p>
+                      )}
+                      <div className="space-y-1.5">
+                        {dests.map((d) => {
+                          const n1 = nome1De(cfg, d);
                           return (
-                            <button key={p.id} disabled={!editando} onClick={() => set({ decisorId: p.id, nome1: null })} className={`rounded-lg border px-2.5 py-1 text-left text-xs transition ${on ? 'border-v4-red bg-[rgba(230,57,70,0.08)] text-v4-text' : 'border-v4-border text-v4-text-muted hover:border-v4-red/60'}`} title={p.cargo ?? ''}>
-                              <span className="font-medium">{p.nome}</span>
-                              {p.cargo && <span className="ml-1 text-v4-text-disabled">· {p.cargo}</span>}
-                              {p.selecionado && <span className="ml-1 text-v4-success">✓ F2</span>}
-                              {!p.phonePersonal && <span className="ml-1 text-v4-warning" title="sem telefone pessoal — o card vai sem WhatsApp do decisor">sem fone</span>}
-                            </button>
+                            <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-v4-border px-3 py-2 text-sm">
+                              <span className="min-w-0 flex-1">
+                                <span className="font-medium text-v4-text">{d.nome}</span>
+                                {d.cargo && <span className="ml-1 text-xs text-v4-text-disabled">· {d.cargo}</span>}
+                                {!d.phonePersonal && <span className="ml-2 rounded bg-[rgba(250,204,21,0.15)] px-1.5 py-0.5 text-[10px] text-v4-warning" title="Sem telefone pessoal — o card vai com o telefone da empresa (completar no Kommo)">sem fone pessoal</span>}
+                                {d.kommoLeadId && <span className="ml-2 rounded bg-[rgba(34,197,94,0.15)] px-1.5 py-0.5 text-[10px] text-v4-success">no Kommo · {d.kommoLeadId}</span>}
+                              </span>
+                              <label className="flex items-center gap-1.5 text-[11px] text-v4-text-muted">
+                                {'{{1}}'}
+                                <input
+                                  disabled={!editando}
+                                  value={cfg.nomes1?.[d.id] ?? ''}
+                                  placeholder={n1 || 'primeiro nome'}
+                                  onChange={(e) => set({ nomes1: { ...(cfg.nomes1 ?? {}), [d.id]: e.target.value } })}
+                                  className={`${inputCls} w-36`}
+                                  title="Como o nome aparece na mensagem (primeiro nome). Ajuste se o cadastro veio estranho."
+                                />
+                                <span className={`${n1.length > LIMITES.nome1 ? 'text-v4-error' : 'text-v4-text-disabled'}`}>{n1.length}/{LIMITES.nome1}</span>
+                              </label>
+                              {dests.length > 1 && (
+                                <button onClick={() => setPreviaDe(d.id)} className={`rounded-md border px-2 py-0.5 text-[11px] transition ${destPrevia?.id === d.id ? 'border-v4-red text-v4-red' : 'border-v4-border text-v4-text-muted hover:border-v4-red hover:text-v4-red'}`}>
+                                  ver prévia
+                                </button>
+                              )}
+                            </div>
                           );
                         })}
                       </div>
-                    )}
-                  </div>
-                  <div>
-                    <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{1}}'} · primeiro nome</span><Contador n={vars?.nome1.length ?? 0} max={LIMITES.nome1} /></div>
-                    <input disabled={!editando} value={cfg.nome1 ?? ''} placeholder={vars?.nome1 ?? ''} onChange={(e) => set({ nome1: e.target.value })} className={inputCls} />
-                  </div>
+                    </>
+                  )}
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
                   <div>
                     <div className="mb-1 flex items-center justify-between"><span className="text-[11px] text-v4-text-muted">{'{{2}}'} · nome do SDR (quem assina)</span><Contador n={(cfg.sdrNome ?? '').length} max={LIMITES.sdr} /></div>
                     <input disabled={!editando} value={cfg.sdrNome ?? ''} placeholder="ex.: Lary" onChange={(e) => set({ sdrNome: e.target.value })} className={inputCls} />
@@ -2970,7 +2996,9 @@ function CadenciaSection({
 
             {/* DIREITA (2/5): prévia ao vivo */}
             <div className="space-y-3 lg:col-span-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">Prévia — exatamente o que sai</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">
+                Prévia — exatamente o que sai{destPrevia ? <span className="normal-case tracking-normal text-v4-text-muted"> · para {destPrevia.nome}{dests.length > 1 ? ` (${dests.length} destinatários)` : ''}</span> : null}
+              </p>
               {([['Passo 1 — abertura', previa?.p1], ['Passo 2 — follow-up (48h)', previa?.p2], ['Passo 3 — breakup (96h)', previa?.p3]] as const).map(([titulo, m]) => (
                 <div key={titulo} className={`rounded-xl border bg-v4-surface p-4 ${m && m.corpoPreview.length > LIMITES.corpo ? 'border-v4-error' : 'border-v4-border'}`}>
                   <div className="mb-2 flex items-center justify-between gap-2">
