@@ -53,6 +53,12 @@ function toRow(d: DecisionMaker): Record<string, unknown> {
     cargo: d.cargo,
     is_primary: d.isPrimary,
     kommo_lead_id: d.kommoLeadId ?? null,
+    // Escolha do F2 (quem vai ser trabalhado / pro Kommo) e os contatos
+    // consolidados (Lemit + DataStone) com a flag de seleção — antes ficavam só
+    // na tela e sumiam ao recarregar (migration_149).
+    selecionado: !!d.selecionado,
+    phones: d.phones ?? null,
+    emails: d.emails ?? null,
     cpf: d.cpf,
     phone_personal: d.phonePersonal,
     phone_whatsapp: d.phoneWhatsapp,
@@ -83,6 +89,9 @@ function fromRow(r: Record<string, unknown>): DecisionMaker {
     cargo: (r.cargo as string) ?? null,
     isPrimary: Boolean(r.is_primary),
     kommoLeadId: (r.kommo_lead_id as string) ?? null,
+    selecionado: Boolean(r.selecionado),
+    phones: (r.phones as DecisionMaker['phones']) ?? undefined,
+    emails: (r.emails as DecisionMaker['emails']) ?? undefined,
     cpf: (r.cpf as string) ?? null,
     phonePersonal: (r.phone_personal as string) ?? null,
     phoneWhatsapp: Boolean(r.phone_whatsapp),
