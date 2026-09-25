@@ -1,5 +1,6 @@
 import type { Lead, SiteAudit } from '../types';
 import { supabase, supabaseConfigured } from './supabase';
+import { preservarValidacoes } from './chavesBusca';
 
 // Repositório de leads. Em modo local (sem Supabase) persiste em localStorage,
 // para permitir testar o fluxo completo antes de existir o banco. Quando o
@@ -44,30 +45,79 @@ export const leadsRepo = {
     return fromRow(data);
   },
 
-  async upsertMany(leads: Lead[]): Promise<void> {
+  /**
+   * Importação. CNPJ que JÁ existe no banco NÃO perde o enriquecimento: só os
+   * dados da planilha (cnpj_raw, nome, faixa, telefone, e-mail) e o perfil são
+   * atualizados, e o lead devolvido carrega o id que já existia (o funil aponta
+   * pra ele). CNPJ novo é inserido inteiro. Devolve os leads como ficaram.
+   */
+  async upsertMany(leads: Lead[]): Promise<Lead[]> {
     if (!supabaseConfigured) {
       const existing = readLocal<Lead>(LEADS_KEY);
       const byCnpj = new Map(existing.map((l) => [l.cnpj ?? l.cnpjRaw, l]));
-      for (const lead of leads) byCnpj.set(lead.cnpj ?? lead.cnpjRaw, lead);
+      const out: Lead[] = [];
+      for (const lead of leads) {
+        const k = lead.cnpj ?? lead.cnpjRaw;
+        const ex = byCnpj.get(k);
+        const next = ex ? { ...ex, cnpjRaw: lead.cnpjRaw, companyNameRaw: lead.companyNameRaw, revenueBandRaw: lead.revenueBandRaw, phoneRaw: lead.phoneRaw, emailRaw: lead.emailRaw, perfil: lead.perfil, updatedAt: new Date().toISOString() } : lead;
+        byCnpj.set(k, next);
+        out.push(next);
+      }
       writeLocal(LEADS_KEY, [...byCnpj.values()]);
-      return;
+      return out;
     }
-    // Lotes grandes: o PostgREST aceita, mas um único CNPJ repetido dentro do lote
-    // derruba o lote inteiro — quem chama deve deduplicar (WorkflowView faz).
-    const { error } = await supabase
-      .from('enriquecedor_leads')
-      .upsert(leads.map(toRow), { onConflict: 'cnpj' });
-    if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ''}${error.code ? ` (${error.code})` : ''}`);
+    const cnpjs = leads.map((l) => l.cnpj).filter((c): c is string => !!c);
+    const existentes = new Map<string, Record<string, unknown>>();
+    for (let i = 0; i < cnpjs.length; i += 200) {
+      const { data, error } = await supabase.from('enriquecedor_leads').select('*').in('cnpj', cnpjs.slice(i, i + 200));
+      if (error) throw erroLegivel(error);
+      for (const r of data ?? []) existentes.set(String(r.cnpj), r);
+    }
+    const novos: Lead[] = [];
+    const out: Lead[] = [];
+    for (const lead of leads) {
+      const r = lead.cnpj ? existentes.get(lead.cnpj) : undefined;
+      if (!r) { novos.push(lead); out.push(lead); continue; }
+      const patch = {
+        cnpj_raw: lead.cnpjRaw,
+        company_name_raw: lead.companyNameRaw,
+        revenue_band_raw: lead.revenueBandRaw,
+        phone_raw: lead.phoneRaw,
+        email_raw: lead.emailRaw,
+        perfil: lead.perfil,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from('enriquecedor_leads').update(patch).eq('id', String(r.id));
+      if (error) throw erroLegivel(error);
+      out.push({ ...fromRow(r), ...fromRow({ ...r, ...patch }) });
+    }
+    // Lote de novos: um CNPJ repetido dentro do lote derruba o lote inteiro —
+    // quem chama deduplica (WorkflowView faz).
+    for (let i = 0; i < novos.length; i += 100) {
+      const { error } = await supabase.from('enriquecedor_leads').upsert(novos.slice(i, i + 100).map(toRow), { onConflict: 'cnpj' });
+      if (error) throw erroLegivel(error);
+    }
+    return out;
   },
 
-  async update(lead: Lead): Promise<void> {
+  /**
+   * Grava o lead inteiro. Por padrão PROTEGE o que o operador validou/apagou no
+   * banco enquanto a execução rodava (ver preservarValidacoes). O bloco Chaves de
+   * busca passa `forcarChaves: true` porque ele é justamente quem muda validação.
+   */
+  async update(lead: Lead, opts: { forcarChaves?: boolean } = {}): Promise<void> {
     if (!supabaseConfigured) {
       const all = readLocal<Lead>(LEADS_KEY).map((l) => (l.id === lead.id ? lead : l));
       writeLocal(LEADS_KEY, all);
       return;
     }
-    const { error } = await supabase.from('enriquecedor_leads').update(toRow(lead)).eq('id', lead.id);
-    if (error) throw error;
+    let final = lead;
+    if (!opts.forcarChaves) {
+      const { data } = await supabase.from('enriquecedor_leads').select('chaves_busca, site_url, company_instagram, company_facebook, google_business').eq('id', lead.id).maybeSingle();
+      if (data) final = preservarValidacoes(lead, fromRow({ ...data, id: lead.id }));
+    }
+    const { error } = await supabase.from('enriquecedor_leads').update(toRow(final)).eq('id', lead.id);
+    if (error) throw erroLegivel(error);
   },
 
   async remove(id: string): Promise<void> {
@@ -206,6 +256,10 @@ function fromRow(r: Record<string, unknown>): Lead {
     createdAt: (r.created_at as string) ?? new Date().toISOString(),
     updatedAt: (r.updated_at as string) ?? new Date().toISOString(),
   };
+}
+
+function erroLegivel(error: { message: string; details?: string | null; code?: string | null }): Error {
+  return new Error(`${error.message}${error.details ? ` — ${error.details}` : ''}${error.code ? ` (${error.code})` : ''}`);
 }
 
 function toRow(l: Lead): Record<string, unknown> {

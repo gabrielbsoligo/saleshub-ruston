@@ -136,7 +136,7 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
     case 'site': {
       const url = lead.siteUrl ?? audit?.siteUrl ?? null;
       const src = e.origem ?? audit?.source ?? (lead.siteUrl ? 'planilha' : null);
-      const rot: Record<string, string> = { gmn: 'site da ficha do Google', email: 'domínio do e-mail', planilha: 'planilha', busca: 'busca web', manual: 'manual', validado: 'validado', nao_encontrado: 'não encontrado' };
+      const rot: Record<string, string> = { gmn: 'site da ficha do Google', email: 'domínio do e-mail', planilha: 'planilha', busca: 'busca web', manual: 'manual', validado: 'busca forçada no site validado', nao_encontrado: 'não encontrado' };
       return { chave, valor: url ? hostOf(url) ?? url : null, link: url, validado, rejeitados, origem: (src && rot[src]) ?? src ?? '—', padrao: false };
     }
     case 'instagram':
@@ -258,8 +258,12 @@ export function definirChave(lead0: Lead, chave: ChaveBuscaId, valor: string): L
       return { ...comEstado(lead, chave, { validacao: 'validado', origem: 'manual' }), companyInstagram: /instagram\.com/i.test(v) ? url(v) : `https://www.instagram.com/${v.replace(/^@/, '')}` };
     case 'facebook':
       return { ...comEstado(lead, chave, { validacao: 'validado', origem: 'manual' }), companyFacebook: /facebook\.com/i.test(v) ? url(v) : `https://www.facebook.com/${v.replace(/^@/, '')}` };
-    case 'gmn':
-      return { ...comEstado(lead, chave, { consulta: v, validacao: null, origem: null }), googleBusiness: null };
+    case 'gmn': {
+      // Aceita a URL do Google Maps colada: usa o nome do lugar (/maps/place/<nome>/) como consulta.
+      const place = v.match(/google\.[a-z.]+\/maps\/place\/([^/?#]+)/i)?.[1];
+      const consulta = place ? decodeURIComponent(place.replace(/\+/g, ' ')).trim() : v;
+      return { ...comEstado(lead, chave, { consulta, validacao: null, origem: null }), googleBusiness: null };
+    }
     case 'meta_pagina': {
       const id = metaPageIdDe(v);
       if (!id) return lead0;
@@ -325,4 +329,35 @@ export function overridesBusca(lead: Lead) {
     googleAdvertiser: googleAdvertiserAtual(lead),
     googleAnuncianteRejeitados: cb.google_anunciante?.rejeitados ?? [],
   };
+}
+
+// Antes de GRAVAR um lead vindo de uma execução longa (F2/F3/F4 rodam minutos com
+// uma cópia em memória), traz do banco o que o operador validou/apagou enquanto
+// isso: chave validada no banco vence (entrada + coluna), rejeitados são unidos.
+// Sem isto, o "Manter" clicado durante a fase era sobrescrito no fim da execução.
+export function preservarValidacoes(lead: Lead, db: Lead | null | undefined): Lead {
+  if (!db) return lead;
+  const dbCb: ChavesBusca = db.chavesBusca ?? {};
+  const cb: ChavesBusca = { ...(lead.chavesBusca ?? {}) };
+  const out: Lead = { ...lead };
+  for (const chave of TODAS_CHAVES) {
+    const d = dbCb[chave];
+    if (!d) continue;
+    const mine = cb[chave] ?? {};
+    const rej = [...new Set([...(mine.rejeitados ?? []), ...(d.rejeitados ?? [])])];
+    if (d.validacao === 'validado') {
+      cb[chave] = { ...d, rejeitados: rej };
+      switch (chave) {
+        case 'site': out.siteUrl = db.siteUrl; break;
+        case 'instagram': out.companyInstagram = db.companyInstagram; break;
+        case 'facebook': out.companyFacebook = db.companyFacebook; break;
+        case 'gmn': out.googleBusiness = db.googleBusiness; break;
+        default: break; // marca/meta_termo/meta_pagina/google_anunciante vivem só na entrada
+      }
+    } else if (rej.length !== (mine.rejeitados ?? []).length) {
+      cb[chave] = { ...mine, rejeitados: rej };
+    }
+  }
+  out.chavesBusca = cb;
+  return out;
 }

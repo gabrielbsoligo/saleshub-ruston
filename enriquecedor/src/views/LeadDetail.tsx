@@ -480,7 +480,7 @@ export function LeadDetail({
             audit={audit}
             chaves={ids}
             onSave={async (next) => {
-              await leadsRepo.update(next);
+              await leadsRepo.update(next, { forcarChaves: true }); // aqui é quem valida/apaga
               await reloadAll();
             }}
             onRefazer={(f) => void handleRunFase(f)}

@@ -976,8 +976,10 @@ function ImportarListaTela({ projeto, onVoltar }: { projeto: Projeto; onVoltar: 
         return true;
       });
       const repetidos = selected.length - unicos.length;
-      await leadsRepo.upsertMany(unicos);
-      const wf = unicos.map(toWf);
+      // Devolve os leads como ficaram no banco: CNPJ já existente mantém o id e o
+      // enriquecimento (site, redes, chaves validadas, briefing) — só a planilha atualiza.
+      const gravados = await leadsRepo.upsertMany(unicos);
+      const wf = gravados.map(toWf);
       finalizarImportacao(projeto.id, wf, {}); // sem status: as fases rodam no funil
       const desc = built.length - selected.length;
       toast.success(
