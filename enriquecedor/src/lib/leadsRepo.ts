@@ -52,10 +52,12 @@ export const leadsRepo = {
       writeLocal(LEADS_KEY, [...byCnpj.values()]);
       return;
     }
+    // Lotes grandes: o PostgREST aceita, mas um único CNPJ repetido dentro do lote
+    // derruba o lote inteiro — quem chama deve deduplicar (WorkflowView faz).
     const { error } = await supabase
       .from('enriquecedor_leads')
       .upsert(leads.map(toRow), { onConflict: 'cnpj' });
-    if (error) throw error;
+    if (error) throw new Error(`${error.message}${error.details ? ` — ${error.details}` : ''}${error.code ? ` (${error.code})` : ''}`);
   },
 
   async update(lead: Lead): Promise<void> {

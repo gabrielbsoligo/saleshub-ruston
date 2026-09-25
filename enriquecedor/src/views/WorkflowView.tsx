@@ -966,13 +966,33 @@ function ImportarListaTela({ projeto, onVoltar }: { projeto: Projeto; onVoltar: 
       // fases (F2 Qualificação, F3 Diagnóstico, F4 Anúncios) rodam DENTRO do funil,
       // 1 por vez — pra auditar cada etapa. Sobrescreve por CNPJ.
       for (const l of selected) l.perfil = projeto.perfil; // perfil de auditoria do projeto
-      await leadsRepo.upsertMany(selected);
-      const wf = selected.map(toWf);
+      // CNPJ repetido na planilha derruba o upsert em lote (Postgres: "ON CONFLICT DO
+      // UPDATE command cannot affect row a second time"). Fica a primeira ocorrência.
+      const vistos = new Set<string>();
+      const unicos = selected.filter((l) => {
+        const k = l.cnpj ?? l.cnpjRaw;
+        if (!k || vistos.has(k)) return false;
+        vistos.add(k);
+        return true;
+      });
+      const repetidos = selected.length - unicos.length;
+      await leadsRepo.upsertMany(unicos);
+      const wf = unicos.map(toWf);
       finalizarImportacao(projeto.id, wf, {}); // sem status: as fases rodam no funil
       const desc = built.length - selected.length;
-      toast.success(`${wf.length} leads na Triagem (F1)${desc > 0 ? ` · ${desc} inválidos descartados` : ''}. Agora rode as fases no funil.`);
+      toast.success(
+        `${wf.length} leads na Triagem (F1)` +
+        (desc > 0 ? ` · ${desc} inválidos descartados` : '') +
+        (repetidos > 0 ? ` · ${repetidos} CNPJ(s) repetido(s) na planilha (ficou o primeiro)` : '') +
+        '. Agora rode as fases no funil.',
+        { duration: 8000 },
+      );
     } catch (e) {
-      toast.error(`Falha ao importar: ${e instanceof Error ? e.message : String(e)}`);
+      // Erro do PostgREST é um objeto {message, details, hint, code}, não um Error.
+      const err = e as { message?: string; details?: string; hint?: string; code?: string };
+      const msg = err?.message ? `${err.message}${err.details ? ` — ${err.details}` : ''}${err.code ? ` (${err.code})` : ''}` : e instanceof Error ? e.message : JSON.stringify(e);
+      toast.error(`Falha ao importar: ${msg}`, { duration: 12000 });
+      void registrarErro({ etapa: 'Importação de lista', empresa: projeto.nome, mensagem: msg, detalhe: { arquivo: file.name, erro: e } });
       setStage('idle');
     }
   };
