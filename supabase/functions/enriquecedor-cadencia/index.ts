@@ -772,7 +772,10 @@ Deno.serve(async (req) => {
     if (!viaQuery && !viaHeader) return json(401, { error: 'segredo inválido' })
     return await acaoKommoWebhook(body)
   }
-  if (!viaHeader) return json(401, { error: 'segredo inválido' })
+  // O cron do Postgres chama disparar/coletar-respostas com o segredo do webhook
+  // no ?s= (Vault enriq_webhook_secret) — sem expor o segredo do widget/ops.
+  const viaCron = viaQuery && (acao === 'disparar' || acao === 'coletar-respostas' || acao === 'status')
+  if (!viaHeader && !viaCron) return json(401, { error: 'segredo inválido' })
 
   try {
     if (acao === 'setup') return await acaoSetup(body)
