@@ -2833,7 +2833,11 @@ async function classificarResposta({ texto }) {
   }
 }
 
-async function runEsteira({ leadId, kommoLeadId, token }) {
+// `fases` (28/09): subconjunto opcional ['f2'|'f3'|'f4'] — sem ele roda tudo.
+// Com fases:['f2'] faz Receita + Qualificação e para (status 'enriquecido'),
+// sem site/anúncios/briefing/nota no Kommo — é o "rodar F2 em todos" pelo servidor.
+async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
+  const so = (f) => !Array.isArray(fases) || !fases.length || fases.includes(f);
   const setStatus = (status) =>
     sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { status, updated_at: new Date().toISOString() }).catch(() => {});
   let row = null;
@@ -2867,6 +2871,12 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
     }
 
     // ── F2 · Qualificação (DataStone + Lemit + redes dos sócios) ────────────
+    // Mesma regra do front (enrichService.discoverPeople): pessoa = união de
+    // DataStone e Lemit por CPF/nome; telefone/e-mail "validado" = nas 2 fontes;
+    // decisor já existente (mesmo nome) é ATUALIZADO, não recriado — preserva
+    // seleção do F2, validação de redes e o card do Kommo; redes da empresa
+    // respeitam as chaves validadas/rejeitadas.
+    if (so('f2')) {
     await setStatus('esteira_f2');
     const [ds, pessoas, lemit] = await Promise.all([
       datastoneCompany(digits).catch(() => null),
@@ -2879,41 +2889,121 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       if (ds.data.organograma) patch2.organograma = ds.data.organograma;
     }
     if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
+    const chaves = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
+    const igValidado = chaves.instagram?.validacao === 'validado' && row.company_instagram;
+    const fbValidado = chaves.facebook?.validacao === 'validado' && row.company_facebook;
+    const existentes = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=*`)) ?? [];
+    const normNome = (n) => normText(String(n ?? '')).replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
     let social = null;
     try {
       social = await discoverSociosSocial({
-        company: row.razao_social ?? row.company_name_raw,
+        company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
         socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
         cidade: row.cidade ?? null,
+        rejeitados: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.instagram_rejeitados ?? []])),
+        rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
+        rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
       });
     } catch { /* busca indisponível */ }
-    if (social?.companyInstagram) patch2.company_instagram = social.companyInstagram;
-    if (social?.companyFacebook) patch2.company_facebook = social.companyFacebook;
+    if (social?.companyInstagram && !igValidado) patch2.company_instagram = social.companyInstagram;
+    if (social?.companyFacebook && !fbValidado) patch2.company_facebook = social.companyFacebook;
     if (Object.keys(patch2).length) {
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, patch2);
       Object.assign(row, patch2);
     }
-    if (pessoas?.ok && (pessoas.people ?? []).length) {
-      await sbDelete(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}`);
-      const rowsDm = pessoas.people.slice(0, 12).map((p, i) => {
-        const cel = (p.phones ?? []).find((x) => x.whatsapp) ?? (p.phones ?? [])[0] ?? null;
-        return {
-          lead_id: leadId,
-          nome: p.nome,
-          cargo: null,
-          is_primary: i === 0,
-          cpf: p.cpf ?? null,
+    // União das pessoas (DataStone + Lemit) por CPF, senão por nome normalizado.
+    const uni = new Map();
+    const chave = (p) => (onlyDigits(p.cpf).length === 11 ? `cpf:${onlyDigits(p.cpf)}` : `nome:${normNome(p.nome)}`);
+    for (const p of pessoas?.ok ? (pessoas.people ?? []) : []) {
+      if (!p?.nome) continue;
+      const u = uni.get(chave(p)) ?? { nome: p.nome, cpf: onlyDigits(p.cpf) || null, cargo: p.cargo ?? null, ds: null, lm: null };
+      u.ds = p; uni.set(chave(p), u);
+    }
+    for (const p of lemit?.ok ? (lemit.people ?? []) : []) {
+      if (!p?.nome) continue;
+      const k = chave(p);
+      const u = uni.get(k) ?? [...uni.values()].find((x) => normNome(x.nome) === normNome(p.nome)) ?? { nome: p.nome, cpf: onlyDigits(p.cpf) || null, cargo: null, ds: null, lm: null };
+      u.lm = p; if (!u.cpf && onlyDigits(p.cpf).length === 11) u.cpf = onlyDigits(p.cpf); uni.set(k, u);
+    }
+    const mergePhones = (lm, dsp) => {
+      const map = new Map();
+      const add = (numero, whatsapp, hot, source) => {
+        const d = onlyDigits(numero); if (d.length < 10) return;
+        const k = d.slice(-11);
+        const ex = map.get(k) ?? { numero, whatsapp: false, hot: false, sources: [], validado: false };
+        ex.whatsapp = ex.whatsapp || !!whatsapp; ex.hot = ex.hot || !!hot;
+        if (String(numero).length >= String(ex.numero).length) ex.numero = numero;
+        if (!ex.sources.includes(source)) ex.sources.push(source);
+        map.set(k, ex);
+      };
+      for (const p of lm ?? []) add(p.numero ?? p, p.whatsapp, false, 'lemit');
+      for (const p of dsp ?? []) add(p.numero, p.whatsapp, p.hot, 'datastone');
+      return [...map.values()].map((p) => ({ ...p, validado: p.sources.length >= 2 }))
+        .sort((a, b) => Number(b.validado) - Number(a.validado) || Number(b.whatsapp) - Number(a.whatsapp) || Number(b.hot) - Number(a.hot));
+    };
+    const mergeEmails = (lm, dsp) => {
+      const map = new Map();
+      const add = (email, source) => { const k = String(email ?? '').toLowerCase().trim(); if (!k) return; const ex = map.get(k) ?? { email: k, sources: [], validado: false }; if (!ex.sources.includes(source)) ex.sources.push(source); map.set(k, ex); };
+      for (const e of lm ?? []) add(e, 'lemit');
+      for (const e of dsp ?? []) add(e, 'datastone');
+      return [...map.values()].map((e) => ({ ...e, validado: e.sources.length >= 2 })).sort((a, b) => Number(b.validado) - Number(a.validado));
+    };
+    const socialPeople = social?.people ?? [];
+    // {url, confianca} da rede achada pro sócio (findPersonInstagram/Linkedin) ou null.
+    const redeDe = (nome, campo) => {
+      const sp = socialPeople.find((x) => normNome(x.nome) === normNome(nome));
+      if (!sp?.[campo]) return null;
+      return { url: sp[campo], confianca: sp[campo === 'instagram' ? 'instagramConfianca' : 'linkedinConfianca'] ?? null };
+    };
+    const pessoasUni = [...uni.values()].slice(0, 12);
+    if (pessoasUni.length) {
+      const porNome = new Map(existentes.map((d) => [normNome(d.nome), d]));
+      const novos = [];
+      let i = 0;
+      for (const u of pessoasUni) {
+        const phones = mergePhones(u.lm?.lemit?.phones ?? (u.lm?.phone ? [{ numero: u.lm.phone, whatsapp: u.lm.whatsapp }] : []), u.ds?.phones ?? []);
+        const emails = mergeEmails(u.lm?.lemit?.emails ?? (u.lm?.email ? [u.lm.email] : []), u.ds?.emails ?? []);
+        const cel = phones.find((x) => x.whatsapp) ?? phones[0] ?? null;
+        const fontes = [u.ds ? 'datastone' : null, u.lm ? 'lemit' : null].filter(Boolean);
+        const base = {
+          cargo: u.cargo ?? (row.socios ?? []).find((s) => normNome(s.nome) === normNome(u.nome))?.qualificacao ?? null,
+          cpf: u.cpf,
           phone_personal: cel?.numero ?? null,
           phone_whatsapp: !!cel?.whatsapp,
-          email_personal: (p.emails ?? [])[0] ?? null,
-          confidence: 70,
-          source: 'datastone',
+          email_personal: emails[0]?.email ?? null,
+          phones, emails,
+          confidence: fontes.length >= 2 ? 90 : 70,
+          source: fontes.join('+'),
+          companies_count: u.lm?.companiesCount ?? 0,
+          companies: u.lm?.companies ?? [],
+          lemit: u.lm?.lemit ?? null,
         };
-      });
-      await sbUpsert(token, 'enriquecedor_decision_makers', rowsDm);
+        const ex = porNome.get(normNome(u.nome));
+        if (ex) {
+          // preserva: selecionado, validações/rejeitados de redes, kommo_lead_id, is_primary
+          const patch = { ...base, cargo: ex.cargo ?? base.cargo };
+          const ig = redeDe(u.nome, 'instagram'); const li = redeDe(u.nome, 'linkedin');
+          if (ig && ex.instagram_validacao !== 'validado') { patch.instagram = ig.url; patch.instagram_confianca = ig.confianca; }
+          if (li && ex.linkedin_validacao !== 'validado') { patch.linkedin = li.url; patch.linkedin_confianca = li.confianca; }
+          await sbPatch(token, 'enriquecedor_decision_makers', `id=eq.${ex.id}`, patch).catch(() => {});
+        } else {
+          const ig = redeDe(u.nome, 'instagram'); const li = redeDe(u.nome, 'linkedin');
+          novos.push({ lead_id: leadId, nome: u.nome, is_primary: existentes.length === 0 && i === 0, ...base,
+            instagram: ig?.url ?? null, instagram_confianca: ig?.confianca ?? null,
+            linkedin: li?.url ?? null, linkedin_confianca: li?.confianca ?? null });
+        }
+        i += 1;
+      }
+      if (novos.length) await sbUpsert(token, 'enriquecedor_decision_makers', novos);
+    }
+    if (Array.isArray(fases) && fases.length && !so('f3') && !so('f4')) {
+      await setStatus('enriquecido');
+      return;
+    }
     }
 
     // ── F3 · Diagnóstico digital (site, GMN, empreendimentos, briefing) ─────
+    if (so('f3')) {
     await setStatus('esteira_f3');
     let audit = null;
     try {
@@ -2979,7 +3069,9 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
     }
 
+    }
     // ── F4 · Anúncios por IDENTIDADE (página Meta + anunciante Google) ───────
+    if (so('f4')) {
     // Mesmo desenho do front: resolve as chaves (respeitando validado/rejeitado
     // em chaves_busca), mede a Meta pela página (fallback: termo) e o Google
     // Transparency pelo anunciante (fallback: domínio); briefing ATUALIZADO.
@@ -3053,6 +3145,7 @@ async function runEsteira({ leadId, kommoLeadId, token }) {
       console.warn('[esteira] anúncios falharam:', String(err?.message || err).slice(0, 150));
     }
 
+    }
     await setStatus('enriquecido');
 
     // ── Cadência: detecta e persiste as falhas verificáveis (falha_primaria etc.)
@@ -3152,6 +3245,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
+        versao: 'esteira-fases-2026-09-28',
         ok: true,
         authRequired: AUTH_REQUIRED,
         authProbe,
@@ -3413,7 +3507,7 @@ const server = http.createServer(async (req, res) => {
       if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
       const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
       // 202 na hora; a esteira roda em background e escreve o progresso no lead.
-      void runEsteira({ leadId: body.leadId, kommoLeadId: body.kommoLeadId ?? null, token });
+      void runEsteira({ leadId: body.leadId, kommoLeadId: body.kommoLeadId ?? null, token, fases: Array.isArray(body.fases) ? body.fases : null });
       return send(res, 202, { ok: true, link: linkDoLead(body.leadId) });
     }
 

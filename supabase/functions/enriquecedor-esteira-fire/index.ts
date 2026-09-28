@@ -294,7 +294,7 @@ Deno.serve(async (req) => {
     const r = await fetch(`${MOTOR_URL}/api/esteira`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ leadId }),
+      body: JSON.stringify({ leadId, fases: Array.isArray(body.fases) ? body.fases : undefined }), // ex.: ['f2'] roda só a Qualificação
     })
     const rb = await r.json().catch(() => null)
     return json(r.status === 202 || r.ok ? 200 : 502, {
