@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
   // das edges não for reposto, as operações de card saem por lá. Auth = login do
   // usuário de integração, igual à esteira.
-  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar'].includes(String(body.acao))) {
+  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar', 'motor-preencher-cards'].includes(String(body.acao))) {
     const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
       email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
       password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
@@ -121,6 +121,7 @@ Deno.serve(async (req) => {
       : body.acao === 'motor-anuncios-google' ? '/api/anuncios-google'
       : body.acao === 'motor-anuncios' ? '/api/anuncios'
       : body.acao === 'motor-cadencia-preparar' ? '/api/cadencia/preparar' // teste/ops: pacote WABA com a config do SDR
+      : body.acao === 'motor-preencher-cards' ? '/api/cadencia/preencher-cards' // ops: CAD * + responsável nos cards existentes
       : '/api/kommo/token-heal'
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
@@ -133,8 +134,10 @@ Deno.serve(async (req) => {
             : body.acao === 'motor-anuncios'
               ? { company: body.company, fbHandle: body.fbHandle ?? null, siteDomain: body.siteDomain ?? null, cidade: body.cidade ?? null, empreendimentos: body.empreendimentos ?? [], metaPageId: body.metaPageId ?? null }
               : body.acao === 'motor-cadencia-preparar'
-                ? { leadId: body.leadId, sdrNome: body.sdrNome ?? null, persistir: body.persistir === true, config: body.config ?? undefined }
-                : {}
+                ? { leadId: body.leadId, sdrNome: body.sdrNome ?? null, persistir: body.persistir === true, config: body.config ?? undefined, decisorId: body.decisorId ?? null }
+                : body.acao === 'motor-preencher-cards'
+                  ? { leadIds: body.leadIds ?? [], responsavelKommoId: body.responsavelKommoId ?? null, sdrNome: body.sdrNome ?? null }
+                  : {}
     const r = await fetch(`${MOTOR_URL}${rota}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },

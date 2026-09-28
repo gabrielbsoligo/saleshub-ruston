@@ -2221,6 +2221,78 @@ async function isAuthenticated(req) {
   }
 }
 
+// Quem está chamando (JWT Supabase) → team_members {id, name, kommo_user_id}.
+// Usado pra atribuir no Kommo o card ao SDR que importou e assinar o {{2}}.
+const _userCache = new Map();
+async function usuarioDoToken(req) {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) return null;
+  const c = _userCache.get(token);
+  if (c && c.exp > Date.now()) return c.user;
+  try {
+    const r = await fetch(`${AUTH_SUPABASE_URL}/auth/v1/user`, { headers: { apikey: AUTH_SUPABASE_ANON, authorization: `Bearer ${token}` } });
+    if (!r.ok) return null;
+    const u = await r.json();
+    const tm = (await sbSelect(token, 'team_members', `auth_user_id=eq.${u.id}&select=id,name,kommo_user_id,role&limit=1`))?.[0]
+      ?? (u.email ? (await sbSelect(token, 'team_members', `email=eq.${encodeURIComponent(u.email)}&select=id,name,kommo_user_id,role&limit=1`))?.[0] : null)
+      ?? null;
+    const user = tm ? { id: tm.id, nome: tm.name, kommoUserId: tm.kommo_user_id ? Number(tm.kommo_user_id) : null, role: tm.role, email: u.email } : { id: null, nome: null, kommoUserId: null, role: null, email: u.email };
+    if (_userCache.size > 200) _userCache.clear();
+    _userCache.set(token, { user, exp: Date.now() + 5 * 60_000 });
+    return user;
+  } catch { return null; }
+}
+
+// Campos custom "CAD *" do Kommo (nome → id), cacheados.
+let _camposCad = null;
+async function camposCad() {
+  if (_camposCad && _camposCad.exp > Date.now()) return _camposCad.map;
+  const map = new Map();
+  for (let page = 1; page <= 4; page++) {
+    const r = await kommoApi('GET', `/api/v4/leads/custom_fields?limit=250&page=${page}`);
+    const items = r.body?._embedded?.custom_fields ?? [];
+    for (const f of items) if (/^CAD |^Enriquecedor URL$/.test(f.name)) map.set(f.name, { id: f.id, type: f.type });
+    if (items.length < 250) break;
+  }
+  _camposCad = { map, exp: Date.now() + 10 * 60_000 };
+  return map;
+}
+const VARS_TEMPLATE = {
+  sdna_p1_auditoria_v1: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
+  sdna_p1_auditoria_v2: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
+};
+
+// Preenche no card os campos CAD com as variáveis da cadência JÁ na importação
+// (o SDR vê no Kommo o que vai sair na mensagem 1) e o responsável. O carteiro
+// regrava na hora do disparo; aqui é visibilidade + atribuição.
+async function preencherCardCadencia({ leadId, decisorId = null, kommoLeadId, token, sdrNome = null, responsavelKommoId = null }) {
+  const pac = await prepararCadencia({ leadId, token, sdrNome, persistir: true, decisorId }).catch(() => null);
+  const campos = await camposCad();
+  const valores = {};
+  const msg = pac?.whatsapp?.p1 ?? null;
+  if (pac?.aptoCadencia && msg) {
+    const ordem = VARS_TEMPLATE[msg.template] ?? [];
+    ordem.forEach((nome, i) => { valores[nome] = String(msg.variaveis[i] ?? ''); });
+    if (pac.variaveis?.rotuloSecundaria) valores['CAD Rotulo 2a falha'] = pac.variaveis.rotuloSecundaria;
+    valores['CAD Template'] = String(msg.template);
+    valores['CAD Passo'] = '0';
+    valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '');
+  } else if (pac?.variaveis) {
+    valores['CAD Nome decisor'] = pac.variaveis.nome1; valores['CAD SDR'] = pac.variaveis.sdr; valores['CAD Fantasia'] = pac.variaveis.fantasia;
+  }
+  valores['Enriquecedor URL'] = `${APP_URL}/enriquecedor/#lead=${leadId}`;
+  const cfv = Object.entries(valores).map(([nome, valor]) => {
+    const f = campos.get(nome); if (!f) return null;
+    return { field_id: f.id, values: [{ value: f.type === 'numeric' ? Number(valor) : valor }] };
+  }).filter(Boolean);
+  const patch = {};
+  if (cfv.length) patch.custom_fields_values = cfv;
+  if (responsavelKommoId) patch.responsible_user_id = Number(responsavelKommoId);
+  if (!Object.keys(patch).length) return { ok: true, vazio: true, apto: !!pac?.aptoCadencia };
+  const r = await kommoApi('PATCH', `/api/v4/leads/${kommoLeadId}`, patch);
+  return { ok: r.ok, status: r.status, apto: !!pac?.aptoCadencia, motivo: pac?.aptoCadencia ? undefined : (pac?.motivo ?? pac?.error ?? null), campos: Object.keys(valores).length, responsavel: responsavelKommoId ?? null };
+}
+
 // ============================================================================
 // ESTEIRA server-side (integração Kommo): roda F1→F4 de UM lead inteiro no
 // motor, gravando no banco via PostgREST com o token do chamador, e devolve
@@ -2415,7 +2487,7 @@ function foneParaKommo(row, decisores) {
 // Importa leads enriquecidos pro Kommo: card no funil da cadência (etapa Fila),
 // contato com telefone do decisor, nota com o link, espelho em public.leads
 // (controle do SalesHub, canal outbound). Idempotente: pula quem já tem card.
-async function importarLeadsKommo({ leadIds, token }) {
+async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, sdrNome = null }) {
   const funil = await funilCadencia();
   if (!funil || !funil.etapas['Fila']) return { ok: false, error: `funil "${FUNIL_CADENCIA_NOME}" não encontrado no Kommo` };
   const sub = process.env.KOMMO_SUBDOMAIN;
@@ -2452,6 +2524,7 @@ async function importarLeadsKommo({ leadIds, token }) {
           name: String(d && destinatarios.length > 1 ? `${nomeCard} · ${primeiro}` : nomeCard).slice(0, 250),
           pipeline_id: funil.id,
           status_id: funil.etapas['Fila'],
+          ...(responsavelKommoId ? { responsible_user_id: Number(responsavelKommoId) } : {}), // card do SDR que importou
           _embedded: { contacts: [contato] },
         }]);
         const kommoId = rc.body?.[0]?.id ?? rc.body?._embedded?.leads?.[0]?.id ?? null;
@@ -2486,8 +2559,10 @@ async function importarLeadsKommo({ leadIds, token }) {
           }]).catch((e) => console.warn('[importar] public.leads falhou:', String(e?.message || e).slice(0, 120)));
         }
 
+        // Variáveis da cadência visíveis no card desde já (CAD *) + responsável.
+        const pre = await preencherCardCadencia({ leadId, decisorId: d?.id ?? null, kommoLeadId, token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
         criados += 1;
-        resultados.push({ leadId, empresa: nomeCard, decisor: d?.nome ?? null, kommo_lead_id: String(kommoId), fone: fone ?? 'SEM TELEFONE — completar no card' });
+        resultados.push({ leadId, empresa: nomeCard, decisor: d?.nome ?? null, kommo_lead_id: String(kommoId), fone: fone ?? 'SEM TELEFONE — completar no card', cadencia: pre });
         await sleep(250); // folga de rate na Kommo
       }
     } catch (err) {
@@ -3245,7 +3320,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'esteira-fases-2026-09-28',
+        versao: 'preencher-cards-2026-09-28',
         ok: true,
         authRequired: AUTH_REQUIRED,
         authProbe,
@@ -3382,9 +3457,37 @@ const server = http.createServer(async (req, res) => {
       if (!leadIds.length) return send(res, 400, { error: 'leadIds obrigatório (array de ids do enriquecedor)' });
       if (leadIds.length > 200) return send(res, 400, { error: 'máximo de 200 leads por importação' });
       const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-      const r = await importarLeadsKommo({ leadIds, token });
+      const quem = await usuarioDoToken(req);
+      const responsavelKommoId = body.responsavelKommoId ?? quem?.kommoUserId ?? null;
+      const sdrNome = body.sdrNome ?? (quem?.nome ? String(quem.nome).split(/\s+/)[0] : null);
+      const r = await importarLeadsKommo({ leadIds, token, responsavelKommoId, sdrNome });
       if (r?.ok === false) void logErroMotor(req, '/api/cadencia/importar-kommo', r.error, { qtd: leadIds.length });
       return send(res, r?.ok === false ? 422 : 200, r);
+    }
+
+    // Backfill: preenche CAD * + responsável nos cards já criados dos leads informados.
+    if (url.pathname === '/api/cadencia/preencher-cards' && req.method === 'POST') {
+      const body = await readJson(req);
+      const leadIds = Array.isArray(body?.leadIds) ? body.leadIds : [];
+      if (!leadIds.length) return send(res, 400, { error: 'leadIds obrigatório' });
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const quem = await usuarioDoToken(req);
+      const responsavelKommoId = body.responsavelKommoId ?? quem?.kommoUserId ?? null;
+      const sdrNome = body.sdrNome ?? (quem?.nome ? String(quem.nome).split(/\s+/)[0] : null);
+      const resultados = [];
+      for (const leadId of leadIds) {
+        const row = (await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=id,razao_social,kommo_lead_id`))?.[0];
+        if (!row) { resultados.push({ leadId, erro: 'não encontrado' }); continue; }
+        const decs = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&kommo_lead_id=not.is.null&select=id,nome,kommo_lead_id`)) ?? [];
+        const cards = decs.length ? decs.map((d) => ({ decisorId: d.id, kommoLeadId: d.kommo_lead_id, nome: d.nome })) : (row.kommo_lead_id ? [{ decisorId: null, kommoLeadId: row.kommo_lead_id, nome: null }] : []);
+        for (const c of cards) {
+          const r = await preencherCardCadencia({ leadId, decisorId: c.decisorId, kommoLeadId: c.kommoLeadId, token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
+          resultados.push({ leadId, empresa: row.razao_social, decisor: c.nome, kommo_lead_id: c.kommoLeadId, ...r });
+          await sleep(200);
+        }
+        if (!cards.length) resultados.push({ leadId, empresa: row.razao_social, pulado: 'sem card no Kommo' });
+      }
+      return send(res, 200, { ok: true, resultados });
     }
 
     if (url.pathname === '/api/cadencia/preparar' && req.method === 'POST') {

@@ -744,9 +744,13 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url)
   const secret = Deno.env.get('ENRIQ_KOMMO_SECRET')
+  // Segredo próprio do webhook (ENRIQ_WEBHOOK_SECRET): permite registrar/rotacionar
+  // o webhook no Kommo sem mexer no segredo do widget/ops.
+  const webhookSecret = Deno.env.get('ENRIQ_WEBHOOK_SECRET') || null
   const viaHeader = req.headers.get('x-enriq-secret') === secret
   // O Kommo às vezes armazena o destino com '&' virando '&amp;' — aceita os dois.
-  const viaQuery = url.searchParams.get('s') === secret || url.searchParams.get('amp;s') === secret
+  const sQuery = url.searchParams.get('s') ?? url.searchParams.get('amp;s')
+  const viaQuery = !!sQuery && (sQuery === secret || (!!webhookSecret && sQuery === webhookSecret))
 
   // Kommo manda webhooks form-encoded; nossas ações usam JSON. Aceita os dois.
   const raw = await req.text()
