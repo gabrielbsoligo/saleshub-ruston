@@ -2342,12 +2342,21 @@ function linkDoLead(id) {
 }
 
 // REST (PostgREST) com o token do chamador — RLS de usuário autenticado.
+// Identidade própria do motor (worker da fila): SUPABASE_SERVICE_ROLE_KEY no
+// Railway. Sem ela o worker fica desligado e o front volta a rodar na aba.
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || null;
 function sbHeaders(token) {
   return {
-    apikey: AUTH_SUPABASE_ANON,
+    apikey: SERVICE_KEY && token === SERVICE_KEY ? SERVICE_KEY : AUTH_SUPABASE_ANON,
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
   };
+}
+async function sbRpc(token, fn, args) {
+  const r = await fetch(`${AUTH_SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: 'POST', headers: sbHeaders(token), body: JSON.stringify(args ?? {}) });
+  if (!r.ok) throw new Error(`rpc ${fn}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const t = await r.text();
+  try { return t ? JSON.parse(t) : null; } catch { return t; }
 }
 // ── Cache em Postgres (enriquecedor_cache, migration_151) ───────────────────
 // Busca web e Places por consulta, com TTL. Só grava resposta OK (falha
@@ -3169,12 +3178,18 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     { const st = ctxAtual(); if (st) st.fase = 'F3'; }
     let audit = null;
     try {
+      // Chaves de busca do operador valem também aqui: site validado é forçado,
+      // domínios/fichas apagados nunca voltam, marca manual é o nome de busca.
+      const chavesSite = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
       const disc = await discoverSite({
         companyName: row.razao_social ?? row.company_name_raw,
-        nomeFantasia: row.nome_fantasia,
+        nomeFantasia: chavesSite.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw),
         emailDomain: row.email_raw?.includes('@') ? row.email_raw.split('@')[1] : null,
         cidade: row.cidade,
         siteUrl: row.site_url,
+        forcar: chavesSite.site?.validacao === 'validado' && row.site_url ? row.site_url : null,
+        rejeitados: chavesSite.site?.rejeitados ?? [],
+        gmnRejeitados: chavesSite.gmn?.rejeitados ?? [],
       });
       if (disc?.url) {
         audit = await auditUrl(disc.url).catch(() => null);
@@ -3366,6 +3381,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
           `Veja o que foi coletado: ${linkDoLead(leadId)}`;
       await kommoNote(kommoLeadId, texto);
     }
+    return { ok: true };
   } catch (err) {
     console.warn('[esteira] falhou:', String(err?.message || err));
     await setStatus('esteira_erro');
@@ -3375,6 +3391,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     if (kommoLeadId) {
       await kommoNote(kommoLeadId, `ENRIQUECEDOR — o enriquecimento automático falhou (${String(err?.message || err).slice(0, 200)}). Acompanhe/re-rode em: ${linkDoLead(leadId)}`);
     }
+    return { ok: false, erro: String(err?.message || err).slice(0, 300) };
   }
 }
 
@@ -3417,6 +3434,92 @@ async function logErroMotor(req, etapa, mensagem, detalhe) {
   } catch {
     /* nunca propaga */
   }
+}
+
+// ============================================================================
+// WORKER DA FILA (Onda 2) — consome enriquecedor_enrichment_jobs com a chave de
+// serviço: concorrência por fase, heartbeat, retry com backoff e recuperação
+// de órfãos. O front só enfileira; fechar a aba não interrompe nada.
+// ============================================================================
+const WORKER_ID = `motor-${process.pid}-${Math.random().toString(36).slice(2, 7)}`;
+const workerRodando = { f2: 0, f3: 0, f4: 0, all: 0 };
+const capacidade = () => ({ f2: 3, f3: 2, f4: proxyConfig() ? 2 : 1, all: 1 });
+let _ultimaRecuperacao = 0;
+
+async function resumoJob(leadId, fase) {
+  try {
+    const row = (await sbSelect(SERVICE_KEY, 'enriquecedor_leads', `id=eq.${leadId}&select=status,site_url,google_business,briefing,anuncios,empreendimentos`))?.[0];
+    if (!row) return null;
+    if (fase === 'f2') {
+      const d = (await sbSelect(SERVICE_KEY, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=id,phone_personal`)) ?? [];
+      return { resumo: `${d.length} decisor(es) · ${d.filter((x) => x.phone_personal).length} com telefone` };
+    }
+    if (fase === 'f3') return { resumo: `site ${row.site_url ? '✓' : '—'} · GMN ${row.google_business?.rating ?? '—'}★ · briefing ${row.briefing ? '✓' : '—'}` };
+    if (fase === 'f4') {
+      const m = row.anuncios?.meta;
+      return { resumo: m ? `Meta ${m.modo === 'pagina' ? '(página)' : '(termo)'}: ${m.validados?.length ?? 0} validados` : `Meta não medida${row.anuncios?.metaFalha?.note ? ` (${row.anuncios.metaFalha.note})` : ''}`, ok: !!m };
+    }
+    return { resumo: row.status };
+  } catch { return null; }
+}
+
+async function executarJob(job) {
+  const fase = job.fase || 'all';
+  workerRodando[fase] = (workerRodando[fase] ?? 0) + 1;
+  const t0 = Date.now();
+  const hb = setInterval(() => { sbPatch(SERVICE_KEY, 'enriquecedor_enrichment_jobs', `id=eq.${job.id}`, { heartbeat_at: new Date().toISOString() }).catch(() => {}); }, 20_000);
+  try {
+    const r = await reqCtx.run({ token: SERVICE_KEY, leadId: job.lead_id, fase: fase.toUpperCase() }, () =>
+      runEsteira({ leadId: job.lead_id, kommoLeadId: null, token: SERVICE_KEY, fases: fase === 'all' ? null : [fase] }));
+    const res = await resumoJob(job.lead_id, fase);
+    const ok = r?.ok !== false && res?.ok !== false;
+    await sbPatch(SERVICE_KEY, 'enriquecedor_enrichment_jobs', `id=eq.${job.id}`, {
+      status: ok ? 'done' : (job.attempts >= 3 ? 'error' : 'pending'),
+      run_after: ok ? undefined : new Date(Date.now() + 60_000 * job.attempts).toISOString(),
+      finished_at: ok || job.attempts >= 3 ? new Date().toISOString() : null,
+      duration_ms: Date.now() - t0,
+      result: { ...(res ?? {}), ok },
+      error: ok ? null : (r?.erro ?? res?.resumo ?? 'fase sem resultado'),
+      locked_at: null, locked_by: null, updated_at: new Date().toISOString(),
+    });
+    void registrarMetrica({ fonte: `job:${fase}`, ms: Date.now() - t0, ok, leadId: job.lead_id, fase: fase.toUpperCase() });
+  } catch (e) {
+    const msg = String(e?.message || e).slice(0, 300);
+    await sbPatch(SERVICE_KEY, 'enriquecedor_enrichment_jobs', `id=eq.${job.id}`, {
+      status: job.attempts >= 3 ? 'error' : 'pending', run_after: new Date(Date.now() + 60_000 * job.attempts).toISOString(),
+      error: msg, duration_ms: Date.now() - t0, locked_at: null, locked_by: null, updated_at: new Date().toISOString(),
+      finished_at: job.attempts >= 3 ? new Date().toISOString() : null,
+    }).catch(() => {});
+  } finally {
+    clearInterval(hb);
+    workerRodando[fase] = Math.max(0, (workerRodando[fase] ?? 1) - 1);
+  }
+}
+
+async function workerTick() {
+  if (!SERVICE_KEY) return;
+  try {
+    if (Date.now() - _ultimaRecuperacao > 60_000) {
+      _ultimaRecuperacao = Date.now();
+      const n = await sbRpc(SERVICE_KEY, 'enriquecedor_recuperar_jobs_orfaos', { p_minutos: 3 }).catch(() => 0);
+      if (n) console.warn(`[worker] ${n} job(s) órfão(s) devolvido(s) à fila`);
+    }
+    const cap = capacidade();
+    for (const fase of ['f4', 'f3', 'f2', 'all']) {
+      const livre = cap[fase] - (workerRodando[fase] ?? 0);
+      if (livre <= 0) continue;
+      const jobs = await sbRpc(SERVICE_KEY, 'enriquecedor_claim_jobs', { p_worker: WORKER_ID, p_fases: [fase], p_limit: livre }).catch((e) => { console.warn('[worker] claim falhou:', String(e?.message || e).slice(0, 160)); return []; });
+      for (const job of jobs ?? []) void executarJob(job);
+    }
+  } catch (e) {
+    console.warn('[worker] tick falhou:', String(e?.message || e).slice(0, 160));
+  }
+}
+if (SERVICE_KEY) {
+  setInterval(workerTick, 4000);
+  console.log(`[worker] fila de jobs LIGADA (${WORKER_ID})`);
+} else {
+  console.log('[worker] fila de jobs DESLIGADA — defina SUPABASE_SERVICE_ROLE_KEY no Railway');
 }
 
 // Métricas por fonte externa: cada chamada registra duração e sucesso em
@@ -3467,7 +3570,8 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda1-2026-10-01',
+        versao: 'onda2-2026-10-01',
+        worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
         authProbe,

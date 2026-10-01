@@ -10,6 +10,7 @@ import {
   Users,
   Send,
   Loader2,
+  Clock,
   Phone,
   Save,
   Linkedin,
@@ -51,6 +52,7 @@ import {
 import type { AdItem, AnunciosMeta, Briefing, DecisionMaker, EmpreendimentoLpAudit, Lead, Organograma, SiteAudit } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { decisionMakersRepo } from '../lib/decisionMakersRepo';
+import { ETAPA_DA_FASE, FASE_DA_ETAPA, jobsRepo, workerAtivo, type Job } from '../lib/jobsRepo';
 import { apagarRede, manterRede, redeHandle, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone, type RedeValidavel } from '../lib/contactSelection';
 import { CHAVES_POR_FASE, TODAS_CHAVES, googleAdvertiserAtual, googleAnuncianteUrl, googleDominioUrl, hostOf as hostDe, metaPageIdAtual, metaPaginaUrl } from '../lib/chavesBusca';
 import { ChavesBusca } from '../components/ChavesBusca';
@@ -118,10 +120,13 @@ export function LeadDetail({
   embedded = false,
   fase,
   onAvancar,
+  projectId = null,
 }: {
   leadId: string;
   onBack?: () => void;
   embedded?: boolean;
+  /** Projeto do Workflow (quando embutido) — os jobs enfileirados daqui aparecem no funil. */
+  projectId?: string | null;
   /** Fase do funil (índice das ETAPAS do Workflow) — restringe o painel ao que a fase valida. */
   fase?: number;
   /** F7: chamado quando o SDR valida a cadência → o Workflow move o lead pro F8. */
@@ -186,11 +191,47 @@ export function LeadDetail({
   }, [emEsteira, leadId]);
 
 
-  // Roda uma fase do funil (F2/F3/F4) direto da página do lead — força a
-  // re-execução (F3 re-gera o briefing mesmo se já existir) e recarrega tudo.
+  // Job deste lead na fila do motor (pendente/rodando) — a página acompanha
+  // por Realtime e recarrega quando termina. Minimizar/fechar não interrompe.
+  const [jobAtivo, setJobAtivo] = useState<Job | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    const sync = (jobs: Job[]) => {
+      if (!vivo) return;
+      setJobAtivo(jobs.find((j) => j.status === 'pending' || j.status === 'running') ?? null);
+    };
+    void jobsRepo.listarLead(leadId).then(sync);
+    return jobsRepo.subscribe(`lead_id=eq.${leadId}`, (job) => {
+      if (!job) { void jobsRepo.listarLead(leadId).then(sync); return; }
+      if (job.status === 'pending' || job.status === 'running') { setJobAtivo(job); return; }
+      setJobAtivo((atual) => (atual && atual.id !== job.id ? atual : null));
+      if (job.status === 'done' || job.status === 'error') {
+        void reloadAll();
+        const f = ETAPA_DA_FASE[job.fase] + 1;
+        if (job.status === 'done') toast.success(`F${f} concluída${job.result?.resumo ? ` — ${job.result.resumo}` : ''}.`);
+        else toast.error(`F${f} falhou${job.error ? ` (${job.error})` : ''}.`);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadId]);
+  const faseNoJob = jobAtivo ? ETAPA_DA_FASE[jobAtivo.fase] + 1 : null;
+
+  // Roda uma fase do funil (F2/F3/F4) direto da página do lead. Com o worker
+  // do motor ligado, só enfileira (prioridade alta) e a página acompanha o job;
+  // sem worker, executa aqui na aba (força re-execução) e recarrega tudo.
   const [faseRodando, setFaseRodando] = useState<number | null>(null);
   const handleRunFase = async (f: number) => {
-    if (!lead || faseRodando != null) return;
+    if (!lead || faseRodando != null || jobAtivo) return;
+    if (await workerAtivo()) {
+      try {
+        const n = await jobsRepo.enfileirar([leadId], FASE_DA_ETAPA[f - 1], projectId, 10);
+        if (n) toast.success(`F${f} na fila do motor — a página atualiza sozinha quando terminar.`);
+        else toast(`F${f} já está na fila.`);
+      } catch (e) {
+        toast.error(`Não deu pra enfileirar: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return;
+    }
     setFaseRodando(f);
     try {
       const fresh = (await leadsRepo.get(leadId)) ?? lead;
@@ -352,12 +393,12 @@ export function LeadDetail({
             <button
               key={f}
               onClick={() => handleRunFase(f)}
-              disabled={faseRodando != null}
-              title={`Rodar ${rotulo} deste lead agora (re-executa e atualiza os dados)`}
+              disabled={faseRodando != null || !!jobAtivo}
+              title={faseNoJob === f ? (jobAtivo?.status === 'running' ? 'O motor está rodando esta fase' : 'Na fila do motor') : `Rodar ${rotulo} deste lead agora (re-executa e atualiza os dados)`}
               className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-2 text-sm font-medium text-v4-text-muted transition hover:border-v4-red hover:text-v4-red disabled:opacity-50"
             >
-              {faseRodando === f ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-              {rotulo}
+              {faseRodando === f || (faseNoJob === f && jobAtivo?.status === 'running') ? <Loader2 size={14} className="animate-spin" /> : faseNoJob === f ? <Clock size={14} /> : <Play size={14} />}
+              {rotulo}{faseNoJob === f && jobAtivo?.status === 'pending' ? ' · na fila' : ''}
             </button>
           ))}
           <button

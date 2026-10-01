@@ -18,7 +18,7 @@ export const PERFIS: Record<PerfilAuditoria, { label: string; desc: string }> = 
   },
 };
 
-export type AuditStatus = 'ok' | 'run' | 'erro';
+export type AuditStatus = 'ok' | 'run' | 'erro' | 'fila';
 
 export interface WfLead {
   id: string;

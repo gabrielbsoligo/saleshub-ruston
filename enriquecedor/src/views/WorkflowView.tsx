@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from 'react';
 import PQueue from 'p-queue';
 import toast from 'react-hot-toast';
-import { Filter, Check, ArrowRight, ChevronDown, X, Play, Loader2, CheckCircle2, AlertCircle, Circle, Sparkles, FolderOpen, UploadCloud, ArrowLeft, Trash2 } from 'lucide-react';
+import { Filter, Check, ArrowRight, ChevronDown, X, Play, Loader2, CheckCircle2, AlertCircle, Circle, Clock, Sparkles, FolderOpen, UploadCloud, ArrowLeft, Trash2 } from 'lucide-react';
 import {
   useProjetos,
   finalizarImportacao,
@@ -19,6 +19,7 @@ import { buildLeadsFromRows } from '../lib/importPipeline';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { motorFetch } from '../lib/motorClient';
 import { leadsRepo } from '../lib/leadsRepo';
+import { ETAPA_DA_FASE, FASE_DA_ETAPA, jobsRepo, workerAtivo, type Job } from '../lib/jobsRepo';
 import { registrarErro } from '../lib/errorLog';
 import { formatCnpj } from '../lib/validation';
 import type { Lead } from '../types';
@@ -58,12 +59,14 @@ const STATUS_META: Record<AuditStatus, { label: string; cor: string }> = {
   ok: { label: 'Auditado', cor: 'text-v4-success' },
   run: { label: 'Auditando', cor: 'text-v4-warning' },
   erro: { label: 'Erro ao auditar', cor: 'text-v4-error' },
+  fila: { label: 'Na fila do motor', cor: 'text-[#3b82f6]' },
 };
 
 function StatusIcone({ status, size = 16 }: { status?: AuditStatus; size?: number }) {
   if (status === 'ok') return <CheckCircle2 size={size} className="text-v4-success" />;
   if (status === 'run') return <Loader2 size={size} className="animate-spin text-v4-warning" />;
   if (status === 'erro') return <AlertCircle size={size} className="text-v4-error" />;
+  if (status === 'fila') return <Clock size={size} className="text-[#3b82f6]" />;
   return <Circle size={size} className="text-v4-text-disabled" />;
 }
 // Execução POR FASE do funil (1 fase por vez). Cada fase executável tem uma
@@ -259,6 +262,72 @@ export function WorkflowView({
   // status mostrado na linha: F1 (Triagem) = validado no import; fases executáveis = execStatus.
   const statusLinha = (l: WfLead): AuditStatus | undefined => (l.etapa === 0 ? 'ok' : stOf(l.etapa, l.id));
 
+  // ── Fila de jobs (worker do motor) ─────────────────────────────────────────
+  // Com o worker ligado, o funil só ENFILEIRA (lead × fase) e acompanha por
+  // Realtime: nada roda na aba — fechar o lead, trocar de tela ou fechar o
+  // navegador não interrompe nem perde estado. Sem worker (chave de serviço
+  // ausente no Railway), cai no caminho legado: execução nesta aba.
+  const [worker, setWorker] = useState<boolean | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    const checa = () => void workerAtivo().then((a) => { if (vivo) setWorker(a); });
+    checa();
+    const t = setInterval(checa, 60_000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
+  const STATUS_DO_JOB: Record<Job['status'], AuditStatus | null> = { pending: 'fila', running: 'run', done: 'ok', error: 'erro', cancelled: null };
+  const aplicarJobs = (jobs: Job[]) =>
+    setExecStatus((prev) => {
+      let next = prev;
+      let mudou = false;
+      const muta = () => { if (!mudou) { next = { ...prev }; mudou = true; } };
+      for (const j of jobs) {
+        const k = `${ETAPA_DA_FASE[j.fase]}:${j.leadId}`;
+        const s = STATUS_DO_JOB[j.status];
+        if (s == null) { if (prev[k] === 'fila') { muta(); delete next[k]; } continue; }
+        if (next[k] !== s) { muta(); next[k] = s; }
+      }
+      return mudou ? next : prev;
+    });
+  useEffect(() => {
+    if (!worker || !selId || !importada) return;
+    const pid = selId;
+    void jobsRepo.listarProjeto(pid).then(aplicarJobs);
+    return jobsRepo.subscribe(`project_id=eq.${pid}`, (job) => {
+      if (job) aplicarJobs([job]);
+      else void jobsRepo.listarProjeto(pid).then(aplicarJobs);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worker, selId, importada]);
+  const enfileirar = async (ids: string[], fase: number, priority = 0): Promise<number> => {
+    const fj = FASE_DA_ETAPA[fase];
+    if (!fj || !selId || !ids.length) return 0;
+    try {
+      const n = await jobsRepo.enfileirar(ids, fj, selId, priority);
+      setExecStatus((prev) => {
+        const next = { ...prev };
+        for (const id of ids) if (next[`${fase}:${id}`] !== 'run') next[`${fase}:${id}`] = 'fila';
+        return next;
+      });
+      return n;
+    } catch (e) {
+      toast.error(`Não deu pra enfileirar: ${e instanceof Error ? e.message : String(e)}`);
+      return 0;
+    }
+  };
+  // "Rodar fase na lista": enfileira todo lead da fase ainda não auditado (1 clique).
+  const rodarFaseNaLista = async (fase: number) => {
+    const ids = leads
+      .filter((l) => l.etapa === fase && !l.descartado && !['ok', 'fila', 'run'].includes(stOf(fase, l.id) ?? ''))
+      .map((l) => l.id);
+    if (!ids.length) {
+      toast('Nada pendente nesta fase — pra refazer um lead, use o botão da linha.');
+      return;
+    }
+    await enfileirar(ids, fase);
+    toast.success(`${ids.length} lead(s) na fila — ${EXEC[fase].label}. Pode fechar a tela: o motor continua sozinho.`);
+  };
+
   // ── F4 automático ──────────────────────────────────────────────────────────
   // Lead que chega em Anúncios (F4) entra SOZINHO na fila de medição do Meta —
   // 1 por vez, com a cadência anti-ban (~40s) — sem precisar clicar em nada.
@@ -275,8 +344,15 @@ export function WorkflowView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selId]);
   useEffect(() => {
-    if (!selId || !importada) return;
+    if (!selId || !importada || worker == null) return;
     const projetoDaFila = selId;
+    if (worker) {
+      // worker ligado: quem chega no F4 entra na fila do motor (sem PQueue na aba)
+      const ids = leads.filter((l) => l.etapa === 3 && !l.descartado && !stOf(3, l.id) && !enfileirados.current.has(l.id)).map((l) => l.id);
+      for (const id of ids) enfileirados.current.add(id);
+      if (ids.length) void enfileirar(ids, 3);
+      return;
+    }
     for (const l of leads) {
       if (l.etapa !== 3 || l.descartado) continue;
       if (stOf(3, l.id) || enfileirados.current.has(l.id)) continue; // já rodou/rodando/na fila
@@ -304,10 +380,18 @@ export function WorkflowView({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leads, selId, importada]);
+  }, [leads, selId, importada, worker]);
 
-  // Executa UMA fase de UM lead (manual). Bloqueia se já houver execução ou auto ligado.
+  // Executa UMA fase de UM lead (manual). Com worker: enfileira com prioridade
+  // (fura a fila da lista). Sem worker: roda na aba e bloqueia se já houver execução.
   const executarLead = (l: WfLead, fase: number) => {
+    if (worker) {
+      void enfileirar([l.id], fase, 10).then((n) => {
+        if (n) toast.success(`${l.empresa} entrou na fila — ${EXEC[fase].label}.`);
+        else toast(`${l.empresa} já está na fila.`);
+      });
+      return;
+    }
     if (execId || autoFase != null) return;
     setExecFase(fase);
     setExecId(l.id);
@@ -432,6 +516,8 @@ export function WorkflowView({
   };
   const descartados = leads.filter((l) => l.descartado);
   const execLeadObj = execId ? leads.find((l) => l.id === execId) ?? null : null;
+  const nRunTotal = leads.filter((l) => !l.descartado && statusLinha(l) === 'run').length;
+  const nFilaTotal = leads.filter((l) => !l.descartado && statusLinha(l) === 'fila').length;
   const execRodando = execFase != null || autoFase != null;
 
   // Sem projeto selecionado → grade de projetos
@@ -460,6 +546,21 @@ export function WorkflowView({
         <b>aprovação</b>, os leads avançam pro próximo F — chegando menos leads, porém mais certos, nas fases caras.
       </p>
 
+      {worker === false && (
+        <div className="mb-3 max-w-3xl rounded-xl border border-v4-warning/50 bg-[rgba(245,158,11,0.08)] px-4 py-2.5 text-xs text-v4-text">
+          <b>Worker do motor desligado</b> — as fases rodam nesta aba (não feche nem troque de tela enquanto audita).
+          Para rodar em background e em paralelo, defina <code>SUPABASE_SERVICE_ROLE_KEY</code> no serviço do motor no Railway.
+        </div>
+      )}
+      {worker && (nRunTotal > 0 || nFilaTotal > 0) && (
+        <div className="mb-3 flex max-w-3xl items-center gap-2 rounded-xl border border-[#3b82f6]/50 bg-[rgba(59,130,246,0.08)] px-4 py-2.5 text-xs text-v4-text">
+          <Loader2 size={14} className="shrink-0 animate-spin text-[#3b82f6]" />
+          <span>
+            <b>Motor trabalhando em background</b> — {nRunTotal} rodando · {nFilaTotal} na fila. Pode fechar esta tela; o status atualiza sozinho.
+          </span>
+        </div>
+      )}
+
       {/* Exportação pro Kommo: cria os cards no funil Outbound Cadência SDNA (etapa
           Fila) + registra no controle de leads do SalesHub (canal outbound). O
           disparo do passo 1 é manual: mover o card de Fila pra "Passo 1 enviado". */}
@@ -472,6 +573,8 @@ export function WorkflowView({
           const nOk = aqui.filter((l) => statusLinha(l) === 'ok').length;
           const nRun = aqui.filter((l) => statusLinha(l) === 'run').length;
           const nErro = aqui.filter((l) => statusLinha(l) === 'erro').length;
+          const nFila = aqui.filter((l) => statusLinha(l) === 'fila').length;
+          const nPend = EXEC[i] ? aqui.filter((l) => !['ok', 'fila', 'run'].includes(statusLinha(l) ?? '')).length : 0;
           const aberto = openF === i;
           const width = `${100 - i * 9}%`; // afunila: 100% → ~46%
           const ultima = i === ETAPAS.length - 1;
@@ -496,11 +599,16 @@ export function WorkflowView({
                     <p className="mt-0.5 truncate text-[11px] text-v4-text-muted">Audita: {e.auditado}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {(nOk > 0 || nRun > 0 || nErro > 0) && (
+                    {(nOk > 0 || nRun > 0 || nErro > 0 || nFila > 0) && (
                       <span className="flex items-center gap-2 rounded-full bg-v4-surface px-2.5 py-1 text-[11px] font-medium">
                         {nOk > 0 && (
                           <span className="flex items-center gap-0.5 text-v4-success">
                             <CheckCircle2 size={13} /> {nOk}
+                          </span>
+                        )}
+                        {nFila > 0 && (
+                          <span className="flex items-center gap-0.5 text-[#3b82f6]" title="Na fila do motor">
+                            <Clock size={13} /> {nFila}
                           </span>
                         )}
                         {nRun > 0 && (
@@ -532,18 +640,22 @@ export function WorkflowView({
                       <div className="flex items-center gap-2">
                         {EXEC[i] && (
                           <button
-                            onClick={() => setAutoFase((v) => (v === i ? null : i))}
-                            disabled={(execRodando && autoFase !== i)}
-                            title={`Executar ${EXEC[i].label} de TODOS os leads desta fase automaticamente — 1 por vez, em ordem, sem clicar em cada um`}
+                            onClick={() => (worker ? void rodarFaseNaLista(i) : setAutoFase((v) => (v === i ? null : i)))}
+                            disabled={!worker && execRodando && autoFase !== i}
+                            title={worker
+                              ? `Enfileirar ${EXEC[i].label} de todos os leads desta fase ainda não auditados — o motor roda em paralelo, em background`
+                              : `Executar ${EXEC[i].label} de TODOS os leads desta fase automaticamente — 1 por vez, em ordem, sem clicar em cada um`}
                             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
                               autoFase === i
                                 ? 'border-[#3b82f6] bg-[rgba(59,130,246,0.12)] text-[#3b82f6]'
-                                : execRodando
+                                : !worker && execRodando
                                   ? 'cursor-not-allowed border-v4-border text-v4-text-disabled'
                                   : 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]'
                             }`}
                           >
-                            {autoFase === i ? <><Loader2 size={13} className="animate-spin" /> Rodando todos… (parar)</> : <><Play size={13} /> Auditar todos (auto, 1 por vez)</>}
+                            {worker
+                              ? <><Play size={13} /> Rodar fase na lista{nPend > 0 ? ` (${nPend})` : ''}</>
+                              : autoFase === i ? <><Loader2 size={13} className="animate-spin" /> Rodando todos… (parar)</> : <><Play size={13} /> Auditar todos (auto, 1 por vez)</>}
                           </button>
                         )}
                         {i >= DESDE_ARQUITETO && i < ARQ && (
@@ -688,21 +800,22 @@ export function WorkflowView({
                                   {EXEC[i] && (() => {
                                     const rodandoEste = execId === l.id && execFase === i;
                                     const st = stOf(i, l.id);
-                                    const ocupado = execRodando && !rodandoEste;
+                                    const ocupado = !worker && execRodando && !rodandoEste;
+                                    const naFila = !!worker && (st === 'fila' || st === 'run');
                                     const btnLabel = i === 1 ? 'Qualificar' : i === 2 ? 'Diagnosticar' : 'Anúncios';
-                                    const Icon = rodandoEste || st === 'run' ? Loader2 : st === 'ok' ? CheckCircle2 : st === 'erro' ? AlertCircle : Play;
-                                    const cor = rodandoEste || st === 'run' ? 'border-[#3b82f6] text-[#3b82f6]' : st === 'ok' ? 'border-v4-success text-v4-success' : st === 'erro' ? 'border-v4-error text-v4-error hover:bg-[rgba(239,68,68,0.12)]' : ocupado ? 'cursor-not-allowed border-v4-border text-v4-text-disabled' : 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]';
+                                    const Icon = rodandoEste || st === 'run' ? Loader2 : st === 'fila' ? Clock : st === 'ok' ? CheckCircle2 : st === 'erro' ? AlertCircle : Play;
+                                    const cor = rodandoEste || st === 'run' || st === 'fila' ? 'border-[#3b82f6] text-[#3b82f6]' : st === 'ok' ? 'border-v4-success text-v4-success' : st === 'erro' ? 'border-v4-error text-v4-error hover:bg-[rgba(239,68,68,0.12)]' : ocupado ? 'cursor-not-allowed border-v4-border text-v4-text-disabled' : 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]';
                                     return (
                                       <button
                                         onClick={(ev) => {
                                           ev.stopPropagation();
                                           executarLead(l, i);
                                         }}
-                                        disabled={ocupado || rodandoEste}
-                                        title={rodandoEste ? 'Executando…' : ocupado ? 'Aguarde (1 por vez / automático ligado)' : st === 'ok' ? `${EXEC[i].label} feito — clique pra refazer` : st === 'erro' ? 'Falhou — clique pra tentar de novo' : `Executar ${EXEC[i].label} só deste lead`}
+                                        disabled={ocupado || rodandoEste || naFila}
+                                        title={rodandoEste ? 'Executando…' : naFila ? (st === 'run' ? 'O motor está rodando este lead' : 'Na fila do motor') : ocupado ? 'Aguarde (1 por vez / automático ligado)' : st === 'ok' ? `${EXEC[i].label} feito — clique pra refazer` : st === 'erro' ? 'Falhou — clique pra tentar de novo' : `Executar ${EXEC[i].label} só deste lead`}
                                         className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${cor}`}
                                       >
-                                        <Icon size={11} className={rodandoEste || st === 'run' ? 'animate-spin' : ''} /> {btnLabel}
+                                        <Icon size={11} className={rodandoEste || st === 'run' ? 'animate-spin' : ''} /> {st === 'fila' && worker ? 'Na fila' : btnLabel}
                                       </button>
                                     );
                                   })()}
@@ -792,6 +905,7 @@ export function WorkflowView({
                                         leadId={l.id}
                                         embedded
                                         fase={i}
+                                        projectId={selId}
                                         onAvancar={i === ARQ ? () => { avancar(l.id); setOpenLead(null); toast.success(`${l.empresa} → F8 · Pronto p/ importar`); } : undefined}
                                       />
                                     </div>
