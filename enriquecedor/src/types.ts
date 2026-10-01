@@ -122,6 +122,7 @@ export interface ChaveBuscaEstado {
   nome?: string | null; // meta_pagina / google_anunciante: nome legível da página/anunciante resolvido
   validacao?: 'validado' | null; // validado pelo operador → a re-busca não sobrescreve
   origem?: string | null; // planilha | receita | email | busca | gmn | site | manual | validado
+  confianca?: 'alta' | 'media' | null; // site/instagram/facebook: quão certo o motor está do valor descoberto
   rejeitados?: string[]; // domínio / @ / slug / cid descartados — nunca voltam
 }
 export type ChavesBusca = Partial<Record<ChaveBuscaId, ChaveBuscaEstado>>;

@@ -119,6 +119,9 @@ export interface ChaveAtual {
   consulta?: string | null; // gmn: termo manual de busca
 }
 
+// "· confiança média" quando o motor não teve 2 sinais fortes — o SDR confere antes de usar.
+const sufixoConfianca = (e: ChaveBuscaEstado) => (e.validacao !== 'validado' && e.confianca === 'media' ? ' · confiança média' : '');
+
 // Valor atual de cada chave (o que a PRÓXIMA execução vai usar), com origem.
 export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBuscaId): ChaveAtual {
   const e = estado(lead, chave);
@@ -137,7 +140,7 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
       const url = lead.siteUrl ?? audit?.siteUrl ?? null;
       const src = e.origem ?? audit?.source ?? (lead.siteUrl ? 'planilha' : null);
       const rot: Record<string, string> = { gmn: 'site da ficha do Google', email: 'domínio do e-mail', planilha: 'planilha', busca: 'busca web', manual: 'manual', validado: 'busca forçada no site validado', nao_encontrado: 'não encontrado' };
-      return { chave, valor: url ? hostOf(url) ?? url : null, link: url, validado, rejeitados, origem: (src && rot[src]) ?? src ?? '—', padrao: false };
+      return { chave, valor: url ? hostOf(url) ?? url : null, link: url, validado, rejeitados, origem: ((src && rot[src]) ?? src ?? '—') + sufixoConfianca(e), padrao: false };
     }
     case 'instagram':
     case 'facebook': {
@@ -145,7 +148,7 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
       const noSite = chave === 'instagram' ? audit?.siteInstagram : audit?.siteFacebook;
       const origem = e.origem ?? (url && noSite && hostOf(url) === hostOf(noSite) && url.replace(/\/$/, '') === noSite.replace(/\/$/, '') ? 'link no próprio site' : url ? 'busca web' : '—');
       const handle = chave === 'instagram' ? redeHandle('instagram', url) : facebookHandle(url);
-      return { chave, valor: url ? (handle ? `@${handle}` : url) : null, link: url, validado, rejeitados, origem, padrao: false };
+      return { chave, valor: url ? (handle ? `@${handle}` : url) : null, link: url, validado, rejeitados, origem: origem + sufixoConfianca(e), padrao: false };
     }
     case 'gmn': {
       const gb = lead.googleBusiness;

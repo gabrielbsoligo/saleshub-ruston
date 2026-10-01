@@ -349,19 +349,62 @@ function isPersonName(nome) {
 // Cada find* devolve {url, ok}. ok=false = a busca falhou (não é "não achou").
 // `rejeitados` = handles institucionais que o operador apagou na tela (chaves de
 // busca do lead) — nunca voltam.
-async function findCompanySocial(company, network, rejeitados = []) {
-  const { results, ok } = await rawSearch(`${company} ${network}`);
+//
+// Redes da EMPRESA com pontuação e confiança (antes: primeiro resultado com uma
+// palavra em comum). Consulta `site:instagram.com "Marca" cidade` e, se nada
+// servir, `Marca cidade instagram`; pontua cada resultado: @ parecido com a
+// marca ou com o domínio do site, marca no título, cidade/domínio na descrição.
+// Exige 2 sinais e devolve alta/média.
+async function findCompanySocial(company, network, rejeitados = [], { cidade = null, siteDomain = null } = {}) {
   const domainRe = network === 'instagram' ? /instagram\.com\//i : /facebook\.com\//i;
   const badPath =
     network === 'instagram'
-      ? /instagram\.com\/(p|reel|reels|explore|stories)\//i
-      : /facebook\.com\/(sharer|login|events|photo|groups|watch|people)/i;
+      ? /instagram\.com\/(p|reel|reels|explore|stories|tv|accounts)\//i
+      : /facebook\.com\/(sharer|login|events|photo|photos|groups|watch|people|marketplace|hashtag|public|pages\/category)\b/i;
   const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
   const handleDe = (u) => (u.match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
-  const hit = results.find(
-    (r) => domainRe.test(r.url) && !badPath.test(r.url) && !bloqueados.has(handleDe(r.url)) && resultMatchesCompany(r, company),
-  );
-  return { url: hit ? stripQuery(hit.url) : null, ok };
+  const toks = companyTokens(company);
+  const chaveMarca = toks.join('');
+  const core = siteDomain ? String(siteDomain).replace(/^www\./, '').split('.')[0].toLowerCase() : null;
+  const pontuar = (r) => {
+    if (!domainRe.test(r.url) || badPath.test(r.url)) return null;
+    const handle = handleDe(r.url);
+    if (!handle || bloqueados.has(handle)) return null;
+    const hk = handle.replace(/[^a-z0-9]/g, '');
+    const sinais = new Set();
+    let score = 0;
+    // O que sobra do @ tirando a marca e palavras de ramo/sufixo ("construtora",
+    // "oficial", "br"...): "construtoraalfa" → "" (é a marca); "alfafestas" → "festas"
+    // (é OUTRO negócio que só compartilha uma palavra).
+    const RAMO_RE = /(construtora|incorporadora|engenharia|imoveis|imobiliaria|empreendimentos|oficial|official|brasil|br|sp|rj|mg|pr|sc|rs|ba|go|df|ltda|sa|group|grupo|company|store|shop)/g;
+    const residuo = (hk.includes(chaveMarca) ? hk.replace(chaveMarca, '') : toks.reduce((acc, t) => acc.replace(t, ''), hk)).replace(RAMO_RE, '');
+    // marcas curtas (MRV, JHSF) valem: o resíduo é quem barra "mrvfans"/"alfafestas"
+    if (chaveMarca.length >= 3 && (hk.includes(chaveMarca) || (hk.length >= 3 && chaveMarca.includes(hk))) && residuo.length < 4) { score += 4; sinais.add('handle_marca'); }
+    else if (toks.some((t) => t.length >= 4 && hk.includes(t))) { score += 3; sinais.add('handle_token'); }
+    if (residuo.length >= 4) { score -= 2; sinais.add('handle_extra'); }
+    if (core && core.length >= 3 && (hk.includes(core) || (hk.length >= 3 && core.includes(hk))) && residuo.length < 4) { score += 3; sinais.add('handle_dominio'); }
+    const texto = normText(`${r.title} ${r.desc}`);
+    if (resultMatchesCompany(r, company)) { score += 2; sinais.add('marca_no_titulo'); }
+    if (cidade && normText(cidade).length >= 3 && texto.includes(normText(cidade))) { score += 1; sinais.add('cidade'); }
+    if (siteDomain && texto.includes(normText(siteDomain))) { score += 2; sinais.add('dominio_na_bio'); }
+    const positivos = [...sinais].filter((x) => x !== 'handle_extra').length;
+    if (positivos < 2 || score < 5) return null;
+    const forte = sinais.has('handle_marca') || sinais.has('handle_dominio') || sinais.has('dominio_na_bio');
+    return { url: stripQuery(r.url), handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
+  };
+  const consultas = [`site:${network}.com "${company}" ${cidade ?? ''}`.trim(), `${company} ${cidade ?? ''} ${network}`.trim()];
+  let okTotal = true;
+  let melhor = null;
+  for (const q of consultas) {
+    const { results, ok } = await rawSearch(q);
+    okTotal = okTotal && ok;
+    for (const r of results.slice(0, 10)) {
+      const c = pontuar(r);
+      if (c && (!melhor || c.score > melhor.score)) melhor = c;
+    }
+    if (melhor?.confianca === 'alta') break; // a 2ª consulta só entra sem resultado forte
+  }
+  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, sinais: melhor?.sinais ?? [], ok: okTotal || !!melhor };
 }
 
 // Slug do perfil pessoal do LinkedIn (linkedin.com/in/<slug>), só letras/números.
@@ -382,19 +425,28 @@ function classificarPerfilLinkedin(r, name) {
 }
 
 // Busca o LinkedIn PESSOAL do decisor. `rejeitados` = slugs que o operador apagou
-// na tela (nunca voltam). Devolve {url, ok, confianca}.
+// na tela (nunca voltam). Consulta `site:linkedin.com/in "Nome" Marca` (fallback:
+// `Nome Marca linkedin`). "alta" só quando a EMPRESA aparece no título/descrição
+// do perfil — sem isso é homônimo em potencial → "media". Devolve {url, ok, confianca}.
 async function findPersonLinkedin(name, company, { rejeitados = [] } = {}) {
-  const { results, ok } = await rawSearch(`${name} ${company ?? ''} linkedin`);
+  const marca = company ? marcaDe(company) : '';
+  const consultas = [`site:linkedin.com/in "${name}" ${marca}`.trim(), `${name} ${marca} linkedin`.trim()];
   const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
   let melhor = null;
-  for (const r of results) {
-    const conf = classificarPerfilLinkedin(r, name);
-    if (!conf) continue;
-    if (bloqueados.has(linkedinSlug(r.url))) continue;
-    if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
-    if (melhor.confianca === 'alta') break;
+  let okTotal = true;
+  for (const q of consultas) {
+    const { results, ok } = await rawSearch(q);
+    okTotal = okTotal && ok;
+    for (const r of results) {
+      if (!classificarPerfilLinkedin(r, name)) continue;
+      if (bloqueados.has(linkedinSlug(r.url))) continue;
+      const conf = marca && resultMatchesCompany(r, marca) ? 'alta' : 'media';
+      if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
+      if (melhor.confianca === 'alta') break;
+    }
+    if (melhor) break;
   }
-  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok };
+  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok: okTotal || !!melhor };
 }
 
 // @ (handle) do perfil, só letras/números — base das regras de nome abaixo.
@@ -442,55 +494,98 @@ function classificarPerfilInstagram(r, name) {
   return null;
 }
 
-// Busca o Instagram PESSOAL do decisor. `cidade` ancora a busca (o Brave devolve
-// resultados bem mais ligados à pessoa certa); `rejeitados` são handles que o
-// operador já apagou na tela — nunca voltam. Devolve {url, ok, confianca}.
-async function findPersonInstagram(name, { cidade = null, rejeitados = [] } = {}) {
-  const q = [`"${name}"`, cidade, 'instagram'].filter(Boolean).join(' ');
-  const { results, ok } = await rawSearch(q);
+// Busca o Instagram PESSOAL do decisor. Consulta `site:instagram.com "Primeiro
+// Sobrenome" cidade` (o nome civil completo entre aspas quase nunca bate) e, se
+// nada servir, `"Nome completo" cidade instagram`. A bio (descrição do resultado)
+// citando a empresa ou a cidade sobe "media" → "alta". `rejeitados` são handles
+// que o operador já apagou na tela — nunca voltam. Devolve {url, ok, confianca}.
+async function findPersonInstagram(name, { cidade = null, rejeitados = [], company = null } = {}) {
+  const toks = personTokens(name);
+  const curto = toks.length >= 2 ? `${toks[0]} ${toks[toks.length - 1]}` : name;
+  const consultas = [
+    `site:instagram.com "${curto}" ${cidade ?? ''}`.trim(),
+    [`"${name}"`, cidade, 'instagram'].filter(Boolean).join(' '),
+  ];
   const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
+  const toksEmpresa = company ? companyTokens(company).filter((t) => t.length >= 4) : [];
   let melhor = null;
-  for (const r of results) {
-    const conf = classificarPerfilInstagram(r, name);
-    if (!conf) continue;
-    if (bloqueados.has(instagramHandle(r.url))) continue;
-    if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
-    if (melhor.confianca === 'alta') break;
+  let okTotal = true;
+  for (const q of consultas) {
+    const { results, ok } = await rawSearch(q);
+    okTotal = okTotal && ok;
+    for (const r of results) {
+      let conf = classificarPerfilInstagram(r, name);
+      if (!conf) continue;
+      if (bloqueados.has(instagramHandle(r.url))) continue;
+      const bio = normText(r.desc);
+      if (conf === 'media' && (toksEmpresa.some((t) => bio.includes(t)) || (cidade && normText(cidade).length >= 3 && bio.includes(normText(cidade))))) conf = 'alta';
+      if (!melhor || (conf === 'alta' && melhor.confianca !== 'alta')) melhor = { url: stripQuery(r.url), confianca: conf };
+      if (melhor.confianca === 'alta') break;
+    }
+    if (melhor) break;
   }
-  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok };
+  return { url: melhor?.url ?? null, confianca: melhor?.confianca ?? null, ok: okTotal || !!melhor };
 }
 
-// Descoberta social completa: institucional (empresa) + por sócio-pessoa.
+// Descoberta social completa: institucional (empresa) + por pessoa.
+// SITE PRIMEIRO: o Instagram/Facebook que a própria empresa linkou no site
+// (`siteSocial`, ou lido de `siteUrl`) vale mais que qualquer busca; a busca web
+// só entra como fallback, já ancorada no domínio. Pessoas = sócios do QSA +
+// `pessoasExtras` (decisores vindos da DataStone/Lemit), em paralelo (a fila de
+// busca serializa as requisições; o paralelo só tira os tempos mortos).
 // searchFailed=true se QUALQUER busca falhou (para reprocessar depois).
 // `rejeitados` = { [nome normalizado]: [@ de Instagram apagados pelo operador] };
 // `rejeitadosLinkedin` = idem para slugs do LinkedIn.
 // `rejeitadosEmpresa` = { instagram: [@...], facebook: [@...] } apagados na tela.
-async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {}, rejeitadosLinkedin = {}, rejeitadosEmpresa = {} }) {
+async function discoverSociosSocial({ company, socios, cidade = null, rejeitados = {}, rejeitadosLinkedin = {}, rejeitadosEmpresa = {}, siteUrl = null, siteSocial = null, pessoasExtras = [] }) {
   let anyFail = false;
-  const mark = (r) => {
-    if (!r.ok) anyFail = true;
-    return r.url;
-  };
-
-  const companyInstagram = company ? mark(await findCompanySocial(company, 'instagram', rejeitadosEmpresa?.instagram ?? [])) : null;
-  const companyFacebook = company ? mark(await findCompanySocial(company, 'facebook', rejeitadosEmpresa?.facebook ?? [])) : null;
-
-  // Todos os sócios-pessoas do contrato social (assertividade > economia).
-  const pessoas = (socios ?? []).filter(isPersonName);
-  const people = [];
-  for (const nome of pessoas) {
-    const li = await findPersonLinkedin(nome, company, { rejeitados: rejeitadosLinkedin?.[normText(nome)] ?? [] });
-    const ig = await findPersonInstagram(nome, { cidade, rejeitados: rejeitados?.[normText(nome)] ?? [] });
-    if (!li.ok || !ig.ok) anyFail = true;
-    people.push({
-      nome,
-      linkedin: li.url,
-      linkedinConfianca: li.confianca,
-      instagram: ig.url,
-      instagramConfianca: ig.confianca,
-    });
+  const urlSite = siteUrl ? (String(siteUrl).startsWith('http') ? String(siteUrl) : `https://${siteUrl}`) : null;
+  let sinais = siteSocial;
+  if (!sinais && urlSite) {
+    const r = await fetchHtmlCached(urlSite);
+    if (r?.html) sinais = sinaisDoSite(r.html);
   }
-  return { companyInstagram, companyFacebook, people, searchFailed: anyFail };
+  let siteDomain = null;
+  try { siteDomain = urlSite ? new URL(urlSite).hostname.replace(/^www\./, '') : null; } catch { /* url inválida */ }
+  const handleDe = (u) => (String(u).match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
+  const rejIg = (rejeitadosEmpresa?.instagram ?? []).map((h) => String(h).toLowerCase());
+  const rejFb = (rejeitadosEmpresa?.facebook ?? []).map((h) => String(h).toLowerCase());
+  const doSiteIg = sinais?.instagram && !rejIg.includes(handleDe(sinais.instagram)) ? sinais.instagram : null;
+  const doSiteFb = sinais?.facebook && !rejFb.includes(handleDe(sinais.facebook)) ? sinais.facebook : null;
+  const opts = { cidade, siteDomain };
+  const buscaRede = (network, rej) =>
+    company
+      ? findCompanySocial(company, network, rej, opts).then((r) => ({ ...r, origem: r.url ? 'busca' : null }))
+      : Promise.resolve({ url: null, confianca: null, origem: null, ok: true });
+  const [ig, fb] = await Promise.all([
+    doSiteIg ? { url: doSiteIg, confianca: 'alta', origem: 'site', ok: true } : buscaRede('instagram', rejIg),
+    doSiteFb ? { url: doSiteFb, confianca: 'alta', origem: 'site', ok: true } : buscaRede('facebook', rejFb),
+  ]);
+  if (!ig.ok || !fb.ok) anyFail = true;
+
+  // Pessoas: sócios-pessoa do contrato social + decisores das outras fontes (até 6).
+  const vistos = new Set();
+  const nomes = [];
+  for (const n of [...(socios ?? []), ...(pessoasExtras ?? [])]) {
+    const nome = String(n ?? '').trim();
+    if (!nome || !isPersonName(nome) || vistos.has(normText(nome))) continue;
+    vistos.add(normText(nome));
+    nomes.push(nome);
+  }
+  const people = await Promise.all(nomes.slice(0, 6).map(async (nome) => {
+    const [li, igp] = await Promise.all([
+      findPersonLinkedin(nome, company, { rejeitados: rejeitadosLinkedin?.[normText(nome)] ?? [] }),
+      findPersonInstagram(nome, { cidade, company, rejeitados: rejeitados?.[normText(nome)] ?? [] }),
+    ]);
+    if (!li.ok || !igp.ok) anyFail = true;
+    return { nome, linkedin: li.url, linkedinConfianca: li.confianca, instagram: igp.url, instagramConfianca: igp.confianca };
+  }));
+  return {
+    companyInstagram: ig.url, companyInstagramConfianca: ig.confianca ?? null, companyInstagramOrigem: ig.origem ?? null,
+    companyFacebook: fb.url, companyFacebookConfianca: fb.confianca ?? null, companyFacebookOrigem: fb.origem ?? null,
+    metaPageId: sinais?.metaPageId ?? null,
+    people, searchFailed: anyFail,
+  };
 }
 
 const NAME_STOPWORDS = new Set([
@@ -517,13 +612,14 @@ const NAME_STOPWORDS = new Set([
 // Cache de Google Meu Negócio (Serper Places) por empresa+cidade — evita chamar
 // duas vezes (na descoberta do site e no card de GMN).
 const _placesCache = new Map();
-async function serperPlacesCached(company, cidade, rejeitados = []) {
-  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}`;
+async function serperPlacesCached(company, cidade, rejeitados = [], { telefones = [] } = {}) {
+  const fonesK = (telefones ?? []).map((t) => onlyDigits(t).slice(-8)).filter((d) => d.length === 8).sort().join(',');
+  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}|${fonesK}`;
   if (_placesCache.has(k)) return _placesCache.get(k);
-  const ck = chaveCache('places', company, cidade, (rejeitados ?? []).join(','));
+  const ck = chaveCache('places', company, cidade, (rejeitados ?? []).join(','), fonesK);
   const hit = await cacheGet(ck);
   if (hit !== undefined) { _placesCache.set(k, hit); return hit; }
-  const r = await serperPlaces(company, cidade, rejeitados).catch(() => ({ ok: false, found: false }));
+  const r = await serperPlaces(company, cidade, rejeitados, { telefones }).catch(() => ({ ok: false, found: false }));
   // Falha transitória (ok:false) NÃO é cacheada: antes virava "sem ficha" até o próximo deploy.
   if (!r || r.ok === false) return null;
   const val = r.found ? r : null;
@@ -543,60 +639,101 @@ async function primeiraQueResponde(urlBruta) {
   return null;
 }
 
+// Pontua um candidato a site pelo CONTEÚDO da home (não por "respondeu"):
+// CNPJ no rodapé é decisivo; marca no <title>/og:site_name e domínio parecido
+// com a marca são fortes; cidade e a fonte do candidato desempatam. Página
+// estacionada/à venda é descartada. https e https://www em paralelo.
+async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
+  const host = String(c.url).trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
+  if (!host || !host.includes('.')) return null;
+  const tenta = async (variantes) => {
+    const rs = await Promise.all(variantes.map(async (v) => [v, await fetchHtmlCached(v)]));
+    return rs.find(([, r]) => r && r.ok && r.html) ?? null;
+  };
+  const hit = (await tenta([`https://${host}`, `https://www.${host}`])) ?? (await tenta([`http://${host}`, `http://www.${host}`]));
+  if (!hit) return null;
+  const [tentada, r] = hit;
+  if (r.finalUrl && isBlocked(r.finalUrl)) return null; // redirecionou pra rede social/diretório
+  const sn = sinaisDoSite(r.html);
+  const sinais = [];
+  let score = 0;
+  if (sn.parked) { score -= 100; sinais.push('pagina_estacionada'); }
+  if (cnpj && sn.cnpjs.has(cnpj)) { score += 100; sinais.push('cnpj_no_site'); }
+  const toks = [...new Set([...companyTokens(nome), ...companyTokens(companyName ?? '')])];
+  const cabecalho = `${sn.title} ${sn.siteName}`;
+  const tituloBate = toks.some((t) => wordSet(cabecalho).has(t)) || (normText(nome).length >= 4 && normText(cabecalho).includes(normText(nome)));
+  if (tituloBate) { score += 30; sinais.push('marca_no_titulo'); }
+  const domBate = domainMatchesName(`https://${host}`, nome) || (companyName && domainMatchesName(`https://${host}`, companyName));
+  if (domBate) { score += 20; sinais.push('dominio_parecido'); }
+  if (cidade && normText(cidade).length >= 3 && sn.texto.includes(normText(cidade))) { score += 10; sinais.push('cidade_no_site'); }
+  score += { validado: 50, gmn: 15, email: 12, planilha: 8, busca: 0 }[c.source] ?? 0;
+  const confianca = sinais.includes('cnpj_no_site') || (tituloBate && domBate) ? 'alta' : score >= 15 ? 'media' : null;
+  return { url: toRoot(r.finalUrl || tentada), source: c.source, score, sinais, confianca, html: r.html };
+}
+
 // Descobre o SITE INSTITUCIONAL investigando de verdade (não confia na planilha):
-// cruza Google Meu Negócio + e-mail corporativo + planilha + busca web (nome
-// fantasia) e valida qual candidato realmente RESPONDE. Ordem de confiança:
-// GMN > e-mail corporativo > planilha > busca. A planilha vira só um palpite.
+// cruza Google Meu Negócio + e-mail corporativo + planilha + busca web (marca) e
+// valida cada candidato PELO CONTEÚDO (validarCandidatoSite), todos em paralelo,
+// ficando com o melhor pontuado. Resultado em cache (7 dias) por marca/cidade/CNPJ/
+// chaves — re-rodar a fase não repete a descoberta.
 // `forcar` = site VALIDADO pelo operador (chaves de busca): se responder, é ele e
-// pronto — sem descoberta. `rejeitados` = domínios apagados na tela (nunca voltam).
-async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, cidade, forcar = null, rejeitados = [], gmnRejeitados = [] }) {
+// pronto. `rejeitados` = domínios apagados na tela (nunca voltam). `gmn` = ficha já
+// conferida pelo chamador (evita segunda consulta ao Places).
+async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, cidade, cnpj = null, forcar = null, rejeitados = [], gmnRejeitados = [], gmn }) {
+  const nome = marcaDe(nomeFantasia || companyName);
+  const cnpjDigits = onlyDigits(cnpj).length === 14 ? onlyDigits(cnpj) : null;
+  const ctx = { nome, companyName, cidade, cnpj: cnpjDigits };
   if (forcar) {
-    const url = await primeiraQueResponde(forcar);
-    if (url) return { url, source: 'validado', searchFailed: false };
+    const v = await validarCandidatoSite({ url: forcar, source: 'validado' }, ctx).catch(() => null);
+    if (v) return { url: v.url, source: 'validado', confianca: 'alta', sinais: v.sinais, searchFailed: false, html: v.html };
     // não respondeu: segue a descoberta normal (o operador vê "não encontrado")
   }
+  const ck = chaveCache('site', nome, companyName, cidade, cnpjDigits, (rejeitados ?? []).join(','), (gmnRejeitados ?? []).join(','));
+  const hit = await cacheGet(ck);
+  if (hit && hit.url) {
+    const r = await fetchHtmlCached(hit.url); // HTML pra quem precisa (redes / página Meta)
+    return { ...hit, searchFailed: false, html: r?.html ?? null, cache: true };
+  }
   const bloqueados = new Set((rejeitados ?? []).map((d) => String(d).toLowerCase().replace(/^www\./, '')));
-  const nome = nomeFantasia || companyName;
-  const candidatos = []; // {url, source}
+  const candidatos = []; // {url, source, dom}
   const push = (url, source) => {
     if (!url) return;
     const dom = String(url).replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
-    if (bloqueados.has(dom)) return;
-    candidatos.push({ url, source });
+    if (!dom.includes('.') || bloqueados.has(dom) || isBlocked(`https://${dom}/`)) return;
+    if (candidatos.some((c) => c.dom === dom)) return;
+    candidatos.push({ url, source, dom });
   };
 
   // 1) Google Meu Negócio — site do perfil (fonte forte do site real)
   try {
-    const gmn = await serperPlacesCached(nome, cidade, gmnRejeitados);
-    if (gmn && gmn.website) push(gmn.website, 'gmn');
+    const g = gmn !== undefined ? gmn : await serperPlacesCached(nome, cidade, gmnRejeitados);
+    if (g && g.website) push(g.website, 'gmn');
   } catch { /* segue */ }
   // 2) site da planilha (palpite — precisa validar)
   if (siteUrl) push(siteUrl, 'planilha');
   // 3) domínio do e-mail corporativo
   if (emailDomain && !FREEMAIL.has(emailDomain.toLowerCase()) && emailDomain.includes('.')) push(emailDomain.toLowerCase(), 'email');
-  // 4) busca web — só domínios que casam com o nome da empresa
+  // 4) busca web — "marca" cidade site oficial; só domínios que casam com o nome
   let buscaFalhou = false;
   if (nome) {
-    const { urls, ok } = await searchSite(`${nome} ${cidade ?? ''} site oficial`.trim());
+    const { urls, ok } = await searchSite(`"${nome}" ${cidade ?? ''} site oficial`.trim());
     buscaFalhou = !ok;
     for (const u of urls) {
       if (domainMatchesName(u, nome) || (companyName && domainMatchesName(u, companyName))) push(u, 'busca');
     }
   }
 
-  // Valida na ordem de confiança: devolve o primeiro que RESPONDE de fato.
-  const ordem = { gmn: 4, email: 3, planilha: 2, busca: 1 };
-  candidatos.sort((a, b) => (ordem[b.source] || 0) - (ordem[a.source] || 0));
-  const vistos = new Set();
-  for (const c of candidatos) {
-    const dom = String(c.url).replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0];
-    if (vistos.has(dom)) continue;
-    vistos.add(dom);
-    const url = await primeiraQueResponde(c.url);
-    if (url) return { url, source: c.source, searchFailed: false };
+  // Valida TODOS em paralelo pelo conteúdo e fica com o melhor pontuado.
+  const avaliados = (await mapLimit(candidatos.slice(0, 8), 4, (c) => validarCandidatoSite(c, ctx).catch(() => null))).filter((v) => v && v.confianca);
+  avaliados.sort((a, b) => b.score - a.score);
+  const melhor = avaliados[0];
+  if (melhor) {
+    const out = { url: melhor.url, source: melhor.source, confianca: melhor.confianca, sinais: melhor.sinais };
+    void cacheSet(ck, out, 7 * DIA);
+    return { ...out, searchFailed: false, html: melhor.html };
   }
-  // Nenhum candidato respondeu: melhor "não encontrado" do que atribuir site morto.
-  return { url: null, source: 'nao_encontrado', searchFailed: buscaFalhou };
+  // Nenhum candidato validou: melhor "não encontrado" do que atribuir site de outro.
+  return { url: null, source: 'nao_encontrado', confianca: null, sinais: [], searchFailed: buscaFalhou, html: null };
 }
 
 // --- auditoria de site ------------------------------------------------------
@@ -645,6 +782,49 @@ function extractSiteSocials(html) {
     return null;
   };
   return { instagram: pickIg(), facebook: pickFb() };
+}
+
+// HTML da home com cache curto em memória (10 min): a mesma página é lida pela
+// validação do site, pela extração de redes/página Meta e pelos empreendimentos.
+const _htmlCache = new Map();
+async function fetchHtmlCached(url, ms = 10000) {
+  const k = String(url).replace(/\/+$/, '').toLowerCase();
+  const hit = _htmlCache.get(k);
+  if (hit && hit.exp > Date.now()) return hit.val;
+  let val = null;
+  try {
+    const res = await fetchWithTimeout(url, { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }, ms);
+    const html = await res.text();
+    val = { ok: res.ok || (res.status >= 300 && res.status < 400), status: res.status, finalUrl: res.url || url, html: html.slice(0, 600_000) };
+  } catch {
+    val = null;
+  }
+  _htmlCache.set(k, { val, exp: Date.now() + 10 * 60_000 });
+  if (_htmlCache.size > 300) _htmlCache.delete(_htmlCache.keys().next().value);
+  return val;
+}
+
+// Página "estacionada"/à venda/em construção — responde 200 mas não é site de ninguém.
+const PARKED_RE =
+  /dom[ií]nio (est[áa] )?[àa] venda|domain (is )?for sale|comprar este dom[ií]nio|buy this domain|sedoparking|parkingcrew|hugedomains|dan\.com\/buy|afternic|este dom[ií]nio (foi|est[áa]) (registrado|reservado)|p[áa]gina em constru[çc][ãa]o|site em constru[çc][ãa]o/i;
+
+// Sinais do PRÓPRIO site: redes linkadas, id da página Meta (fb:pages / fb://page),
+// título/og:site_name e CNPJs do rodapé. Fonte mais confiável que qualquer busca.
+function sinaisDoSite(html) {
+  const h = String(html || '');
+  const { instagram, facebook } = extractSiteSocials(h);
+  const metaPageId =
+    h.match(/property=["']fb:pages?["']\s+content=["'](\d{5,})["']/i)?.[1] ??
+    h.match(/content=["'](\d{5,})["']\s+property=["']fb:pages?["']/i)?.[1] ??
+    h.match(/property=["']fb:page_id["']\s+content=["'](\d{5,})["']/i)?.[1] ??
+    h.match(/fb:\/\/(?:page|profile)\/(\d{5,})/)?.[1] ??
+    h.match(/facebook\.com\/profile\.php\?id=(\d{5,})/)?.[1] ??
+    null;
+  const title = decodeHtml((h.match(/<title[^>]*>([\s\S]{1,200}?)<\/title>/i)?.[1] ?? '').replace(/\s+/g, ' ').trim());
+  const siteName = decodeHtml(h.match(/property=["']og:site_name["']\s+content=["']([^"']{1,120})["']/i)?.[1] ?? '');
+  const cnpjs = new Set([...h.matchAll(/\b(\d{2})\.?(\d{3})\.?(\d{3})\/?(\d{4})-?(\d{2})\b/g)].map((m) => m.slice(1).join('')));
+  const texto = normText(h.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<[^>]+>/g, ' '));
+  return { instagram, facebook, metaPageId, title, siteName, cnpjs, texto, parked: PARKED_RE.test(h.slice(0, 30000)) };
 }
 
 // Formulário de cadastro (captação de lead): existe? quantos campos? tem botão
@@ -853,7 +1033,7 @@ async function lemitEnrich(cnpj) {
 // --- Google Meu Negócio (via Serper Places) ---------------------------------
 // `rejeitados` = cids de fichas que o operador apagou (chave gmn do lead) —
 // pula pra próxima ficha da resposta; se só sobrar rejeitada, "não encontrado".
-async function serperPlaces(company, cidade, rejeitados = []) {
+async function serperPlaces(company, cidade, rejeitados = [], { telefones = [] } = {}) {
   const key = process.env.SERPER_API_KEY;
   if (!key) return { ok: true, found: false, note: 'serper_desativado' };
   const bloqueados = new Set((rejeitados ?? []).map(String));
@@ -869,11 +1049,41 @@ async function serperPlaces(company, cidade, rejeitados = []) {
     );
     if (!res.ok) return { ok: false, found: false };
     const j = await res.json();
-    const p = (j.places ?? []).find((x) => !bloqueados.has(String(x.cid ?? '')));
-    if (!p) return { ok: true, found: false };
+    const places = (j.places ?? []).filter((x) => !bloqueados.has(String(x.cid ?? '')));
+    if (!places.length) return { ok: true, found: false };
+    // Conferência (antes: primeira ficha da resposta). A ficha tem que bater com a
+    // marca no título OU com um telefone conhecido (Lemit/DataStone); cidade no
+    // endereço e posição desempatam. Nada bate → "não encontrado" (com candidatas).
+    const fones = new Set((telefones ?? []).map((t) => onlyDigits(t).slice(-8)).filter((d) => d.length === 8));
+    const marca = normText(company);
+    const avaliadas = places.map((x, i) => {
+      const sinais = [];
+      let score = 0;
+      const titulo = String(x.title ?? '');
+      // marca inteira no título (ex.: "construtora alfa") vale mais que um token em
+      // comum ("alfa festas e eventos" também tem "alfa").
+      if (marca.length >= 4 && normText(titulo).includes(marca)) { score += 4; sinais.push('marca_no_titulo'); }
+      else if (resultMatchesCompany({ title: titulo, desc: '' }, company)) { score += 2; sinais.push('marca_parcial'); }
+      if (fones.size && fones.has(onlyDigits(x.phoneNumber).slice(-8))) { score += 3; sinais.push('telefone_confere'); }
+      if (cidade && normText(cidade).length >= 3 && normText(x.address ?? '').includes(normText(cidade))) { score += 2; sinais.push('cidade_no_endereco'); }
+      if (i === 0) score += 1;
+      return { x, score, sinais };
+    });
+    avaliadas.sort((a, b) => b.score - a.score);
+    const top = avaliadas[0];
+    const conferida =
+      top.sinais.includes('marca_no_titulo') || top.sinais.includes('telefone_confere') ||
+      (top.sinais.includes('marca_parcial') && top.sinais.includes('cidade_no_endereco')) ||
+      (places.length === 1 && top.sinais.includes('cidade_no_endereco'));
+    if (!conferida) {
+      return { ok: true, found: false, note: 'ficha_nao_confere', candidatos: places.slice(0, 3).map((x) => ({ title: x.title ?? null, address: x.address ?? null, cid: x.cid ?? null })) };
+    }
+    const p = top.x;
     return {
       ok: true,
       found: true,
+      confianca: top.sinais.includes('telefone_confere') || (top.sinais.includes('marca_no_titulo') && top.sinais.length >= 2) ? 'alta' : 'media',
+      sinais: top.sinais,
       title: p.title ?? null,
       rating: p.rating ?? null,
       reviews: p.ratingCount ?? null,
@@ -968,12 +1178,8 @@ async function discoverEmpreendimentos({ company, nomeFantasia, cidade, siteUrl 
   const nome = nomeFantasia || company;
   let context = '';
   if (siteUrl) {
-    try {
-      const res = await fetchWithTimeout(siteUrl, {}, 12000);
-      context += 'SITE:\n' + stripHtml(await res.text()) + '\n\n';
-    } catch {
-      /* segue sem o site */
-    }
+    const r = await fetchHtmlCached(siteUrl.startsWith('http') ? siteUrl : `https://${siteUrl}`, 12000);
+    if (r?.html) context += 'SITE:\n' + stripHtml(r.html) + '\n\n';
   }
   // Busca ancorada no nome fantasia (mais assertivo que a razão social).
   const { results } = await rawSearch(`empreendimentos lançamentos ${nome} ${cidade ?? ''}`.trim());
@@ -1697,7 +1903,7 @@ async function anunciosHeadless(payload) {
 function decodeHtml(t) {
   return String(t).replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#039;|&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 }
-async function resolverMetaPageId(fbUrlOuHandle) {
+async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
   const bruto = String(fbUrlOuHandle || '').trim();
   const handle = bruto.match(/facebook\.com\/([^/?#]+)/i)?.[1] || bruto.replace(/^@/, '');
   if (!handle) return { ok: false, pageId: null, note: 'sem_handle' };
@@ -1774,8 +1980,17 @@ async function resolverMetaPageId(fbUrlOuHandle) {
       }
       if (!opcoes.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
       const hk = normText(handle).replace(/[^a-z0-9]/g, '');
-      const alvo = opcoes.findIndex((t) => { const k = normText(t).replace(/[^a-z0-9]/g, ''); return k.includes(hk) || hk.includes(k.slice(0, Math.max(6, hk.length))); });
-      const idx = alvo >= 0 ? alvo : 0;
+      const toksMarca = marca ? companyTokens(marca).filter((t) => t.length >= 4) : [];
+      const alvo = opcoes.findIndex((t) => {
+        const k = normText(t).replace(/[^a-z0-9]/g, '');
+        if (k.includes(hk) || hk.includes(k.slice(0, Math.max(6, hk.length)))) return true;
+        const ws = wordSet(t);
+        return toksMarca.some((tok) => ws.has(tok));
+      });
+      // Nenhuma opção bate com o @ nem com a marca: NÃO chuta a primeira (era a
+      // origem das páginas erradas) — devolve as candidatas pro operador escolher.
+      if (alvo < 0) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      const idx = alvo;
       const els = await page.$$('[role="option"], [role="listbox"] [role="button"], [role="listbox"] li');
       if (!els[idx]) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
       await els[idx].click();
@@ -3059,29 +3274,70 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     const fbValidado = chaves.facebook?.validacao === 'validado' && row.company_facebook;
     const existentes = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=*`)) ?? [];
     const normNome = (n) => normText(String(n ?? '')).replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
-    // Busca social (web) NÃO depende da DataStone/Lemit: roda em paralelo com elas.
-    const socialP = discoverSociosSocial({
-      company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
-      socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
-      cidade: row.cidade ?? null,
-      rejeitados: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.instagram_rejeitados ?? []])),
-      rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
-      rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
+    // SITE PRIMEIRO (em paralelo com DataStone/Lemit): descobre e valida o site pelo
+    // conteúdo e lê DELE as redes que a própria empresa publica e o id da página
+    // Meta. A busca web de redes só entra como fallback, ancorada no domínio.
+    const marcaF2 = chaves.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw);
+    const siteP = discoverSite({
+      companyName: row.razao_social ?? row.company_name_raw,
+      nomeFantasia: marcaF2,
+      emailDomain: row.email_raw?.includes('@') ? row.email_raw.split('@')[1] : null,
+      cidade: row.cidade,
+      siteUrl: row.site_url,
+      cnpj: digits,
+      forcar: chaves.site?.validacao === 'validado' && row.site_url ? row.site_url : null,
+      rejeitados: chaves.site?.rejeitados ?? [],
+      gmnRejeitados: chaves.gmn?.rejeitados ?? [],
     }).catch(() => null);
-    const [ds, pessoas, lemit] = await Promise.all([
+    const [ds, pessoas, lemit, disc] = await Promise.all([
       datastoneCompany(digits).catch(() => null),
       datastonePessoas(digits).catch(() => null),
       lemitEnrich(digits).catch(() => null),
+      siteP,
     ]);
     const patch2 = {};
+    const novasChaves = { ...chaves };
+    let chavesMudou = false;
+    const setChave = (id, patch) => { novasChaves[id] = { ...(novasChaves[id] ?? {}), ...patch }; chavesMudou = true; };
     if (ds?.ok && ds.data) {
       patch2.datastone = ds.data;
       if (ds.data.organograma) patch2.organograma = ds.data.organograma;
     }
     if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
-    const social = await socialP;
-    if (social?.companyInstagram && !igValidado) patch2.company_instagram = social.companyInstagram;
-    if (social?.companyFacebook && !fbValidado) patch2.company_facebook = social.companyFacebook;
+    if (disc?.url && chaves.site?.validacao !== 'validado' && disc.url !== row.site_url) {
+      patch2.site_url = disc.url;
+      setChave('site', { origem: disc.source, confianca: disc.confianca ?? null });
+    }
+    const sinaisSite = disc?.html ? sinaisDoSite(disc.html) : null;
+    // Decisores que a DataStone/Lemit trouxeram além do QSA também ganham busca social.
+    const nomesQsa = new Set((row.socios ?? []).map((s) => normText(s.nome ?? '')));
+    const pessoasExtras = [...(pessoas?.ok ? pessoas.people ?? [] : []), ...(lemit?.ok ? lemit.people ?? [] : [])]
+      .map((p) => p?.nome).filter((n) => n && !nomesQsa.has(normText(n)));
+    const social = await discoverSociosSocial({
+      company: marcaF2,
+      socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
+      pessoasExtras,
+      cidade: row.cidade ?? null,
+      siteUrl: disc?.url ?? row.site_url ?? null,
+      siteSocial: sinaisSite,
+      rejeitados: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.instagram_rejeitados ?? []])),
+      rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
+      rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
+    }).catch(() => null);
+    if (social?.companyInstagram && !igValidado) {
+      patch2.company_instagram = social.companyInstagram;
+      setChave('instagram', { origem: social.companyInstagramOrigem ?? 'busca', confianca: social.companyInstagramConfianca ?? null });
+    }
+    if (social?.companyFacebook && !fbValidado) {
+      patch2.company_facebook = social.companyFacebook;
+      setChave('facebook', { origem: social.companyFacebookOrigem ?? 'busca', confianca: social.companyFacebookConfianca ?? null });
+    }
+    // Id da página Meta publicado no próprio site → F4 mede direto, sem headless/chute.
+    const mp = social?.metaPageId ?? sinaisSite?.metaPageId ?? null;
+    if (mp && chaves.meta_pagina?.validacao !== 'validado' && !chaves.meta_pagina?.valor && !(chaves.meta_pagina?.rejeitados ?? []).includes(mp)) {
+      setChave('meta_pagina', { valor: mp, nome: null, origem: 'site' });
+    }
+    if (chavesMudou) patch2.chaves_busca = novasChaves;
     if (Object.keys(patch2).length) {
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, patch2);
       Object.assign(row, patch2);
@@ -3186,16 +3442,40 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       // Chaves de busca do operador valem também aqui: site validado é forçado,
       // domínios/fichas apagados nunca voltam, marca manual é o nome de busca.
       const chavesSite = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
+      const marcaF3 = chavesSite.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw);
+      // Google Meu Negócio CONFERIDO (marca no título / telefone conhecido / cidade)
+      // antes do site: a ficha certa é a fonte mais forte do site real.
+      const telefones = [
+        row.phone_raw,
+        ...(row.lemit_company?.phones ?? []).map((t) => (typeof t === 'string' ? t : t?.numero)),
+        ...(row.lemit_company?.fixos ?? []).map((t) => (typeof t === 'string' ? t : t?.numero)),
+        row.datastone?.telefone, row.datastone?.phone,
+      ].filter(Boolean);
+      const gmnValidado = chavesSite.gmn?.validacao === 'validado' && row.google_business;
+      const gb = gmnValidado
+        ? row.google_business
+        : await serperPlacesCached(chavesSite.gmn?.consulta?.trim() || marcaF3, row.cidade, chavesSite.gmn?.rejeitados ?? [], { telefones }).catch(() => null);
+      if (gb && !gmnValidado) {
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb }).catch(() => {});
+        row.google_business = gb;
+      }
       const disc = await discoverSite({
         companyName: row.razao_social ?? row.company_name_raw,
-        nomeFantasia: chavesSite.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw),
+        nomeFantasia: marcaF3,
         emailDomain: row.email_raw?.includes('@') ? row.email_raw.split('@')[1] : null,
         cidade: row.cidade,
         siteUrl: row.site_url,
+        cnpj: digits,
         forcar: chavesSite.site?.validacao === 'validado' && row.site_url ? row.site_url : null,
         rejeitados: chavesSite.site?.rejeitados ?? [],
         gmnRejeitados: chavesSite.gmn?.rejeitados ?? [],
+        gmn: gb ?? null,
       });
+      if (disc?.url && chavesSite.site?.validacao !== 'validado' && disc.source !== 'validado') {
+        const ch = { ...chavesSite, site: { ...(chavesSite.site ?? {}), origem: disc.source, confianca: disc.confianca ?? null } };
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { chaves_busca: ch }).catch(() => {});
+        row.chaves_busca = ch;
+      }
       if (disc?.url) {
         audit = await auditUrl(disc.url).catch(() => null);
         if (audit) {
@@ -3224,17 +3504,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       }
     } catch { /* site não encontrado */ }
     // Google Meu Negócio ‖ empreendimentos ‖ PageSpeed (já disparado) — independentes.
-    const chavesF3 = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
-    const gmnP = (async () => {
-      if (chavesF3.gmn?.validacao === 'validado' && row.google_business) return; // ficha validada pelo operador fica
-      try {
-        const gb = await serperPlacesCached(chavesF3.gmn?.consulta?.trim() || marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw), row.cidade, chavesF3.gmn?.rejeitados ?? []);
-        if (gb) {
-          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb });
-          row.google_business = gb;
-        }
-      } catch { /* GMN indisponível */ }
-    })();
+    const gmnP = Promise.resolve(); // GMN já conferido antes da descoberta do site
     const empP = (async () => {
       if ((row.perfil ?? 'construtoras') === 'geral') return;
       try {
@@ -3299,7 +3569,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       const precisaGoogle = !googleAdvertiser && chaves.google_anunciante?.validacao !== 'validado' && siteDomain;
       if (precisaMeta || precisaGoogle) {
         const [rm, rg] = await Promise.all([
-          precisaMeta ? resolverMetaPageId(row.company_facebook).catch(() => null) : null,
+          precisaMeta ? resolverMetaPageId(row.company_facebook, { marca: chaves.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw) }).catch(() => null) : null,
           precisaGoogle ? googleTransparency({ domain: siteDomain }).catch(() => null) : null,
         ]);
         if (precisaMeta) {
@@ -3575,7 +3845,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda2-2026-10-01',
+        versao: 'onda3-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
@@ -3627,6 +3897,8 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, {
           discoveredUrl: audit.siteUrl,
           source: disc.source,
+          confianca: disc.confianca ?? null,
+          sinais: disc.sinais ?? [],
           audit,
           searchFailed: false,
         });
@@ -3846,7 +4118,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/anunciantes/resolver' && req.method === 'POST') {
       const body = await readJson(req);
       const [meta, google] = await Promise.all([
-        body?.fbUrl ? resolverMetaPageId(body.fbUrl).catch((e) => ({ ok: false, pageId: null, note: String(e?.message || e).slice(0, 120) })) : Promise.resolve(null),
+        body?.fbUrl ? resolverMetaPageId(body.fbUrl, { marca: body.marca ?? body.company ?? null }).catch((e) => ({ ok: false, pageId: null, note: String(e?.message || e).slice(0, 120) })) : Promise.resolve(null),
         body?.siteDomain ? googleTransparency({ domain: body.siteDomain }).catch((e) => ({ ok: false, note: String(e?.message || e).slice(0, 120) })) : Promise.resolve(null),
       ]);
       return send(res, 200, { ok: true, meta, google });
