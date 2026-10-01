@@ -553,6 +553,11 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
   const handleDe = (u) => (String(u).match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
   const rejIg = (rejeitadosEmpresa?.instagram ?? []).map((h) => String(h).toLowerCase());
   const rejFb = (rejeitadosEmpresa?.facebook ?? []).map((h) => String(h).toLowerCase());
+  // Link do site só é "alta" se o @ lembra a marca ou o domínio (um site errado
+  // — ou um rodapé com a rede do grupo/parceiro — não pode virar a rede oficial).
+  const toksMarca = company ? companyTokens(company).filter((t) => t.length >= 3) : [];
+  const coreSite = siteDomain ? siteDomain.split('.')[0].toLowerCase() : null;
+  const coerente = (u) => { const hk = handleDe(u).replace(/[^a-z0-9]/g, ''); return toksMarca.some((t) => hk.includes(t)) || (coreSite && coreSite.length >= 3 && (hk.includes(coreSite) || coreSite.includes(hk))); };
   const doSiteIg = sinais?.instagram && !rejIg.includes(handleDe(sinais.instagram)) ? sinais.instagram : null;
   const doSiteFb = sinais?.facebook && !rejFb.includes(handleDe(sinais.facebook)) ? sinais.facebook : null;
   const opts = { cidade, siteDomain };
@@ -561,8 +566,8 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
       ? findCompanySocial(company, network, rej, opts).then((r) => ({ ...r, origem: r.url ? 'busca' : null }))
       : Promise.resolve({ url: null, confianca: null, origem: null, ok: true });
   const [ig, fb] = await Promise.all([
-    doSiteIg ? { url: doSiteIg, confianca: 'alta', origem: 'site', ok: true } : buscaRede('instagram', rejIg),
-    doSiteFb ? { url: doSiteFb, confianca: 'alta', origem: 'site', ok: true } : buscaRede('facebook', rejFb),
+    doSiteIg ? { url: doSiteIg, confianca: coerente(doSiteIg) ? 'alta' : 'media', origem: 'site', ok: true } : buscaRede('instagram', rejIg),
+    doSiteFb ? { url: doSiteFb, confianca: coerente(doSiteFb) ? 'alta' : 'media', origem: 'site', ok: true } : buscaRede('facebook', rejFb),
   ]);
   if (!ig.ok || !fb.ok) anyFail = true;
 
@@ -642,6 +647,7 @@ async function primeiraQueResponde(urlBruta) {
   return null;
 }
 
+const JURIDICO_RE = /^(ltda|limitada|sa|eireli|me|epp|spe|cia|companhia|holding|participacoes|participacao)$/;
 // Pontua um candidato a site pelo CONTEÚDO da home (não por "respondeu"):
 // CNPJ no rodapé é decisivo; marca no <title>/og:site_name e domínio parecido
 // com a marca são fortes; cidade e a fonte do candidato desempatam. Página
@@ -669,8 +675,16 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
   const domBate = domainMatchesName(`https://${host}`, nome) || (companyName && domainMatchesName(`https://${host}`, companyName));
   if (domBate) { score += 20; sinais.push('dominio_parecido'); }
   if (cidade && normText(cidade).length >= 3 && sn.texto.includes(normText(cidade))) { score += 10; sinais.push('cidade_no_site'); }
+  // Cobertura do NOME COMPLETO (com palavras de ramo: "net empreendimentos
+  // imobiliarios") no título/og:site_name/domínio. Uma marca curta e genérica
+  // ("NET") bate em site de qualquer um — o nome inteiro, não.
+  const palavras = normText(companyName || nome).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !JURIDICO_RE.test(w));
+  const alvoCobertura = `${normText(cabecalho)} ${host.replace(/[^a-z0-9]/g, '')}`;
+  const cobertura = palavras.length ? palavras.filter((w) => alvoCobertura.includes(w)).length / palavras.length : 0;
+  if (cobertura >= 0.6) { score += 15; sinais.push('nome_completo'); }
+  if (c.source === 'busca' && !sinais.includes('cnpj_no_site') && cobertura < 0.6) return null; // busca só com o nome inteiro
   score += { validado: 50, gmn: 15, email: 12, planilha: 8, busca: 0 }[c.source] ?? 0;
-  const confianca = sinais.includes('cnpj_no_site') || (tituloBate && domBate) ? 'alta' : score >= 15 ? 'media' : null;
+  const confianca = sinais.includes('cnpj_no_site') || (tituloBate && domBate && (cobertura >= 0.6 || c.source !== 'busca')) ? 'alta' : score >= 15 ? 'media' : null;
   return { url: toRoot(r.finalUrl || tentada), source: c.source, score, sinais, confianca, html: r.html };
 }
 
@@ -719,7 +733,9 @@ async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, c
   // 4) busca web — "marca" cidade site oficial; só domínios que casam com o nome
   let buscaFalhou = false;
   if (nome) {
-    const { urls, ok } = await searchSite(`"${nome}" ${cidade ?? ''} site oficial`.trim());
+    // marca curta ("NET", "MRV") busca com o nome completo sem sufixo jurídico
+    const nomeBusca = nome.length >= 5 ? nome : String(nomeFantasia || companyName || nome).replace(/\b(ltda|limitada|s\/?a\.?|eireli|me|epp|spe)\b/gi, '').replace(/\s+/g, ' ').trim();
+    const { urls, ok } = await searchSite(`"${nomeBusca}" ${cidade ?? ''} site oficial`.trim());
     buscaFalhou = !ok;
     for (const u of urls) {
       if (domainMatchesName(u, nome) || (companyName && domainMatchesName(u, companyName))) push(u, 'busca');
@@ -3317,7 +3333,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       if (ds.data.organograma) patch2.organograma = ds.data.organograma;
     }
     if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
-    if (disc?.url && chaves.site?.validacao !== 'validado' && disc.url !== row.site_url) {
+    if (disc?.url && chaves.site?.validacao !== 'validado' && disc.url !== row.site_url && (!row.site_url || disc.confianca === 'alta')) {
       patch2.site_url = disc.url;
       setChave('site', { origem: disc.source, confianca: disc.confianca ?? null });
     }
@@ -3337,11 +3353,12 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
       rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
     }).catch(() => null);
-    if (social?.companyInstagram && !igValidado) {
+    const podeTrocar = (conf, atual) => !atual || conf === 'alta'; // valor existente só cai pra um "alta"
+    if (social?.companyInstagram && !igValidado && podeTrocar(social.companyInstagramConfianca, row.company_instagram)) {
       patch2.company_instagram = social.companyInstagram;
       setChave('instagram', { origem: social.companyInstagramOrigem ?? 'busca', confianca: social.companyInstagramConfianca ?? null });
     }
-    if (social?.companyFacebook && !fbValidado) {
+    if (social?.companyFacebook && !fbValidado && podeTrocar(social.companyFacebookConfianca, row.company_facebook)) {
       patch2.company_facebook = social.companyFacebook;
       setChave('facebook', { origem: social.companyFacebookOrigem ?? 'busca', confianca: social.companyFacebookConfianca ?? null });
     }
@@ -3511,8 +3528,11 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
             has_google_tag: !!audit.hasGoogleTag,
             notes: audit.notes ?? [],
           }], 'lead_id');
-          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: audit.siteUrl });
-          row.site_url = audit.siteUrl;
+          const mesmoHost = (a, b) => { try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); } catch { return false; } };
+          if (!row.site_url || disc.confianca === 'alta' || mesmoHost(row.site_url, audit.siteUrl)) {
+            await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: audit.siteUrl });
+            row.site_url = audit.siteUrl;
+          }
         }
       }
     } catch { /* site não encontrado */ }
@@ -3879,7 +3899,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda4-2026-10-01',
+        versao: 'onda4b-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
