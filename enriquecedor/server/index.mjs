@@ -223,17 +223,22 @@ async function searchOnce(query) {
     };
   }
   if (brave) {
-    const res = await fetchWithTimeout(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&country=br&search_lang=pt&ui_lang=pt-BR&count=10&text_decorations=false`,
-      { headers: { 'x-subscription-token': brave, accept: 'application/json' } },
-      12000,
-    );
+    // Brave exige o código de idioma no formato dele (`pt-br`, não `pt`): parâmetro
+    // inválido vira HTTP 422 e TODA busca falha em silêncio. Por garantia, 422 re-tenta
+    // sem os parâmetros de idioma, e qualquer HTTP != 2xx fica anotado na métrica/health.
+    const base = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&country=br&count=10&text_decorations=false`;
+    const hdr = { headers: { 'x-subscription-token': brave, accept: 'application/json' } };
+    let res = await fetchWithTimeout(`${base}&search_lang=pt-br&ui_lang=pt-BR`, hdr, 12000);
+    if (res.status === 422) res = await fetchWithTimeout(base, hdr, 12000);
     if (res.status === 429) throw { status: 429 };
     if (res.status === 402 || res.status === 403) {
       searchStatus = 'quota'; // cota/crédito da chave esgotado
-      return { results: [], ok: false };
+      return { results: [], ok: false, note: `brave HTTP ${res.status} (cota)` };
     }
-    if (!res.ok) return { results: [], ok: false };
+    if (!res.ok) {
+      searchStatus = `erro HTTP ${res.status}`;
+      return { results: [], ok: false, note: `brave HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 160)}` };
+    }
     searchStatus = 'ok';
     const j = await res.json();
     return {
@@ -277,10 +282,10 @@ async function rawSearchSemCache(query) {
           await sleep(1500 * (attempt + 1)); // backoff no rate limit
           continue;
         }
-        return { results: [], ok: false }; // 429 persistente = falha transitória
+        return { results: [], ok: false, note: e?.status === 429 ? 'brave HTTP 429 (rate limit)' : String(e?.message || e) }; // 429 persistente = falha transitória
       }
     }
-    return { results: [], ok: false };
+    return { results: [], ok: false, note: 'brave HTTP 429 (rate limit)' };
   });
 }
 
