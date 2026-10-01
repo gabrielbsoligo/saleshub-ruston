@@ -10,6 +10,15 @@ import http from 'node:http';
 import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Contexto da requisição (token do chamador + lead em foco) disponível em
+// qualquer função do motor, inclusive em trabalho que continua em background
+// (esteira). Usado pelo cache em Postgres e pelas métricas sem passar token
+// por parâmetro em toda a árvore de chamadas.
+const reqCtx = new AsyncLocalStorage();
+const ctxAtual = () => reqCtx.getStore() ?? null;
+const tokenAtual = () => ctxAtual()?.token ?? null;
 
 // Normaliza envs colados com aspas/espaços (ex.: valores copiados de um .env
 // no formato CHAVE="valor" para o painel do Railway/Vercel).
@@ -215,7 +224,7 @@ async function searchOnce(query) {
   }
   if (brave) {
     const res = await fetchWithTimeout(
-      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&country=br`,
+      `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&country=br&search_lang=pt&ui_lang=pt-BR&count=10&text_decorations=false`,
       { headers: { 'x-subscription-token': brave, accept: 'application/json' } },
       12000,
     );
@@ -250,6 +259,15 @@ const searchLimiter = new Bottleneck({ maxConcurrent: 1, minTime: SEARCH_INTERVA
 // Retorna {results, ok}. ok=false quando a busca não pôde rodar (cota/limite),
 // sinal usado pela lógica de coerência (não confundir com "não encontrado").
 async function rawSearch(query) {
+  // Cache em Postgres (14 dias): a mesma consulta volta na hora e não gasta cota.
+  const ck = chaveCache('busca', query);
+  const hit = await cacheGet(ck);
+  if (hit && Array.isArray(hit.results)) return { results: hit.results, ok: true, cache: true };
+  const r = await rawSearchSemCache(query);
+  if (r?.ok) void cacheSet(ck, { results: r.results }, 14 * DIA);
+  return r;
+}
+async function rawSearchSemCache(query) {
   return searchLimiter.schedule(async () => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
@@ -497,9 +515,15 @@ const _placesCache = new Map();
 async function serperPlacesCached(company, cidade, rejeitados = []) {
   const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}`;
   if (_placesCache.has(k)) return _placesCache.get(k);
+  const ck = chaveCache('places', company, cidade, (rejeitados ?? []).join(','));
+  const hit = await cacheGet(ck);
+  if (hit !== undefined) { _placesCache.set(k, hit); return hit; }
   const r = await serperPlaces(company, cidade, rejeitados).catch(() => ({ ok: false, found: false }));
-  const val = r && r.found ? r : null;
+  // Falha transitória (ok:false) NÃO é cacheada: antes virava "sem ficha" até o próximo deploy.
+  if (!r || r.ok === false) return null;
+  const val = r.found ? r : null;
   _placesCache.set(k, val);
+  void cacheSet(ck, val, 14 * DIA);
   return val;
 }
 
@@ -1904,27 +1928,50 @@ function cleanPosition(pos) {
 const MGMT_RE =
   /diret|presid|geren|coorden|superint|\bhead\b|chief|conselh|\bceo\b|\bcfo\b|\bcto\b|\bcoo\b|s[oó]cio/i;
 
-async function datastoneCompany(cnpj) {
+// A consulta de EMPRESA na DataStone (paga) era feita duas vezes por lead —
+// datastoneCompany e datastonePessoas batiam no mesmo endpoint. Agora uma só,
+// com cache curto em memória compartilhado pelas duas.
+const _dsCompanyRaw = new Map();
+async function datastoneCompanyRaw(digits) {
   const token = process.env.DATASTONE_API_TOKEN;
-  if (!token) return { ok: true, data: null, note: 'datastone_desativado' };
-  const digits = onlyDigits(cnpj);
-  if (digits.length !== 14) return { ok: false, data: null };
+  const c = _dsCompanyRaw.get(digits);
+  if (c && c.exp > Date.now()) return c.val;
+  let val;
   try {
     const res = await fetchWithTimeout(
       `https://api.datastone.com.br/v1/companies/?cnpj=${digits}`,
       { headers: { Authorization: `Token ${token}`, accept: 'application/json' } },
       15000,
     );
+    if (res.ok) {
+      const j = await res.json();
+      val = { status: res.status, ok: true, comp: Array.isArray(j) ? j[0] : j.results ? j.results[0] : j, body: '' };
+    } else {
+      val = { status: res.status, ok: false, comp: null, body: await res.text().catch(() => '') };
+    }
+  } catch (e) {
+    val = { status: 0, ok: false, comp: null, body: String(e?.message || e), erro: true };
+  }
+  // 429/erro de rede não ficam em cache (reprocessa depois); o resto 10 min.
+  if (val.status !== 429 && !val.erro) _dsCompanyRaw.set(digits, { val, exp: Date.now() + 10 * 60_000 });
+  return val;
+}
+
+async function datastoneCompany(cnpj) {
+  const token = process.env.DATASTONE_API_TOKEN;
+  if (!token) return { ok: true, data: null, note: 'datastone_desativado' };
+  const digits = onlyDigits(cnpj);
+  if (digits.length !== 14) return { ok: false, data: null };
+  try {
+    const res = await datastoneCompanyRaw(digits);
     if (res.status === 401 || res.status === 403) return { ok: false, data: null, note: 'datastone_auth' };
     if (res.status === 429) return { ok: false, data: null }; // limite transitório — reprocessa depois
     if (!res.ok) {
       // Sem créditos = condição PERMANENTE: degrada sem travar nem reprocessar.
-      const body = await res.text().catch(() => '');
-      if (/insufficient_credits|cr[eé]dito/i.test(body)) return { ok: true, data: null, note: 'datastone_sem_creditos' };
+      if (/insufficient_credits|cr[eé]dito/i.test(res.body)) return { ok: true, data: null, note: 'datastone_sem_creditos' };
       return { ok: false, data: null };
     }
-    const j = await res.json();
-    const d = Array.isArray(j) ? j[0] : j.results ? j.results[0] : j;
+    const d = res.comp;
     if (!d || !d.company_name) return { ok: true, data: null }; // não encontrado (não é falha)
 
     const diretoria = (d.partners || [])
@@ -2034,24 +2081,13 @@ async function datastonePessoas(cnpj) {
   if (!token) return { ok: true, people: [], note: 'datastone_desativado' };
   const digits = onlyDigits(cnpj);
   if (digits.length !== 14) return { ok: false, people: [] };
-  let comp;
-  try {
-    const res = await fetchWithTimeout(
-      `${DATASTONE_BASE}/companies/?cnpj=${digits}`,
-      { headers: { Authorization: `Token ${token}`, accept: 'application/json' } },
-      15000,
-    );
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      // Sem créditos = permanente: degrada (Lemit assume) sem travar/reprocessar.
-      if (/insufficient_credits|cr[eé]dito/i.test(body)) return { ok: true, people: [], note: 'datastone_sem_creditos' };
-      return { ok: false, people: [] };
-    }
-    const j = await res.json();
-    comp = Array.isArray(j) ? j[0] : j.results ? j.results[0] : j;
-  } catch {
+  const res = await datastoneCompanyRaw(digits);
+  if (!res.ok) {
+    // Sem créditos = permanente: degrada (Lemit assume) sem travar/reprocessar.
+    if (/insufficient_credits|cr[eé]dito/i.test(res.body)) return { ok: true, people: [], note: 'datastone_sem_creditos' };
     return { ok: false, people: [] };
   }
+  const comp = res.comp;
   if (!comp || !comp.company_name) return { ok: true, people: [] };
   const cpfs = [...new Set((comp.partners || []).map((p) => cpfNorm(p.cpf)).filter(Boolean))];
   const people = (await mapLimit(cpfs, 2, (cpf) => datastonePerson(cpf))).filter(Boolean);
@@ -2313,6 +2349,54 @@ function sbHeaders(token) {
     'content-type': 'application/json',
   };
 }
+// ── Cache em Postgres (enriquecedor_cache, migration_151) ───────────────────
+// Busca web e Places por consulta, com TTL. Só grava resposta OK (falha
+// transitória nunca vira "não existe" permanente — era o bug do _placesCache).
+const DIA = 24 * 60 * 60 * 1000;
+async function cacheGet(chave) {
+  const token = tokenAtual();
+  if (!token) return undefined;
+  try {
+    const rows = await sbSelect(token, 'enriquecedor_cache', `chave=eq.${encodeURIComponent(chave)}&expira_em=gt.${encodeURIComponent(new Date().toISOString())}&select=valor`);
+    return rows?.[0]?.valor;
+  } catch { return undefined; }
+}
+async function cacheSet(chave, valor, ttlMs) {
+  const token = tokenAtual();
+  if (!token) return;
+  try {
+    await sbUpsert(token, 'enriquecedor_cache', [{ chave, valor, expira_em: new Date(Date.now() + ttlMs).toISOString() }], 'chave');
+  } catch { /* cache é best-effort */ }
+}
+const chaveCache = (prefixo, ...partes) => `${prefixo}:${partes.map((x) => String(x ?? '').toLowerCase().trim()).join('|')}`.slice(0, 900);
+
+// ── Métricas (enriquecedor_metricas) — duração por fonte/rota ────────────────
+async function registrarMetrica({ fonte, ms, ok = true, note = null, leadId = null, fase = null }) {
+  const token = tokenAtual();
+  if (!token) return;
+  try {
+    await fetch(`${AUTH_SUPABASE_URL}/rest/v1/enriquecedor_metricas`, {
+      method: 'POST',
+      headers: { ...sbHeaders(token), prefer: 'return=minimal' },
+      body: JSON.stringify({ lead_id: leadId ?? ctxAtual()?.leadId ?? null, origem: 'motor', fase: fase ?? ctxAtual()?.fase ?? null, fonte, duration_ms: Math.round(ms), ok: ok !== false, note: note ? String(note).slice(0, 200) : null }),
+    });
+  } catch { /* métrica nunca derruba a rota */ }
+}
+// Envolve uma função assíncrona registrando a duração e se deu certo (result.ok !== false).
+function medido(fonte, fn) {
+  return async function (...args) {
+    const t0 = Date.now();
+    try {
+      const r = await fn.apply(this, args);
+      void registrarMetrica({ fonte, ms: Date.now() - t0, ok: !(r && r.ok === false), note: r && r.note ? r.note : null });
+      return r;
+    } catch (e) {
+      void registrarMetrica({ fonte, ms: Date.now() - t0, ok: false, note: String(e?.message || e) });
+      throw e;
+    }
+  };
+}
+
 async function sbSelect(token, table, query) {
   const r = await fetch(`${AUTH_SUPABASE_URL}/rest/v1/${table}?${query}`, { headers: sbHeaders(token) });
   if (!r.ok) throw new Error(`select ${table}: HTTP ${r.status}`);
@@ -2422,7 +2506,8 @@ function payloadBriefing(row, audit, decisores, anunciosMeta) {
           facebook: audit.siteFacebook,
         }
       : { online: false, obs: 'empresa sem site no ar' },
-    empreendimentos: (row.empreendimentos ?? []).map((e) => ({ nome: e.nome, cidade: e.cidade, status: e.status })),
+    // Perfil geral não tem "empreendimentos": não manda a lista pra IA não puxar jargão imobiliário.
+    ...((row.perfil ?? 'construtoras') === 'geral' ? {} : { empreendimentos: (row.empreendimentos ?? []).map((e) => ({ nome: e.nome, cidade: e.cidade, status: e.status })) }),
     google: row.google_business?.found !== false && row.google_business
       ? { rating: row.google_business.rating, reviews: row.google_business.reviews, category: row.google_business.category }
       : null,
@@ -2913,6 +2998,7 @@ async function classificarResposta({ texto }) {
 // sem site/anúncios/briefing/nota no Kommo — é o "rodar F2 em todos" pelo servidor.
 async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
   const so = (f) => !Array.isArray(fases) || !fases.length || fases.includes(f);
+  { const st = ctxAtual(); if (st) st.leadId = leadId; }
   const setStatus = (status) =>
     sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { status, updated_at: new Date().toISOString() }).catch(() => {});
   let row = null;
@@ -2953,6 +3039,21 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     // respeitam as chaves validadas/rejeitadas.
     if (so('f2')) {
     await setStatus('esteira_f2');
+    { const st = ctxAtual(); if (st) st.fase = 'F2'; }
+    const chaves = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
+    const igValidado = chaves.instagram?.validacao === 'validado' && row.company_instagram;
+    const fbValidado = chaves.facebook?.validacao === 'validado' && row.company_facebook;
+    const existentes = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=*`)) ?? [];
+    const normNome = (n) => normText(String(n ?? '')).replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
+    // Busca social (web) NÃO depende da DataStone/Lemit: roda em paralelo com elas.
+    const socialP = discoverSociosSocial({
+      company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
+      socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
+      cidade: row.cidade ?? null,
+      rejeitados: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.instagram_rejeitados ?? []])),
+      rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
+      rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
+    }).catch(() => null);
     const [ds, pessoas, lemit] = await Promise.all([
       datastoneCompany(digits).catch(() => null),
       datastonePessoas(digits).catch(() => null),
@@ -2964,22 +3065,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       if (ds.data.organograma) patch2.organograma = ds.data.organograma;
     }
     if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
-    const chaves = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
-    const igValidado = chaves.instagram?.validacao === 'validado' && row.company_instagram;
-    const fbValidado = chaves.facebook?.validacao === 'validado' && row.company_facebook;
-    const existentes = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=*`)) ?? [];
-    const normNome = (n) => normText(String(n ?? '')).replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
-    let social = null;
-    try {
-      social = await discoverSociosSocial({
-        company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
-        socios: (row.socios ?? []).map((s) => s.nome).filter(Boolean),
-        cidade: row.cidade ?? null,
-        rejeitados: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.instagram_rejeitados ?? []])),
-        rejeitadosLinkedin: Object.fromEntries(existentes.map((d) => [normText(d.nome), d.linkedin_rejeitados ?? []])),
-        rejeitadosEmpresa: { instagram: chaves.instagram?.rejeitados ?? [], facebook: chaves.facebook?.rejeitados ?? [] },
-      });
-    } catch { /* busca indisponível */ }
+    const social = await socialP;
     if (social?.companyInstagram && !igValidado) patch2.company_instagram = social.companyInstagram;
     if (social?.companyFacebook && !fbValidado) patch2.company_facebook = social.companyFacebook;
     if (Object.keys(patch2).length) {
@@ -3080,6 +3166,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     // ── F3 · Diagnóstico digital (site, GMN, empreendimentos, briefing) ─────
     if (so('f3')) {
     await setStatus('esteira_f3');
+    { const st = ctxAtual(); if (st) st.fase = 'F3'; }
     let audit = null;
     try {
       const disc = await discoverSite({
@@ -3092,7 +3179,8 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       if (disc?.url) {
         audit = await auditUrl(disc.url).catch(() => null);
         if (audit) {
-          try { audit.pagespeed = await pagespeed(audit.siteUrl); } catch { /* sem nota */ }
+          // PageSpeed (até 2,5 min) sai do caminho crítico: dispara agora, cobra depois.
+          var psP = pagespeed(audit.siteUrl).catch(() => null);
           await sbUpsert(token, 'enriquecedor_site_audits', [{
             lead_id: leadId,
             site_url: audit.siteUrl,
@@ -3115,14 +3203,20 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
         }
       }
     } catch { /* site não encontrado */ }
-    try {
-      const gb = await serperPlacesCached(row.razao_social ?? row.company_name_raw, row.cidade);
-      if (gb) {
-        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb });
-        row.google_business = gb;
-      }
-    } catch { /* GMN indisponível */ }
-    if ((row.perfil ?? 'construtoras') !== 'geral') {
+    // Google Meu Negócio ‖ empreendimentos ‖ PageSpeed (já disparado) — independentes.
+    const chavesF3 = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
+    const gmnP = (async () => {
+      if (chavesF3.gmn?.validacao === 'validado' && row.google_business) return; // ficha validada pelo operador fica
+      try {
+        const gb = await serperPlacesCached(chavesF3.gmn?.consulta?.trim() || marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw), row.cidade, chavesF3.gmn?.rejeitados ?? []);
+        if (gb) {
+          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb });
+          row.google_business = gb;
+        }
+      } catch { /* GMN indisponível */ }
+    })();
+    const empP = (async () => {
+      if ((row.perfil ?? 'construtoras') === 'geral') return;
       try {
         const emp = await discoverEmpreendimentos({
           company: row.razao_social ?? row.company_name_raw,
@@ -3131,17 +3225,38 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
           siteUrl: row.site_url,
         });
         if (emp?.ok && (emp.empreendimentos ?? []).length) {
-          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { empreendimentos: emp.empreendimentos });
-          row.empreendimentos = emp.empreendimentos;
+          // Mescla com o que já existe (LPs descobertas por anúncio e auditorias de LP não se perdem).
+          const atuais = Array.isArray(row.empreendimentos) ? row.empreendimentos : [];
+          const chaveE = (e) => normText(e?.nome ?? '');
+          const mapa = new Map(atuais.map((e) => [chaveE(e), e]));
+          for (const e of emp.empreendimentos) {
+            const ex = mapa.get(chaveE(e));
+            mapa.set(chaveE(e), ex ? { ...ex, ...e, lp: e.lp ?? ex.lp ?? null, lpAudit: ex.lpAudit ?? e.lpAudit ?? null } : e);
+          }
+          const final = [...mapa.values()];
+          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { empreendimentos: final });
+          row.empreendimentos = final;
         }
       } catch { /* sem empreendimentos */ }
+    })();
+    await Promise.all([gmnP, empP]);
+    // PageSpeed: espera no máximo 20 s aqui; se demorar mais, grava quando chegar.
+    if (typeof psP !== 'undefined' && psP && audit) {
+      const ps = await Promise.race([psP, sleep(20000).then(() => undefined)]);
+      const gravaPs = async (v) => { if (v && v.ok !== false) { audit.pagespeed = v; await sbPatch(token, 'enriquecedor_site_audits', `lead_id=eq.${leadId}`, { pagespeed: v }).catch(() => {}); } };
+      if (ps !== undefined) await gravaPs(ps);
+      else void psP.then(gravaPs).catch(() => {});
     }
     const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
     let briefing = null;
-    const b1 = await generateBriefing(payloadBriefing(row, audit, decisores, null));
-    if (b1?.ok && b1.briefing) {
-      briefing = { ...b1.briefing, model: b1.model ?? null, generatedAt: new Date().toISOString() };
-      await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
+    // Briefing do F3 só quando o F4 NÃO vai rodar nesta execução (senão seria
+    // gerado duas vezes — o do F4 já incorpora a mídia).
+    if (!so('f4')) {
+      const b1 = await generateBriefing(payloadBriefing(row, audit, decisores, null));
+      if (b1?.ok && b1.briefing) {
+        briefing = { ...b1.briefing, model: b1.model ?? null, generatedAt: new Date().toISOString() };
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
+      }
     }
 
     }
@@ -3211,6 +3326,14 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
           await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
         }
       } else {
+        // Sem medição Meta: o briefing do F3 foi pulado por causa do F4 — gera agora sem mídia.
+        if (!briefing) {
+          const b3 = await generateBriefing(payloadBriefing(row, audit, decisores, null)).catch(() => null);
+          if (b3?.ok && b3.briefing) {
+            briefing = { ...b3.briefing, model: b3.model ?? null, generatedAt: new Date().toISOString() };
+            await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { briefing });
+          }
+        }
         // Motivo real fica no lead (a UI mostra em vez de "ainda não medidos").
         await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, {
           anuncios: { meta: row.anuncios?.meta ?? null, google, checkedAt: row.anuncios?.checkedAt ?? new Date().toISOString(), metaFalha: { note: an?.note ?? 'meta_nao_medido', at: new Date().toISOString() } },
@@ -3296,9 +3419,33 @@ async function logErroMotor(req, etapa, mensagem, detalhe) {
   }
 }
 
+// Métricas por fonte externa: cada chamada registra duração e sucesso em
+// enriquecedor_metricas. Rebind das declarações (bindings de function são mutáveis).
+searchOnce = medido('busca_web', searchOnce);
+serperPlaces = medido('places', serperPlaces);
+fetchCnpj = medido('cnpj', fetchCnpj);
+datastoneCompany = medido('datastone_empresa', datastoneCompany);
+datastonePessoas = medido('datastone_pessoas', datastonePessoas);
+lemitEnrich = medido('lemit', lemitEnrich);
+discoverSociosSocial = medido('social_socios', discoverSociosSocial);
+discoverSite = medido('site_descoberta', discoverSite);
+auditUrl = medido('site_auditoria', auditUrl);
+pagespeed = medido('pagespeed', pagespeed);
+discoverEmpreendimentos = medido('empreendimentos', discoverEmpreendimentos);
+generateBriefing = medido('llm_briefing', generateBriefing);
+metaAdSearch = medido('meta_adlib', metaAdSearch);
+resolverMetaPageId = medido('meta_page_id', resolverMetaPageId);
+googleTransparency = medido('google_transparency', googleTransparency);
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') return send(res, 204, {});
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  // Contexto da requisição (token/lead/fase) pra cache e métricas em qualquer profundidade.
+  reqCtx.enterWith({ token: String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null, leadId: null, fase: null });
+  if (url.pathname.startsWith('/api/') && url.pathname !== '/api/health') {
+    const t0 = Date.now();
+    res.once('finish', () => void registrarMetrica({ fonte: `rota:${url.pathname}`, ms: Date.now() - t0, ok: res.statusCode < 500, note: res.statusCode >= 400 ? `HTTP ${res.statusCode}` : null }));
+  }
 
   try {
     if (url.pathname !== '/api/health' && !(await isAuthenticated(req))) {
@@ -3320,7 +3467,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'preencher-cards-2026-09-28',
+        versao: 'onda1-2026-10-01',
         ok: true,
         authRequired: AUTH_REQUIRED,
         authProbe,

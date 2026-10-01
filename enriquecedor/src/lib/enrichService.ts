@@ -8,6 +8,7 @@ import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
 import { redeHandle } from './contactSelection';
 import { facebookHandle, hostOf as hostDe, marcaAtual, metaTermoAtual, overridesBusca, registrarAnuncianteResolvido } from './chavesBusca';
+import { medir, registrarMetrica } from './metricas';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -340,64 +341,70 @@ export async function discoverPeople(
     if (p.linkedinRejeitados?.length) rejeitadosLinkedin[normName(p.nome)] = p.linkedinRejeitados;
   }
 
-  // --- Brave (redes) ---
-  let social: SociosSocialResponse = {
-    companyInstagram: null,
-    companyFacebook: null,
-    people: [],
-    searchFailed: false,
-  };
+  // --- As 3 fontes em PARALELO (eram em série: ~3× o tempo) ---
+  let social: SociosSocialResponse = { companyInstagram: null, companyFacebook: null, people: [], searchFailed: false };
   let braveFailed = false;
-  try {
-    const res = await motorFetch('/api/socios-social', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome), cidade: lead.cidade, rejeitados, rejeitadosLinkedin, rejeitadosEmpresa: ov.redesRejeitadas }),
-    });
-    if (res.ok) {
-      social = await res.json();
-      braveFailed = !!social.searchFailed;
-    } else braveFailed = true;
-  } catch {
-    braveFailed = true;
-  }
-
-  // --- Lemit (contatos) ---
   let lemit: LemitResponse = { ok: false, company: null, people: [] };
   let lemitFailed = false;
-  try {
-    const res = await motorFetch('/api/lemit', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cnpj: lead.cnpj }),
-    });
-    if (res.ok) {
-      lemit = await res.json();
-      lemitFailed = !lemit.ok;
-    } else lemitFailed = true;
-  } catch {
-    lemitFailed = true;
-  }
-
-  // --- DataStone (contatos do decisor por CPF: telefone quente/WhatsApp) ---
   let dsPeople: DatastonePessoa[] = [];
   let dsFailed = false;
   let dsNote: string | undefined;
-  try {
-    const res = await motorFetch('/api/datastone-pessoas', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cnpj: lead.cnpj }),
-    });
-    if (res.ok) {
-      const j = (await res.json()) as { ok: boolean; people: DatastonePessoa[]; note?: string };
-      dsPeople = j.people ?? [];
-      dsFailed = j.ok === false;
-      dsNote = j.note;
-    } else dsFailed = true;
-  } catch {
-    dsFailed = true;
-  }
+  await Promise.all([
+    // Brave (redes da empresa + sócios)
+    medir({ leadId: lead.id, fase: 'F2', fonte: 'socios-social' }, async () => {
+      try {
+        const res = await motorFetch('/api/socios-social', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          timeoutMs: 180_000, // 2 + 2×sócios buscas, serializadas no motor
+          body: JSON.stringify({ company: empresa, socios: sociosPessoas.map((s) => s.nome), cidade: lead.cidade, rejeitados, rejeitadosLinkedin, rejeitadosEmpresa: ov.redesRejeitadas }),
+        });
+        if (res.ok) {
+          social = await res.json();
+          braveFailed = !!social.searchFailed;
+        } else braveFailed = true;
+      } catch {
+        braveFailed = true;
+      }
+      return { ok: !braveFailed };
+    }, (r) => r.ok),
+    // Lemit (contatos)
+    medir({ leadId: lead.id, fase: 'F2', fonte: 'lemit' }, async () => {
+      try {
+        const res = await motorFetch('/api/lemit', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cnpj: lead.cnpj }),
+        });
+        if (res.ok) {
+          lemit = await res.json();
+          lemitFailed = !lemit.ok;
+        } else lemitFailed = true;
+      } catch {
+        lemitFailed = true;
+      }
+      return { ok: !lemitFailed };
+    }, (r) => r.ok),
+    // DataStone (contatos do decisor por CPF: telefone quente/WhatsApp)
+    medir({ leadId: lead.id, fase: 'F2', fonte: 'datastone-pessoas' }, async () => {
+      try {
+        const res = await motorFetch('/api/datastone-pessoas', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ cnpj: lead.cnpj }),
+        });
+        if (res.ok) {
+          const j = (await res.json()) as { ok: boolean; people: DatastonePessoa[]; note?: string };
+          dsPeople = j.people ?? [];
+          dsFailed = j.ok === false;
+          dsNote = j.note;
+        } else dsFailed = true;
+      } catch {
+        dsFailed = true;
+      }
+      return { ok: !dsFailed };
+    }, (r) => r.ok),
+  ]);
 
   // Redes institucionais: o link no PRÓPRIO site tem prioridade (mais confiável
   // que busca). Só usa a busca como complemento quando o site não tem.
@@ -558,7 +565,9 @@ export async function discoverPeople(
   });
   if (people.length > 0 && !people.some((p) => p.isPrimary)) people[0].isPrimary = true;
 
-  await decisionMakersRepo.replaceForLead(lead.id, people);
+  // Casa com os decisores existentes (preserva seleção do F2, redes validadas e
+  // card do Kommo) em vez de apagar e recriar.
+  await decisionMakersRepo.syncForLead(lead.id, people);
 
   const issues: EnrichIssue[] = [];
   if (braveFailed)
@@ -590,6 +599,18 @@ interface SourceResult {
   note?: string;
 }
 
+// Lista nova da IA + o que já existia: LP descoberta por anúncio e auditoria de
+// LP (F4) não se perdem quando o F3 roda de novo. Casa por nome normalizado.
+function mesclarEmpreendimentos(atuais: Empreendimento[], novos: Empreendimento[]): Empreendimento[] {
+  const k = (e: Empreendimento) => normName(e.nome);
+  const mapa = new Map(atuais.map((e) => [k(e), e]));
+  for (const n of novos) {
+    const ex = mapa.get(k(n));
+    mapa.set(k(n), ex ? { ...ex, ...n, lp: n.lp ?? ex.lp ?? null, lpAudit: ex.lpAudit ?? n.lpAudit ?? null, status: n.status ?? ex.status ?? null } : n);
+  }
+  return [...mapa.values()];
+}
+
 async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promise<SourceResult> {
   // Etapa específica do perfil construtoras — no perfil versátil (geral) não há
   // "empreendimentos" para extrair; pula sem marcar falha.
@@ -609,7 +630,7 @@ async function fetchEmpreendimentos(lead: Lead, siteUrl?: string | null): Promis
     if (!res.ok) return { ok: false };
     const j = await res.json();
     if (Array.isArray(j.empreendimentos) && j.empreendimentos.length > 0) {
-      lead.empreendimentos = j.empreendimentos;
+      lead.empreendimentos = mesclarEmpreendimentos(lead.empreendimentos ?? [], j.empreendimentos as Empreendimento[]);
     }
     return { ok: j.ok !== false, note: j.note }; // ia_desativada conta como ok (etapa pulada)
   } catch {
@@ -1075,35 +1096,47 @@ async function fetchBriefing(lead: Lead, audit: SiteAudit): Promise<SourceResult
   }
 }
 
+// PageSpeed fora do caminho crítico: dispara junto com o resto, espera no
+// máximo `capMs`; se não chegou, grava sozinho quando chegar (patchAudit).
+function pagespeedAssincrono(lead: Lead, audit: SiteAudit, capMs = 20_000): Promise<SiteAudit['pagespeed']> {
+  if (!(audit.isOnline && audit.siteUrl)) return Promise.resolve(null);
+  const p = medir({ leadId: lead.id, fase: 'F3', fonte: 'pagespeed' }, () => fetchPagespeed(audit.siteUrl), (r) => !!r).catch(() => null);
+  return Promise.race([p, sleep(capMs).then(() => undefined as unknown as SiteAudit['pagespeed'])]).then((ps) => {
+    if (ps === undefined) {
+      // chegou depois do teto: grava sem segurar a fase
+      void p.then((v) => { if (v) return leadsRepo.patchAudit(lead.id, { pagespeed: v }); }).catch(() => {});
+      return null;
+    }
+    return ps;
+  });
+}
+
+// Enriquecimento base (F2+F3) de um lead — usado pela tela de Leads ("Enriquecer
+// pendentes"). Grava SÓ as colunas que produziu (patch) e nunca mexe em F4.
 async function enrichOne(lead: Lead): Promise<boolean> {
+  const t0 = performance.now();
   const issues: EnrichIssue[] = [];
-  const { audit, searchFailed: siteFailed } = await auditLeadSite(lead);
+  const { audit, searchFailed: siteFailed } = await medir({ leadId: lead.id, fase: 'F3', fonte: 'site-audit' }, () => auditLeadSite(lead), (r) => !r.searchFailed);
   if (siteFailed)
     issues.push({ source: 'Site / Busca', reason: 'site não descoberto ou busca indisponível — presença digital pode faltar' });
-  // PageSpeed (Google) — best-effort; não bloqueia a conclusão.
-  if (audit.isOnline && audit.siteUrl) {
-    audit.pagespeed = await fetchPagespeed(audit.siteUrl);
-    if (!audit.pagespeed)
-      issues.push({ source: 'PageSpeed (Google)', reason: 'indisponível ou limite atingido — nota do site aproximada' });
-  }
-  await leadsRepo.saveAudit(audit);
-  const people = await discoverPeople(lead, {
-    instagram: audit.siteInstagram,
-    facebook: audit.siteFacebook,
-  }); // muta lead.companyInstagram/Facebook
+  await leadsRepo.saveAudit(audit); // vazia não sobrescreve uma boa
+  const psP = pagespeedAssincrono(lead, audit);
+  // Fontes independentes em paralelo (eram 4 chamadas em série).
+  const [people, ds, empre, gmn] = await Promise.all([
+    discoverPeople(lead, { instagram: audit.siteInstagram, facebook: audit.siteFacebook }), // muta companyInstagram/Facebook, lemitCompany, chavesBusca
+    medir({ leadId: lead.id, fase: 'F2', fonte: 'datastone' }, () => fetchDatastone(lead), (r) => r.ok), // muta organograma/datastone
+    medir({ leadId: lead.id, fase: 'F3', fonte: 'empreendimentos' }, () => fetchEmpreendimentos(lead, audit.siteUrl), (r) => r.ok),
+    medir({ leadId: lead.id, fase: 'F3', fonte: 'google-negocio' }, () => fetchGoogleBusiness(lead), (r) => r.ok),
+  ]);
   issues.push(...people.issues);
-  const ds = await fetchDatastone(lead); // muta lead.organograma / lead.datastone
-  const dsI = issueFor('DataStone', ds.ok, ds.note);
-  if (dsI) issues.push(dsI);
-  const empre = await fetchEmpreendimentos(lead, audit.siteUrl); // muta lead.empreendimentos
-  const eI = issueFor('Empreendimentos (IA)', empre.ok, empre.note);
-  if (eI) issues.push(eI);
-  const gmn = await fetchGoogleBusiness(lead); // muta lead.googleBusiness
-  const gI = issueFor('Google Meu Negócio', gmn.ok, gmn.note);
-  if (gI) issues.push(gI);
-  // NOTA: os anúncios (headless/Meta) NÃO rodam aqui — vão para uma fila em
-  // background cadenciada (runAdsQueue), para não tomar bloqueio/ban.
-  const briefing = await fetchBriefing(lead, audit); // por último: usa todo o contexto
+  for (const [src, r] of [['DataStone', ds], ['Empreendimentos (IA)', empre], ['Google Meu Negócio', gmn]] as const) {
+    const it = issueFor(src, r.ok, r.note);
+    if (it) issues.push(it);
+  }
+  const ps = await psP;
+  if (ps) audit.pagespeed = ps;
+  else if (audit.isOnline && audit.siteUrl) issues.push({ source: 'PageSpeed (Google)', reason: 'ainda não respondeu — a nota entra sozinha quando chegar' });
+  const briefing = await medir({ leadId: lead.id, fase: 'F3', fonte: 'briefing' }, () => fetchBriefing(lead, audit), (r) => r.ok); // por último: usa todo o contexto
   const bI = issueFor('Briefing (IA)', briefing.ok, briefing.note);
   if (bI) issues.push(bI);
 
@@ -1117,14 +1150,23 @@ async function enrichOne(lead: Lead): Promise<boolean> {
   });
 
   const complete = !siteFailed && people.ok && ds.ok && empre.ok && gmn.ok && briefing.ok;
-  const updated: Lead = {
-    ...lead,
-    status: complete ? 'enriquecido' : 'incompleto',
-    score: computeScore(lead, audit),
-    updatedAt: new Date().toISOString(),
-  };
-  await leadsRepo.update(updated);
-  lead.status = updated.status; // reflete para o loop de reprocesso
+  lead.status = complete ? 'enriquecido' : 'incompleto';
+  lead.score = computeScore(lead, audit);
+  await leadsRepo.patch(lead.id, {
+    companyInstagram: lead.companyInstagram,
+    companyFacebook: lead.companyFacebook,
+    lemitCompany: lead.lemitCompany,
+    organograma: lead.organograma,
+    datastone: lead.datastone,
+    empreendimentos: lead.empreendimentos,
+    googleBusiness: lead.googleBusiness,
+    briefing: lead.briefing,
+    chavesBusca: lead.chavesBusca,
+    enrichIssues: lead.enrichIssues,
+    status: lead.status,
+    score: lead.score,
+  });
+  void registrarMetrica({ leadId: lead.id, fase: 'F2+F3', fonte: 'fase', durationMs: performance.now() - t0, ok: complete });
   return complete;
 }
 
@@ -1147,13 +1189,25 @@ export async function enrichQualificacao(lead: Lead, opts?: { force?: boolean })
   if (jaFeito && !opts?.force) {
     return { ok: true, note: 'ja_feito', resumo: 'já qualificado (dado existente)' };
   }
-  const people = await discoverPeople(lead, { instagram: lead.companyInstagram, facebook: lead.companyFacebook });
-  const ds = await fetchDatastone(lead);
+  const t0 = performance.now();
+  const [people, ds] = await Promise.all([
+    discoverPeople(lead, { instagram: lead.companyInstagram, facebook: lead.companyFacebook }),
+    medir({ leadId: lead.id, fase: 'F2', fonte: 'datastone' }, () => fetchDatastone(lead), (r) => r.ok),
+  ]);
   lead.score = computeScore(lead);
-  lead.updatedAt = new Date().toISOString();
-  await leadsRepo.update(lead);
+  // Só o que o F2 produz — F3/F4 ficam intactos.
+  await leadsRepo.patch(lead.id, {
+    companyInstagram: lead.companyInstagram,
+    companyFacebook: lead.companyFacebook,
+    lemitCompany: lead.lemitCompany,
+    organograma: lead.organograma,
+    datastone: lead.datastone,
+    chavesBusca: lead.chavesBusca,
+    score: lead.score,
+  });
   const dir = lead.organograma?.diretoria?.length ?? 0;
   const ger = lead.organograma?.gerencia?.length ?? 0;
+  void registrarMetrica({ leadId: lead.id, fase: 'F2', fonte: 'fase', durationMs: performance.now() - t0, ok: people.ok && ds.ok, note: ds.note ?? null });
   return { ok: people.ok && ds.ok, note: ds.note, resumo: `diretoria ${dir} · gerência ${ger} · sócios ${lead.socios?.length ?? 0}` };
 }
 
@@ -1162,19 +1216,34 @@ export async function enrichDiagnostico(lead: Lead, opts?: { force?: boolean }):
   if (lead.briefing && !opts?.force) {
     return { ok: true, note: 'ja_feito', resumo: 'já diagnosticado (dado existente)' };
   }
-  const { audit, searchFailed } = await auditLeadSite(lead);
-  if (audit.isOnline && audit.siteUrl) audit.pagespeed = await fetchPagespeed(audit.siteUrl);
-  await leadsRepo.saveAudit(audit);
-  const empre = await fetchEmpreendimentos(lead, audit.siteUrl);
-  const gmn = await fetchGoogleBusiness(lead);
-  const briefing = await fetchBriefing(lead, audit);
+  const t0 = performance.now();
+  const { audit, searchFailed } = await medir({ leadId: lead.id, fase: 'F3', fonte: 'site-audit' }, () => auditLeadSite(lead), (r) => !r.searchFailed);
+  await leadsRepo.saveAudit(audit); // vazia não sobrescreve uma boa
+  const psP = pagespeedAssincrono(lead, audit);
+  const [empre, gmn] = await Promise.all([
+    medir({ leadId: lead.id, fase: 'F3', fonte: 'empreendimentos' }, () => fetchEmpreendimentos(lead, audit.siteUrl), (r) => r.ok),
+    medir({ leadId: lead.id, fase: 'F3', fonte: 'google-negocio' }, () => fetchGoogleBusiness(lead), (r) => r.ok),
+  ]);
+  const ps = await psP;
+  if (ps) { audit.pagespeed = ps; await leadsRepo.patchAudit(lead.id, { pagespeed: ps }); }
+  const briefing = await medir({ leadId: lead.id, fase: 'F3', fonte: 'briefing' }, () => fetchBriefing(lead, audit), (r) => r.ok);
   lead.score = computeScore(lead, audit);
-  lead.updatedAt = new Date().toISOString();
-  await leadsRepo.update(lead);
+  // Só o que o F3 produz — decisores (F2) e anúncios/cadência (F4+) ficam intactos.
+  await leadsRepo.patch(lead.id, {
+    empreendimentos: lead.empreendimentos,
+    googleBusiness: lead.googleBusiness,
+    briefing: lead.briefing,
+    chavesBusca: lead.chavesBusca,
+    score: lead.score,
+  });
   const emps = lead.empreendimentos?.length ?? 0;
+  const ok = !searchFailed && empre.ok && gmn.ok && briefing.ok;
+  void registrarMetrica({ leadId: lead.id, fase: 'F3', fonte: 'fase', durationMs: performance.now() - t0, ok });
   return {
-    ok: !searchFailed && empre.ok && gmn.ok && briefing.ok,
-    resumo: `site ${audit.isOnline ? '✓' : '—'} · ${emps} empreend · GMN ${lead.googleBusiness?.rating ?? '—'}★`,
+    ok,
+    resumo: lead.perfil === 'geral'
+      ? `site ${audit.isOnline ? '✓' : '—'} · GMN ${lead.googleBusiness?.rating ?? '—'}★`
+      : `site ${audit.isOnline ? '✓' : '—'} · ${emps} empreend · GMN ${lead.googleBusiness?.rating ?? '—'}★`,
   };
 }
 
@@ -1183,23 +1252,15 @@ export async function enrichLeads(
   onProgress?: (p: EnrichProgress) => void,
 ): Promise<void> {
   const total = leads.length;
-  let firstRoundDone = 0;
-  let pending = leads.slice();
-
-  // Até 3 rodadas: reprocessa automaticamente o que ficou incompleto.
-  for (let round = 0; round < 3 && pending.length > 0; round++) {
-    const failed: Lead[] = [];
-    await mapLimit(pending, 5, async (lead) => {
-      const ok = await enrichOne(lead);
-      if (!ok) failed.push(lead);
-      if (round === 0) {
-        firstRoundDone += 1;
-        onProgress?.({ done: firstRoundDone, total });
-      }
-    });
-    pending = failed;
-    if (pending.length > 0 && round < 2) await sleep(2500); // backoff entre rodadas
-  }
+  let done = 0;
+  // Uma rodada só. As 3 rodadas antigas repetiam o pipeline INTEIRO (fontes
+  // pagas inclusive) a cada fonte que falhasse; falha fica registrada em
+  // enrichIssues e o operador refaz a fase certa pelo funil.
+  await mapLimit(leads, 3, async (lead) => {
+    await enrichOne(lead);
+    done += 1;
+    onProgress?.({ done, total });
+  });
   // Anúncios (headless Meta) NÃO rodam automaticamente — são medidos SOB DEMANDA
   // (botão "Medir agora" por lead), para nunca tomar ban por rajada de requisições.
 }
@@ -1263,14 +1324,17 @@ async function auditPendingLps(lead: Lead): Promise<number> {
  */
 export async function measureLeadAds(lead: Lead): Promise<{ ok: boolean; note?: string; google?: SourceResult }> {
   const audit = await leadsRepo.getAudit(lead.id);
-  await resolverAnunciantes(lead, audit);
-  await leadsRepo.update(lead); // as chaves resolvidas aparecem mesmo que a medição falhe
+  const t0 = performance.now();
+  await medir({ leadId: lead.id, fase: 'F4', fonte: 'anunciantes-resolver' }, () => resolverAnunciantes(lead, audit));
+  await leadsRepo.patch(lead.id, { chavesBusca: lead.chavesBusca, anuncios: lead.anuncios }); // as chaves resolvidas aparecem mesmo que a medição falhe
   const [r, g] = await Promise.all([
-    fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit)),
-    fetchAnunciosGoogle(lead, audit),
+    medir({ leadId: lead.id, fase: 'F4', fonte: 'anuncios-meta' }, () => fetchAnuncios(lead, audit ?? ({ siteUrl: null } as SiteAudit)), (x) => x.ok),
+    medir({ leadId: lead.id, fase: 'F4', fonte: 'anuncios-google' }, () => fetchAnunciosGoogle(lead, audit), (x) => x.ok),
   ]);
-  await auditPendingLps(lead); // audita as LPs recém-descobertas nos anúncios
-  await leadsRepo.update(lead);
+  await medir({ leadId: lead.id, fase: 'F4', fonte: 'audit-lps' }, () => auditPendingLps(lead)); // audita as LPs recém-descobertas nos anúncios
+  // Só o que o F4 produz.
+  await leadsRepo.patch(lead.id, { anuncios: lead.anuncios, empreendimentos: lead.empreendimentos, chavesBusca: lead.chavesBusca, enrichIssues: lead.enrichIssues });
+  void registrarMetrica({ leadId: lead.id, fase: 'F4', fonte: 'fase', durationMs: performance.now() - t0, ok: r.ok, note: r.note ?? null });
   return { ...r, google: g };
 }
 
@@ -1288,9 +1352,8 @@ export async function runAnuncios(lead: Lead): Promise<FaseResult> {
   let resumo: string | undefined;
   if (r.ok && medido && fresh) {
     const audit = (await leadsRepo.getAudit(lead.id)) ?? ({ leadId: lead.id, isOnline: false } as unknown as SiteAudit);
-    await fetchBriefing(fresh, audit); // re-gera com anúncios no contexto
-    fresh.updatedAt = new Date().toISOString();
-    await leadsRepo.update(fresh);
+    await medir({ leadId: lead.id, fase: 'F4', fonte: 'briefing' }, () => fetchBriefing(fresh, audit), (x) => x.ok); // re-gera com anúncios no contexto
+    await leadsRepo.patch(fresh.id, { briefing: fresh.briefing });
     const g = fresh.anuncios?.google;
     resumo = `${meta.modo === 'pagina' ? 'Meta (página oficial): ' : 'Meta (termo): '}${meta.validados.length} validados · ${meta.aValidar.length} a validar${g ? ` · Google: ${g.criativos} criativo(s)` : ''} · briefing atualizado`;
     // Cadência: com F4 medido, o motor detecta e persiste as falhas verificáveis
@@ -1335,7 +1398,7 @@ export async function runAdsQueue(leads: Lead[]): Promise<void> {
         const cur = lead.enrichIssues ?? [];
         if (!cur.some((x) => x.source === aI.source)) lead.enrichIssues = [...cur, aI];
       }
-      await leadsRepo.update(lead);
+      await leadsRepo.patch(lead.id, { anuncios: lead.anuncios, empreendimentos: lead.empreendimentos, chavesBusca: lead.chavesBusca, enrichIssues: lead.enrichIssues });
     }),
   );
 }

@@ -31,7 +31,88 @@ export const decisionMakersRepo = {
     return (data ?? []).map(fromRow);
   },
 
-  // Substitui todos os sócios de um lead pela nova lista.
+  /**
+   * Grava edições do operador (seleção, Manter/Apagar de redes) nos decisores
+   * JÁ existentes — upsert por id. Antes era apagar-e-inserir, que trocava os
+   * ids (perdia o vínculo com os envios da cadência) e não era atômico.
+   */
+  async upsertMany(people: DecisionMaker[]): Promise<void> {
+    if (!people.length) return;
+    if (!supabaseConfigured) {
+      const ids = new Set(people.map((p) => p.id));
+      writeLocal([...readLocal().filter((d) => !ids.has(d.id)), ...people]);
+      return;
+    }
+    const comId = people.filter((p) => UUID_RE.test(p.id));
+    const semId = people.filter((p) => !UUID_RE.test(p.id));
+    if (comId.length) {
+      const { error } = await supabase.from('enriquecedor_decision_makers').upsert(comId.map((d) => ({ id: d.id, ...toRow(d) })), { onConflict: 'id' });
+      if (error) throw error;
+    }
+    if (semId.length) {
+      const { error } = await supabase.from('enriquecedor_decision_makers').insert(semId.map(toRow));
+      if (error) throw error;
+    }
+  },
+
+  /**
+   * Sincroniza a lista descoberta pelo enriquecimento com a que existe no
+   * banco: casa por CPF ou nome normalizado; quem já existe é ATUALIZADO
+   * preservando o que o operador fez (selecionado, telefones/e-mails marcados,
+   * card do Kommo, validação de redes); quem é novo entra; ninguém é apagado.
+   * Mesma regra da esteira do motor. Substitui o antigo apagar-e-inserir.
+   */
+  async syncForLead(leadId: string, novos: DecisionMaker[]): Promise<void> {
+    const atuais = await this.listByLead(leadId);
+    if (!atuais.length) {
+      await this.replaceForLead(leadId, novos);
+      return;
+    }
+    const porCpf = new Map(atuais.filter((d) => d.cpf).map((d) => [digits(d.cpf), d]));
+    const porNome = new Map(atuais.map((d) => [normNome(d.nome), d]));
+    const inserts: DecisionMaker[] = [];
+    const updates: DecisionMaker[] = [];
+    for (const n of novos) {
+      const ex = (n.cpf ? porCpf.get(digits(n.cpf)) : undefined) ?? porNome.get(normNome(n.nome));
+      if (!ex) { inserts.push({ ...n, leadId, id: `novo-${Math.random().toString(36).slice(2)}` }); continue; }
+      updates.push({
+        ...n,
+        id: ex.id,
+        leadId,
+        cargo: ex.cargo ?? n.cargo,
+        isPrimary: ex.isPrimary || n.isPrimary,
+        selecionado: ex.selecionado ?? n.selecionado,
+        kommoLeadId: ex.kommoLeadId ?? n.kommoLeadId ?? null,
+        kommoContactId: ex.kommoContactId ?? n.kommoContactId ?? null,
+        instagram: ex.instagramValidacao === 'validado' && ex.instagram ? ex.instagram : n.instagram,
+        instagramConfianca: ex.instagramValidacao === 'validado' && ex.instagram ? ex.instagramConfianca : n.instagramConfianca,
+        instagramValidacao: ex.instagramValidacao === 'validado' && ex.instagram ? 'validado' : n.instagramValidacao ?? null,
+        instagramRejeitados: [...new Set([...(ex.instagramRejeitados ?? []), ...(n.instagramRejeitados ?? [])])],
+        linkedin: ex.linkedinValidacao === 'validado' && ex.linkedin ? ex.linkedin : n.linkedin,
+        linkedinConfianca: ex.linkedinValidacao === 'validado' && ex.linkedin ? ex.linkedinConfianca : n.linkedinConfianca,
+        linkedinValidacao: ex.linkedinValidacao === 'validado' && ex.linkedin ? 'validado' : n.linkedinValidacao ?? null,
+        linkedinRejeitados: [...new Set([...(ex.linkedinRejeitados ?? []), ...(n.linkedinRejeitados ?? [])])],
+        phones: (n.phones ?? []).map((ph) => ({ ...ph, selecionado: ex.phones?.find((x) => digits(x.numero).slice(-11) === digits(ph.numero).slice(-11))?.selecionado ?? ph.selecionado })),
+        emails: (n.emails ?? []).map((em) => ({ ...em, selecionado: ex.emails?.find((x) => x.email.toLowerCase() === em.email.toLowerCase())?.selecionado ?? em.selecionado })),
+      });
+    }
+    if (!supabaseConfigured) {
+      const others = readLocal().filter((d) => d.leadId !== leadId);
+      const mantidos = atuais.filter((d) => !updates.some((u) => u.id === d.id));
+      writeLocal([...others, ...mantidos, ...updates, ...inserts]);
+      return;
+    }
+    if (updates.length) {
+      const { error } = await supabase.from('enriquecedor_decision_makers').upsert(updates.map((d) => ({ id: d.id, ...toRow(d) })), { onConflict: 'id' });
+      if (error) throw error;
+    }
+    if (inserts.length) {
+      const { error } = await supabase.from('enriquecedor_decision_makers').insert(inserts.map(toRow));
+      if (error) throw error;
+    }
+  },
+
+  // Substitui todos os sócios de um lead pela nova lista (usado só quando não há nenhum).
   async replaceForLead(leadId: string, people: DecisionMaker[]): Promise<void> {
     if (!supabaseConfigured) {
       const others = readLocal().filter((d) => d.leadId !== leadId);
@@ -45,6 +126,10 @@ export const decisionMakersRepo = {
     }
   },
 };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const digits = (s: string | null | undefined) => String(s ?? '').replace(/\D/g, '');
+const normNome = (s: string | null | undefined) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim();
 
 function toRow(d: DecisionMaker): Record<string, unknown> {
   return {

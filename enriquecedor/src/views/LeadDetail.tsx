@@ -54,7 +54,7 @@ import { decisionMakersRepo } from '../lib/decisionMakersRepo';
 import { apagarRede, manterRede, redeHandle, resumoSelecao, selecionarTudo, toggleDecisor, toggleEmail, togglePhone, type RedeValidavel } from '../lib/contactSelection';
 import { CHAVES_POR_FASE, TODAS_CHAVES, googleAdvertiserAtual, googleAnuncianteUrl, googleDominioUrl, hostOf as hostDe, metaPageIdAtual, metaPaginaUrl } from '../lib/chavesBusca';
 import { ChavesBusca } from '../components/ChavesBusca';
-import { auditLeadSite, descreverNotaMeta, enrichLeads, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, resolverAnunciantes, runAnuncios, setAdDecision } from '../lib/enrichService';
+import { auditLeadSite, descreverNotaMeta, enrichQualificacao, enrichDiagnostico, fetchPagespeed, measureLeadAds, resolverAnunciantes, runAnuncios, setAdDecision } from '../lib/enrichService';
 import { computeScore, decisorLevel } from '../lib/leadScore';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
@@ -136,7 +136,6 @@ export function LeadDetail({
   const [auditing, setAuditing] = useState(false);
   const [contact, setContact] = useState({ phone: '', email: '' });
   const [savingContact, setSavingContact] = useState(false);
-  const [reenriching, setReenriching] = useState(false);
   // No funil, já abre na seção que a fase valida (sem clique extra).
   const [section, setSection] = useState<string | null>(foco?.padrao ?? null);
   useEffect(() => {
@@ -158,7 +157,7 @@ export function LeadDetail({
   // Persiste a seleção de decisores/contatos (F2) — grava e reflete na hora.
   const persistPeople = (next: DecisionMaker[]) => {
     setPeople(next);
-    decisionMakersRepo.replaceForLead(leadId, next).catch(() => {
+    decisionMakersRepo.upsertMany(next).catch(() => {
       toast.error('Não foi possível salvar a seleção — tente de novo.');
     });
   };
@@ -186,17 +185,6 @@ export function LeadDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emEsteira, leadId]);
 
-  const handleReenrich = async () => {
-    if (!lead) return;
-    setReenriching(true);
-    try {
-      await enrichLeads([lead]);
-      await reloadAll();
-      toast.success('Lead re-enriquecido.');
-    } finally {
-      setReenriching(false);
-    }
-  };
 
   // Roda uma fase do funil (F2/F3/F4) direto da página do lead — força a
   // re-execução (F3 re-gera o briefing mesmo se já existir) e recarrega tudo.
@@ -385,14 +373,26 @@ export function LeadDetail({
           >
             <Link2 size={14} /> Copiar link
           </button>
-          <button
-            onClick={handleReenrich}
-            disabled={reenriching}
-            className="flex items-center gap-2 rounded-lg border border-v4-red px-3 py-2 text-sm font-medium text-v4-red-hover hover:bg-v4-red-muted disabled:opacity-60"
-          >
-            {reenriching ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            {reenriching ? 'Re-enriquecendo…' : 'Re-enriquecer este lead'}
-          </button>
+          {/* Perfil de auditoria do lead: muda vocabulário do briefing/scripts e
+              liga/desliga a etapa de empreendimentos. Trocar zera o briefing
+              (o F3 regenera no perfil novo). */}
+          <label className="flex items-center gap-1.5 rounded-lg border border-v4-border px-2.5 py-2 text-xs text-v4-text-muted" title="Construtoras: empreendimentos, lançamentos, LPs. Geral: produtos/serviços, sem jargão imobiliário.">
+            Perfil
+            <select
+              value={lead.perfil ?? 'construtoras'}
+              onChange={async (e) => {
+                const perfil = e.target.value as Lead['perfil'];
+                const geral = perfil === 'geral';
+                await leadsRepo.patch(lead.id, { perfil, briefing: null, ...(geral ? { empreendimentos: [] } : {}) });
+                await reloadAll();
+                toast(`Perfil alterado para ${geral ? 'Geral' : 'Construtoras'} — rode o F3 para regerar o briefing no vocabulário certo.`, { duration: 7000 });
+              }}
+              className="rounded-md border border-v4-border bg-v4-surface px-1.5 py-0.5 text-xs text-v4-text"
+            >
+              <option value="construtoras">Construtoras</option>
+              <option value="geral">Geral</option>
+            </select>
+          </label>
         </div>
       </div>
 
@@ -514,7 +514,7 @@ export function LeadDetail({
           <KpiTile value={ps?.seo ?? '—'} label="SEO" tone={scoreTone(ps?.seo ?? null)} />
           <KpiTile value={loadSecs} label="Carregamento" tone={loadTone} small />
           <KpiTile value={gb?.rating ?? '—'} label="Google ★" sub={gb ? `${gb.reviews ?? 0} aval.` : null} tone={ratingTone(gb?.rating ?? null)} />
-          <KpiTile value={emp.length} label="Empreend." sub={empLancamento.length ? `${empLancamento.length} em lançam.` : null} tone="neutral" />
+          {lead.perfil !== 'geral' && <KpiTile value={emp.length} label="Empreend." sub={empLancamento.length ? `${empLancamento.length} em lançam.` : null} tone="neutral" />}
           <KpiTile value={orgCount || people.length} label="Pessoas" sub={people.length ? `${people.length} decisores` : null} tone="neutral" />
         </div>
         {/* Sem briefing: mostra as dores/gaps aqui como fallback rápido. */}
@@ -559,7 +559,7 @@ export function LeadDetail({
         {mostra('scripts') && briefing?.scripts && (
           <MenuBtn active={section === 'scripts'} onClick={() => toggle('scripts')} icon={Send} label="Scripts de abordagem" />
         )}
-        {mostra('empreendimentos') && emp.length > 0 && (
+        {mostra('empreendimentos') && lead.perfil !== 'geral' && emp.length > 0 && (
           <MenuBtn active={section === 'empreendimentos'} onClick={() => toggle('empreendimentos')} icon={Building2} label={`Empreendimentos · ${emp.length}`} />
         )}
         {mostra('anuncios') && (

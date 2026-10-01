@@ -120,6 +120,41 @@ export const leadsRepo = {
     if (error) throw erroLegivel(error);
   },
 
+  /**
+   * Grava SÓ as colunas tocadas (patch). É o caminho padrão das fases: cada uma
+   * escreve o que produziu, sem levar junto um retrato velho das outras colunas
+   * (era isso que apagava F4/cadência quando o F3 terminava). Mesma proteção de
+   * chaves validadas do update() quando o patch toca site/redes/GMN.
+   */
+  async patch(id: string, parcial: Partial<Lead>, opts: { forcarChaves?: boolean } = {}): Promise<void> {
+    const chavesTocadas = Object.keys(parcial) as (keyof Lead)[];
+    if (!chavesTocadas.length) return;
+    if (!supabaseConfigured) {
+      const all = readLocal<Lead>(LEADS_KEY).map((l) => (l.id === id ? { ...l, ...parcial, updatedAt: new Date().toISOString() } : l));
+      writeLocal(LEADS_KEY, all);
+      return;
+    }
+    let p: Partial<Lead> = { ...parcial };
+    const protegidas: (keyof Lead)[] = ['siteUrl', 'companyInstagram', 'companyFacebook', 'googleBusiness', 'chavesBusca'];
+    if (!opts.forcarChaves && chavesTocadas.some((k) => protegidas.includes(k))) {
+      const { data } = await supabase.from('enriquecedor_leads').select('chaves_busca, site_url, company_instagram, company_facebook, google_business').eq('id', id).maybeSingle();
+      if (data) {
+        const db = fromRow({ ...data, id });
+        const merged = preservarValidacoes({ ...db, ...parcial, id } as Lead, db);
+        p = {};
+        for (const k of [...chavesTocadas, 'chavesBusca'] as (keyof Lead)[]) (p as Record<string, unknown>)[k] = merged[k];
+      }
+    }
+    const row = toRow({ id, ...p } as unknown as Lead);
+    const sel: Record<string, unknown> = { updated_at: row.updated_at };
+    for (const k of Object.keys(p) as (keyof Lead)[]) {
+      const col = COLUNA[k];
+      if (col && col in row) sel[col] = row[col];
+    }
+    const { error } = await supabase.from('enriquecedor_leads').update(sel).eq('id', id);
+    if (error) throw erroLegivel(error);
+  },
+
   async remove(id: string): Promise<void> {
     if (!supabaseConfigured) {
       writeLocal(
@@ -146,7 +181,16 @@ export const leadsRepo = {
     if (error) throw error;
   },
 
-  async saveAudit(audit: SiteAudit): Promise<void> {
+  /**
+   * Grava a auditoria do site. Uma auditoria VAZIA (motor fora, busca falhou)
+   * não sobrescreve uma auditoria boa já existente — antes o "Re-enriquecer"
+   * com o motor instável zerava site/pixels/WhatsApp do lead.
+   */
+  async saveAudit(audit: SiteAudit, opts: { preservarBoa?: boolean } = {}): Promise<void> {
+    if (opts.preservarBoa !== false && !audit.isOnline && !audit.siteUrl) {
+      const ex = await this.getAudit(audit.leadId);
+      if (ex?.isOnline && ex.siteUrl) return;
+    }
     if (!supabaseConfigured) {
       const audits = readLocal<SiteAudit>(AUDITS_KEY).filter((a) => a.leadId !== audit.leadId);
       audits.push(audit);
@@ -156,6 +200,21 @@ export const leadsRepo = {
     const { error } = await supabase
       .from('enriquecedor_site_audits')
       .upsert(auditToRow(audit), { onConflict: 'lead_id' });
+    if (error) throw error;
+  },
+
+  /** Atualiza só partes da auditoria (ex.: PageSpeed que chegou depois, fora do caminho crítico). */
+  async patchAudit(leadId: string, parcial: Partial<Pick<SiteAudit, 'pagespeed' | 'notes'>>): Promise<void> {
+    if (!supabaseConfigured) {
+      const audits = readLocal<SiteAudit>(AUDITS_KEY).map((a) => (a.leadId === leadId ? { ...a, ...parcial } : a));
+      writeLocal(AUDITS_KEY, audits);
+      return;
+    }
+    const row: Record<string, unknown> = {};
+    if ('pagespeed' in parcial) row.pagespeed = parcial.pagespeed ?? null;
+    if ('notes' in parcial) row.notes = parcial.notes ?? [];
+    if (!Object.keys(row).length) return;
+    const { error } = await supabase.from('enriquecedor_site_audits').update(row).eq('lead_id', leadId);
     if (error) throw error;
   },
 
@@ -261,6 +320,17 @@ function fromRow(r: Record<string, unknown>): Lead {
 function erroLegivel(error: { message: string; details?: string | null; code?: string | null }): Error {
   return new Error(`${error.message}${error.details ? ` — ${error.details}` : ''}${error.code ? ` (${error.code})` : ''}`);
 }
+
+// camelCase (app) → coluna. Usado pelo patch() para gravar só o que foi tocado.
+const COLUNA: Partial<Record<keyof Lead, string>> = {
+  perfil: 'perfil', cnpjRaw: 'cnpj_raw', companyNameRaw: 'company_name_raw', revenueBandRaw: 'revenue_band_raw', phoneRaw: 'phone_raw', emailRaw: 'email_raw',
+  siteUrl: 'site_url', cnpj: 'cnpj', razaoSocial: 'razao_social', nomeFantasia: 'nome_fantasia', cnae: 'cnae', segmento: 'segmento', cidade: 'cidade', uf: 'uf',
+  situacaoCadastral: 'situacao_cadastral', socios: 'socios', companyInstagram: 'company_instagram', companyFacebook: 'company_facebook', empreendimentos: 'empreendimentos',
+  googleBusiness: 'google_business', lemitCompany: 'lemit_company', organograma: 'organograma', datastone: 'datastone', briefing: 'briefing', enrichIssues: 'enrich_issues',
+  anuncios: 'anuncios', chavesBusca: 'chaves_busca', falhaPrimaria: 'falha_primaria', falhaSecundaria: 'falha_secundaria', falhasDetectadas: 'falhas_detectadas',
+  aptoCadencia: 'apto_cadencia', cadenciaConfig: 'cadencia_config', optout: 'optout', dataQuality: 'data_quality', validationNotes: 'validation_notes', status: 'status',
+  score: 'score', kommoLeadId: 'kommo_lead_id',
+};
 
 function toRow(l: Lead): Record<string, unknown> {
   return {
