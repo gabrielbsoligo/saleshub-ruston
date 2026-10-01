@@ -36,6 +36,22 @@ export const leadsRepo = {
     return (data ?? []).map(fromRow);
   },
 
+  /** Quem já tem card no Kommo, em UMA consulta (F8 — antes era 1 GET por lead). */
+  async kommoIds(ids: string[]): Promise<Record<string, string>> {
+    if (!ids.length) return {};
+    if (!supabaseConfigured) {
+      const out: Record<string, string> = {};
+      for (const l of readLocal<Lead>(LEADS_KEY)) if (ids.includes(l.id) && l.kommoLeadId) out[l.id] = l.kommoLeadId;
+      return out;
+    }
+    const out: Record<string, string> = {};
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('enriquecedor_leads').select('id, kommo_lead_id').in('id', ids.slice(i, i + 200)).not('kommo_lead_id', 'is', null);
+      for (const r of data ?? []) if (r.kommo_lead_id) out[String(r.id)] = String(r.kommo_lead_id);
+    }
+    return out;
+  },
+
   async get(id: string): Promise<Lead | null> {
     if (!supabaseConfigured) {
       return readLocal<Lead>(LEADS_KEY).find((l) => l.id === id) ?? null;

@@ -475,13 +475,23 @@ async function acaoDisparar(b: Record<string, any>) {
     plano.push({ lead, passo, decisor })
   }
 
+  // Lotes com checkpoint: a edge tem ~150 s; para com folga (100 s) e o próximo
+  // ciclo do cron (a cada 30 min) recomeça do plano recalculado — quem já foi
+  // disparado tem envio gravado e sai do plano sozinho.
+  const ORCAMENTO_MS = 100_000
+  const t0 = Date.now()
   const resultados: any[] = []
+  let parcial = false
   for (const item of plano) {
+    if (Date.now() - t0 > ORCAMENTO_MS) { parcial = true; break }
     resultados.push(await dispararLeadPasso(ctx, item.lead, item.passo, { mover: true, dryRun, decisor: item.decisor }))
   }
   return json(200, {
     ok: true,
     dry_run: dryRun,
+    parcial,
+    processados: resultados.length,
+    restantes: plano.length - resultados.length,
     total_plano: plano.length,
     por_passo: [2, 3].map((p) => ({ passo: p, leads: plano.filter((x) => x.passo === p).length })),
     resultados,

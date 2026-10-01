@@ -1310,7 +1310,17 @@ async function getBrowser() {
         return null;
       }
       try {
-        return await chromium.launch({ headless: true });
+        // Flags de container (Railway): /dev/shm pequeno derruba o Chromium no meio
+        // da página; sem GPU/sandbox. Se o browser cair, a próxima chamada reabre.
+        const browser = await chromium.launch({
+          headless: true,
+          args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--no-zygote', '--disable-extensions', '--mute-audio'],
+        });
+        browser.on('disconnected', () => {
+          console.warn('[anuncios] Chromium desconectou — reabre na próxima chamada');
+          _browserPromise = null;
+        });
+        return browser;
       } catch (err) {
         // Falha de LAUNCH pode ser transitória (boot/memória): zera a promise
         // para re-tentar na próxima requisição, em vez de ficar "sem headless"
@@ -3774,6 +3784,22 @@ async function executarJob(job) {
   }
 }
 
+// Lead preso em `esteira_fX` (redeploy no meio, processo morto) sem job rodando há
+// 30 min: vira `esteira_erro` — a tela mostra o aviso e o botão da fase re-roda.
+let _ultimoSweep = 0;
+async function sweepEsteirasOrfas() {
+  const limite = new Date(Date.now() - 30 * 60_000).toISOString();
+  const presos = await sbSelect(SERVICE_KEY, 'enriquecedor_leads', `status=like.esteira_f*&updated_at=lt.${encodeURIComponent(limite)}&select=id&limit=200`);
+  if (!presos?.length) return 0;
+  const ids = presos.map((l) => l.id);
+  const rodando = await sbSelect(SERVICE_KEY, 'enriquecedor_enrichment_jobs', `lead_id=in.(${ids.join(',')})&status=in.(pending,running)&select=lead_id`);
+  const ocupados = new Set((rodando ?? []).map((j) => j.lead_id));
+  const alvo = ids.filter((id) => !ocupados.has(id));
+  if (!alvo.length) return 0;
+  await sbPatch(SERVICE_KEY, 'enriquecedor_leads', `id=in.(${alvo.join(',')})`, { status: 'esteira_erro', updated_at: new Date().toISOString() });
+  return alvo.length;
+}
+
 async function workerTick() {
   if (!SERVICE_KEY) return;
   try {
@@ -3781,6 +3807,11 @@ async function workerTick() {
       _ultimaRecuperacao = Date.now();
       const n = await sbRpc(SERVICE_KEY, 'enriquecedor_recuperar_jobs_orfaos', { p_minutos: 3 }).catch(() => 0);
       if (n) console.warn(`[worker] ${n} job(s) órfão(s) devolvido(s) à fila`);
+    }
+    if (Date.now() - _ultimoSweep > 10 * 60_000) {
+      _ultimoSweep = Date.now();
+      const n = await sweepEsteirasOrfas().catch((e) => { console.warn('[worker] sweep falhou:', String(e?.message || e).slice(0, 160)); return 0; });
+      if (n) console.warn(`[worker] ${n} lead(s) preso(s) em esteira_fX marcados como esteira_erro`);
     }
     const cap = capacidade();
     for (const fase of ['f4', 'f3', 'f2', 'all']) {
@@ -3848,7 +3879,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda3b-2026-10-01',
+        versao: 'onda4-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
@@ -4140,8 +4171,25 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       if (!body?.leadId) return send(res, 400, { error: 'leadId obrigatório' });
       const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const fases = Array.isArray(body.fases) && body.fases.length ? body.fases : null;
+      // Com o worker ligado, a esteira vira JOB na fila: não duplica (índice único por
+      // lead×fase pendente), sobrevive a redeploy e respeita a concorrência por fase.
+      // O card do Kommo (nota ao final) só é conhecido no disparo direto — por isso a
+      // esteira completa disparada pelo Kommo (com kommoLeadId) continua direta.
+      if (SERVICE_KEY && !body.kommoLeadId) {
+        const fase = fases && fases.length === 1 ? fases[0] : 'all';
+        try {
+          const existentes = await sbSelect(SERVICE_KEY, 'enriquecedor_enrichment_jobs', `lead_id=eq.${body.leadId}&fase=eq.${fase}&status=in.(pending,running)&select=id`);
+          if (!existentes?.length) {
+            await sbUpsert(SERVICE_KEY, 'enriquecedor_enrichment_jobs', [{ lead_id: body.leadId, type: 'fase', fase, status: 'pending', priority: 5, requested_by: 'api/esteira' }]);
+          }
+          return send(res, 202, { ok: true, viaFila: true, duplicado: !!existentes?.length, link: linkDoLead(body.leadId) });
+        } catch (e) {
+          console.warn('[esteira] não deu pra enfileirar, roda direto:', String(e?.message || e).slice(0, 160));
+        }
+      }
       // 202 na hora; a esteira roda em background e escreve o progresso no lead.
-      void runEsteira({ leadId: body.leadId, kommoLeadId: body.kommoLeadId ?? null, token, fases: Array.isArray(body.fases) ? body.fases : null });
+      void runEsteira({ leadId: body.leadId, kommoLeadId: body.kommoLeadId ?? null, token, fases });
       return send(res, 202, { ok: true, link: linkDoLead(body.leadId) });
     }
 

@@ -502,12 +502,7 @@ export function WorkflowView({
     const ids = leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id);
     if (!ids.length) { setNoKommo({}); return; }
     let vivo = true;
-    void Promise.all(ids.map((id) => leadsRepo.get(id).catch(() => null))).then((rows) => {
-      if (!vivo) return;
-      const m: Record<string, string> = {};
-      for (const r of rows) if (r?.kommoLeadId) m[r.id] = r.kommoLeadId;
-      setNoKommo(m);
-    });
+    void leadsRepo.kommoIds(ids).then((m) => { if (vivo) setNoKommo(m); }).catch(() => {});
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id).join(','), importadosTick]);
