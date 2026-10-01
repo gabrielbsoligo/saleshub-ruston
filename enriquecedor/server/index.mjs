@@ -620,14 +620,14 @@ const NAME_STOPWORDS = new Set([
 // Cache de Google Meu Negócio (Serper Places) por empresa+cidade — evita chamar
 // duas vezes (na descoberta do site e no card de GMN).
 const _placesCache = new Map();
-async function serperPlacesCached(company, cidade, rejeitados = [], { telefones = [] } = {}) {
+async function serperPlacesCached(company, cidade, rejeitados = [], { telefones = [], nomeCompleto = null } = {}) {
   const fonesK = (telefones ?? []).map((t) => onlyDigits(t).slice(-8)).filter((d) => d.length === 8).sort().join(',');
-  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}|${fonesK}`;
+  const k = `${String(company ?? '').toLowerCase()}|${String(cidade ?? '').toLowerCase()}|${(rejeitados ?? []).join(',')}|${fonesK}|${String(nomeCompleto ?? '').toLowerCase()}`;
   if (_placesCache.has(k)) return _placesCache.get(k);
-  const ck = chaveCache('places', company, cidade, (rejeitados ?? []).join(','), fonesK);
+  const ck = chaveCache('places', company, cidade, (rejeitados ?? []).join(','), fonesK, nomeCompleto ?? '');
   const hit = await cacheGet(ck);
   if (hit !== undefined) { _placesCache.set(k, hit); return hit; }
-  const r = await serperPlaces(company, cidade, rejeitados, { telefones }).catch(() => ({ ok: false, found: false }));
+  const r = await serperPlaces(company, cidade, rejeitados, { telefones, nomeCompleto }).catch(() => ({ ok: false, found: false }));
   // Falha transitória (ok:false) NÃO é cacheada: antes virava "sem ficha" até o próximo deploy.
   if (!r || r.ok === false) return null;
   const val = r.found ? r : null;
@@ -1052,7 +1052,7 @@ async function lemitEnrich(cnpj) {
 // --- Google Meu Negócio (via Serper Places) ---------------------------------
 // `rejeitados` = cids de fichas que o operador apagou (chave gmn do lead) —
 // pula pra próxima ficha da resposta; se só sobrar rejeitada, "não encontrado".
-async function serperPlaces(company, cidade, rejeitados = [], { telefones = [] } = {}) {
+async function serperPlaces(company, cidade, rejeitados = [], { telefones = [], nomeCompleto = null } = {}) {
   const key = process.env.SERPER_API_KEY;
   if (!key) return { ok: true, found: false, note: 'serper_desativado' };
   const bloqueados = new Set((rejeitados ?? []).map(String));
@@ -1075,13 +1075,17 @@ async function serperPlaces(company, cidade, rejeitados = [], { telefones = [] }
     // endereço e posição desempatam. Nada bate → "não encontrado" (com candidatas).
     const fones = new Set((telefones ?? []).map((t) => onlyDigits(t).slice(-8)).filter((d) => d.length === 8));
     const marca = normText(company);
+    // Palavras do nome completo (razão social sem sufixo jurídico): "net
+    // empreendimentos imobiliarios" — a marca limpa ("net") sozinha é genérica.
+    const palavras = normText(nomeCompleto || '').split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !JURIDICO_RE.test(w));
+    const cobre = (titulo) => palavras.length >= 2 && palavras.filter((w) => normText(titulo).includes(w)).length / palavras.length >= 0.6;
     const avaliadas = places.map((x, i) => {
       const sinais = [];
       let score = 0;
       const titulo = String(x.title ?? '');
       // marca inteira no título (ex.: "construtora alfa") vale mais que um token em
       // comum ("alfa festas e eventos" também tem "alfa").
-      if (marca.length >= 4 && normText(titulo).includes(marca)) { score += 4; sinais.push('marca_no_titulo'); }
+      if ((marca.length >= 4 && normText(titulo).includes(marca)) || cobre(titulo)) { score += 4; sinais.push('marca_no_titulo'); }
       else if (resultMatchesCompany({ title: titulo, desc: '' }, company)) { score += 2; sinais.push('marca_parcial'); }
       if (fones.size && fones.has(onlyDigits(x.phoneNumber).slice(-8))) { score += 3; sinais.push('telefone_confere'); }
       if (cidade && normText(cidade).length >= 3 && normText(x.address ?? '').includes(normText(cidade))) { score += 2; sinais.push('cidade_no_endereco'); }
@@ -3482,13 +3486,16 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
         row.datastone?.telefone, row.datastone?.phone,
       ].filter(Boolean);
       const gmnValidado = chavesSite.gmn?.validacao === 'validado' && row.google_business;
-      const gb = gmnValidado
-        ? row.google_business
-        : await serperPlacesCached(chavesSite.gmn?.consulta?.trim() || marcaF3, row.cidade, chavesSite.gmn?.rejeitados ?? [], { telefones }).catch(() => null);
-      if (gb && !gmnValidado) {
-        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gb }).catch(() => {});
-        row.google_business = gb;
+      const gbNovo = gmnValidado
+        ? null
+        : await serperPlacesCached(chavesSite.gmn?.consulta?.trim() || marcaF3, row.cidade, chavesSite.gmn?.rejeitados ?? [], { telefones, nomeCompleto: row.razao_social ?? row.company_name_raw }).catch(() => null);
+      // Ficha já gravada só é trocada por uma "alta" (ou a mesma ficha).
+      const trocaGmn = gbNovo && !gmnValidado && (!row.google_business || gbNovo.confianca === 'alta' || String(gbNovo.cid ?? '') === String(row.google_business?.cid ?? '-'));
+      if (trocaGmn) {
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { google_business: gbNovo }).catch(() => {});
+        row.google_business = gbNovo;
       }
+      const gb = row.google_business ?? gbNovo;
       const disc = await discoverSite({
         companyName: row.razao_social ?? row.company_name_raw,
         nomeFantasia: marcaF3,
@@ -3501,13 +3508,18 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
         gmnRejeitados: chavesSite.gmn?.rejeitados ?? [],
         gmn: gb ?? null,
       });
-      if (disc?.url && chavesSite.site?.validacao !== 'validado' && disc.source !== 'validado') {
+      // Site já gravado só é trocado por um "alta" (ou mesmo host): a auditoria é
+      // do site que FICA no lead — nunca de um candidato que não foi aceito.
+      const mesmoHost = (a, b) => { try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); } catch { return false; } };
+      const trocaSite = !!disc?.url && (!row.site_url || disc.confianca === 'alta' || disc.source === 'validado' || mesmoHost(row.site_url, disc.url));
+      const siteAlvo = trocaSite ? disc.url : (row.site_url || null);
+      if (trocaSite && chavesSite.site?.validacao !== 'validado' && disc.source !== 'validado') {
         const ch = { ...chavesSite, site: { ...(chavesSite.site ?? {}), origem: disc.source, confianca: disc.confianca ?? null } };
         await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { chaves_busca: ch }).catch(() => {});
         row.chaves_busca = ch;
       }
-      if (disc?.url) {
-        audit = await auditUrl(disc.url).catch(() => null);
+      if (siteAlvo) {
+        audit = await auditUrl(siteAlvo).catch(() => null);
         if (audit) {
           // PageSpeed (até 2,5 min) sai do caminho crítico: dispara agora, cobra depois.
           var psP = pagespeed(audit.siteUrl).catch(() => null);
@@ -3528,8 +3540,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
             has_google_tag: !!audit.hasGoogleTag,
             notes: audit.notes ?? [],
           }], 'lead_id');
-          const mesmoHost = (a, b) => { try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); } catch { return false; } };
-          if (!row.site_url || disc.confianca === 'alta' || mesmoHost(row.site_url, audit.siteUrl)) {
+          if (trocaSite || mesmoHost(row.site_url ?? '', audit.siteUrl)) {
             await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: audit.siteUrl });
             row.site_url = audit.siteUrl;
           }
@@ -3899,7 +3910,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda4b-2026-10-01',
+        versao: 'onda4c-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
