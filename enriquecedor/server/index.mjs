@@ -481,11 +481,14 @@ function handleTemSobrenome(handle, name) {
 //   alta  = título/descrição traz nome E sobrenome  +  @ traz primeiro nome OU sobrenome
 //   media = título/descrição traz nome E sobrenome  OU  @ traz primeiro nome E sobrenome
 //   null  = só sobrenome no @, só primeiro nome, ou @ de empresa/loja
+// Fã-clube, memes, frases, notícias… — perfil SOBRE a pessoa, não DA pessoa
+// (o caso "migueloliveirafanclub88").
+const HANDLE_FA_RE = /(fanclub|fan_?club|fans?(?=[^a-z]|$)|f[aã]s(?=[^a-z]|$)|club(?=[^a-z]|$)|memes?|frases|noticias|news|fofoca|gossip|edits?(?=[^a-z]|$)|updates?|daily|fanpage|fc(?=\d|$))/i;
 function classificarPerfilInstagram(r, name) {
   if (!/instagram\.com\//i.test(r.url)) return null;
   if (/instagram\.com\/(p|reel|reels|explore|stories|tv|accounts)\//i.test(r.url)) return null;
   const handle = instagramHandle(r.url);
-  if (!handle || HANDLE_NEGOCIO_RE.test(handle)) return null;
+  if (!handle || HANDLE_NEGOCIO_RE.test(handle) || HANDLE_FA_RE.test(handle)) return null;
   const titulo = resultMatchesPerson(r, name);
   const pn = handleTemPrimeiroNome(handle, name);
   const sn = handleTemSobrenome(handle, name);
@@ -3845,7 +3848,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda3-2026-10-01',
+        versao: 'onda3b-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
