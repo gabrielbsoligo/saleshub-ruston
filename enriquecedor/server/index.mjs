@@ -3511,7 +3511,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       // Site já gravado só é trocado por um "alta" (ou mesmo host): a auditoria é
       // do site que FICA no lead — nunca de um candidato que não foi aceito.
       const mesmoHost = (a, b) => { try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); } catch { return false; } };
-      const trocaSite = !!disc?.url && (!row.site_url || disc.confianca === 'alta' || disc.source === 'validado' || mesmoHost(row.site_url, disc.url));
+      let trocaSite = !!disc?.url && (!row.site_url || disc.confianca === 'alta' || disc.source === 'validado' || mesmoHost(row.site_url, disc.url));
       const siteAlvo = trocaSite ? disc.url : (row.site_url || null);
       if (trocaSite && chavesSite.site?.validacao !== 'validado' && disc.source !== 'validado') {
         const ch = { ...chavesSite, site: { ...(chavesSite.site ?? {}), origem: disc.source, confianca: disc.confianca ?? null } };
@@ -3520,6 +3520,20 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       }
       if (siteAlvo) {
         audit = await auditUrl(siteAlvo).catch(() => null);
+        // Site gravado fora do ar e há um candidato novo (mesmo "média"): site morto
+        // é pior que um plausível — troca e registra a origem/confiança.
+        if (!trocaSite && disc?.url && (!audit || !audit.isOnline)) {
+          const alt = await auditUrl(disc.url).catch(() => null);
+          if (alt?.isOnline) {
+            audit = alt;
+            trocaSite = true;
+            if (chavesSite.site?.validacao !== 'validado') {
+              const ch = { ...chavesSite, site: { ...(chavesSite.site ?? {}), origem: disc.source, confianca: disc.confianca ?? null } };
+              await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { chaves_busca: ch }).catch(() => {});
+              row.chaves_busca = ch;
+            }
+          }
+        }
         if (audit) {
           // PageSpeed (até 2,5 min) sai do caminho crítico: dispara agora, cobra depois.
           var psP = pagespeed(audit.siteUrl).catch(() => null);
@@ -3910,7 +3924,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda4c-2026-10-01',
+        versao: 'onda4d-2026-10-01',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,
