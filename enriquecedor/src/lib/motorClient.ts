@@ -61,3 +61,27 @@ export async function motorFetch(path: string, init?: RequestInit & { timeoutMs?
     clearTimeout(timer);
   }
 }
+
+// Estado da fila do motor (/api/health → fila). Cache de 5 s; null = motor fora.
+export interface FilaMotorInfo {
+  pendentes: Record<string, number>;
+  rodando: Record<string, number>;
+  capacidade: Record<string, number>;
+  busca: { naFila: number; rodando: number; intervaloMs: number };
+  headless: { ativos: number; esperando: number; max: number };
+  meta: { cooldownAte: string | null; usadoHoje: number; cap: number; proxy: boolean };
+  workerId: string;
+  ultimoTick: string | null;
+}
+let _fila: { val: { ativo: boolean; fila: FilaMotorInfo | null } | null; exp: number } = { val: null, exp: 0 };
+export async function lerFila(): Promise<{ ativo: boolean; fila: FilaMotorInfo | null } | null> {
+  if (_fila.exp > Date.now()) return _fila.val;
+  try {
+    const r = await motorFetch('/api/health', { timeoutMs: 8000 });
+    const j = await r.json();
+    _fila = { val: { ativo: !!j?.worker?.ativo, fila: (j?.fila as FilaMotorInfo) ?? null }, exp: Date.now() + 5000 };
+  } catch {
+    _fila = { val: null, exp: Date.now() + 5000 };
+  }
+  return _fila.val;
+}

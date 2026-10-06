@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Users2,
@@ -9,8 +10,10 @@ import {
   LogOut,
   Sparkles,
   Plus,
+  Loader2,
   type LucideIcon,
 } from 'lucide-react';
+import { jobsRepo } from '../lib/jobsRepo';
 import type { Permissions, View } from '../types';
 import { useAuth } from '../lib/auth';
 
@@ -31,6 +34,27 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'usuarios', label: 'Usuários', icon: Users2, permission: 'canManageUsers' },
   { id: 'configuracoes', label: 'Configurações', icon: Settings, permission: 'canManageConfig' },
 ];
+
+// Chip "Motor · N rodando · M na fila" — a fila de enriquecimento é global
+// (todos os projetos), então mora na navegação e leva pro Workflow.
+function MotorChip({ onClick }: { onClick: () => void }) {
+  const [n, setN] = useState({ run: 0, fila: 0 });
+  useEffect(
+    () => jobsRepo.subscribeAtivos((jobs) => setN({ run: jobs.filter((j) => j.status === 'running').length, fila: jobs.filter((j) => j.status === 'pending').length })),
+    [],
+  );
+  if (!n.run && !n.fila) return null;
+  return (
+    <button
+      onClick={onClick}
+      title="Fila do motor de enriquecimento — abrir o Workflow"
+      className="mt-2 flex w-full items-center gap-2 rounded-lg border border-[#3b82f6]/50 bg-[rgba(59,130,246,0.10)] px-3 py-2 text-left text-xs text-v4-text transition hover:bg-[rgba(59,130,246,0.18)]"
+    >
+      <Loader2 size={14} className="shrink-0 animate-spin text-[#3b82f6]" />
+      <span><b>Motor</b> · {n.run} rodando · {n.fila} na fila</span>
+    </button>
+  );
+}
 
 interface LayoutProps {
   currentView: View;
@@ -82,6 +106,7 @@ export function Layout({ currentView, onNavigate, onNovoProjeto, children }: Lay
               </button>
             );
           })}
+          <MotorChip onClick={() => onNavigate('workflow')} />
         </nav>
 
         <div className="border-t border-v4-border p-3">

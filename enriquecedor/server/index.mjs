@@ -7,6 +7,7 @@
 // O frontend (Vite) chama via proxy /api -> este servidor.
 // ============================================================================
 import http from 'node:http';
+import os from 'node:os';
 import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
@@ -1427,7 +1428,7 @@ async function getBrowser() {
 // Pool de concorrência do headless. COM proxy (IPs rodando) dá pra rodar várias
 // buscas ao mesmo tempo com segurança → mede um lead em ~20-30s, não em 3 min.
 // SEM proxy, mantém 1 por vez (serial + cadência) pra não tomar ban de um único IP.
-const HEADLESS_CONCURRENCY = process.env.PROXY_SERVER ? 4 : 1;
+const HEADLESS_CONCURRENCY = Number(process.env.HEADLESS_CONCURRENCY) > 0 ? Number(process.env.HEADLESS_CONCURRENCY) : (process.env.PROXY_SERVER ? 5 : 1);
 let _headlessActive = 0;
 const _headlessWaiters = [];
 async function runHeadless(fn) {
@@ -1560,32 +1561,31 @@ function checkProxy() {
 // (view_all_page_id): devolve exatamente os anúncios ativos daquela página, sem
 // ruído de homônimos — é o modo preferido do F4 quando a página foi resolvida.
 async function metaAdSearch(term, useProxy = null, force = false, { pageId = null } = {}) {
+  // useProxy explícito manda; se null, usa o proxy se configurado.
+  const proxy = useProxy === false ? null : proxyConfig();
+  const usingProxy = !!proxy;
+  // Cooldown e CADÊNCIA fora do slot headless: antes a espera (1,5 s com proxy,
+  // 6 s + jitter direto) segurava um slot parado, serializando todo o resto.
+  if (!usingProxy && !force && Date.now() < _metaCooldownUntil) return { ok: true, cards: [], total: null, note: 'meta_bloqueado' };
+  // Teto diário (só sem proxy; com proxy o volume é seguro).
+  const day = new Date().toISOString().slice(0, 10);
+  if (day !== _metaDayStamp) {
+    _metaDayStamp = day;
+    _metaDayCount = 0;
+  }
+  if (!usingProxy && _metaDayCount >= META_DAILY_CAP) return { ok: true, cards: [], total: null, note: 'meta_cap' };
+  // Cadência atômica: reserva o próximo horário JÁ (antes do await), pra buscas
+  // concorrentes ficarem escalonadas de verdade. Com proxy: 1,5s (IP roda).
+  // Direto: 6s entre buscas (uso interativo de poucos leads é seguro assim).
+  const safety = usingProxy ? 1500 : META_DIRECT_MS;
+  const jitter = usingProxy ? 0 : Math.floor(Math.random() * 1500);
+  const now = Date.now();
+  const slot = Math.max(now, _metaLastTs + safety + jitter);
+  _metaLastTs = slot;
+  _metaDayCount += 1;
+  const wait = slot - now;
+  if (wait) await sleep(wait);
   return runHeadless(async () => {
-    // useProxy explícito manda; se null, usa o proxy se configurado.
-    const proxy = useProxy === false ? null : useProxy === true ? proxyConfig() : proxyConfig();
-    const usingProxy = !!proxy;
-    // Cooldown só quando SEM proxy. `force` ignora o cooldown (usado quando o
-    // proxy está indisponível e o direto é a única opção — melhor tentar).
-    if (!usingProxy && !force && Date.now() < _metaCooldownUntil) return { ok: true, cards: [], total: null, note: 'meta_bloqueado' };
-    // Teto diário (só sem proxy; com proxy o volume é seguro).
-    const day = new Date().toISOString().slice(0, 10);
-    if (day !== _metaDayStamp) {
-      _metaDayStamp = day;
-      _metaDayCount = 0;
-    }
-    if (!usingProxy && _metaDayCount >= META_DAILY_CAP) return { ok: true, cards: [], total: null, note: 'meta_cap' };
-    // Cadência atômica: reserva o próximo horário JÁ (antes do await), pra buscas
-    // concorrentes ficarem escalonadas de verdade. Com proxy: 1,5s (IP roda).
-    // Direto: 6s entre buscas (uso interativo de poucos leads é seguro assim).
-    const safety = usingProxy ? 1500 : META_DIRECT_MS;
-    const jitter = usingProxy ? 0 : Math.floor(Math.random() * 1500);
-    const now = Date.now();
-    const slot = Math.max(now, _metaLastTs + safety + jitter);
-    _metaLastTs = slot;
-    _metaDayCount += 1;
-    const wait = slot - now;
-    if (wait) await sleep(wait);
-
     const browser = await getBrowser();
     if (!browser) return { ok: false, cards: [], total: null, note: 'headless_indisponivel' };
     let ctx;
@@ -3862,7 +3862,29 @@ async function logErroMotor(req, etapa, mensagem, detalhe) {
 // ============================================================================
 const WORKER_ID = `motor-${process.pid}-${Math.random().toString(36).slice(2, 7)}`;
 const workerRodando = { f2: 0, f3: 0, f4: 0, all: 0 };
-const capacidade = () => ({ f2: 3, f3: 2, f4: proxyConfig() ? 2 : 1, all: 1 });
+// Capacidade por fase (jobs ao mesmo tempo neste processo). Railway Hobby dá
+// até 8 vCPU/8 GB por réplica; a busca web continua serializada (1/1,1 s), então
+// mais jobs em paralelo só intercalam as buscas — o ganho vem do que não é busca
+// (DataStone/Lemit, PageSpeed, briefing por IA, headless com proxy).
+const envInt = (k, d) => { const v = Number(process.env[k]); return Number.isFinite(v) && v > 0 ? Math.floor(v) : d; };
+const CAP_BASE = () => ({
+  f2: envInt('WORKER_CAP_F2', 6),
+  f3: envInt('WORKER_CAP_F3', 4),
+  f4: envInt('WORKER_CAP_F4', proxyConfig() ? 3 : 1),
+  all: envInt('WORKER_CAP_ALL', 2),
+});
+let _avisouMemoria = false;
+const capacidade = () => {
+  const base = CAP_BASE();
+  // Guarda por memória: com menos de 600 MB livres, metade da capacidade (Chromium pesa).
+  const livreMb = os.freemem() / 1048576;
+  if (livreMb < 600) {
+    if (!_avisouMemoria) { _avisouMemoria = true; console.warn(`[worker] memória livre baixa (${Math.round(livreMb)} MB) — capacidade reduzida à metade`); }
+    return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, Math.max(1, Math.floor(v / 2))]));
+  }
+  _avisouMemoria = false;
+  return base;
+};
 let _ultimaRecuperacao = 0;
 
 async function resumoJob(leadId, fase) {
@@ -3931,8 +3953,12 @@ async function sweepEsteirasOrfas() {
   return alvo.length;
 }
 
+let _tickEmAndamento = false;
+let _ultimoTick = 0;
 async function workerTick() {
-  if (!SERVICE_KEY) return;
+  if (!SERVICE_KEY || _tickEmAndamento) return;
+  _tickEmAndamento = true;
+  _ultimoTick = Date.now();
   try {
     if (Date.now() - _ultimaRecuperacao > 60_000) {
       _ultimaRecuperacao = Date.now();
@@ -3953,10 +3979,35 @@ async function workerTick() {
     }
   } catch (e) {
     console.warn('[worker] tick falhou:', String(e?.message || e).slice(0, 160));
+  } finally {
+    _tickEmAndamento = false;
   }
 }
+// Estado da fila pro /api/health (pendentes por fase vêm do banco, cache 5 s).
+let _pendCache = { exp: 0, val: { f2: 0, f3: 0, f4: 0, all: 0 } };
+async function estadoFila() {
+  if (SERVICE_KEY && Date.now() > _pendCache.exp) {
+    try {
+      const rows = await sbSelect(SERVICE_KEY, 'enriquecedor_enrichment_jobs', 'status=eq.pending&select=fase&limit=2000');
+      const val = { f2: 0, f3: 0, f4: 0, all: 0 };
+      for (const r of rows ?? []) val[r.fase] = (val[r.fase] ?? 0) + 1;
+      _pendCache = { exp: Date.now() + 5000, val };
+    } catch { /* mantém o anterior */ }
+  }
+  const c = typeof searchLimiter.counts === 'function' ? searchLimiter.counts() : {};
+  return {
+    pendentes: _pendCache.val,
+    rodando: { ...workerRodando },
+    capacidade: capacidade(),
+    busca: { naFila: (c.QUEUED ?? 0) + (c.RECEIVED ?? 0), rodando: (c.RUNNING ?? 0) + (c.EXECUTING ?? 0), intervaloMs: SEARCH_INTERVAL_MS },
+    headless: { ativos: _headlessActive, esperando: _headlessWaiters.length, max: HEADLESS_CONCURRENCY },
+    meta: { cooldownAte: _metaCooldownUntil > Date.now() ? new Date(_metaCooldownUntil).toISOString() : null, usadoHoje: _metaDayCount, cap: META_DAILY_CAP, proxy: !!proxyConfig() },
+    workerId: WORKER_ID,
+    ultimoTick: _ultimoTick ? new Date(_ultimoTick).toISOString() : null,
+  };
+}
 if (SERVICE_KEY) {
-  setInterval(workerTick, 4000);
+  setInterval(workerTick, 2000);
   console.log(`[worker] fila de jobs LIGADA (${WORKER_ID})`);
 } else {
   console.log('[worker] fila de jobs DESLIGADA — defina SUPABASE_SERVICE_ROLE_KEY no Railway');
@@ -4009,9 +4060,11 @@ const server = http.createServer(async (req, res) => {
           authProbe = { supabaseUrl: AUTH_SUPABASE_URL, erro: String(err?.message || err) };
         }
       }
+      const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'funil-gate-2026-10-06',
+        versao: 'fila-visivel-2026-10-06',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
+        fila,
         ok: true,
         authRequired: AUTH_REQUIRED,
         authProbe,

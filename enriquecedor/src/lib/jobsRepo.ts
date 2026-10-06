@@ -103,6 +103,64 @@ export const jobsRepo = {
     return (data ?? []).map(fromRow);
   },
 
+  /** Todos os jobs pendentes/rodando (qualquer projeto) — a fila do motor como ela é. */
+  async listarAtivos(): Promise<Job[]> {
+    if (!supabaseConfigured) return [];
+    const { data } = await supabase
+      .from('enriquecedor_enrichment_jobs')
+      .select('*')
+      .in('status', ['pending', 'running'])
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(500);
+    return (data ?? []).map(fromRow);
+  },
+
+  /** Duração média (s) por fase dos jobs concluídos na última hora — pra prever a espera. */
+  async mediasRecentes(): Promise<Record<string, number | null>> {
+    const out: Record<string, number | null> = { f2: null, f3: null, f4: null, all: null };
+    if (!supabaseConfigured) return out;
+    const desde = new Date(Date.now() - 3_600_000).toISOString();
+    const { data } = await supabase.from('enriquecedor_enrichment_jobs').select('fase, duration_ms').eq('status', 'done').gt('finished_at', desde).limit(400);
+    const acc: Record<string, number[]> = {};
+    for (const r of data ?? []) if (r.duration_ms) (acc[String(r.fase)] ??= []).push(Number(r.duration_ms));
+    for (const [f, v] of Object.entries(acc)) out[f] = Math.round(v.reduce((a, b) => a + b, 0) / v.length / 1000);
+    return out;
+  },
+
+  /** Posição na fila (1 = próximo) entre os pendentes da mesma fase. */
+  posicao(job: Job, ativos: Job[]): number {
+    const fila = ativos.filter((j) => j.status === 'pending' && j.fase === job.fase);
+    const i = fila.findIndex((j) => j.id === job.id);
+    return i < 0 ? fila.length + 1 : i + 1;
+  },
+
+  /** Acompanha a fila inteira (Realtime sem filtro + releitura a cada 10 s). */
+  subscribeAtivos(onChange: (jobs: Job[]) => void): () => void {
+    if (!supabaseConfigured) return () => {};
+    let vivo = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reler = () => {
+      if (timer) return; // junta rajadas de eventos numa releitura só
+      timer = setTimeout(() => {
+        timer = null;
+        void jobsRepo.listarAtivos().then((j) => { if (vivo) onChange(j); });
+      }, 300);
+    };
+    reler();
+    const ch = supabase
+      .channel(`jobs-ativos-${Math.random().toString(36).slice(2, 7)}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enriquecedor_enrichment_jobs' }, reler)
+      .subscribe();
+    const poll = setInterval(reler, 10_000);
+    return () => {
+      vivo = false;
+      clearInterval(poll);
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(ch);
+    };
+  },
+
   async cancelarPendentes(projectId: string, fase?: FaseJob): Promise<void> {
     if (!supabaseConfigured) return;
     let q = supabase.from('enriquecedor_enrichment_jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('project_id', projectId).eq('status', 'pending');

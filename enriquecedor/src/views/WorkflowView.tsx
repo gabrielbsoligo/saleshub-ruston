@@ -17,7 +17,8 @@ import {
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
 import { buildLeadsFromRows } from '../lib/importPipeline';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
-import { motorFetch } from '../lib/motorClient';
+import { lerFila, motorFetch, type FilaMotorInfo } from '../lib/motorClient';
+import { FilaMotor } from '../components/FilaMotor';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ETAPA_DA_FASE, FASE_DA_ETAPA, jobsRepo, workerAtivo, type Job } from '../lib/jobsRepo';
 import { registrarErro } from '../lib/errorLog';
@@ -272,7 +273,12 @@ export function WorkflowView({
   };
   const rotuloLinha = (l: WfLead): string => {
     const s = statusLinha(l);
-    if (l.etapa === 0 || EXEC[l.etapa]) return s ? STATUS_META[s].label : 'Aguardando rodar';
+    if (l.etapa === 0 || EXEC[l.etapa]) {
+      const j = s === 'fila' || s === 'run' ? jobDe(l.etapa, l.id) : null;
+      if (j && s === 'fila') return `Na fila do motor · ${jobsRepo.posicao(j, jobsAtivos)}º`;
+      if (j && s === 'run' && j.startedAt) return `Auditando há ${Math.max(0, Math.round((agora - new Date(j.startedAt).getTime()) / 1000))} s`;
+      return s ? STATUS_META[s].label : 'Não rodou';
+    }
     const nomes = (st: AuditStatus | undefined) => FASES_EXEC.filter((f) => stOf(f, l.id) === st).map((f) => ETAPAS[f].f).join(', ');
     if (s === 'ok') return 'Auditado F2–F4';
     if (s === 'erro') return `Erro em ${nomes('erro')}`;
@@ -305,6 +311,29 @@ export function WorkflowView({
     const t = setInterval(checa, 60_000);
     return () => { vivo = false; clearInterval(t); };
   }, []);
+  // ── Fila do motor como ela é: jobs do banco (Realtime) + estado do motor (/api/health)
+  const [jobsAtivos, setJobsAtivos] = useState<Job[]>([]);
+  const [filaInfo, setFilaInfo] = useState<FilaMotorInfo | null>(null);
+  const [mediaSeg, setMediaSeg] = useState<Record<string, number | null>>({});
+  const [agora, setAgora] = useState(Date.now());
+  useEffect(() => jobsRepo.subscribeAtivos(setJobsAtivos), []);
+  const temJobs = jobsAtivos.length > 0;
+  useEffect(() => {
+    let vivo = true;
+    let n = 0;
+    const le = () => {
+      void lerFila().then((r) => { if (vivo) setFilaInfo(r?.fila ?? null); });
+      if (n % 12 === 0) void jobsRepo.mediasRecentes().then((m) => { if (vivo) setMediaSeg(m); });
+      n += 1;
+    };
+    le();
+    const t = setInterval(() => { setAgora(Date.now()); if (temJobs) le(); }, 5000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [temJobs]);
+  const jobDe = (etapa: number, id: string): Job | null => {
+    const f = FASE_DA_ETAPA[etapa];
+    return f ? jobsAtivos.find((j) => j.leadId === id && j.fase === f) ?? null : null;
+  };
   const STATUS_DO_JOB: Record<Job['status'], AuditStatus | null> = { pending: 'fila', running: 'run', done: 'ok', error: 'erro', cancelled: null };
   const aplicarJobs = (jobs: Job[]) =>
     setExecStatus((prev) => {
@@ -579,8 +608,6 @@ export function WorkflowView({
   };
   const descartados = leads.filter((l) => l.descartado);
   const execLeadObj = execId ? leads.find((l) => l.id === execId) ?? null : null;
-  const nRunTotal = leads.filter((l) => !l.descartado && statusLinha(l) === 'run').length;
-  const nFilaTotal = leads.filter((l) => !l.descartado && statusLinha(l) === 'fila').length;
   const execRodando = execFase != null || autoFase != null;
 
   // Sem projeto selecionado → grade de projetos
@@ -615,14 +642,14 @@ export function WorkflowView({
           Para rodar em background e em paralelo, defina <code>SUPABASE_SERVICE_ROLE_KEY</code> no serviço do motor no Railway.
         </div>
       )}
-      {worker && (nRunTotal > 0 || nFilaTotal > 0) && (
-        <div className="mb-3 flex max-w-3xl items-center gap-2 rounded-xl border border-[#3b82f6]/50 bg-[rgba(59,130,246,0.08)] px-4 py-2.5 text-xs text-v4-text">
-          <Loader2 size={14} className="shrink-0 animate-spin text-[#3b82f6]" />
-          <span>
-            <b>Motor trabalhando em background</b> — {nRunTotal} rodando · {nFilaTotal} na fila. Pode fechar esta tela; o status atualiza sozinho.
-          </span>
-        </div>
-      )}
+      <FilaMotor
+        jobs={jobsAtivos}
+        nomeDe={(id) => leads.find((l) => l.id === id)?.empresa ?? null}
+        info={filaInfo}
+        worker={worker}
+        agora={agora}
+        mediaSeg={mediaSeg}
+      />
 
       {worker && reparo.total > 0 && (
         <div className="mb-3 flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-v4-warning/50 bg-[rgba(245,158,11,0.08)] px-4 py-2.5 text-xs text-v4-text">
