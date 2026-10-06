@@ -5,6 +5,7 @@ type WaAuditable = {
   whatsappButtons: WhatsappButtonCheck[];
   hasWhatsappWidget: boolean;
   isOnline: boolean;
+  bloqueado?: boolean; // no ar, mas bloqueia robôs: WhatsApp não verificável
 };
 
 export interface WhatsappAudit {
@@ -32,7 +33,7 @@ export function whatsappAudit(lead: Lead, audit: SiteAudit | null): WhatsappAudi
   let okCount = 0;
 
   for (const { label, a } of fontes) {
-    if (!a || !a.isOnline) continue;
+    if (!a || !a.isOnline || a.bloqueado) continue;
     const broken = (a.whatsappButtons ?? []).filter((b) => !b.working);
     const working = (a.whatsappButtons ?? []).filter((b) => b.working);
     if (broken.length > 0) {
@@ -101,7 +102,7 @@ export function computeDores(
     if (audit.pagespeed?.performance != null && audit.pagespeed.performance < 50) {
       dores.push(`Performance do site baixa (${audit.pagespeed.performance}/100 no PageSpeed mobile).`);
     }
-    if (audit.isOnline && !audit.hasMetaPixel && !audit.hasGoogleTag) {
+    if (audit.isOnline && !audit.bloqueado && !audit.hasMetaPixel && !audit.hasGoogleTag) {
       dores.push('Sem pixel/tag no site — provavelmente não faz (nem otimiza) tráfego pago.');
     }
   }

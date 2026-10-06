@@ -272,6 +272,7 @@ function auditFromRow(r: Record<string, unknown>): SiteAudit {
     source: (r.source as string) ?? null,
     isOnline: Boolean(r.is_online),
     httpStatus: (r.http_status as number) ?? null,
+    bloqueado: Boolean(r.is_online) && Number(r.http_status ?? 200) >= 400,
     httpsValid: Boolean(r.https_valid),
     loadTimeMs: (r.load_time_ms as number) ?? null,
     whatsappButtons: (r.whatsapp_buttons as SiteAudit['whatsappButtons']) ?? [],

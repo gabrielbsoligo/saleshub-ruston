@@ -3,7 +3,7 @@ import type { SiteAudit } from '../types';
 // Campos mínimos para calcular a nota — servem tanto para o site quanto para a LP.
 type Auditable = Pick<
   SiteAudit,
-  'isOnline' | 'httpsValid' | 'loadTimeMs' | 'hasMetaPixel' | 'hasGoogleTag' | 'whatsappButtons' | 'hasWhatsappWidget'
+  'isOnline' | 'httpsValid' | 'loadTimeMs' | 'hasMetaPixel' | 'hasGoogleTag' | 'whatsappButtons' | 'hasWhatsappWidget' | 'bloqueado'
 >;
 
 // Classificação do tempo de carregamento.
@@ -34,10 +34,14 @@ export function siteGrade(audit: Auditable | null): { nota: number; label: strin
   } else {
     nota += 1;
   }
-  if (audit.hasMetaPixel || audit.hasGoogleTag) nota += 2; // faz rastreamento
-  const waOk = audit.whatsappButtons.some((b) => b.working);
-  if (waOk) nota += 2;
-  else if (audit.hasWhatsappWidget) nota += 1;
+  if (audit.bloqueado) {
+    nota += 2; // site bloqueia robôs: rastreamento e WhatsApp desconhecidos (≠ ausentes) — meio ponto de cada
+  } else {
+    if (audit.hasMetaPixel || audit.hasGoogleTag) nota += 2; // faz rastreamento
+    const waOk = audit.whatsappButtons.some((b) => b.working);
+    if (waOk) nota += 2;
+    else if (audit.hasWhatsappWidget) nota += 1;
+  }
 
   const label = nota >= 8 ? 'ótimo' : nota >= 6 ? 'bom' : nota >= 4 ? 'regular' : 'fraco';
   const cls = nota >= 8 ? 'text-v4-success' : nota >= 6 ? 'text-v4-warning' : 'text-v4-error';

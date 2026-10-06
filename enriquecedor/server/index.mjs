@@ -170,10 +170,14 @@ function domainMatchesName(url, companyName) {
   );
 }
 
+// Respostas de WAF/anti-bot: o site EXISTE, só não gosta do robô.
+const BLOQUEIO_HTTP = new Set([401, 403, 406, 429]);
+const WAF_RE = /cloudflare|just a moment|attention required|access denied|incapsula|imperva|sucuri|akamai|request blocked|bot detection|captcha|verificando (seu|se você)|checking your browser/i;
+
 async function siteResponds(url) {
   try {
     const res = await fetchWithTimeout(url, { method: 'GET' }, 10000);
-    return res.ok || (res.status >= 300 && res.status < 400);
+    return res.ok || (res.status >= 300 && res.status < 400) || BLOQUEIO_HTTP.has(res.status);
   } catch {
     return false;
   }
@@ -657,20 +661,23 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
   if (!host || !host.includes('.')) return null;
   const tenta = async (variantes) => {
     const rs = await Promise.all(variantes.map(async (v) => [v, await fetchHtmlCached(v)]));
-    return rs.find(([, r]) => r && r.ok && r.html) ?? null;
+    return rs.find(([, r]) => r && ((r.ok && r.html) || r.bloqueado)) ?? null;
   };
   const hit = (await tenta([`https://${host}`, `https://www.${host}`])) ?? (await tenta([`http://${host}`, `http://www.${host}`]));
   if (!hit) return null;
   const [tentada, r] = hit;
   if (r.finalUrl && isBlocked(r.finalUrl)) return null; // redirecionou pra rede social/diretório
-  const sn = sinaisDoSite(r.html);
+  // Site que bloqueia robôs (403/429): sem HTML útil — pontua só por domínio/fonte.
+  const bloqueado = !!r.bloqueado && !(r.ok && r.html);
+  const sn = bloqueado ? { parked: false, cnpjs: new Set(), title: '', siteName: '', texto: '' } : sinaisDoSite(r.html);
   const sinais = [];
   let score = 0;
+  if (bloqueado) sinais.push('bloqueia_robos');
   if (sn.parked) { score -= 100; sinais.push('pagina_estacionada'); }
   if (cnpj && sn.cnpjs.has(cnpj)) { score += 100; sinais.push('cnpj_no_site'); }
   const toks = [...new Set([...companyTokens(nome), ...companyTokens(companyName ?? '')])];
   const cabecalho = `${sn.title} ${sn.siteName}`;
-  const tituloBate = toks.some((t) => wordSet(cabecalho).has(t)) || (normText(nome).length >= 4 && normText(cabecalho).includes(normText(nome)));
+  const tituloBate = !bloqueado && (toks.some((t) => wordSet(cabecalho).has(t)) || (normText(nome).length >= 4 && normText(cabecalho).includes(normText(nome))));
   if (tituloBate) { score += 30; sinais.push('marca_no_titulo'); }
   const domBate = domainMatchesName(`https://${host}`, nome) || (companyName && domainMatchesName(`https://${host}`, companyName));
   if (domBate) { score += 20; sinais.push('dominio_parecido'); }
@@ -682,10 +689,10 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
   const alvoCobertura = `${normText(cabecalho)} ${host.replace(/[^a-z0-9]/g, '')}`;
   const cobertura = palavras.length ? palavras.filter((w) => alvoCobertura.includes(w)).length / palavras.length : 0;
   if (cobertura >= 0.6) { score += 15; sinais.push('nome_completo'); }
-  if (c.source === 'busca' && !sinais.includes('cnpj_no_site') && cobertura < 0.6) return null; // busca só com o nome inteiro
+  if (c.source === 'busca' && !sinais.includes('cnpj_no_site') && cobertura < 0.6 && !(bloqueado && domBate)) return null; // busca só com o nome inteiro
   score += { validado: 50, gmn: 15, email: 12, planilha: 8, busca: 0 }[c.source] ?? 0;
   const confianca = sinais.includes('cnpj_no_site') || (tituloBate && domBate && (cobertura >= 0.6 || c.source !== 'busca')) ? 'alta' : score >= 15 ? 'media' : null;
-  return { url: toRoot(r.finalUrl || tentada), source: c.source, score, sinais, confianca, html: r.html };
+  return { url: toRoot(r.finalUrl || tentada), source: c.source, score, sinais, confianca, html: bloqueado ? null : r.html };
 }
 
 // Descobre o SITE INSTITUCIONAL investigando de verdade (não confia na planilha):
@@ -756,6 +763,19 @@ async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, c
 }
 
 // --- auditoria de site ------------------------------------------------------
+// Linha de enriquecedor_site_audits → objeto no formato do auditUrl (camelCase).
+function auditDeRow(r) {
+  if (!r) return null;
+  return {
+    siteUrl: r.site_url ?? null, isOnline: !!r.is_online, httpStatus: r.http_status ?? null,
+    bloqueado: !!r.is_online && Number(r.http_status ?? 200) >= 400,
+    httpsValid: !!r.https_valid, loadTimeMs: r.load_time_ms ?? null,
+    whatsappButtons: Array.isArray(r.whatsapp_buttons) ? r.whatsapp_buttons : [], hasWhatsappWidget: !!r.has_whatsapp_widget,
+    hasMetaPixel: !!r.has_meta_pixel, hasGoogleTag: !!r.has_google_tag,
+    siteInstagram: r.site_instagram ?? null, siteFacebook: r.site_facebook ?? null,
+    pagespeed: r.pagespeed ?? null, notes: Array.isArray(r.notes) ? r.notes : [],
+  };
+}
 function analyzeWhatsapp(html) {
   const buttons = [];
   const seen = new Set();
@@ -814,7 +834,7 @@ async function fetchHtmlCached(url, ms = 10000) {
   try {
     const res = await fetchWithTimeout(url, { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }, ms);
     const html = await res.text();
-    val = { ok: res.ok || (res.status >= 300 && res.status < 400), status: res.status, finalUrl: res.url || url, html: html.slice(0, 600_000) };
+    val = { ok: res.ok || (res.status >= 300 && res.status < 400), bloqueado: BLOQUEIO_HTTP.has(res.status), status: res.status, finalUrl: res.url || url, html: html.slice(0, 600_000) };
   } catch {
     val = null;
   }
@@ -876,17 +896,66 @@ function analyzeForm(html) {
   return { hasForm: true, viaEmbed: false, fields, fieldList, hasSubmit, actionSuspeita, action };
 }
 
+// Lê a home pelo navegador (Playwright) — para sites que respondem 403/429 ao
+// fetch simples (WAF/anti-bot). Devolve {status, html, finalUrl} ou null.
+async function fetchHtmlHeadless(url) {
+  return runHeadless(async () => {
+    const browser = await getBrowser();
+    if (!browser) return null;
+    let ctx;
+    try {
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 800 } });
+      const page = await ctx.newPage();
+      const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => null);
+      await page.waitForTimeout(2500);
+      const html = await page.content().catch(() => '');
+      return { status: resp ? resp.status() : null, html, finalUrl: page.url() };
+    } catch {
+      return null;
+    } finally {
+      if (ctx) await ctx.close().catch(() => {});
+    }
+  });
+}
+
 async function auditUrl(url) {
   const started = Date.now();
-  const res = await fetchWithTimeout(url, {}, 12000);
-  const finalUrl = res.url || url;
-  const html = await res.text();
+  const res = await fetchWithTimeout(url, { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } }, 12000);
+  let finalUrl = res.url || url;
+  let html = await res.text();
+  let httpStatus = res.status;
+  let isOnline = res.ok;
+  let loadTimeMs = Date.now() - started;
+  let bloqueado = false;
+  const notes = [];
+  // WAF/anti-bot: 403/429 (ou 503 com cara de Cloudflare) pro robô ≠ site fora do
+  // ar. Tenta o navegador; se ainda bloquear, fica "no ar, bloqueia robôs" e os
+  // sinais de conteúdo (WhatsApp/pixel) ficam como não verificados.
+  const caraDeWaf = WAF_RE.test(`${html.slice(0, 20000)} ${res.headers.get('server') ?? ''}`);
+  if (BLOQUEIO_HTTP.has(res.status) || (res.status === 503 && caraDeWaf)) {
+    const h = await fetchHtmlHeadless(url).catch(() => null);
+    if (h && h.status != null && h.status < 400 && h.html && h.html.length > 500 && !WAF_RE.test(h.html.slice(0, 5000))) {
+      html = h.html;
+      finalUrl = h.finalUrl || finalUrl;
+      httpStatus = h.status;
+      isOnline = true;
+      loadTimeMs = null; // o tempo medido foi o da página de bloqueio
+      notes.push(`Bloqueia robôs simples (HTTP ${res.status}) — auditado via navegador.`);
+    } else {
+      isOnline = true;
+      bloqueado = true;
+      loadTimeMs = null;
+      html = '';
+      notes.push(`Site responde (HTTP ${res.status}) mas bloqueia robôs — WhatsApp/pixel não verificados automaticamente.`);
+    }
+  }
   const { buttons, hasWhatsappWidget } = analyzeWhatsapp(html);
   const form = analyzeForm(html);
   const siteSocials = extractSiteSocials(html);
-  const notes = [];
   const broken = buttons.filter((b) => !b.working);
-  if (broken.length > 0) {
+  if (bloqueado) {
+    /* sem HTML: nada a dizer sobre WhatsApp */
+  } else if (broken.length > 0) {
     notes.push(`${broken.length} botão(ões) de WhatsApp com problema — gancho de abordagem.`);
   } else if (buttons.length === 0 && hasWhatsappWidget) {
     notes.push(
@@ -897,10 +966,11 @@ async function auditUrl(url) {
   }
   return {
     siteUrl: finalUrl,
-    isOnline: res.ok,
-    httpStatus: res.status,
+    isOnline,
+    httpStatus,
+    bloqueado, // no ar, mas bloqueia robôs (derivado no front por is_online && http_status >= 400)
     httpsValid: finalUrl.startsWith('https://'),
-    loadTimeMs: Date.now() - started,
+    loadTimeMs,
     whatsappButtons: buttons,
     hasWhatsappWidget,
     form,
@@ -2724,6 +2794,7 @@ function marcaDe(nome) {
 function sinaisBasicos(row, audit, gb, anunciosMeta) {
   const s = [];
   if (!audit || !audit.isOnline) s.push('Sem site no ar (ou não encontrado)');
+  else if (audit.bloqueado) s.push('Site no ar, mas bloqueia robôs — WhatsApp/pixel não verificados automaticamente');
   else {
     if ((audit.whatsappButtons ?? []).length === 0 && !audit.hasWhatsappWidget) s.push('Site sem botão de WhatsApp: perde contato de cliente quente');
     const quebrados = (audit.whatsappButtons ?? []).filter((b) => !b.working).length;
@@ -2939,12 +3010,14 @@ function detectarFalhas(leadRow, auditRow) {
 
   // 1 · https — precisa de auditoria feita; sem linha de audit não dá pra afirmar
   //     que o site não existe (pode ser só F3 que não rodou).
-  if (auditRow && (!auditRow.is_online || auditRow.https_valid === false || (auditRow.http_status ?? 200) >= 400)) {
+  // Site no ar que bloqueia robôs (403/429) não é falha: só não dá pra afirmar nada do conteúdo.
+  const bloqueado = !!auditRow?.is_online && (auditRow.http_status ?? 200) >= 400;
+  if (auditRow && (!auditRow.is_online || auditRow.https_valid === false)) {
     add('https');
   }
   // 2 · whatsapp — ausente (sem botão E sem widget) ou quebrado (há botões, nenhum
   //     com número utilizável). Widget JS presente = ambíguo, não vira falha.
-  if (auditRow?.is_online) {
+  if (auditRow?.is_online && !bloqueado) {
     const botoes = Array.isArray(auditRow.whatsapp_buttons) ? auditRow.whatsapp_buttons : [];
     const quebrado = botoes.length > 0 && botoes.every((b) => !b?.working);
     const ausente = botoes.length === 0 && !auditRow.has_whatsapp_widget;
@@ -2963,7 +3036,7 @@ function detectarFalhas(leadRow, auditRow) {
     }
   }
   // 6 · pixel
-  if (auditRow?.is_online && !auditRow.has_meta_pixel) add('pixel');
+  if (auditRow?.is_online && !bloqueado && !auditRow.has_meta_pixel) add('pixel');
 
   falhas.sort((a, b) => FALHA_ORDEM.indexOf(a.codigo) - FALHA_ORDEM.indexOf(b.codigo));
   return falhas;
@@ -3468,10 +3541,15 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     }
 
     // ── F3 · Diagnóstico digital (site, GMN, empreendimentos, briefing) ─────
+    // audit/decisores/briefing vivem FORA dos blocos de fase: o F4 e a nota final
+    // usam os três mesmo quando o F3 não roda neste job (antes: ReferenceError
+    // engolido — job f4 sem briefing com mídia e esteira do Kommo terminando em erro).
+    let audit = null;
+    let decisores = [];
+    let briefing = row.briefing ?? null;
     if (so('f3')) {
     await setStatus('esteira_f3');
     { const st = ctxAtual(); if (st) st.fase = 'F3'; }
-    let audit = null;
     try {
       // Chaves de busca do operador valem também aqui: site validado é forçado,
       // domínios/fichas apagados nunca voltam, marca manual é o nome de busca.
@@ -3595,8 +3673,8 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       if (ps !== undefined) await gravaPs(ps);
       else void psP.then(gravaPs).catch(() => {});
     }
-    const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
-    let briefing = null;
+    decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
+    briefing = null; // o F3 sempre gera um briefing novo (b1 aqui ou b2/b3 no F4)
     // Briefing do F3 só quando o F4 NÃO vai rodar nesta execução (senão seria
     // gerado duas vezes — o do F4 já incorpora a mídia).
     if (!so('f4')) {
@@ -3614,6 +3692,14 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     // em chaves_busca), mede a Meta pela página (fallback: termo) e o Google
     // Transparency pelo anunciante (fallback: domínio); briefing ATUALIZADO.
     await setStatus('esteira_f4');
+    if (!so('f3')) {
+      // F3 não rodou neste job: o contexto do briefing (auditoria, decisores) vem do banco.
+      try {
+        const aud = (await sbSelect(token, 'enriquecedor_site_audits', `lead_id=eq.${leadId}&select=*`))?.[0];
+        if (aud) audit = auditDeRow(aud);
+        decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=nome,cargo`)) ?? [];
+      } catch { /* segue sem contexto */ }
+    }
     let anunciosMeta = null;
     try {
       const hostDe = (u) => { try { return new URL(u.startsWith('http') ? u : `https://${u}`).hostname.replace(/^www\./, ''); } catch { return null; } };
@@ -3924,7 +4010,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, {
-        versao: 'onda4d-2026-10-01',
+        versao: 'funil-gate-2026-10-06',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         ok: true,
         authRequired: AUTH_REQUIRED,

@@ -646,7 +646,7 @@ export function LeadDetail({
                 </a>
               )}
               <div className="mt-3 flex flex-wrap gap-1.5">
-                <Chip ok={audit.isOnline} label={audit.isOnline ? 'Site no ar' : 'Fora do ar'} />
+                <Chip ok={audit.isOnline} label={audit.isOnline ? (audit.bloqueado ? `No ar (bloqueia robôs · HTTP ${audit.httpStatus ?? '?'})` : 'Site no ar') : 'Fora do ar'} />
                 <Chip ok={audit.httpsValid} label="HTTPS" />
                 <Chip ok={audit.hasMetaPixel} label="Meta Pixel" />
                 <Chip ok={audit.hasGoogleTag} label="Google Tag" />
@@ -3817,8 +3817,9 @@ function LemitPersonDetails({ data }: { data: NonNullable<DecisionMaker['lemit']
 function WhatsappStatus({
   audit,
 }: {
-  audit: Pick<SiteAudit, 'whatsappButtons' | 'hasWhatsappWidget'>;
+  audit: Pick<SiteAudit, 'whatsappButtons' | 'hasWhatsappWidget' | 'bloqueado'>;
 }) {
+  if (audit.bloqueado) return <span className="text-v4-warning">WhatsApp não verificável — o site bloqueia robôs; conferir manualmente</span>;
   const broken = audit.whatsappButtons.filter((b) => !b.working);
   const working = audit.whatsappButtons.filter((b) => b.working);
   if (broken.length > 0) return <span className="text-v4-error">Botão de WhatsApp quebrado ({broken.length})</span>;

@@ -259,8 +259,38 @@ export function WorkflowView({
   const stOf = (fase: number, id: string) => execStatus[`${fase}:${id}`];
   const setSt = (fase: number, id: string, status: AuditStatus) =>
     setExecStatus((prev) => (prev[`${fase}:${id}`] === status ? prev : { ...prev, [`${fase}:${id}`]: status }));
-  // status mostrado na linha: F1 (Triagem) = validado no import; fases executáveis = execStatus.
-  const statusLinha = (l: WfLead): AuditStatus | undefined => (l.etapa === 0 ? 'ok' : stOf(l.etapa, l.id));
+  // status mostrado na linha: F1 (Triagem) = validado no import; fases executáveis =
+  // execStatus da própria fase; F5+ (sem execução) = o PIOR das três auditorias
+  // (erro > rodando > fila > não rodou > ok) — "Auditado F2–F4" só com as três ok.
+  const FASES_EXEC = [1, 2, 3];
+  const statusLinha = (l: WfLead): AuditStatus | undefined => {
+    if (l.etapa === 0) return 'ok';
+    if (EXEC[l.etapa]) return stOf(l.etapa, l.id);
+    const ss = FASES_EXEC.map((f) => stOf(f, l.id));
+    for (const s of ['erro', 'run', 'fila'] as const) if (ss.includes(s)) return s;
+    return ss.every((s) => s === 'ok') ? 'ok' : undefined;
+  };
+  const rotuloLinha = (l: WfLead): string => {
+    const s = statusLinha(l);
+    if (l.etapa === 0 || EXEC[l.etapa]) return s ? STATUS_META[s].label : 'Aguardando rodar';
+    const nomes = (st: AuditStatus | undefined) => FASES_EXEC.filter((f) => stOf(f, l.id) === st).map((f) => ETAPAS[f].f).join(', ');
+    if (s === 'ok') return 'Auditado F2–F4';
+    if (s === 'erro') return `Erro em ${nomes('erro')}`;
+    if (s === 'run') return `Auditando ${nomes('run')}`;
+    if (s === 'fila') return `Na fila: ${nomes('fila')}`;
+    return `Falta ${nomes(undefined)}`;
+  };
+  // Regra do funil: a fase roda ao chegar e o lead só SAI dela depois que rodou
+  // ('ok' ou 'erro' — erro conta como rodou; o botão da linha re-roda).
+  const podeSair = (l: WfLead) => !EXEC[l.etapa] || ['ok', 'erro'].includes(stOf(l.etapa, l.id) ?? '');
+  const motivoBloqueio = (l: WfLead) => {
+    const s = stOf(l.etapa, l.id);
+    const nome = EXEC[l.etapa]?.label ?? 'a fase';
+    return s === 'run' ? `${nome} está rodando` : s === 'fila' ? `${nome} está na fila do motor` : `${nome} ainda não rodou`;
+  };
+  const avisoFicaram = (n: number, fase: number) => {
+    if (n > 0) toast(`${n} lead(s) ficaram em ${ETAPAS[fase].f}: ${EXEC[fase]?.label ?? 'a fase'} ainda não rodou (avançam quando você clicar de novo).`);
+  };
 
   // ── Fila de jobs (worker do motor) ─────────────────────────────────────────
   // Com o worker ligado, o funil só ENFILEIRA (lead × fase) e acompanha por
@@ -347,16 +377,22 @@ export function WorkflowView({
     if (!selId || !importada || worker == null) return;
     const projetoDaFila = selId;
     if (worker) {
-      // worker ligado: quem chega no F4 entra na fila do motor (sem PQueue na aba)
-      const ids = leads.filter((l) => l.etapa === 3 && !l.descartado && !stOf(3, l.id) && !enfileirados.current.has(l.id)).map((l) => l.id);
-      for (const id of ids) enfileirados.current.add(id);
-      if (ids.length) void enfileirar(ids, 3);
+      // worker ligado: quem CHEGA numa fase executável (F2/F3/F4) entra na fila do
+      // motor sozinho — a fase roda ao chegar; o botão da linha re-roda.
+      for (const fase of FASES_EXEC) {
+        const ids = leads
+          .filter((l) => l.etapa === fase && !l.descartado && !stOf(fase, l.id) && !enfileirados.current.has(`${fase}:${l.id}`))
+          .map((l) => l.id);
+        for (const id of ids) enfileirados.current.add(`${fase}:${id}`);
+        if (ids.length) void enfileirar(ids, fase, 5);
+      }
       return;
     }
+    // sem worker: só o F4 roda sozinho (PQueue na aba); F2/F3 ficam no botão
     for (const l of leads) {
       if (l.etapa !== 3 || l.descartado) continue;
-      if (stOf(3, l.id) || enfileirados.current.has(l.id)) continue; // já rodou/rodando/na fila
-      enfileirados.current.add(l.id);
+      if (stOf(3, l.id) || enfileirados.current.has(`3:${l.id}`)) continue; // já rodou/rodando/na fila
+      enfileirados.current.add(`3:${l.id}`);
       void adsAutoQueue.current.add(async () => {
         if (projetoDaFila !== selIdAtual.current) return; // projeto trocou no meio — descarta
         setSt(3, l.id, 'run');
@@ -424,10 +460,12 @@ export function WorkflowView({
       for (let f = alvo; f < ETAPAS.length; f++) delete next[`${f}:${id}`];
       return next;
     });
-    enfileirados.current.delete(id);
+    for (const f of FASES_EXEC) enfileirados.current.delete(`${f}:${id}`); // volta a enfileirar ao "chegar"
   };
 
   const avancar = (id: string) => {
+    const l = leads.find((x) => x.id === id);
+    if (l && !podeSair(l)) { toast.error(`${l.empresa}: ${motivoBloqueio(l)}.`); return; }
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, etapa: Math.min(l.etapa + 1, ETAPAS.length - 1) } : l)));
   };
   // Seleção por checkbox — permite avançar VÁRIOS leads de uma fase de uma vez.
@@ -443,7 +481,10 @@ export function WorkflowView({
     });
   const avancarSelecionados = (fase: number) => {
     if (fase >= ETAPAS.length - 1) return;
-    setLeads((prev) => prev.map((l) => (l.etapa === fase && marcados[l.id] && !l.descartado ? { ...l, etapa: l.etapa + 1 } : l)));
+    const alvo = leads.filter((l) => l.etapa === fase && marcados[l.id] && !l.descartado);
+    const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
+    avisoFicaram(alvo.length - aptos.size, fase);
+    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: l.etapa + 1 } : l)));
     setMarcados((prev) => {
       const next = { ...prev };
       leads.forEach((l) => {
@@ -454,13 +495,18 @@ export function WorkflowView({
   };
   const aprovarFase = (fase: number) => {
     if (fase >= ETAPAS.length - 1) return;
-    setLeads((prev) => prev.map((l) => (l.etapa === fase && !l.descartado ? { ...l, etapa: l.etapa + 1 } : l)));
+    const alvo = leads.filter((l) => l.etapa === fase && !l.descartado);
+    const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
+    avisoFicaram(alvo.length - aptos.size, fase);
+    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: l.etapa + 1 } : l)));
   };
   const descartar = (id: string) => {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: true } : l)));
   };
   const restaurar = (id: string) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: false } : l)));
   const enviarArquiteto = (id: string) => {
+    const l = leads.find((x) => x.id === id);
+    if (l && !podeSair(l)) { toast.error(`${l.empresa}: ${motivoBloqueio(l)}.`); return; }
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, auditadoAte: l.etapa, etapa: ARQ, parcial: true } : l)));
   };
   // Importa pro Kommo (funil Outbound Cadência SDNA, etapa Fila) os leads do F8
@@ -507,7 +553,29 @@ export function WorkflowView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id).join(','), importadosTick]);
   const enviarFaseArquiteto = (fase: number) => {
-    setLeads((prev) => prev.map((l) => (l.etapa === fase && !l.descartado ? { ...l, auditadoAte: fase, etapa: ARQ, parcial: true } : l)));
+    const alvo = leads.filter((l) => l.etapa === fase && !l.descartado);
+    const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
+    avisoFicaram(alvo.length - aptos.size, fase);
+    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, auditadoAte: fase, etapa: ARQ, parcial: true } : l)));
+  };
+  // Reparo do legado: leads que passaram por F2/F3/F4 sem a auditoria rodar (ou
+  // com erro) — enfileira o que falta sem mover ninguém. Some quando N chega a 0.
+  const reparo = (() => {
+    const porFase: Record<number, string[]> = { 1: [], 2: [], 3: [] };
+    for (const l of leads) {
+      if (l.descartado) continue;
+      for (const f of FASES_EXEC) {
+        if (f < l.etapa && !['ok', 'fila', 'run'].includes(stOf(f, l.id) ?? '')) porFase[f].push(l.id);
+      }
+    }
+    return { porFase, total: FASES_EXEC.reduce((n, f) => n + porFase[f].length, 0) };
+  })();
+  const completarPendentes = async () => {
+    const quebra = FASES_EXEC.filter((f) => reparo.porFase[f].length).map((f) => `${ETAPAS[f].f}: ${reparo.porFase[f].length}`).join(' · ');
+    if (!window.confirm(`Enfileirar as auditorias que faltam (${quebra})? Ninguém muda de fase; o status da linha atualiza quando o motor terminar.`)) return;
+    let n = 0;
+    for (const f of FASES_EXEC) if (reparo.porFase[f].length) n += await enfileirar(reparo.porFase[f], f, 0);
+    toast.success(`${n} auditoria(s) na fila do motor.`);
   };
   const descartados = leads.filter((l) => l.descartado);
   const execLeadObj = execId ? leads.find((l) => l.id === execId) ?? null : null;
@@ -553,6 +621,21 @@ export function WorkflowView({
           <span>
             <b>Motor trabalhando em background</b> — {nRunTotal} rodando · {nFilaTotal} na fila. Pode fechar esta tela; o status atualiza sozinho.
           </span>
+        </div>
+      )}
+
+      {worker && reparo.total > 0 && (
+        <div className="mb-3 flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-v4-warning/50 bg-[rgba(245,158,11,0.08)] px-4 py-2.5 text-xs text-v4-text">
+          <span>
+            <b>{reparo.total} auditoria(s) pendente(s)</b> em leads que já passaram da fase (
+            {FASES_EXEC.filter((f) => reparo.porFase[f].length).map((f) => `${ETAPAS[f].f}: ${reparo.porFase[f].length}`).join(' · ')}).
+          </span>
+          <button
+            onClick={() => void completarPendentes()}
+            className="flex items-center gap-1.5 rounded-lg border border-v4-warning px-3 py-1 text-xs font-medium text-v4-warning transition hover:bg-[rgba(245,158,11,0.15)]"
+          >
+            <Play size={12} /> Completar auditorias pendentes ({reparo.total})
+          </button>
         </div>
       )}
 
@@ -786,7 +869,7 @@ export function WorkflowView({
                                     return (
                                       <span className={`flex items-center gap-1.5 text-xs ${s ? STATUS_META[s].cor : 'text-v4-text-disabled'}`}>
                                         <StatusIcone status={s} />
-                                        {s ? STATUS_META[s].label : 'Na fila'}
+                                        {rotuloLinha(l)}
                                       </span>
                                     );
                                   })()}
@@ -820,8 +903,9 @@ export function WorkflowView({
                                         ev.stopPropagation();
                                         avancar(l.id);
                                       }}
-                                      title={`Passar para ${ETAPAS[i + 1].f} · ${ETAPAS[i + 1].nome}`}
-                                      className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-success px-2 py-1 text-[11px] font-medium text-v4-success transition hover:bg-[rgba(34,197,94,0.12)]"
+                                      disabled={!podeSair(l)}
+                                      title={podeSair(l) ? `Passar para ${ETAPAS[i + 1].f} · ${ETAPAS[i + 1].nome}` : `Aguardando: ${motivoBloqueio(l)}`}
+                                      className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${podeSair(l) ? 'border-v4-success text-v4-success hover:bg-[rgba(34,197,94,0.12)]' : 'cursor-not-allowed border-v4-border text-v4-text-disabled'}`}
                                     >
                                       Avançar <ArrowRight size={11} />
                                     </button>
@@ -832,8 +916,9 @@ export function WorkflowView({
                                         ev.stopPropagation();
                                         enviarArquiteto(l.id);
                                       }}
-                                      title="Enviar direto ao arquiteto agora (com o que já foi auditado)"
-                                      className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-red px-2 py-1 text-[11px] font-medium text-v4-red transition hover:bg-[rgba(230,57,70,0.12)]"
+                                      disabled={!podeSair(l)}
+                                      title={podeSair(l) ? 'Enviar direto ao arquiteto agora (com o que já foi auditado)' : `Aguardando: ${motivoBloqueio(l)}`}
+                                      className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${podeSair(l) ? 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]' : 'cursor-not-allowed border-v4-border text-v4-text-disabled'}`}
                                     >
                                       <Sparkles size={11} /> Arquiteto
                                     </button>

@@ -447,6 +447,9 @@ export interface SiteAudit {
   source: string | null;
   isOnline: boolean;
   httpStatus: number | null;
+  // no ar, mas bloqueia robôs (403/429 — WAF): WhatsApp/pixel não verificados.
+  // Derivado de isOnline && httpStatus >= 400 (não é coluna).
+  bloqueado?: boolean;
   httpsValid: boolean;
   loadTimeMs: number | null;
   whatsappButtons: WhatsappButtonCheck[];
