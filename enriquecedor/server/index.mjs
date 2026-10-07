@@ -3401,7 +3401,7 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
         }
 
         // Variáveis da cadência visíveis no card desde já (CAD *) + responsável.
-        const pre = await preencherCardCadencia({ leadId, decisorId: d?.id ?? null, kommoLeadId, token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
+        const pre = await preencherCardCadencia({ leadId, decisorId: d?.id ?? null, kommoLeadId: String(kommoId), token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
         criados += 1;
         resultados.push({ leadId, empresa: nomeCard, decisor: d?.nome ?? null, kommo_lead_id: String(kommoId), fone: fone ?? 'SEM TELEFONE — completar no card', cadencia: pre });
         await sleep(250); // folga de rate na Kommo
@@ -4534,7 +4534,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'nome-exibicao-2026-10-07',
+        versao: 'nome-exibicao2-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
