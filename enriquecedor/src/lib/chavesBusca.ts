@@ -69,9 +69,13 @@ export function marcaAtual(lead: Lead): string {
 
 // Handle do Facebook institucional (facebook.com/<handle>), se houver.
 export function facebookHandle(url: string | null | undefined): string | null {
-  // facebook.com/p/<Nome-Da-Pagina>-<id>/ → "nome-da-pagina"
-  const p = url?.match(/facebook\.com\/p\/([^/?#]+)/i)?.[1];
-  if (p) return p.replace(/-\d{6,}$/, '').toLowerCase();
+  // facebook.com/p/<Nome>-<id>/ · /people/<Nome>/<id>/ · /pages/<Nome>/<id>/ → "nome"
+  const p = url?.match(/facebook\.com\/(?:p|people|pages)\/([^/?#]+)/i)?.[1];
+  if (p) {
+    let n = p;
+    try { n = decodeURIComponent(p); } catch { /* mantém */ }
+    return n.replace(/-\d{6,}$/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
   const h = url?.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null;
   return h && !/^\d+$/.test(h) && h.length > 2 ? h.toLowerCase() : null;
 }

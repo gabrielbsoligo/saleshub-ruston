@@ -84,7 +84,7 @@ export function redeHandle(rede: RedeValidavel, url: string | null | undefined):
       return i >= 0 ? decodeURIComponent(partes[i + 1] ?? '').toLowerCase() || null : null;
     }
     // facebook.com/p/<Nome-Da-Pagina>-<id>/ → "nome-da-pagina" (mesmo handle do motor)
-    if (partes[0] === 'p' && partes[1]) return decodeURIComponent(partes[1]).replace(/-\d{6,}$/, '').toLowerCase();
+    if (['p', 'people', 'pages'].includes(partes[0]) && partes[1]) return decodeURIComponent(partes[1]).replace(/-\d{6,}$/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     return partes[0]?.toLowerCase() ?? null;
   } catch {
     return null;

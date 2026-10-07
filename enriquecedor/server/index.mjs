@@ -376,8 +376,7 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
   const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
   // facebook.com/p/<Nome-Da-Pagina>-<id>/ (formato novo de página) → o "@" é o nome.
   const handleDe = (u) => {
-    const p = u.match(/facebook\.com\/p\/([^/?#]+)/i)?.[1];
-    if (p) return p.replace(/-\d{6,}$/, '').toLowerCase();
+    if (/facebook\.com/i.test(u)) { const c = fbCanonica(u); return c ? (c.nome ?? c.id ?? '') : ''; }
     return (u.match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
   };
   const toks = companyTokens(company);
@@ -417,7 +416,8 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     const positivos = [...sinais].filter((x) => x !== 'handle_extra' && x !== 'sem_sinal_br').length;
     if (positivos < 2 || score < 5) return null;
     const forte = sinais.has('handle_marca') || sinais.has('handle_dominio') || sinais.has('dominio_na_bio');
-    return { url: stripQuery(r.url), handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
+    const urlFinal = network === 'facebook' ? (fbCanonica(r.url)?.url ?? stripQuery(r.url)) : stripQuery(r.url);
+    return { url: urlFinal, handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
   };
   const consultas = [`site:${network}.com "${company}" ${cidade ?? ''}`.trim(), `${company} ${cidade ?? ''} ${network}`.trim()];
   // Marca curta/genérica ("PLANETA") não acha; o núcleo do domínio do site costuma ser o @ (planetahonda).
@@ -587,7 +587,7 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
   if (sinais?.facebook && /facebook\.com\/share/i.test(sinais.facebook)) sinais = { ...sinais, facebook: await resolverFacebookShare(sinais.facebook) };
   let siteDomain = null;
   try { siteDomain = urlSite ? new URL(urlSite).hostname.replace(/^www\./, '') : null; } catch { /* url inválida */ }
-  const handleDe = (u) => (String(u).match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
+  const handleDe = (u) => (/facebook\.com/i.test(String(u)) ? (fbCanonica(u)?.nome ?? fbCanonica(u)?.id ?? '') : (String(u).match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase());
   const rejIg = (rejeitadosEmpresa?.instagram ?? []).map((h) => String(h).toLowerCase());
   const rejFb = (rejeitadosEmpresa?.facebook ?? []).map((h) => String(h).toLowerCase());
   // Link do site só é "alta" se o @ lembra a marca ou o domínio (um site errado
@@ -863,17 +863,51 @@ function extractSiteSocials(html) {
   };
   const pickFb = () => {
     let share = null;
-    for (const m of html.matchAll(/https?:\/\/(?:www\.|m\.)?facebook\.com\/([A-Za-z0-9_.\-]+)(\/[A-Za-z0-9_.\-]+)?\/?/gi)) {
-      const handle = m[1].toLowerCase();
+    let comId = null;
+    for (const m of html.matchAll(/https?:\/\/(?:[a-z-]+\.)?facebook\.com\/[^"'\s<>)]+/gi)) {
+      const bruto = m[0].replace(/&amp;/g, '&');
       // Link de compartilhamento (facebook.com/share/<id>/) leva à página certa
       // depois de um redirect — fica como última opção, resolvido depois.
-      if ((handle === 'share' || handle === 'share.php') && m[2]) { share = share ?? `https://www.facebook.com/share${m[2]}/`; continue; }
-      if (FB_NAO_PERFIL.has(handle)) continue;
-      return `https://www.facebook.com/${m[1]}`;
+      const sh = bruto.match(/facebook\.com\/share(?:\.php)?\/([^/?#"']+)/i);
+      if (sh) { share = share ?? `https://www.facebook.com/share/${sh[1]}/`; continue; }
+      const c = fbCanonica(bruto);
+      if (!c) continue;
+      if (c.nome && !c.id) return c.url;   // @handle simples: o melhor
+      comId = comId ?? c.url;              // /p/, /people/, /pages/, profile.php
     }
-    return share;
+    return comId ?? share;
   };
   return { instagram: pickIg(), facebook: pickFb() };
+}
+
+// Normaliza QUALQUER formato de URL de página do Facebook:
+//   /<handle>  ·  /p/<Nome>-<id>/  ·  /people/<Nome>/<id>/  ·  /pages/<Nome>/<id>/  ·  /profile.php?id=<id>
+// → { url canônica, nome (pro "@"/pontuação), id (quando a URL traz) } ou null.
+function fbCanonica(raw) {
+  let u;
+  try { u = new URL(String(raw).trim().startsWith('http') ? String(raw).trim() : `https://${String(raw).trim()}`); } catch { return null; }
+  if (!/(^|\.)facebook\.com$/i.test(u.hostname)) return null;
+  const partes = u.pathname.split('/').filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch { return x; } });
+  if (!partes.length) return null;
+  const p0 = partes[0].toLowerCase();
+  const slug = (n) => normText(n).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (p0 === 'profile.php') {
+    const id = u.searchParams.get('id');
+    return id && /^\d{5,}$/.test(id) ? { url: `https://www.facebook.com/profile.php?id=${id}`, nome: null, id } : null;
+  }
+  if (p0 === 'p' && partes[1]) {
+    const id = partes[1].match(/-(\d{6,})$/)?.[1] ?? null;
+    return { url: `https://www.facebook.com/p/${encodeURIComponent(partes[1])}/`, nome: slug(partes[1].replace(/-\d{6,}$/, '')), id };
+  }
+  if ((p0 === 'people' || p0 === 'pages') && partes[1]) {
+    const id = partes.find((x) => /^\d{6,}$/.test(x)) ?? null;
+    const resto = partes.slice(1).filter((x) => !/^\d{6,}$/.test(x) && !/^(about|photos|posts|videos|reviews)$/i.test(x));
+    const nome = resto.length ? slug(resto[0]) : null;
+    return { url: `https://www.facebook.com/${p0}/${encodeURIComponent(partes[1])}${id ? `/${id}` : ''}/`, nome, id };
+  }
+  if (FB_NAO_PERFIL.has(p0) || /^(share|sharer)/.test(p0)) return null;
+  if (/^\d{5,}$/.test(partes[0])) return { url: `https://www.facebook.com/${partes[0]}`, nome: null, id: partes[0] };
+  return { url: `https://www.facebook.com/${partes[0]}`, nome: p0, id: null };
 }
 
 // Caminhos do facebook.com que NÃO são o @ de uma página.
@@ -913,11 +947,12 @@ async function instagramExiste(url) {
   return existe !== false; // desconhecido = mantém
 }
 async function facebookExiste(url) {
-  const formatoP = String(url).match(/facebook\.com\/p\/([^/?#]+)/i)?.[1] ?? null;
-  const handle = formatoP ?? (String(url).match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? '').trim();
-  if (!handle || (!formatoP && FB_NAO_PERFIL.has(handle.toLowerCase()))) return false;
-  if (/^\d{5,}$/.test(handle)) return true;
-  const alvo = formatoP ? `https://www.facebook.com/p/${formatoP}/` : `https://www.facebook.com/${handle}`;
+  const c = fbCanonica(url);
+  if (!c) return false;
+  const formatoP = !!c.id; // /p/, /people/, /pages/, profile.php: plugin pode não reconhecer
+  const handle = c.nome ?? c.id;
+  if (!c.nome && c.id && /^\d{5,}$/.test(c.id) && !/\/(p|people|pages)\//.test(c.url)) return true;
+  const alvo = c.url;
   const ck = chaveCache('fb_existe', handle.toLowerCase());
   const hit = await cacheGet(ck);
   if (hit !== undefined && hit !== null) return !!hit.existe;
@@ -2200,7 +2235,7 @@ function decodeHtml(t) {
 }
 async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
   const bruto = String(fbUrlOuHandle || '').trim();
-  const idDoP = bruto.match(/facebook\.com\/p\/[^/?#]*?-(\d{6,})/i)?.[1];
+  const idDoP = fbCanonica(bruto)?.id ?? null;
   if (idDoP) return { ok: true, pageId: idDoP, pageName: null, via: 'url', handle: idDoP };
   const handle = bruto.match(/facebook\.com\/([^/?#]+)/i)?.[1] || bruto.replace(/^@/, '');
   if (!handle) return { ok: false, pageId: null, note: 'sem_handle' };
@@ -4256,7 +4291,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'fb-p-2026-10-07',
+        versao: 'fb-formatos-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
