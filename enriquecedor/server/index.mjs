@@ -393,8 +393,12 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     // marcas curtas (MRV, JHSF) valem: o resíduo é quem barra "mrvfans"/"alfafestas"
     if (chaveMarca.length >= 3 && (hk.includes(chaveMarca) || (hk.length >= 3 && chaveMarca.includes(hk))) && residuo.length < 4) { score += 4; sinais.add('handle_marca'); }
     else if (toks.some((t) => t.length >= 4 && hk.includes(t))) { score += 3; sinais.add('handle_token'); }
-    if (residuo.length >= 4) { score -= 2; sinais.add('handle_extra'); }
-    if (core && core.length >= 3 && (hk.includes(core) || (hk.length >= 3 && core.includes(hk))) && residuo.length < 4) { score += 3; sinais.add('handle_dominio'); }
+    // @ = núcleo do domínio do site (planetahonda.com.br → @planetahonda): sinal forte por
+    // si só, e a "sobra" em relação à marca ("honda") deixa de ser penalidade.
+    const residuoDom = core && hk.includes(core) ? hk.replace(core, '').replace(RAMO_RE, '') : null;
+    const bateDominio = !!core && core.length >= 3 && ((residuoDom != null && residuoDom.length < 4) || (hk.length >= 3 && core.includes(hk) && residuo.length < 4));
+    if (residuo.length >= 4 && !bateDominio) { score -= 2; sinais.add('handle_extra'); }
+    if (bateDominio) { score += 3; sinais.add('handle_dominio'); }
     const texto = normText(`${r.title} ${r.desc}`);
     if (resultMatchesCompany(r, company)) { score += 2; sinais.add('marca_no_titulo'); }
     if (cidade && normText(cidade).length >= 3 && texto.includes(normText(cidade))) { score += 1; sinais.add('cidade'); }
@@ -411,6 +415,8 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     return { url: stripQuery(r.url), handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
   };
   const consultas = [`site:${network}.com "${company}" ${cidade ?? ''}`.trim(), `${company} ${cidade ?? ''} ${network}`.trim()];
+  // Marca curta/genérica ("PLANETA") não acha; o núcleo do domínio do site costuma ser o @ (planetahonda).
+  if (core && core.length >= 4 && !toks.includes(core)) consultas.push(`site:${network}.com ${core}`);
   let okTotal = true;
   let melhor = null;
   for (const q of consultas) {
@@ -564,7 +570,14 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
   let sinais = siteSocial;
   if (!sinais && urlSite) {
     const r = await fetchHtmlCached(urlSite);
-    if (r?.html) sinais = sinaisDoSite(r.html);
+    if (r?.html && !r.bloqueado) sinais = sinaisDoSite(r.html);
+    else if (r?.bloqueado || !r) {
+      // Site atrás de WAF (Cloudflare 403): lê pelo navegador, com proxy se preciso.
+      const ok = (x) => x && x.status != null && x.status < 400 && x.html && !WAF_RE.test(x.html.slice(0, 5000));
+      let h = await fetchHtmlHeadless(urlSite).catch(() => null);
+      if (!ok(h) && proxyConfig()) h = await fetchHtmlHeadless(urlSite, { proxy: proxyConfig() }).catch(() => null);
+      if (ok(h)) sinais = sinaisDoSite(h.html);
+    }
   }
   if (sinais?.facebook && /facebook\.com\/share/i.test(sinais.facebook)) sinais = { ...sinais, facebook: await resolverFacebookShare(sinais.facebook) };
   let siteDomain = null;
@@ -1100,7 +1113,10 @@ async function auditUrl(url) {
   // sinais de conteúdo (WhatsApp/pixel) ficam como não verificados.
   const caraDeWaf = WAF_RE.test(`${html.slice(0, 20000)} ${res?.headers?.get('server') ?? ''}`);
   if (!viaProxy && (BLOQUEIO_HTTP.has(res.status) || (res.status === 503 && caraDeWaf))) {
-    const h = await fetchHtmlHeadless(url).catch(() => null);
+    const passou = (x) => x && x.status != null && x.status < 400 && x.html && x.html.length > 500 && !WAF_RE.test(x.html.slice(0, 5000));
+    let h = await fetchHtmlHeadless(url).catch(() => null);
+    // Cloudflare costuma barrar também o navegador vindo de datacenter: tenta com o proxy.
+    if (!passou(h) && proxyConfig()) h = await fetchHtmlHeadless(url, { proxy: proxyConfig() }).catch(() => null);
     if (h && h.status != null && h.status < 400 && h.html && h.html.length > 500 && !WAF_RE.test(h.html.slice(0, 5000))) {
       html = h.html;
       finalUrl = h.finalUrl || finalUrl;
@@ -4229,7 +4245,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-existe2-2026-10-07',
+        versao: 'social-waf-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
