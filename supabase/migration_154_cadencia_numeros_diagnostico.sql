@@ -27,7 +27,7 @@ update public.enriquecedor_cadencia_templates
 insert into public.enriquecedor_cadencia_templates
   (nome, canal, passo, versao, corpo, variaveis, chaves_vars, botoes, cidades, padrao, ativo, review_status)
 values
-  ('sdna_p1_diag_sjc_v1', 'whatsapp', 1, 1,
+  ('sdna_p1_diag_sjc_v2', 'whatsapp', 1, 2, -- v1 foi criado no Kommo com {{n}} puro (aprovado e não editável); v2 usa os campos do card
    E'Oi {{1}}, tudo bem? Aqui é {{2}}, da V4 Ruston.\n\nNosso escritório acabou de chegar em São José dos Campos e, pra começar, mapeamos algumas empresas da região com potencial pra crescer no digital. A {{3}} foi uma delas: preparamos um diagnóstico de marketing e vendas gratuito pra vocês, e ele já está pronto.\n\nSó pra adiantar o que encontramos: {{4}}.\n\nQueria marcar um papo rápido pra te mostrar o diagnóstico completo e o que dá pra fazer com isso. Podemos conversar ainda hoje?',
    '["primeiro nome do decisor","nome do SDR","nome da empresa","pontos do diagnóstico (rótulos das falhas: X e Y)"]'::jsonb,
    array['nome1','sdr','fantasia','pontos'],
