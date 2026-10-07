@@ -29,6 +29,8 @@ export interface WfLead {
   segmento?: string | null; // CNAE/segmento real do lead (Receita)
   etapa: number;
   descartado?: boolean;
+  motivoDescarte?: string; // motivo de perda (id de src/lib/motivosDescarte.ts)
+  descarteObs?: string;
   parcial?: boolean; // enviado ao arquiteto antes de completar o funil
   auditadoAte?: number; // maior fase REALMENTE auditada (≠ etapa quando pulou pro arquiteto)
 }

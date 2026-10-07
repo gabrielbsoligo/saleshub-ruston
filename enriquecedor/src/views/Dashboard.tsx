@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Upload, Users2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { Lead, View } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
+import { motivoLabel } from '../lib/motivosDescarte';
 import { STATUS_COLORS, STATUS_LABELS } from '../lib/labels';
 import { useAuth } from '../lib/auth';
 
@@ -21,6 +22,14 @@ export function Dashboard({ onNavigate }: { onNavigate: (view: View) => void }) 
     acc[l.status] = (acc[l.status] ?? 0) + 1;
     return acc;
   }, {});
+  // Perdas por motivo (descartes com motivo registrado no funil)
+  const perdas = Object.entries(
+    leads.reduce<Record<string, number>>((acc, l) => {
+      if (l.motivoDescarte) acc[l.motivoDescarte] = (acc[l.motivoDescarte] ?? 0) + 1;
+      return acc;
+    }, {}),
+  ).sort((a, b) => b[1] - a[1]);
+  const totalPerdas = perdas.reduce((n, [, c]) => n + c, 0);
 
   return (
     <div className="mx-auto max-w-6xl p-8">
@@ -66,6 +75,22 @@ export function Dashboard({ onNavigate }: { onNavigate: (view: View) => void }) 
               </div>
             ))}
           </div>
+          {totalPerdas > 0 && (
+            <>
+              <h3 className="mb-4 mt-8 font-display text-sm font-semibold text-v4-text">Perdas por motivo — {totalPerdas} descartado{totalPerdas !== 1 ? 's' : ''}</h3>
+              <div className="space-y-2">
+                {perdas.map(([motivo, count]) => (
+                  <div key={motivo} className="flex items-center gap-3">
+                    <span className="w-64 truncate text-xs text-v4-text-muted" title={motivoLabel(motivo) ?? motivo}>{motivoLabel(motivo)}</span>
+                    <div className="h-3 flex-1 overflow-hidden rounded-full bg-v4-surface">
+                      <div className="h-full bg-v4-error" style={{ width: `${(count / totalPerdas) * 100}%` }} />
+                    </div>
+                    <span className="w-10 text-right text-sm font-medium text-v4-text">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

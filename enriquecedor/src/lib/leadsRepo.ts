@@ -169,6 +169,19 @@ export const leadsRepo = {
    * (era isso que apagava F4/cadência quando o F3 terminava). Mesma proteção de
    * chaves validadas do update() quando o patch toca site/redes/GMN.
    */
+  /** Descarte com motivo de perda (quem/quando vêm da sessão). */
+  async descartar(id: string, motivo: string, obs: string | null): Promise<void> {
+    let por: string | null = null;
+    if (supabaseConfigured) {
+      const { data } = await supabase.auth.getSession();
+      por = data.session?.user?.email ?? null;
+    }
+    await this.patch(id, { motivoDescarte: motivo, descarteObs: obs?.trim() || null, descartadoEm: new Date().toISOString(), descartadoPor: por });
+  },
+  async restaurar(id: string): Promise<void> {
+    await this.patch(id, { motivoDescarte: null, descarteObs: null, descartadoEm: null, descartadoPor: null });
+  },
+
   async patch(id: string, parcial: Partial<Lead>, opts: { forcarChaves?: boolean } = {}): Promise<void> {
     const chavesTocadas = Object.keys(parcial) as (keyof Lead)[];
     if (!chavesTocadas.length) return;
@@ -351,6 +364,10 @@ function fromRow(r: Record<string, unknown>): Lead {
     aptoCadencia: (r.apto_cadencia as boolean) ?? false,
     cadenciaConfig: (r.cadencia_config as Lead['cadenciaConfig']) ?? null,
     optout: (r.optout as boolean) ?? false,
+    motivoDescarte: (r.motivo_descarte as string) ?? null,
+    descarteObs: (r.descarte_obs as string) ?? null,
+    descartadoEm: (r.descartado_em as string) ?? null,
+    descartadoPor: (r.descartado_por as string) ?? null,
     dataQuality: (r.data_quality as Lead['dataQuality']) ?? 'suspeito',
     validationNotes: (r.validation_notes as string[]) ?? [],
     status: (r.status as Lead['status']) ?? 'importado',
@@ -373,6 +390,7 @@ const COLUNA: Partial<Record<keyof Lead, string>> = {
   googleBusiness: 'google_business', lemitCompany: 'lemit_company', organograma: 'organograma', datastone: 'datastone', briefing: 'briefing', enrichIssues: 'enrich_issues',
   anuncios: 'anuncios', chavesBusca: 'chaves_busca', falhaPrimaria: 'falha_primaria', falhaSecundaria: 'falha_secundaria', falhasDetectadas: 'falhas_detectadas',
   aptoCadencia: 'apto_cadencia', cadenciaConfig: 'cadencia_config', optout: 'optout', dataQuality: 'data_quality', validationNotes: 'validation_notes', status: 'status',
+  motivoDescarte: 'motivo_descarte', descarteObs: 'descarte_obs', descartadoEm: 'descartado_em', descartadoPor: 'descartado_por',
   score: 'score', kommoLeadId: 'kommo_lead_id',
 };
 
@@ -412,6 +430,10 @@ function toRow(l: Lead): Record<string, unknown> {
     apto_cadencia: l.aptoCadencia ?? false,
     cadencia_config: l.cadenciaConfig ?? {},
     optout: l.optout ?? false,
+    motivo_descarte: l.motivoDescarte ?? null,
+    descarte_obs: l.descarteObs ?? null,
+    descartado_em: l.descartadoEm ?? null,
+    descartado_por: l.descartadoPor ?? null,
     data_quality: l.dataQuality,
     validation_notes: l.validationNotes,
     status: l.status,

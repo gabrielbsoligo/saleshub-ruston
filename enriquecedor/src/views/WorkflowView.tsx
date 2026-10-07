@@ -21,6 +21,7 @@ import { lerFila, motorFetch, type FilaMotorInfo } from '../lib/motorClient';
 import { FilaMotor } from '../components/FilaMotor';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ETAPA_DA_FASE, FASE_DA_ETAPA, jobsRepo, workerAtivo, type Job } from '../lib/jobsRepo';
+import { GRUPOS_DESCARTE, MOTIVOS_DESCARTE, motivoLabel } from '../lib/motivosDescarte';
 import { registrarErro } from '../lib/errorLog';
 import { formatCnpj } from '../lib/validation';
 import type { Lead } from '../types';
@@ -562,10 +563,23 @@ export function WorkflowView({
     avisoFicaram(alvo.length - aptos.size, fase);
     setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: proximaEtapa(l.etapa) } : l)));
   };
-  const descartar = (id: string) => {
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: true } : l)));
+  // Descartar = registrar a PERDA: motivo (lista fechada) + observação opcional
+  // (obrigatória em "outro"). Vai pro lead no banco (motivo_descarte, quem, quando)
+  // e aparece na lista de descartados; restaurar limpa.
+  const [descarteMenu, setDescarteMenu] = useState<string | null>(null);
+  const [descarteMotivo, setDescarteMotivo] = useState('');
+  const [descarteObs, setDescarteObs] = useState('');
+  const descartar = (id: string, motivo: string, obs: string) => {
+    if (!motivo) { toast.error('Escolha o motivo da perda.'); return; }
+    if (motivo === 'outro' && !obs.trim()) { toast.error('Descreva o motivo em "Outro".'); return; }
+    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: true, motivoDescarte: motivo, descarteObs: obs.trim() || undefined } : l)));
+    setDescarteMenu(null); setDescarteMotivo(''); setDescarteObs('');
+    void leadsRepo.descartar(id, motivo, obs).catch(() => toast.error('Não deu pra gravar o motivo no lead (o descarte ficou só no funil).'));
   };
-  const restaurar = (id: string) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: false } : l)));
+  const restaurar = (id: string) => {
+    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: false, motivoDescarte: undefined, descarteObs: undefined } : l)));
+    void leadsRepo.restaurar(id).catch(() => {});
+  };
   // Importa pro Kommo (funil Outbound Cadência SDNA, etapa Fila) os leads do F8
   // informados — cria card + contato + nota com a cadência validada; quem já tem
   // card é pulado. O disparo do passo 1 continua manual no Kommo.
@@ -994,16 +1008,44 @@ export function WorkflowView({
                                         <ArrowLeft size={11} /> Voltar
                                       </button>
                                     ))}
-                                  <button
-                                    onClick={(ev) => {
-                                      ev.stopPropagation();
-                                      descartar(l.id);
-                                    }}
-                                    title="Descartar (tira do funil)"
-                                    className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-border px-2 py-1 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
-                                  >
-                                    Descartar <X size={11} />
-                                  </button>
+                                  {descarteMenu === l.id ? (
+                                    <span onClick={(ev) => ev.stopPropagation()} className="mr-2 inline-flex flex-wrap items-center gap-1 rounded-md border border-v4-error/60 px-1.5 py-1 align-middle">
+                                      <select
+                                        autoFocus
+                                        value={descarteMotivo}
+                                        onChange={(ev) => setDescarteMotivo(ev.target.value)}
+                                        className="rounded border border-v4-border bg-v4-surface px-1.5 py-0.5 text-[11px] text-v4-text"
+                                        title="Motivo da perda"
+                                      >
+                                        <option value="">Motivo da perda…</option>
+                                        {GRUPOS_DESCARTE.map((g) => (
+                                          <optgroup key={g} label={g}>
+                                            {MOTIVOS_DESCARTE.filter((m) => m.grupo === g).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                                          </optgroup>
+                                        ))}
+                                      </select>
+                                      <input
+                                        value={descarteObs}
+                                        onChange={(ev) => setDescarteObs(ev.target.value)}
+                                        onKeyDown={(ev) => { if (ev.key === 'Enter') descartar(l.id, descarteMotivo, descarteObs); if (ev.key === 'Escape') setDescarteMenu(null); }}
+                                        placeholder={descarteMotivo === 'outro' ? 'Descreva (obrigatório)' : 'Observação (opcional)'}
+                                        className="w-40 rounded border border-v4-border bg-v4-surface px-1.5 py-0.5 text-[11px] text-v4-text"
+                                      />
+                                      <button onClick={() => descartar(l.id, descarteMotivo, descarteObs)} className="rounded bg-v4-error px-2 py-0.5 text-[11px] font-semibold text-white">Descartar</button>
+                                      <button onClick={() => setDescarteMenu(null)} title="Cancelar" className="rounded px-1 text-v4-text-muted hover:text-v4-text"><X size={11} /></button>
+                                    </span>
+                                  ) : (
+                                    <button
+                                      onClick={(ev) => {
+                                        ev.stopPropagation();
+                                        setDescarteMotivo(''); setDescarteObs(''); setDescarteMenu(l.id);
+                                      }}
+                                      title="Descartar (tira do funil) — pede o motivo da perda"
+                                      className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-border px-2 py-1 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
+                                    >
+                                      Descartar <X size={11} />
+                                    </button>
+                                  )}
                                   <ChevronDown size={16} className={`inline text-v4-text-muted transition ${openLead === l.id ? 'rotate-180' : ''}`} />
                                 </td>
                               </tr>
@@ -1046,6 +1088,11 @@ export function WorkflowView({
               <div key={l.id} className="flex items-center gap-2 rounded-lg border border-v4-border bg-v4-surface px-2.5 py-1.5 text-xs">
                 <span className="text-v4-text line-through">{l.empresa}</span>
                 <span className="text-v4-text-disabled">({ETAPAS[l.etapa].f})</span>
+                {l.motivoDescarte && (
+                  <span className="rounded bg-[rgba(239,68,68,0.12)] px-1.5 py-0.5 text-[10px] font-medium text-v4-error" title={l.descarteObs ?? ''}>
+                    {motivoLabel(l.motivoDescarte)}{l.descarteObs ? ` — ${l.descarteObs}` : ''}
+                  </span>
+                )}
                 <button onClick={() => restaurar(l.id)} className="text-v4-red-hover hover:underline">
                   restaurar
                 </button>

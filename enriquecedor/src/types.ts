@@ -94,6 +94,11 @@ export interface Lead {
   // Escolhas do SDR pra cadência (arquiteto, F7). Ver src/lib/cadencia.ts.
   cadenciaConfig?: CadenciaConfig | null;
   optout?: boolean;
+  // Perda: motivo (lista fechada em src/lib/motivosDescarte.ts), observação, quem/quando.
+  motivoDescarte?: string | null;
+  descarteObs?: string | null;
+  descartadoEm?: string | null;
+  descartadoPor?: string | null;
   status: LeadStatus;
   score: number | null;
   kommoLeadId: string | null; // preenchido na integração (Fase 4)

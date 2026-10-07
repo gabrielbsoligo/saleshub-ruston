@@ -8,6 +8,9 @@
 // ============================================================================
 import http from 'node:http';
 import os from 'node:os';
+import dns from 'node:dns';
+// IPv4 primeiro: domínio com AAAA quebrado (ou IPv6 ruim no host) travava a leitura do site.
+try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node antigo */ }
 import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
@@ -664,7 +667,15 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
     const rs = await Promise.all(variantes.map(async (v) => [v, await fetchHtmlCached(v)]));
     return rs.find(([, r]) => r && ((r.ok && r.html) || r.bloqueado)) ?? null;
   };
-  const hit = (await tenta([`https://${host}`, `https://www.${host}`])) ?? (await tenta([`http://${host}`, `http://www.${host}`]));
+  let hit = (await tenta([`https://${host}`, `https://www.${host}`])) ?? (await tenta([`http://${host}`, `http://www.${host}`]));
+  if (!hit && proxyConfig()) {
+    // Alguns hosts brasileiros não respondem pro IP do Railway (caso sadeltransmissao.com.br):
+    // lê pelo navegador com o proxy (IP residencial BR) antes de dar "não encontrado".
+    const h = await fetchHtmlHeadless(`https://${host}`, { proxy: proxyConfig() }).catch(() => null);
+    if (h && h.status != null && h.status < 400 && h.html && h.html.length > 200) {
+      hit = [`https://${host}`, { ok: true, bloqueado: false, status: h.status, finalUrl: h.finalUrl || `https://${host}`, html: h.html }];
+    }
+  }
   if (!hit) return null;
   const [tentada, r] = hit;
   if (r.finalUrl && isBlocked(r.finalUrl)) return null; // redirecionou pra rede social/diretório
@@ -824,6 +835,27 @@ function extractSiteSocials(html) {
   return { instagram: pickIg(), facebook: pickFb() };
 }
 
+// Página-stub de redirecionamento: <meta http-equiv="refresh"> ou window.location
+// numa página minúscula (ex.: sadeltransmissao.com.br → sadeltransmissao.netlify.app).
+// Devolve o destino absoluto ou null.
+function destinoRedirectHtml(html, baseUrl) {
+  const h = String(html || '');
+  if (h.length > 6000) return null;
+  const m =
+    h.match(/http-equiv=["']?refresh["']?[^>]*content=["']\s*\d+\s*;\s*url=([^"'>\s]+)/i) ||
+    h.match(/content=["']\s*\d+\s*;\s*url=([^"'>\s]+)["'][^>]*http-equiv=["']?refresh/i) ||
+    h.match(/(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/i) ||
+    h.match(/location\.replace\(\s*["']([^"']+)["']/i);
+  if (!m) return null;
+  try {
+    const u = new URL(m[1].trim(), baseUrl);
+    if (!/^https?:$/.test(u.protocol)) return null;
+    return u.href;
+  } catch {
+    return null;
+  }
+}
+
 // HTML da home com cache curto em memória (10 min): a mesma página é lida pela
 // validação do site, pela extração de redes/página Meta e pelos empreendimentos.
 const _htmlCache = new Map();
@@ -834,8 +866,18 @@ async function fetchHtmlCached(url, ms = 10000) {
   let val = null;
   try {
     const res = await fetchWithTimeout(url, { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }, ms);
-    const html = await res.text();
-    val = { ok: res.ok || (res.status >= 300 && res.status < 400), bloqueado: BLOQUEIO_HTTP.has(res.status), status: res.status, finalUrl: res.url || url, html: html.slice(0, 600_000) };
+    let html = await res.text();
+    let finalUrl = res.url || url;
+    let status = res.status;
+    // Redirect por HTML (1 salto): lê o destino, mas o domínio "oficial" segue sendo o pedido.
+    const dest = res.ok ? destinoRedirectHtml(html, finalUrl) : null;
+    if (dest && dest !== finalUrl) {
+      try {
+        const r2 = await fetchWithTimeout(dest, { headers: { 'accept-language': 'pt-BR,pt;q=0.9' } }, ms);
+        if (r2.ok) { html = await r2.text(); status = r2.status; }
+      } catch { /* fica com o stub */ }
+    }
+    val = { ok: res.ok || (res.status >= 300 && res.status < 400), bloqueado: BLOQUEIO_HTTP.has(res.status), status, finalUrl, destinoHtml: dest, html: html.slice(0, 600_000) };
   } catch {
     val = null;
   }
@@ -899,13 +941,13 @@ function analyzeForm(html) {
 
 // Lê a home pelo navegador (Playwright) — para sites que respondem 403/429 ao
 // fetch simples (WAF/anti-bot). Devolve {status, html, finalUrl} ou null.
-async function fetchHtmlHeadless(url) {
+async function fetchHtmlHeadless(url, { proxy = null } = {}) {
   return runHeadless(async () => {
     const browser = await getBrowser();
     if (!browser) return null;
     let ctx;
     try {
-      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 800 } });
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 800 }, ...(proxy ? { proxy } : {}) });
       const page = await ctx.newPage();
       const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => null);
       await page.waitForTimeout(2500);
@@ -921,19 +963,42 @@ async function fetchHtmlHeadless(url) {
 
 async function auditUrl(url) {
   const started = Date.now();
-  const res = await fetchWithTimeout(url, { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } }, 12000);
-  let finalUrl = res.url || url;
-  let html = await res.text();
-  let httpStatus = res.status;
-  let isOnline = res.ok;
-  let loadTimeMs = Date.now() - started;
-  let bloqueado = false;
+  let res;
   const notes = [];
+  let viaProxy = null;
+  try {
+    res = await fetchWithTimeout(url, { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } }, 12000);
+  } catch (e) {
+    // Host não responde pro IP do Railway: tenta pelo navegador com o proxy antes de dar "fora do ar".
+    const h = proxyConfig() ? await fetchHtmlHeadless(url, { proxy: proxyConfig() }).catch(() => null) : null;
+    if (!(h && h.status != null && h.status < 400 && h.html)) throw e;
+    viaProxy = h;
+    notes.push('O site não respondeu ao servidor direto — auditado via navegador/proxy.');
+  }
+  let finalUrl = viaProxy ? (viaProxy.finalUrl || url) : (res.url || url);
+  let html = viaProxy ? viaProxy.html : await res.text();
+  let httpStatus = viaProxy ? viaProxy.status : res.status;
+  let isOnline = viaProxy ? true : res.ok;
+  let loadTimeMs = viaProxy ? null : Date.now() - started;
+  let bloqueado = false;
+  // Página-stub que redireciona por HTML/JS: audita o destino, mantém a URL oficial.
+  const destHtml = isOnline ? destinoRedirectHtml(html, finalUrl) : null;
+  if (destHtml && destHtml !== finalUrl) {
+    try {
+      const r2 = await fetchWithTimeout(destHtml, { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } }, 12000);
+      if (r2.ok) {
+        html = await r2.text();
+        httpStatus = r2.status;
+        isOnline = true;
+        notes.push(`A home redireciona para ${destHtml} — auditado o destino.`);
+      }
+    } catch { /* fica com o stub */ }
+  }
   // WAF/anti-bot: 403/429 (ou 503 com cara de Cloudflare) pro robô ≠ site fora do
   // ar. Tenta o navegador; se ainda bloquear, fica "no ar, bloqueia robôs" e os
   // sinais de conteúdo (WhatsApp/pixel) ficam como não verificados.
-  const caraDeWaf = WAF_RE.test(`${html.slice(0, 20000)} ${res.headers.get('server') ?? ''}`);
-  if (BLOQUEIO_HTTP.has(res.status) || (res.status === 503 && caraDeWaf)) {
+  const caraDeWaf = WAF_RE.test(`${html.slice(0, 20000)} ${res?.headers?.get('server') ?? ''}`);
+  if (!viaProxy && (BLOQUEIO_HTTP.has(res.status) || (res.status === 503 && caraDeWaf))) {
     const h = await fetchHtmlHeadless(url).catch(() => null);
     if (h && h.status != null && h.status < 400 && h.html && h.html.length > 500 && !WAF_RE.test(h.html.slice(0, 5000))) {
       html = h.html;
@@ -4062,7 +4127,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'fila-visivel-2026-10-06',
+        versao: 'site-redirect-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
