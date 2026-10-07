@@ -556,6 +556,7 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
     const r = await fetchHtmlCached(urlSite);
     if (r?.html) sinais = sinaisDoSite(r.html);
   }
+  if (sinais?.facebook && /facebook\.com\/share/i.test(sinais.facebook)) sinais = { ...sinais, facebook: await resolverFacebookShare(sinais.facebook) };
   let siteDomain = null;
   try { siteDomain = urlSite ? new URL(urlSite).hostname.replace(/^www\./, '') : null; } catch { /* url inválida */ }
   const handleDe = (u) => (String(u).match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
@@ -825,14 +826,43 @@ function extractSiteSocials(html) {
     return null;
   };
   const pickFb = () => {
-    for (const m of html.matchAll(/https?:\/\/(?:www\.)?facebook\.com\/([A-Za-z0-9_.\-]+)\/?/gi)) {
+    let share = null;
+    for (const m of html.matchAll(/https?:\/\/(?:www\.|m\.)?facebook\.com\/([A-Za-z0-9_.\-]+)(\/[A-Za-z0-9_.\-]+)?\/?/gi)) {
       const handle = m[1].toLowerCase();
-      if (['sharer', 'plugins', 'dialog', 'tr', 'login', 'sharer.php', 'profile.php'].includes(handle)) continue;
+      // Link de compartilhamento (facebook.com/share/<id>/) leva à página certa
+      // depois de um redirect — fica como última opção, resolvido depois.
+      if ((handle === 'share' || handle === 'share.php') && m[2]) { share = share ?? `https://www.facebook.com/share${m[2]}/`; continue; }
+      if (FB_NAO_PERFIL.has(handle)) continue;
       return `https://www.facebook.com/${m[1]}`;
     }
-    return null;
+    return share;
   };
   return { instagram: pickIg(), facebook: pickFb() };
+}
+
+// Caminhos do facebook.com que NÃO são o @ de uma página.
+const FB_NAO_PERFIL = new Set(['sharer', 'sharer.php', 'share', 'share.php', 'plugins', 'dialog', 'tr', 'login', 'profile.php', 'l.php', 'watch', 'groups', 'events', 'hashtag', 'photo', 'photos', 'reel', 'reels', 'stories', 'people', 'marketplace', 'pages', 'public', 'help', 'privacy', 'policies']);
+
+// facebook.com/share/<id>/ → segue o redirect e devolve a página (facebook.com/<handle>),
+// ou null se continuar sem @ (login exigido). Cache em memória.
+const _fbShareCache = new Map();
+async function resolverFacebookShare(url) {
+  const u = String(url || '');
+  if (!/facebook\.com\/share(\.php)?\//i.test(u)) return u || null;
+  if (_fbShareCache.has(u)) return _fbShareCache.get(u);
+  let out = null;
+  // Com user-agent de navegador o Facebook responde 400; com UA "simples" devolve o
+  // 302 pra página de verdade. Lê o Location sem seguir (evita cair na tela de login).
+  for (const ua of ['curl/8.0', UA]) {
+    try {
+      const res = await fetchWithTimeout(u, { headers: { 'user-agent': ua, 'accept-language': 'pt-BR,pt;q=0.9' }, redirect: 'manual' }, 12000);
+      const loc = res.headers.get('location') || (res.status < 300 ? res.url : '') || '';
+      const handle = loc.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? '';
+      if (handle && !FB_NAO_PERFIL.has(handle.toLowerCase()) && !/^\d+$/.test(handle)) { out = `https://www.facebook.com/${handle}`; break; }
+    } catch { /* tenta o próximo UA */ }
+  }
+  _fbShareCache.set(u, out);
+  return out;
 }
 
 // Página-stub de redirecionamento: <meta http-equiv="refresh"> ou window.location
@@ -1018,6 +1048,7 @@ async function auditUrl(url) {
   const { buttons, hasWhatsappWidget } = analyzeWhatsapp(html);
   const form = analyzeForm(html);
   const siteSocials = extractSiteSocials(html);
+  if (siteSocials.facebook && /facebook\.com\/share/i.test(siteSocials.facebook)) siteSocials.facebook = await resolverFacebookShare(siteSocials.facebook);
   const broken = buttons.filter((b) => !b.working);
   if (bloqueado) {
     /* sem HTML: nada a dizer sobre WhatsApp */
@@ -4127,7 +4158,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'site-redirect-2026-10-07',
+        versao: 'fb-share-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
