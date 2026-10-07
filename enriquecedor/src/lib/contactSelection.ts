@@ -83,6 +83,8 @@ export function redeHandle(rede: RedeValidavel, url: string | null | undefined):
       const i = partes.findIndex((s) => s === 'in' || s === 'pub');
       return i >= 0 ? decodeURIComponent(partes[i + 1] ?? '').toLowerCase() || null : null;
     }
+    // facebook.com/p/<Nome-Da-Pagina>-<id>/ → "nome-da-pagina" (mesmo handle do motor)
+    if (partes[0] === 'p' && partes[1]) return decodeURIComponent(partes[1]).replace(/-\d{6,}$/, '').toLowerCase();
     return partes[0]?.toLowerCase() ?? null;
   } catch {
     return null;

@@ -374,7 +374,12 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
       ? /instagram\.com\/(p|reel|reels|explore|stories|tv|accounts)\//i
       : /facebook\.com\/(sharer|login|events|photo|photos|groups|watch|people|marketplace|hashtag|public|pages\/category)\b/i;
   const bloqueados = new Set((rejeitados ?? []).map((h) => String(h).toLowerCase()));
-  const handleDe = (u) => (u.match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
+  // facebook.com/p/<Nome-Da-Pagina>-<id>/ (formato novo de página) → o "@" é o nome.
+  const handleDe = (u) => {
+    const p = u.match(/facebook\.com\/p\/([^/?#]+)/i)?.[1];
+    if (p) return p.replace(/-\d{6,}$/, '').toLowerCase();
+    return (u.match(/\.com\/([^/?#]+)/i)?.[1] ?? '').toLowerCase();
+  };
   const toks = companyTokens(company);
   const chaveMarca = toks.join('');
   const core = siteDomain ? String(siteDomain).replace(/^www\./, '').split('.')[0].toLowerCase() : null;
@@ -908,20 +913,24 @@ async function instagramExiste(url) {
   return existe !== false; // desconhecido = mantém
 }
 async function facebookExiste(url) {
-  const handle = (String(url).match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? '').trim();
-  if (!handle || FB_NAO_PERFIL.has(handle.toLowerCase())) return false;
+  const formatoP = String(url).match(/facebook\.com\/p\/([^/?#]+)/i)?.[1] ?? null;
+  const handle = formatoP ?? (String(url).match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? '').trim();
+  if (!handle || (!formatoP && FB_NAO_PERFIL.has(handle.toLowerCase()))) return false;
   if (/^\d{5,}$/.test(handle)) return true;
+  const alvo = formatoP ? `https://www.facebook.com/p/${formatoP}/` : `https://www.facebook.com/${handle}`;
   const ck = chaveCache('fb_existe', handle.toLowerCase());
   const hit = await cacheGet(ck);
   if (hit !== undefined && hit !== null) return !!hit.existe;
   let existe = null;
   try {
     const r = await fetchWithTimeout(
-      `https://www.facebook.com/plugins/page.php?href=${encodeURIComponent(`https://www.facebook.com/${handle}`)}&tabs=&width=340&height=130&small_header=true`,
+      `https://www.facebook.com/plugins/page.php?href=${encodeURIComponent(alvo)}&tabs=&width=340&height=130&small_header=true`,
       { headers: { 'accept-language': 'pt-BR,pt;q=0.9' }, redirect: 'follow' }, 12000,
     );
     const html = await r.text();
     if (r.ok) existe = /ref=embed_page/.test(html);
+    // /p/<nome>-<id>: o plugin pode não reconhecer o formato — veio do índice, então não derruba.
+    if (existe === false && formatoP) existe = null;
   } catch { /* segue */ }
   if (existe !== null) void cacheSet(ck, { existe }, 7 * DIA);
   return existe !== false;
@@ -2191,6 +2200,8 @@ function decodeHtml(t) {
 }
 async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
   const bruto = String(fbUrlOuHandle || '').trim();
+  const idDoP = bruto.match(/facebook\.com\/p\/[^/?#]*?-(\d{6,})/i)?.[1];
+  if (idDoP) return { ok: true, pageId: idDoP, pageName: null, via: 'url', handle: idDoP };
   const handle = bruto.match(/facebook\.com\/([^/?#]+)/i)?.[1] || bruto.replace(/^@/, '');
   if (!handle) return { ok: false, pageId: null, note: 'sem_handle' };
   if (/^\d{5,}$/.test(handle)) return { ok: true, pageId: handle, pageName: null, via: 'id', handle };
@@ -4245,7 +4256,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-waf-2026-10-07',
+        versao: 'fb-p-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
