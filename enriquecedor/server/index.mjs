@@ -126,6 +126,8 @@ const BLOCK_DOMAINS = [
   'gov.br', 'receita', 'serasa', 'reclameaqui',
 ];
 
+const hostDeUrl = (u) => { try { return new URL(String(u).startsWith('http') ? String(u) : `https://${u}`).hostname.replace(/^www\./, '').toLowerCase(); } catch { return null; } };
+
 // Agregadores de links ("link na bio") e encurtadores: nunca são o site, mas
 // costumam APONTAR pro site (caso Botanique: ficha do Google → linktr.ee → botanique.com.br).
 const AGREGADOR_RE = /(^|\.)(linktr\.ee|linkin\.bio|bio\.link|beacons\.ai|taplink\.(cc|at|ws)|campsite\.bio|lnk\.bio|linkr\.bio|solo\.to|msha\.ke|direct\.me|komi\.io|linkbio\.co|meulink\.bio|url\.bio|linklist\.bio|biolink\.info|instabio\.cc|hoo\.be|allmylinks\.com|milkshake\.app|linkme\.bio|linkfly\.to|bit\.ly|tinyurl\.com|cutt\.ly|encurtador\.com\.br|wa\.link)$/i;
@@ -3665,7 +3667,8 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       if (ds.data.organograma) patch2.organograma = ds.data.organograma;
     }
     if (lemit?.ok && lemit.company) patch2.lemit_company = lemit.company;
-    if (disc?.url && chaves.site?.validacao !== 'validado' && disc.url !== row.site_url && (!row.site_url || disc.confianca === 'alta')) {
+    const siteAtualFracoF2 = !row.site_url || isBlocked(row.site_url) || AGREGADOR_RE.test(hostDeUrl(row.site_url) ?? '') || !chaves.site?.origem;
+    if (disc?.url && chaves.site?.validacao !== 'validado' && disc.url !== row.site_url && (siteAtualFracoF2 || disc.confianca === 'alta')) {
       patch2.site_url = disc.url;
       setChave('site', { origem: disc.source, confianca: disc.confianca ?? null });
     }
@@ -3844,7 +3847,15 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       // Site já gravado só é trocado por um "alta" (ou mesmo host): a auditoria é
       // do site que FICA no lead — nunca de um candidato que não foi aceito.
       const mesmoHost = (a, b) => { try { return new URL(a).hostname.replace(/^www\./, '') === new URL(b).hostname.replace(/^www\./, ''); } catch { return false; } };
-      let trocaSite = !!disc?.url && (!row.site_url || disc.confianca === 'alta' || disc.source === 'validado' || mesmoHost(row.site_url, disc.url));
+      // Site "legado" (gravado antes da validação por conteúdo, sem origem registrada) ou
+      // que nem é site (instagram.com, linktr.ee…) não tem a proteção de "só troca por alta".
+      const siteAtualFraco = !row.site_url || isBlocked(row.site_url) || AGREGADOR_RE.test(hostDeUrl(row.site_url) ?? '') || !chavesSite.site?.origem;
+      let trocaSite = !!disc?.url && (siteAtualFraco || disc.confianca === 'alta' || disc.source === 'validado' || mesmoHost(row.site_url, disc.url));
+      // Nada encontrado e o atual nem é site: limpa (melhor "não encontrado" que instagram.com como site).
+      if (!disc?.url && row.site_url && (isBlocked(row.site_url) || AGREGADOR_RE.test(hostDeUrl(row.site_url) ?? '')) && chavesSite.site?.validacao !== 'validado') {
+        await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: null }).catch(() => {});
+        row.site_url = null;
+      }
       const siteAlvo = trocaSite ? disc.url : (row.site_url || null);
       if (trocaSite && chavesSite.site?.validacao !== 'validado' && disc.source !== 'validado') {
         const ch = { ...chavesSite, site: { ...(chavesSite.site ?? {}), origem: disc.source, confianca: disc.confianca ?? null } };
@@ -4317,7 +4328,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'linkbio-2026-10-07',
+        versao: 'site-legado-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
