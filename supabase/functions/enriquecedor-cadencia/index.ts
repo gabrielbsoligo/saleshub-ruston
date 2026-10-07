@@ -74,6 +74,7 @@ const CAMPOS = [
   { name: 'CAD Template', type: 'text' },
   { name: 'CAD Passo', type: 'numeric' },
   { name: 'CAD Falha primaria', type: 'text' },
+  { name: 'CAD Pontos diagnostico', type: 'text' }, // "X e Y" dos modelos de diagnóstico gratuito
   { name: 'CAD Optout', type: 'checkbox' },
   { name: 'Enriquecedor URL', type: 'url' },
 ] as const
@@ -108,6 +109,24 @@ const EXEMPLOS: Record<string, string> = {
   'CAD Frase falha': 'não encontrei nenhum anúncio ativo de vocês nas plataformas nos últimos 30 dias',
   'CAD Frase impacto': 'hoje vocês só aparecem pra quem já conhece a marca e foi procurar — quem está descobrindo o serviço agora não passa por vocês',
   'CAD Rotulo 2a falha': 'o perfil do Google sem avaliações',
+  'CAD Pontos diagnostico': 'nenhum anúncio ativo nos últimos 30 dias e o site sem pixel de rastreamento',
+}
+
+// Variável da cadência (motor) → campo CAD. No disparo gravamos TODAS no card: o
+// modelo no Kommo lê o campo, então qualquer modelo (por número de WhatsApp) acha o que usa.
+const CAMPO_DA_VAR: Record<string, string> = {
+  nome1: 'CAD Nome decisor', sdr: 'CAD SDR', fantasia: 'CAD Fantasia', fraseFalha: 'CAD Frase falha',
+  fraseImpacto: 'CAD Frase impacto', rotuloSecundaria: 'CAD Rotulo 2a falha', pontos: 'CAD Pontos diagnostico',
+}
+
+// Bot do Salesbot que dispara o modelo PELO WHATSAPP DO RESPONSÁVEL do card (Lary e
+// Edric têm números oficiais diferentes). Mapa {kommoUserId: botId}; vazio = legado
+// (kommo_bot_id único). Com mapa e sem bot do responsável: NÃO dispara por outro número.
+function botDoResponsavel(tpl: any, uid: number | null): number | null {
+  const mapa = (tpl?.kommo_bots_por_responsavel ?? {}) as Record<string, number>
+  if (!Object.keys(mapa).length) return tpl?.kommo_bot_id ? Number(tpl.kommo_bot_id) : null
+  const b = uid ? mapa[String(uid)] : null
+  return b ? Number(b) : null
 }
 
 async function listarCamposCustom(): Promise<Map<string, { id: number; type: string }>> {
@@ -276,6 +295,14 @@ async function acaoSyncReview() {
 
 async function acaoVincularBot(b: Record<string, any>) {
   if (!b.template || !b.bot_id) return json(400, { error: 'template e bot_id obrigatórios' })
+  // Com responsavel_kommo_id: bot do WhatsApp daquele SDR (mapa por responsável).
+  if (b.responsavel_kommo_id) {
+    const { data: row } = await sb().from('enriquecedor_cadencia_templates').select('kommo_bots_por_responsavel').eq('nome', String(b.template)).maybeSingle()
+    if (!row) return json(404, { error: 'template não encontrado' })
+    const mapa = { ...(row.kommo_bots_por_responsavel ?? {}), [String(b.responsavel_kommo_id)]: Number(b.bot_id) }
+    const { error } = await sb().from('enriquecedor_cadencia_templates').update({ kommo_bots_por_responsavel: mapa }).eq('nome', String(b.template))
+    return json(error ? 500 : 200, { ok: !error, mapa, erro: error?.message ?? null })
+  }
   const { error } = await sb().from('enriquecedor_cadencia_templates')
     .update({ kommo_bot_id: Number(b.bot_id) })
     .eq('nome', String(b.template))
@@ -337,7 +364,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   // Card que recebe: o do decisor destinatário (novo) ou o do lead (legado).
   const cardId = String(opts.decisor?.kommo_lead_id ?? lead.kommo_lead_id)
 
-  const { sdrNome } = await nomeResponsavel(cardId, cacheUsers)
+  const { sdrNome, uid } = await nomeResponsavel(cardId, cacheUsers)
   const rp = await fetch(`${MOTOR_URL}/api/cadencia/preparar`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -359,6 +386,10 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   const valores: Record<string, string> = {}
   const ordem = VARS_POR_TEMPLATE[String(msg.template)] ?? []
   ordem.forEach((nomeCampo: string, i: number) => { valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
+  for (const [k, campo] of Object.entries(CAMPO_DA_VAR)) {
+    const v = pac.variaveis?.[k]
+    if (v != null && v !== '' && valores[campo] == null) valores[campo] = String(v)
+  }
   valores['CAD Template'] = String(msg.template)
   valores['CAD Passo'] = String(passo)
   valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '')
@@ -371,14 +402,17 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     passo,
     template: msg.template,
     variaveis: msg.variaveis,
-    bot_id: tpl.kommo_bot_id ?? null,
+    bot_id: botDoResponsavel(tpl, uid),
+    responsavel: uid,
     review: tpl.review_status,
   }
   if (opts.dryRun) return linha
 
-  if (tpl.review_status !== 'aprovado' || !tpl.kommo_bot_id) {
-    await finaliza({ status: 'falhou', erro: 'template sem aprovação/bot' })
-    return { ...linha, pulado: 'template sem aprovação da Meta ou sem bot vinculado' }
+  const botId = botDoResponsavel(tpl, uid)
+  if (tpl.review_status !== 'aprovado' || !botId) {
+    const motivo = tpl.review_status !== 'aprovado' ? 'template sem aprovação da Meta' : `sem bot deste modelo no WhatsApp do responsável do card (${sdrNome ?? uid ?? 'sem responsável'})`
+    await finaliza({ status: 'falhou', erro: motivo })
+    return { ...linha, pulado: motivo }
   }
 
   // Registro do envio ANTES do Kommo (se ainda não existe placeholder).
@@ -413,7 +447,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     return { ...linha, erro: `PATCH lead HTTP ${rl.status}` }
   }
 
-  const rb = await runBot(Number(tpl.kommo_bot_id), Number(cardId))
+  const rb = await runBot(botId, Number(cardId))
   const okBot = rb.ok || rb.status === 202
   await db.from('enriquecedor_cadencia_envios').update({
     template_id: tpl.id,

@@ -19,7 +19,7 @@ export const FALHA_LABEL: Record<string, string> = {
 };
 
 // Tetos das variáveis (o template WABA aprovado não muda; só o conteúdo).
-export const LIMITES = { nome1: 20, sdr: 20, fantasia: 40, fraseFalha: 140, fraseImpacto: 180, rotulo: 60, corpo: 1024 } as const;
+export const LIMITES = { nome1: 20, sdr: 20, fantasia: 40, fraseFalha: 140, fraseImpacto: 180, rotulo: 60, pontos: 140, corpo: 1024 } as const;
 
 export interface FalhaOpcao {
   codigo: FalhaCadencia;
@@ -38,6 +38,11 @@ export interface TemplateOpcao {
   statusMeta: string;
   review: string | null;
   temBot: boolean;
+  /** ordem das variáveis ({{1}}..{{n}}) por chave — modelos novos; os antigos usam a lista fixa */
+  chavesVars?: string[] | null;
+  /** cidades em que o modelo é o padrão do passo 1 (ex.: São José dos Campos) */
+  cidades?: string[] | null;
+  padrao?: boolean;
 }
 export interface PacoteMsg {
   template: string;
@@ -56,7 +61,7 @@ export interface PacoteCadencia {
   falhaPrimaria?: (FalhaOpcao & { codigo: FalhaCadencia }) | null;
   falhaSecundaria?: (FalhaOpcao & { codigo: FalhaCadencia }) | null;
   whatsapp?: { p1: PacoteMsg | null; p2: PacoteMsg | null; p3: PacoteMsg | null };
-  variaveis?: { nome1: string; sdr: string; fantasia: string; fraseFalha: string; fraseImpacto: string; rotuloSecundaria: string | null };
+  variaveis?: { nome1: string; sdr: string; fantasia: string; fraseFalha: string; fraseImpacto: string; rotuloSecundaria: string | null; pontos?: string };
   decisorId?: string | null;
   validado?: boolean;
   opcoes?: { falhas: FalhaOpcao[]; templates: TemplateOpcao[]; limites: typeof LIMITES };
@@ -171,7 +176,9 @@ export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaCo
   const fraseFalha = cortaPalavra((cfg.fraseFalha ?? '').trim() || f1?.falha || '', LIMITES.fraseFalha);
   const fraseImpacto = cortaPalavra((cfg.fraseImpacto ?? '').trim() || f1?.impacto || '', LIMITES.fraseImpacto);
   const rotuloSecundaria = f2 ? cortaPalavra((cfg.rotuloSecundaria ?? '').trim() || f2.rotulo, LIMITES.rotulo) : null;
-  return { nome1, sdr, fantasia, fraseFalha, fraseImpacto, rotuloSecundaria, decisor, f1, f2 };
+  // "X e Y" dos modelos de diagnóstico (mesma regra do motor)
+  const pontos = f1 ? cortaPalavra(rotuloSecundaria ? `${f1.rotulo} e ${rotuloSecundaria}` : f1.rotulo, LIMITES.pontos) : '';
+  return { nome1, sdr, fantasia, fraseFalha, fraseImpacto, rotuloSecundaria, pontos, decisor, f1, f2 };
 }
 
 /** Prévia local das 3 mensagens a partir dos templates das opções (sem ida ao motor). */
@@ -188,8 +195,12 @@ export function previaLocal(lead: Lead, people: DecisionMaker[], cfg: CadenciaCo
   if (t2?.nome === 'sdna_p2_segunda_falha_v1' && !v.f2) t2 = tpls.find((x) => x.nome === 'sdna_p2_aprofunda_v1') ?? t2;
   const t3 = t(3);
   const vars2 = t2?.nome === 'sdna_p2_segunda_falha_v1' ? [v.nome1, v.fantasia, v.rotuloSecundaria ?? ''] : [v.nome1, v.fantasia];
-  const mk = (tp: TemplateOpcao | null, vars: string[]): PacoteMsg | null =>
-    tp ? { template: tp.nome, statusMeta: tp.statusMeta, variaveis: vars, botoes: tp.botoes, corpoPreview: montarCorpo(tp.corpo, vars) } : null;
+  const valores: Record<string, string> = { nome1: v.nome1, sdr: v.sdr, fantasia: v.fantasia, fraseFalha: v.fraseFalha, fraseImpacto: v.fraseImpacto, rotuloSecundaria: v.rotuloSecundaria ?? '', pontos: v.pontos };
+  const mk = (tp: TemplateOpcao | null, legado: string[]): PacoteMsg | null => {
+    if (!tp) return null;
+    const vars = tp.chavesVars?.length ? tp.chavesVars.map((k) => valores[k] ?? '') : legado;
+    return { template: tp.nome, statusMeta: tp.statusMeta, variaveis: vars, botoes: tp.botoes, corpoPreview: montarCorpo(tp.corpo, vars) };
+  };
   return { variaveis: v, p1: mk(t1, [v.nome1, v.sdr, v.fantasia, v.fraseFalha, v.fraseImpacto]), p2: mk(t2, vars2), p3: mk(t3, [v.nome1, v.fantasia]) };
 }
 

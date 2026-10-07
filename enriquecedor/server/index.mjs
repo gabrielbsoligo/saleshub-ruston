@@ -3018,6 +3018,13 @@ const VARS_TEMPLATE = {
   sdna_p1_auditoria_v1: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
   sdna_p1_auditoria_v2: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
 };
+// Variável da cadência → campo CAD do card. O template no Kommo lê o CAMPO (não a
+// posição), então gravamos TODAS no card: qualquer modelo (inclusive os criados à
+// mão no Kommo, por número de WhatsApp) encontra o que precisa.
+const CAMPO_DA_VAR = {
+  nome1: 'CAD Nome decisor', sdr: 'CAD SDR', fantasia: 'CAD Fantasia', fraseFalha: 'CAD Frase falha',
+  fraseImpacto: 'CAD Frase impacto', rotuloSecundaria: 'CAD Rotulo 2a falha', pontos: 'CAD Pontos diagnostico',
+};
 
 // Preenche no card os campos CAD com as variáveis da cadência JÁ na importação
 // (o SDR vê no Kommo o que vai sair na mensagem 1) e o responsável. O carteiro
@@ -3030,7 +3037,7 @@ async function preencherCardCadencia({ leadId, decisorId = null, kommoLeadId, to
   if (pac?.aptoCadencia && msg) {
     const ordem = VARS_TEMPLATE[msg.template] ?? [];
     ordem.forEach((nome, i) => { valores[nome] = String(msg.variaveis[i] ?? ''); });
-    if (pac.variaveis?.rotuloSecundaria) valores['CAD Rotulo 2a falha'] = pac.variaveis.rotuloSecundaria;
+    for (const [k, campo] of Object.entries(CAMPO_DA_VAR)) if (pac.variaveis?.[k]) valores[campo] = String(pac.variaveis[k]);
     valores['CAD Template'] = String(msg.template);
     valores['CAD Passo'] = '0';
     valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '');
@@ -3566,8 +3573,8 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
   const apto = !!primaria && !row.optout;
   const opcoes = {
     falhas: falhas.map((f) => ({ ...f, ...(frasesDaFalha(f, catalogo) ?? {}), rotuloLongo: catalogo.find((c) => c.codigo === f.codigo)?.rotulo_curto ?? f.codigo })),
-    templates: templates.map((t) => ({ nome: t.nome, passo: t.passo, versao: t.versao, corpo: t.corpo, variaveis: t.variaveis ?? [], botoes: t.botoes ?? [], statusMeta: t.status_meta, review: t.review_status ?? null, temBot: !!t.kommo_bot_id })),
-    limites: { nome1: 20, sdr: 20, fantasia: 40, fraseFalha: 140, fraseImpacto: 180, rotulo: 60, corpo: 1024 },
+    templates: templates.map((t) => ({ nome: t.nome, passo: t.passo, versao: t.versao, corpo: t.corpo, variaveis: t.variaveis ?? [], chavesVars: t.chaves_vars ?? null, cidades: t.cidades ?? null, padrao: !!t.padrao, botoes: t.botoes ?? [], statusMeta: t.status_meta, review: t.review_status ?? null, temBot: !!t.kommo_bot_id || Object.keys(t.kommo_bots_por_responsavel ?? {}).length > 0 })),
+    limites: { nome1: 20, sdr: 20, fantasia: 40, fraseFalha: 140, fraseImpacto: 180, rotulo: 60, pontos: 140, corpo: 1024 },
   };
 
   if (persistir) {
@@ -3651,12 +3658,25 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
   };
   const fr2 = secundaria ? frasesDaFalha(secundaria, catalogo) : null;
   if (fr2 && cfg?.falhaSecundaria === secundaria.codigo && String(cfg.rotuloSecundaria ?? '').trim()) fr2.rotulo = cortaPalavra(String(cfg.rotuloSecundaria).trim(), 60);
-  const p1 = msg(escolhe(1, rot === 0 ? 'sdna_p1_auditoria_v1' : 'sdna_p1_auditoria_v2'), [nome1, sdr, fantasia, v4, v5]);
+  // {{pontos}} dos modelos de diagnóstico: "X e Y" com os rótulos das duas falhas (ou só X).
+  const pontos = teto(fr2 ? `${fr1.rotulo} e ${fr2.rotulo}` : fr1.rotulo, 140, 'pontos do diagnóstico');
+  const valoresVars = { nome1, sdr, fantasia, fraseFalha: v4, fraseImpacto: v5, rotuloSecundaria: fr2?.rotulo ?? '', pontos };
+  // Template com a ordem das variáveis no banco (chaves_vars) monta pela ordem; os antigos seguem a lista fixa.
+  const varsDe = (t, legado) => (Array.isArray(t?.chaves_vars) && t.chaves_vars.length ? t.chaves_vars.map((k) => String(valoresVars[k] ?? '')) : legado);
+  const msgT = (t, legado) => msg(t, varsDe(t, legado));
+  // Padrão do passo 1: modelo marcado como padrão e aprovado — o da cidade do lead
+  // (ex.: São José dos Campos) antes do geral; sem nenhum, a rotação antiga v1/v2.
+  const cidadeLead = normText(row.cidade || '').replace(/[^a-z ]/g, '').trim();
+  const padroesP1 = templates.filter((t) => t.passo === 1 && t.padrao && t.review_status === 'aprovado');
+  const p1Padrao = padroesP1.find((t) => (t.cidades ?? []).some((c) => normText(c).replace(/[^a-z ]/g, '').trim() === cidadeLead))
+    ?? padroesP1.find((t) => !(t.cidades ?? []).length)
+    ?? null;
+  const p1 = msgT(escolhe(1, p1Padrao?.nome ?? (rot === 0 ? 'sdna_p1_auditoria_v1' : 'sdna_p1_auditoria_v2')), [nome1, sdr, fantasia, v4, v5]);
   const t2 = escolhe(2, fr2 ? 'sdna_p2_segunda_falha_v1' : 'sdna_p2_aprofunda_v1');
   const p2 = t2 && t2.nome === 'sdna_p2_segunda_falha_v1'
     ? (fr2 ? msg(t2, [nome1, fantasia, fr2.rotulo]) : msg(tpl('sdna_p2_aprofunda_v1'), [nome1, fantasia]))
-    : msg(t2, [nome1, fantasia]);
-  const p3 = msg(escolhe(3, rot === 0 ? 'sdna_p3_breakup_v1' : 'sdna_p3_breakup_v2'), [nome1, fantasia]);
+    : msgT(t2, [nome1, fantasia]);
+  const p3 = msgT(escolhe(3, rot === 0 ? 'sdna_p3_breakup_v1' : 'sdna_p3_breakup_v2'), [nome1, fantasia]);
 
   return {
     ok: true,
@@ -3668,7 +3688,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
     falhaPrimaria: { ...primaria, ...fr1 },
     falhaSecundaria: fr2 ? { ...secundaria, ...fr2 } : null,
     whatsapp: { p1, p2, p3 },
-    variaveis: { nome1, sdr, fantasia, fraseFalha: v4, fraseImpacto: v5, rotuloSecundaria: fr2?.rotulo ?? null },
+    variaveis: { nome1, sdr, fantasia, fraseFalha: v4, fraseImpacto: v5, rotuloSecundaria: fr2?.rotulo ?? null, pontos },
     decisorId: decisorEscolhido?.id ?? null,
     destinatarios: destinatarios.map((d) => ({ id: d.id, nome: d.nome, cargo: d.cargo ?? null, nome1: nome1De(cfg, d), fone: !!(d.phone_whatsapp || d.phone_personal), kommoLeadId: d.kommo_lead_id ?? null })),
     validado: !!cfg?.validadoEm,
@@ -4534,7 +4554,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'fantasia-vazia-2026-10-07',
+        versao: 'cadencia-numeros-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
