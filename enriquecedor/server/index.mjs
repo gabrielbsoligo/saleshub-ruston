@@ -3190,6 +3190,28 @@ function marcaDe(nome) {
   return limpo || String(nome || '');
 }
 
+// Nome da empresa como gente escreve, pra mensagem e card: sem sufixo societário
+// (LTDA, ME, EPP, S/A…) e, quando veio TUDO EM MAIÚSCULA da Receita, em caixa normal
+// ("CEMEF ENGENHARIA LTDA" → "Cemef Engenharia"). Sigla curta/sem vogal fica em
+// maiúscula (OL, GTK, SJC); conectivo fica minúsculo (de, da, do…). Nome já escrito
+// em caixa mista é respeitado. Mesma regra em src/lib/cadencia.ts (nomeExibicao).
+const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'para', 'com']);
+// Receita grava sem acento: devolve o das palavras comuns em nome de empresa + o sufixo -ção/-ções.
+const ACENTOS_NOME = { sao: 'são', jose: 'josé', joao: 'joão', comercio: 'comércio', industria: 'indústria', industrias: 'indústrias', farmacia: 'farmácia', terapeutica: 'terapêutica', eletronicos: 'eletrônicos', eletronica: 'eletrônica', eletricos: 'elétricos', eletrica: 'elétrica', tecnica: 'técnica', tecnico: 'técnico', servicos: 'serviços', saude: 'saúde', clinica: 'clínica', medico: 'médico', medica: 'médica', odontologica: 'odontológica', agricola: 'agrícola', logistica: 'logística', automoveis: 'automóveis', veiculos: 'veículos', imoveis: 'imóveis', imobiliaria: 'imobiliária', contabil: 'contábil', plasticos: 'plásticos', plastica: 'plástica', plastico: 'plástico', metalurgica: 'metalúrgica', mecanica: 'mecânica', quimica: 'química', grafica: 'gráfica', otica: 'ótica', optica: 'óptica', ribeirao: 'ribeirão', jacarei: 'jacareí', taubate: 'taubaté', guaratingueta: 'guaratinguetá', cacapava: 'caçapava', pecas: 'peças', acucar: 'açúcar', cafe: 'café', colegio: 'colégio', alimenticios: 'alimentícios', alimenticia: 'alimentícia', area: 'área', academico: 'acadêmico', pratica: 'prática', economica: 'econômica', basica: 'básica', fisica: 'física', estetica: 'estética', tecnologica: 'tecnológica', sustentavel: 'sustentável', moveis: 'móveis', ceramica: 'cerâmica', vidracaria: 'vidraçaria', acos: 'aços', aco: 'aço', pao: 'pão', brasilia: 'brasília', paraiba: 'paraíba', goias: 'goiás', parana: 'paraná', ceara: 'ceará', amapa: 'amapá', piaui: 'piauí', maranhao: 'maranhão', uniao: 'união', gestao: 'gestão', visao: 'visão', precisao: 'precisão', razao: 'razão', construcoes: 'construções', incorporacoes: 'incorporações', solucoes: 'soluções' };
+const acentuaNome = (l) => ACENTOS_NOME[l] ?? l.replace(/([aeiou])cao$/, '$1ção').replace(/([aeiou])coes$/, '$1ções');
+function nomeExibicao(nome) {
+  let s = String(nome || '').replace(/\s+/g, ' ').trim();
+  s = s.replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\/?a|s\.a\.?|me|mei)\.?\s*$/i, '').replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp)\b\.?/gi, '').trim();
+  if (!s || /[a-zà-ÿ]/.test(s)) return s;
+  return s.split(' ').map((w, i) => {
+    const l = w.toLocaleLowerCase('pt-BR');
+    if (i > 0 && CONECTIVOS_NOME.has(l)) return l;
+    if (/\d/.test(w) || w.length <= 2 || !/[aeiouyáéíóúâêôãõà]/i.test(l)) return w;
+    const a = acentuaNome(l);
+    return a.charAt(0).toLocaleUpperCase('pt-BR') + a.slice(1);
+  }).join(' ');
+}
+
 // Sinais/gaps básicos server-side (aproximação do computeDores do app) — só
 // fatos verificados; alimentam o briefing gerado pela esteira.
 function sinaisBasicos(row, audit, gb, anunciosMeta) {
@@ -3321,7 +3343,7 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
       // cadência com o próprio {{1}}. Quem já tem card (decisor.kommo_lead_id) é pulado.
       const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=id,nome,cargo,is_primary,selecionado,phone_whatsapp,phone_personal,kommo_lead_id`)) ?? [];
       const destinatarios = destinatariosDe(decisores);
-      const nomeCard = row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw;
+      const nomeCard = nomeExibicao(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw);
       const cc = row.cadencia_config && typeof row.cadencia_config === 'object' ? row.cadencia_config : null;
       const linhaCad = cc?.validadoEm
         ? `\nCadencia validada${cc.validadoPor ? ` por ${cc.validadoPor}` : ''}${cc.sdrNome ? ` - SDR: ${cc.sdrNome}` : ''}. Gancho principal: ${cc.falhaPrimaria ?? row.falha_primaria ?? '-'}${cc.falhaSecundaria ? ` / secundario: ${cc.falhaSecundaria}` : ''}.`
@@ -3586,7 +3608,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
   // {{2}}: o SDR que validou a cadência manda; senão o responsável do card (carteiro) ou o informado.
   let sdr = cortaPalavra(String(cfg?.sdrNome || sdrNome || '').trim(), 20);
   if (!sdr) { sdr = '[SDR]'; avisos.push('sdrNome não informado — preencha {{2}} antes do disparo'); }
-  const fantasia = cortaPalavra(String(cfg?.fantasia ?? '').trim() || row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || ''), 40);
+  const fantasia = cortaPalavra(String(cfg?.fantasia ?? '').trim() || nomeExibicao(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '')), 40);
 
   const fr1 = frasesDaFalha(primaria, catalogo);
   if (!fr1) return { ok: false, error: `falha '${primaria.codigo}' sem registro no catálogo` };
@@ -4512,7 +4534,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'meta-pagina-2026-10-07',
+        versao: 'nome-exibicao-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,

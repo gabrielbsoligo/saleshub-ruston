@@ -61,7 +61,7 @@ import { computeScore, decisorLevel } from '../lib/leadScore';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
 import { useAuth } from '../lib/auth';
-import { FALHA_LABEL, LIMITES, configEfetiva, destinatarios, limparConfig, nome1De, pendenciasValidacao, prepararCadencia, previaLocal, semEscolhaNoF2, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
+import { FALHA_LABEL, LIMITES, configEfetiva, destinatarios, limparConfig, nome1De, nomeExibicao, pendenciasValidacao, prepararCadencia, previaLocal, semEscolhaNoF2, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
 import type { CadenciaConfig } from '../types';
 import { QUALITY_COLORS, QUALITY_LABELS, STATUS_LABELS } from '../lib/labels';
 import { checkEmail, checkPhone, formatCnpj } from '../lib/validation';
@@ -2970,7 +2970,7 @@ function CadenciaSection({
                           return (
                             <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-v4-border px-3 py-2 text-sm">
                               <span className="min-w-0 flex-1">
-                                <span className="font-medium text-v4-text">{d.nome}</span>
+                                <span className="font-medium text-v4-text">{nomeExibicao(d.nome)}</span>
                                 {d.cargo && <span className="ml-1 text-xs text-v4-text-disabled">· {d.cargo}</span>}
                                 {!d.phonePersonal && <span className="ml-2 rounded bg-[rgba(250,204,21,0.15)] px-1.5 py-0.5 text-[10px] text-v4-warning" title="Sem telefone pessoal — o card vai com o telefone da empresa (completar no Kommo)">sem fone pessoal</span>}
                                 {d.kommoLeadId && <span className="ml-2 rounded bg-[rgba(34,197,94,0.15)] px-1.5 py-0.5 text-[10px] text-v4-success">no Kommo · {d.kommoLeadId}</span>}
@@ -3038,7 +3038,7 @@ function CadenciaSection({
             {/* DIREITA (2/5): prévia ao vivo */}
             <div className="space-y-3 lg:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">
-                Prévia — exatamente o que sai{destPrevia ? <span className="normal-case tracking-normal text-v4-text-muted"> · para {destPrevia.nome}{dests.length > 1 ? ` (${dests.length} destinatários)` : ''}</span> : null}
+                Prévia — exatamente o que sai{destPrevia ? <span className="normal-case tracking-normal text-v4-text-muted"> · para {nomeExibicao(destPrevia.nome)}{dests.length > 1 ? ` (${dests.length} destinatários)` : ''}</span> : null}
               </p>
               {([['Passo 1 — abertura', previa?.p1], ['Passo 2 — follow-up (48h)', previa?.p2], ['Passo 3 — breakup (96h)', previa?.p3]] as const).map(([titulo, m]) => (
                 <div key={titulo} className={`rounded-xl border bg-v4-surface p-4 ${m && m.corpoPreview.length > LIMITES.corpo ? 'border-v4-error' : 'border-v4-border'}`}>

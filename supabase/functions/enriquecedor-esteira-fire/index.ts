@@ -11,7 +11,7 @@
 // Ações (POST JSON, auth por body.secret === ESTEIRA_FIRE_SECRET):
 //   {secret, acao:'fire',     leadId}    → login integração + POST /api/esteira no motor (202)
 //   {secret, acao:'status',   leadIds[]} → status atual dos leads (p/ o runner serializar o lote)
-//   {secret, acao:'importar', leadIds[]} → POST /api/cadencia/importar-kommo (cria card no
+//   {secret, acao:'importar', leadIds[], responsavelKommoId?, sdrNome?} → POST /api/cadencia/importar-kommo (cria card no
 //                                          funil Outbound Cadência SDNA, etapa Fila — nada
 //                                          é enviado: o Passo 1 é manual, arrastando o card)
 //   {secret, acao:'campos'}              → lista os custom fields de lead do Kommo (nome→id)
@@ -279,7 +279,8 @@ Deno.serve(async (req) => {
     const r = await fetch(`${MOTOR_URL}/api/cadencia/importar-kommo`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${sess.session.access_token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ leadIds: ids }),
+      // responsável (id do usuário no Kommo) e SDR que assina o {{2}} — sem eles, o motor usa o usuário da integração
+      body: JSON.stringify({ leadIds: ids, responsavelKommoId: body.responsavelKommoId ?? undefined, sdrNome: body.sdrNome ?? undefined }),
     })
     const rb = await r.json().catch(() => null)
     return json(r.ok ? 200 : 502, { ok: r.ok, motor_status: r.status, resultado: rb })
