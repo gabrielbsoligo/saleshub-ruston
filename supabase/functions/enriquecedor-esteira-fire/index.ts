@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
       : body.acao === 'motor-socios'
-        ? { company: body.company, socios: body.socios, cidade: body.cidade ?? null, rejeitados: body.rejeitados ?? {}, rejeitadosLinkedin: body.rejeitadosLinkedin ?? {}, rejeitadosEmpresa: body.rejeitadosEmpresa ?? {} }
+        ? { company: body.company, socios: body.socios ?? [], cidade: body.cidade ?? null, siteUrl: body.siteUrl ?? null, pessoasExtras: body.pessoasExtras ?? [], rejeitados: body.rejeitados ?? {}, rejeitadosLinkedin: body.rejeitadosLinkedin ?? {}, rejeitadosEmpresa: body.rejeitadosEmpresa ?? {} }
         : body.acao === 'motor-anunciantes'
           ? { fbUrl: body.fbUrl ?? null, siteDomain: body.siteDomain ?? null }
           : body.acao === 'motor-anuncios-google'

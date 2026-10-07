@@ -577,8 +577,12 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
   const toksMarca = company ? companyTokens(company).filter((t) => t.length >= 3) : [];
   const coreSite = siteDomain ? siteDomain.split('.')[0].toLowerCase() : null;
   const coerente = (u) => { const hk = handleDe(u).replace(/[^a-z0-9]/g, ''); return toksMarca.some((t) => hk.includes(t)) || (coreSite && coreSite.length >= 3 && (hk.includes(coreSite) || coreSite.includes(hk))); };
-  const doSiteIg = sinais?.instagram && !rejIg.includes(handleDe(sinais.instagram)) ? sinais.instagram : null;
-  const doSiteFb = sinais?.facebook && !rejFb.includes(handleDe(sinais.facebook)) ? sinais.facebook : null;
+  let doSiteIg = sinais?.instagram && !rejIg.includes(handleDe(sinais.instagram)) ? sinais.instagram : null;
+  let doSiteFb = sinais?.facebook && !rejFb.includes(handleDe(sinais.facebook)) ? sinais.facebook : null;
+  // Link do site pode apontar pra perfil removido: confere antes de usar (senão cai na busca).
+  const [igVivo, fbVivo] = await Promise.all([doSiteIg ? instagramExiste(doSiteIg) : true, doSiteFb ? facebookExiste(doSiteFb) : true]);
+  if (!igVivo) doSiteIg = null;
+  if (!fbVivo) doSiteFb = null;
   const opts = { cidade, siteDomain };
   const buscaRede = (network, rej) =>
     company
@@ -588,6 +592,9 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
     doSiteIg ? { url: doSiteIg, confianca: coerente(doSiteIg) ? 'alta' : 'media', origem: 'site', ok: true } : buscaRede('instagram', rejIg),
     doSiteFb ? { url: doSiteFb, confianca: coerente(doSiteFb) ? 'alta' : 'media', origem: 'site', ok: true } : buscaRede('facebook', rejFb),
   ]);
+  // Resultado da busca também pode ser perfil removido (índice atrasado): confere o escolhido.
+  if (ig.url && ig.origem === 'busca' && !(await instagramExiste(ig.url))) { ig.url = null; ig.confianca = null; ig.origem = null; }
+  if (fb.url && fb.origem === 'busca' && !(await facebookExiste(fb.url))) { fb.url = null; fb.confianca = null; fb.origem = null; }
   if (!ig.ok || !fb.ok) anyFail = true;
 
   // Pessoas: sócios-pessoa do contrato social + decisores das outras fontes (até 6).
@@ -853,6 +860,53 @@ function extractSiteSocials(html) {
 
 // Caminhos do facebook.com que NÃO são o @ de uma página.
 const FB_NAO_PERFIL = new Set(['sharer', 'sharer.php', 'share', 'share.php', 'plugins', 'dialog', 'tr', 'login', 'profile.php', 'l.php', 'watch', 'groups', 'events', 'hashtag', 'photo', 'photos', 'reel', 'reels', 'stories', 'people', 'marketplace', 'pages', 'public', 'help', 'privacy', 'policies']);
+
+// O perfil EXISTE? Sites antigos linkam @ que já foi removido (caso Acta → @actalaboratorio).
+// Instagram não diz nada pra IP de datacenter (redireciona tudo pro login): 1) está no
+// índice do Brave? → existe; 2) senão, lê pelo navegador com o proxy (IP residencial)
+// e procura "esta página não está disponível". Sem proxy e sem índice: não sabe → mantém.
+// Facebook: o plugin público da página responde sem login (mesmo truque do resolverMetaPageId).
+const IG_INDISPONIVEL_RE = /n[ãa]o est[áa] dispon[íi]vel|isn.t available|page not found|p[áa]gina n[ãa]o encontrada/i;
+async function instagramExiste(url) {
+  const handle = instagramHandle(url);
+  if (!handle) return false;
+  const ck = chaveCache('ig_existe', handle);
+  const hit = await cacheGet(ck);
+  if (hit !== undefined && hit !== null) return !!hit.existe;
+  let existe = null;
+  try {
+    const { results, ok } = await rawSearch(`site:instagram.com/${handle}`);
+    if (ok && results.some((r) => instagramHandle(r.url) === handle)) existe = true;
+  } catch { /* segue */ }
+  if (existe === null && proxyConfig()) {
+    const h = await fetchHtmlHeadless(`https://www.instagram.com/${handle}/`, { proxy: proxyConfig() }).catch(() => null);
+    if (h?.html) {
+      if (IG_INDISPONIVEL_RE.test(h.html)) existe = false;
+      else if (new RegExp(`"username":"${handle}"|og:title[^>]*${handle}`, 'i').test(h.html)) existe = true;
+    }
+  }
+  if (existe !== null) void cacheSet(ck, { existe }, 7 * DIA);
+  return existe !== false; // desconhecido = mantém
+}
+async function facebookExiste(url) {
+  const handle = (String(url).match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? '').trim();
+  if (!handle || FB_NAO_PERFIL.has(handle.toLowerCase())) return false;
+  if (/^\d{5,}$/.test(handle)) return true;
+  const ck = chaveCache('fb_existe', handle.toLowerCase());
+  const hit = await cacheGet(ck);
+  if (hit !== undefined && hit !== null) return !!hit.existe;
+  let existe = null;
+  try {
+    const r = await fetchWithTimeout(
+      `https://www.facebook.com/plugins/page.php?href=${encodeURIComponent(`https://www.facebook.com/${handle}`)}&tabs=&width=340&height=130&small_header=true`,
+      { headers: { 'accept-language': 'pt-BR,pt;q=0.9' }, redirect: 'follow' }, 12000,
+    );
+    const html = await r.text();
+    if (r.ok) existe = /ref=embed_page/.test(html);
+  } catch { /* segue */ }
+  if (existe !== null) void cacheSet(ck, { existe }, 7 * DIA);
+  return existe !== false;
+}
 
 // facebook.com/share/<id>/ → segue o redirect e devolve a página (facebook.com/<handle>),
 // ou null se continuar sem @ (login exigido). Cache em memória.
@@ -4169,7 +4223,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-br-2026-10-07',
+        versao: 'social-existe-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
