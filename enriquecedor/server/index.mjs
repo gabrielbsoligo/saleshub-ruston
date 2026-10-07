@@ -385,6 +385,9 @@ function isPersonName(nome) {
 // Exige 2 sinais e devolve alta/média.
 const ESTRANGEIRO_RE = /[\u0600-\u06FF\u0590-\u05FF\u0400-\u04FF\u0370-\u03FF\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
 const PAIS_FORA_RE = /\b(dubai|uae|emirates|abu dhabi|qatar|doha|riyadh|usa|united states|new york|miami|london|uk|paris|france|angers|madrid|barcelona|spain|lisboa|lisbon|porto|portugal|italia|italy|roma|milano|berlin|germany|mexico|cdmx|argentina|buenos aires|chile|santiago|colombia|bogota|peru|lima|canada|toronto|australia|sydney|istanbul|turkey|india|mumbai|delhi|singapore|hong kong|tokyo|japan|china|shanghai)\b/;
+const CATEGORIA_NAO_EMPRESA_RE = /\b(musician|music(al)? (artist|group)|band|musicista|m[úu]sico|banda|artist|artista|cantor|cantora|dj|rapper|gamer|gaming|youtuber|streamer|creator|criador(a)? de conte[úu]do|digital creator|blogger|blogueir[ao]|influencer|influenciador(a)?|fan ?page|f[ãa]s? ?clube|fandom|personagem|public figure|figura p[úu]blica|atleta|athlete|personal blog|meme)\b/i;
+const OUTRA_LINGUA_RE = /[ñ¿¡łąęśżźćőű]|\b(del|los|las|nuestr[oa]s?|hace|años|somos l[íi]deres|empresa l[íi]der en|fabricaci[óo]n|productos|servicios|calidad)\b/i;
+const PT_FORTE_RE = /[ãõç]|\b(voc[êe]|n[ãa]o|nosso|nossa|tamb[ée]m|fazemos|atendimento|qualidade|or[çc]amento|servi[çc]os|solu[çc][õo]es)\b/i;
 const PT_RE = /\b(de|da|do|das|dos|para|com|em|e|sua|seu|nossa|nosso|nossos|voce|você|produtos|servicos|serviços|empresa|loja|atendimento|qualidade|desde|anos|entrega|orcamento|orçamento|fabrica|fábrica|industria|indústria|solucoes|soluções)\b/g;
 
 async function findCompanySocial(company, network, rejeitados = [], { cidade = null, siteDomain = null } = {}) {
@@ -436,8 +439,14 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     // Marca curta/genérica bate em perfil de qualquer país ("SADEL" → @sadel.ae, Dubai).
     // Perfil estrangeiro (escrita não latina, país/cidade de fora, @ com sufixo de país) é
     // descartado; sem NENHUM sinal de Brasil/português, @ + título não bastam.
-    if (ESTRANGEIRO_RE.test(`${r.title} ${r.desc}`) || PAIS_FORA_RE.test(texto) || /\.(ae|uk|us|fr|es|it|de|pt|mx|ar|cl|co|ca|au|tr|sa|qa)$/i.test(handle)) return null;
-    const sinalBr = sinais.has('cidade') || sinais.has('dominio_na_bio') || /\b(brasil|brazil)\b|\.com\.br\b/.test(texto) || (texto.match(PT_RE) ?? []).length >= 2;
+    const bruto = `${r.title} ${r.desc}`;
+    if (ESTRANGEIRO_RE.test(bruto) || PAIS_FORA_RE.test(texto) || /\.(ae|uk|us|fr|es|it|de|pt|mx|ar|cl|co|ca|au|tr|sa|qa)$/i.test(handle)) return null;
+    // Perfil de pessoa/artista/fã com o mesmo nome (caso Mextra → "Mextra Terrestrial", músico).
+    if (CATEGORIA_NAO_EMPRESA_RE.test(bruto)) return null;
+    const sinalForteBr = sinais.has('cidade') || sinais.has('dominio_na_bio') || /\b(brasil|brazil)\b|\.com\.br\b/.test(texto);
+    // Espanhol/polonês etc. com a mesma marca (Lubricantes Mextra, MX): só passa com sinal BR forte.
+    if (!sinalForteBr && OUTRA_LINGUA_RE.test(bruto)) return null;
+    const sinalBr = sinalForteBr || PT_FORTE_RE.test(bruto) || (texto.match(PT_RE) ?? []).length >= 3;
     if (!sinalBr) { score -= 2; sinais.add('sem_sinal_br'); }
     const positivos = [...sinais].filter((x) => x !== 'handle_extra' && x !== 'sem_sinal_br').length;
     if (positivos < 2 || score < 5) return null;
@@ -4403,7 +4412,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'marca-traco-2026-10-07',
+        versao: 'social-categoria-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
