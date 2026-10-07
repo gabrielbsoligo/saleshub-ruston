@@ -674,7 +674,8 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
     // lê pelo navegador com o proxy (IP residencial BR) antes de dar "não encontrado".
     const h = await fetchHtmlHeadless(`https://${host}`, { proxy: proxyConfig() }).catch(() => null);
     if (h && h.status != null && h.status < 400 && h.html && h.html.length > 200) {
-      hit = [`https://${host}`, { ok: true, bloqueado: false, status: h.status, finalUrl: h.finalUrl || `https://${host}`, html: h.html }];
+      // o navegador segue redirects por HTML (apex → netlify etc.); o site OFICIAL continua sendo o domínio pedido
+      hit = [`https://${host}`, { ok: true, bloqueado: false, status: h.status, finalUrl: `https://${host}`, html: h.html }];
     }
   }
   if (!hit) return null;
