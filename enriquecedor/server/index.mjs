@@ -4102,6 +4102,13 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       const idDe = (c, re) => { const m = String(c?.valor ?? '').match(re); return m && !(c?.rejeitados ?? []).includes(m[1]) ? m[1] : null; };
       let metaPageId = idDe(chaves.meta_pagina, /(\d{5,})/);
       let googleAdvertiser = idDe(chaves.google_anunciante, /(AR\d{6,})/i);
+      // Anunciante gravado antes da regra de terceiro (e não validado pelo operador): se o
+      // nome não é da empresa, descarta e resolve de novo — senão continua medindo a conta
+      // da agência com os anúncios dos outros clientes.
+      if (googleAdvertiser && chaves.google_anunciante?.validacao !== 'validado' && chaves.google_anunciante?.nome
+        && !anuncianteDaEmpresa(chaves.google_anunciante.nome, [chaves.marca?.valor, row.nome_fantasia, row.razao_social, marcaDe(row.razao_social ?? row.company_name_raw), siteDomain?.split('.')[0]])) {
+        googleAdvertiser = null;
+      }
       let googleDominio = null;
       const precisaMeta = !metaPageId && chaves.meta_pagina?.validacao !== 'validado' && row.company_facebook;
       const precisaGoogle = !googleAdvertiser && chaves.google_anunciante?.validacao !== 'validado' && siteDomain;
@@ -4464,7 +4471,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'google-terceiro2-2026-10-07',
+        versao: 'google-terceiro3-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,

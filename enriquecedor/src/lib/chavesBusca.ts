@@ -341,7 +341,10 @@ export function metaPageIdAtual(lead: Lead): string | null {
 export function googleAdvertiserAtual(lead: Lead): string | null {
   const e = estado(lead, 'google_anunciante');
   const id = googleAdvertiserIdDe(e.valor);
-  return id && !(e.rejeitados ?? []).includes(id) ? id : null;
+  if (!id || (e.rejeitados ?? []).includes(id)) return null;
+  // gravado antes da regra de terceiro e não validado: conta de agência não mede a empresa
+  if (e.validacao !== 'validado' && e.nome && !anuncianteDaEmpresa(e.nome, lead)) return null;
+  return id;
 }
 
 export function chavesPendentes(lead: Lead, audit: SiteAudit | null, ids: ChaveBuscaId[]): number {
