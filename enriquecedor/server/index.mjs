@@ -2379,7 +2379,7 @@ async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
     }
   } catch { /* segue pro headless */ }
 
-  return runHeadless(async () => {
+  const r = await runHeadless(async () => {
     const browser = await getBrowser();
     if (!browser) return { ok: false, pageId: null, note: 'headless_indisponivel', handle };
     const proxy = proxyConfig();
@@ -2399,40 +2399,56 @@ async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
       const termo = handle.replace(/[._-]+/g, ' ');
       const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=BR&search_type=page&media_type=all`;
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-      await page.waitForTimeout(1500);
-      const input = await page.$('input[type="search"], input[placeholder*="anunciante" i], input[placeholder*="advertiser" i], input[aria-label*="Pesquisar" i], input[aria-label*="Search" i], input[type="text"]');
-      if (!input) return { ok: true, pageId: null, note: 'campo_busca_nao_encontrado', handle };
+      // A casca da Ad Library é montada por JS (pode levar >10 s pelo proxy) e o IP
+      // de fora cai no banner de cookies: espera o campo de verdade e aceita o banner.
+      const SEL_INPUT = 'input[type="search"], input[placeholder*="anunciante" i], input[placeholder*="advertiser" i], input[aria-label*="Pesquisar" i], input[aria-label*="Search" i]';
+      let input = null;
+      const ateCampo = Date.now() + 20000;
+      while (!input && Date.now() < ateCampo) {
+        await page.waitForTimeout(1000);
+        for (const rotulo of ['Permitir todos os cookies', 'Allow all cookies', 'Recusar cookies opcionais', 'Decline optional cookies']) {
+          const b = await page.$(`[role="button"]:has-text("${rotulo}"), button:has-text("${rotulo}")`).catch(() => null);
+          if (b) { await b.click().catch(() => {}); break; }
+        }
+        input = await page.$(SEL_INPUT).catch(() => null);
+      }
+      if (!input) {
+        const diag = await page.evaluate(() => ({ url: location.href, title: document.title, texto: (document.body?.innerText || '').replace(/\s+/g, ' ').slice(0, 300) })).catch(() => null);
+        console.warn('[meta-pagina] campo de busca não apareceu', JSON.stringify(diag).slice(0, 400));
+        return { ok: true, pageId: null, note: 'campo_busca_nao_encontrado', handle, diag };
+      }
       await input.click();
       await input.fill('');
       await input.type(termo, { delay: 60 });
+      // Opções do dropdown: páginas (nome · @handle · seguidores) e a sugestão de busca
+      // por palavra-chave ('"termo" Pesquise esta frase exata'), que NÃO é página —
+      // clicar nela abria a busca por termo e o page id nunca vinha.
+      const SEL_OPCAO = '[role="option"], [role="listbox"] [role="button"], [role="listbox"] li';
+      const RE_NAO_PAGINA = /frase exata|exact phrase|pesquis(e|ar) (por|esta)|search (for|this)/i;
       const deadline = Date.now() + 12000;
       let opcoes = [];
-      while (Date.now() < deadline && !opcoes.length) {
+      while (Date.now() < deadline && !opcoes.some((o) => !RE_NAO_PAGINA.test(o))) {
         await page.waitForTimeout(800);
-        opcoes = await page.evaluate(() => {
-          const out = [];
-          for (const el of document.querySelectorAll('[role="option"], [role="listbox"] [role="button"], [role="listbox"] li')) {
-            const t = (el.innerText || '').trim().replace(/\s+/g, ' ');
-            if (t && t.length < 200) out.push(t);
-          }
-          return out;
-        }).catch(() => []);
+        opcoes = await page.evaluate((sel) => [...document.querySelectorAll(sel)].map((el) => (el.innerText || '').trim().replace(/\s+/g, ' ')).map((t) => (t.length < 200 ? t : '')), SEL_OPCAO).catch(() => []);
       }
-      if (!opcoes.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
+      const paginas = opcoes.map((t, i) => ({ t, i })).filter((o) => o.t && !RE_NAO_PAGINA.test(o.t));
+      if (!paginas.length) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle };
       const hk = normText(handle).replace(/[^a-z0-9]/g, '');
       const toksMarca = marca ? companyTokens(marca).filter((t) => t.length >= 4) : [];
-      const alvo = opcoes.findIndex((t) => {
+      const achada = paginas.find(({ t }) => {
         const k = normText(t).replace(/[^a-z0-9]/g, '');
         if (k.includes(hk) || hk.includes(k.slice(0, Math.max(6, hk.length)))) return true;
         const ws = wordSet(t);
         return toksMarca.some((tok) => ws.has(tok));
       });
+      const candidatosNomes = paginas.slice(0, 5).map(({ t }) => ({ id: null, nome: t }));
       // Nenhuma opção bate com o @ nem com a marca: NÃO chuta a primeira (era a
       // origem das páginas erradas) — devolve as candidatas pro operador escolher.
-      if (alvo < 0) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      if (!achada) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: candidatosNomes };
+      const alvo = achada.i;
       const idx = alvo;
-      const els = await page.$$('[role="option"], [role="listbox"] [role="button"], [role="listbox"] li');
-      if (!els[idx]) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      const els = await page.$$(SEL_OPCAO);
+      if (!els[idx]) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: candidatosNomes };
       await els[idx].click();
       const fim = Date.now() + 10000;
       let pageId = null;
@@ -2440,14 +2456,39 @@ async function resolverMetaPageId(fbUrlOuHandle, { marca = null } = {}) {
         await page.waitForTimeout(500);
         pageId = page.url().match(/view_all_page_id=(\d{5,})/)?.[1] ?? null;
       }
-      if (!pageId) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
-      return { ok: true, pageId, pageName: opcoes[idx].split(/\s{2,}|\n/)[0].slice(0, 120) || null, via: 'adlib', handle, candidatos: opcoes.slice(0, 5).map((nome) => ({ id: null, nome })) };
+      if (!pageId) return { ok: true, pageId: null, note: 'pagina_nao_encontrada', handle, candidatos: candidatosNomes };
+      return { ok: true, pageId, pageName: opcoes[idx].split(/\s{2,}|\n/)[0].slice(0, 120) || null, via: 'adlib', handle, candidatos: candidatosNomes };
     } catch (e) {
       return { ok: false, pageId: null, note: String(e?.message || e).slice(0, 120), handle };
     } finally {
       if (ctx) await ctx.close().catch(() => {});
     }
   });
+  if (r?.pageId) return r;
+  // Último recurso: busca por palavra-chave (a mesma que mede os anúncios e que
+  // funciona quando o typeahead não monta) — o card traz o link da página
+  // anunciante (facebook.com/<id>) e o nome dela no topo do texto.
+  const k = await paginaPelosAnuncios(handle, marca).catch(() => null);
+  return k ?? r;
+}
+
+async function paginaPelosAnuncios(handle, marca) {
+  const termo = (marca && companyTokens(marca).length ? marca : handle.replace(/[._-]+/g, ' ')).trim();
+  const res = await metaAdSearch(termo).catch(() => null);
+  if (!res?.cards?.length) return null;
+  const hk = normText(handle).replace(/[^a-z0-9]/g, '');
+  const toksMarca = marca ? companyTokens(marca).filter((t) => t.length >= 4) : [];
+  for (const c of res.cards) {
+    if (!/^\d{5,}$/.test(String(c.advertiser || ''))) continue;
+    // nome da página = primeira linha do card, antes de "Patrocinado"/"Sponsored"
+    const nome = String(c.copy || '').split(/Patrocinad|Sponsored/i)[0].split(/Ver detalhes d[oe] (?:an[úu]ncio|resumo)|See (?:ad|summary) details/i).pop().replace(/\s+/g, ' ').trim().slice(-80);
+    const k = normText(nome).replace(/[^a-z0-9]/g, '');
+    const ws = wordSet(nome);
+    if ((hk.length >= 5 && k.includes(hk)) || (toksMarca.length && toksMarca.every((tok) => ws.has(tok)))) {
+      return { ok: true, pageId: String(c.advertiser), pageName: nome || null, via: 'adlib_anuncios', handle };
+    }
+  }
+  return null;
 }
 
 // Google Ads Transparency Center: por DOMÍNIO (lista anunciantes que apontam pro
@@ -4471,7 +4512,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'google-terceiro3-2026-10-07',
+        versao: 'meta-pagina-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
