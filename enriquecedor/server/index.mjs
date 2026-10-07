@@ -126,6 +126,24 @@ const BLOCK_DOMAINS = [
   'gov.br', 'receita', 'serasa', 'reclameaqui',
 ];
 
+// Agregadores de links ("link na bio") e encurtadores: nunca são o site, mas
+// costumam APONTAR pro site (caso Botanique: ficha do Google → linktr.ee → botanique.com.br).
+const AGREGADOR_RE = /(^|\.)(linktr\.ee|linkin\.bio|bio\.link|beacons\.ai|taplink\.(cc|at|ws)|campsite\.bio|lnk\.bio|linkr\.bio|solo\.to|msha\.ke|direct\.me|komi\.io|linkbio\.co|meulink\.bio|url\.bio|linklist\.bio|biolink\.info|instabio\.cc|hoo\.be|allmylinks\.com|milkshake\.app|linkme\.bio|linkfly\.to|bit\.ly|tinyurl\.com|cutt\.ly|encurtador\.com\.br|wa\.link)$/i;
+const NAO_SITE_RE = /(^|\.)(fonts\.googleapis\.com|fonts\.gstatic\.com|gstatic\.com|googletagmanager\.com|google-analytics\.com|cloudflare\.com|cdn\.|jsdelivr\.net|unpkg\.com|apple\.com|play\.google\.com|whatsapp\.com|api\.whatsapp\.com|tiktok\.com|spotify\.com|booking\.com|airbnb\.|tripadvisor\.|ifood\.com\.br|mercadolivre\.|shopee\.|amazon\.)/i;
+// Lê a página do agregador e devolve os sites externos que ela linka (na ordem).
+async function sitesDoAgregador(url) {
+  const r = await fetchHtmlCached(url.startsWith('http') ? url : `https://${url}`).catch(() => null);
+  if (!r?.html) return [];
+  const out = [];
+  for (const m of r.html.matchAll(/href=["'](https?:\/\/[^"'#\s]+)["']/gi)) {
+    let host;
+    try { host = new URL(m[1]).hostname.replace(/^www\./, '').toLowerCase(); } catch { continue; }
+    if (AGREGADOR_RE.test(host) || NAO_SITE_RE.test(host) || isBlocked(`https://${host}/`)) continue;
+    if (!out.includes(host)) out.push(host);
+  }
+  return out.slice(0, 4);
+}
+
 function isBlocked(url) {
   const u = url.toLowerCase();
   return BLOCK_DOMAINS.some((d) => u.includes(d));
@@ -769,9 +787,11 @@ async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, c
   }
   const bloqueados = new Set((rejeitados ?? []).map((d) => String(d).toLowerCase().replace(/^www\./, '')));
   const candidatos = []; // {url, source, dom}
+  const agregadores = []; // {url, source}: expandidos depois (o site está DENTRO deles)
   const push = (url, source) => {
     if (!url) return;
     const dom = String(url).replace(/^https?:\/\//i, '').replace(/^www\./i, '').split('/')[0].toLowerCase();
+    if (AGREGADOR_RE.test(dom)) { agregadores.push({ url: String(url), source }); return; }
     if (!dom.includes('.') || bloqueados.has(dom) || isBlocked(`https://${dom}/`)) return;
     if (candidatos.some((c) => c.dom === dom)) return;
     candidatos.push({ url, source, dom });
@@ -796,6 +816,12 @@ async function discoverSite({ siteUrl, emailDomain, companyName, nomeFantasia, c
     for (const u of urls) {
       if (domainMatchesName(u, nome) || (companyName && domainMatchesName(u, companyName))) push(u, 'busca');
     }
+  }
+
+  // "Link na bio" (linktr.ee etc.) na ficha/planilha: os sites que ele linka viram candidatos
+  // com a mesma fonte — a validação pelo conteúdo escolhe o certo.
+  for (const a of agregadores.slice(0, 2)) {
+    for (const host of await sitesDoAgregador(a.url)) push(host, a.source);
   }
 
   // Valida TODOS em paralelo pelo conteúdo e fica com o melhor pontuado.
@@ -4291,7 +4317,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'fb-formatos-2026-10-07',
+        versao: 'linkbio-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
