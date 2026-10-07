@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
   // das edges não for reposto, as operações de card saem por lá. Auth = login do
   // usuário de integração, igual à esteira.
-  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar', 'motor-preencher-cards', 'motor-site-audit'].includes(String(body.acao))) {
+  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar', 'motor-preencher-cards', 'motor-site-audit', 'motor-rede-existe'].includes(String(body.acao))) {
     const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
       email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
       password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
       : body.acao === 'motor-cadencia-preparar' ? '/api/cadencia/preparar' // teste/ops: pacote WABA com a config do SDR
       : body.acao === 'motor-preencher-cards' ? '/api/cadencia/preencher-cards' // ops: CAD * + responsável nos cards existentes
       : body.acao === 'motor-site-audit' ? '/api/site-audit' // teste/ops: descoberta + auditoria do site como o F3 faz
+      : body.acao === 'motor-rede-existe' ? '/api/ops/rede-existe' // teste/ops: o perfil IG/FB existe?
       : '/api/kommo/token-heal'
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
@@ -138,6 +139,8 @@ Deno.serve(async (req) => {
                 ? { leadId: body.leadId, sdrNome: body.sdrNome ?? null, persistir: body.persistir === true, config: body.config ?? undefined, decisorId: body.decisorId ?? null }
                 : body.acao === 'motor-preencher-cards'
                   ? { leadIds: body.leadIds ?? [], responsavelKommoId: body.responsavelKommoId ?? null, sdrNome: body.sdrNome ?? null }
+                  : body.acao === 'motor-rede-existe'
+                    ? { instagram: body.instagram ?? null, facebook: body.facebook ?? null }
                   : body.acao === 'motor-site-audit'
                     ? { siteUrl: body.siteUrl ?? null, emailDomain: body.emailDomain ?? null, companyName: body.companyName ?? null, nomeFantasia: body.nomeFantasia ?? null, cidade: body.cidade ?? null, cnpj: body.cnpj ?? null, forcar: body.forcar ?? null, rejeitados: body.rejeitados ?? [], gmnRejeitados: body.gmnRejeitados ?? [] }
                     : {}

@@ -874,18 +874,24 @@ async function instagramExiste(url) {
   const hit = await cacheGet(ck);
   if (hit !== undefined && hit !== null) return !!hit.existe;
   let existe = null;
-  try {
-    const { results, ok } = await rawSearch(`site:instagram.com/${handle}`);
-    if (ok && results.some((r) => instagramHandle(r.url) === handle)) existe = true;
-  } catch { /* segue */ }
-  if (existe === null && proxyConfig()) {
+  let via = null;
+  // 1) Navegador com proxy (IP residencial) é a fonte que vale: o índice do Brave
+  //    demora a tirar perfil removido (foi assim que @actalaboratorio passou).
+  if (proxyConfig()) {
     const h = await fetchHtmlHeadless(`https://www.instagram.com/${handle}/`, { proxy: proxyConfig() }).catch(() => null);
     if (h?.html) {
-      if (IG_INDISPONIVEL_RE.test(h.html)) existe = false;
-      else if (new RegExp(`"username":"${handle}"|og:title[^>]*${handle}`, 'i').test(h.html)) existe = true;
+      if (IG_INDISPONIVEL_RE.test(h.html)) { existe = false; via = 'navegador'; }
+      else if (new RegExp(`"username":"${handle}"|og:title[^>]*${handle}|og:url[^>]*instagram\\.com/${handle}`, 'i').test(h.html)) { existe = true; via = 'navegador'; }
     }
   }
-  if (existe !== null) void cacheSet(ck, { existe }, 7 * DIA);
+  // 2) Sem proxy (ou navegador inconclusivo): índice do Brave só confirma existência.
+  if (existe === null) {
+    try {
+      const { results, ok } = await rawSearch(`site:instagram.com/${handle}`);
+      if (ok && results.some((r) => instagramHandle(r.url) === handle)) { existe = true; via = 'indice'; }
+    } catch { /* segue */ }
+  }
+  if (existe !== null) void cacheSet(ck, { existe, via }, 7 * DIA);
   return existe !== false; // desconhecido = mantém
 }
 async function facebookExiste(url) {
@@ -4223,7 +4229,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-existe-2026-10-07',
+        versao: 'social-existe2-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4243,6 +4249,19 @@ const server = http.createServer(async (req, res) => {
       const cnpj = url.pathname.split('/').pop();
       const r = await fetchCnpj(cnpj);
       return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/ops/rede-existe' && req.method === 'POST') {
+      // ops/teste: o perfil existe? {instagram?, facebook?} → {instagram:{existe}, facebook:{existe}}
+      const body = await readJson(req);
+      const out = {};
+      if (body?.instagram) {
+        const h = instagramHandle(body.instagram);
+        await sbDelete(SERVICE_KEY || tokenAtual(), 'enriquecedor_cache', `chave=eq.${encodeURIComponent(chaveCache('ig_existe', h))}`).catch(() => {});
+        out.instagram = { handle: h, existe: await instagramExiste(body.instagram), proxy: !!proxyConfig() };
+      }
+      if (body?.facebook) out.facebook = { existe: await facebookExiste(body.facebook) };
+      return send(res, 200, out);
     }
 
     if (url.pathname === '/api/socios-social' && req.method === 'POST') {
