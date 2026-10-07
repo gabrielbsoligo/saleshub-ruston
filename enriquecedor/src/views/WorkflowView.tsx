@@ -569,6 +569,15 @@ export function WorkflowView({
   const [descarteMenu, setDescarteMenu] = useState<string | null>(null);
   const [descarteMotivo, setDescarteMotivo] = useState('');
   const [descarteObs, setDescarteObs] = useState('');
+  // Posição do popover (fixed, ancorado no botão): a tabela tem overflow e cortaria um absolute.
+  const [descartePos, setDescartePos] = useState<{ top: number; right: number } | null>(null);
+  useEffect(() => {
+    if (!descarteMenu) return;
+    const fecha = () => setDescarteMenu(null);
+    window.addEventListener('resize', fecha);
+    window.addEventListener('scroll', fecha, true);
+    return () => { window.removeEventListener('resize', fecha); window.removeEventListener('scroll', fecha, true); };
+  }, [descarteMenu]);
   const descartar = (id: string, motivo: string, obs: string) => {
     if (!motivo) { toast.error('Escolha o motivo da perda.'); return; }
     if (motivo === 'outro' && !obs.trim()) { toast.error('Descreva o motivo em "Outro".'); return; }
@@ -1008,13 +1017,34 @@ export function WorkflowView({
                                         <ArrowLeft size={11} /> Voltar
                                       </button>
                                     ))}
-                                  {descarteMenu === l.id ? (
-                                    <span onClick={(ev) => ev.stopPropagation()} className="mr-2 inline-flex flex-wrap items-center gap-1 rounded-md border border-v4-error/60 px-1.5 py-1 align-middle">
+                                  {/* Descarte: o botão fica no lugar; o formulário abre num popover ancorado
+                                      nele (inline, ele alargava a linha e quebrava a tabela). */}
+                                  <span className="relative inline-block align-middle">
+                                  <button
+                                    onClick={(ev) => {
+                                      ev.stopPropagation();
+                                      if (descarteMenu === l.id) { setDescarteMenu(null); return; }
+                                      const r = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                                      setDescartePos({ top: Math.min(r.bottom + 4, window.innerHeight - 190), right: Math.max(8, window.innerWidth - r.right) });
+                                      setDescarteMotivo(''); setDescarteObs(''); setDescarteMenu(l.id);
+                                    }}
+                                    title="Descartar (tira do funil) — pede o motivo da perda"
+                                    className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${descarteMenu === l.id ? 'border-v4-error text-v4-error' : 'border-v4-border text-v4-text-muted hover:border-v4-error hover:text-v4-error'}`}
+                                  >
+                                    Descartar <X size={11} />
+                                  </button>
+                                  {descarteMenu === l.id && descartePos && (
+                                    <span
+                                      onClick={(ev) => ev.stopPropagation()}
+                                      style={{ position: 'fixed', top: descartePos.top, right: descartePos.right }}
+                                      className="z-50 flex w-72 flex-col gap-1.5 whitespace-normal rounded-lg border border-v4-error/60 bg-v4-card p-2.5 text-left shadow-[0_8px_24px_rgba(0,0,0,0.45)]"
+                                    >
+                                      <span className="text-[11px] font-semibold text-v4-text">Motivo da perda</span>
                                       <select
                                         autoFocus
                                         value={descarteMotivo}
                                         onChange={(ev) => setDescarteMotivo(ev.target.value)}
-                                        className="rounded border border-v4-border bg-v4-surface px-1.5 py-0.5 text-[11px] text-v4-text"
+                                        className="w-full rounded border border-v4-border bg-v4-surface px-1.5 py-1 text-[11px] text-v4-text"
                                         title="Motivo da perda"
                                       >
                                         <option value="">Motivo da perda…</option>
@@ -1029,23 +1059,15 @@ export function WorkflowView({
                                         onChange={(ev) => setDescarteObs(ev.target.value)}
                                         onKeyDown={(ev) => { if (ev.key === 'Enter') descartar(l.id, descarteMotivo, descarteObs); if (ev.key === 'Escape') setDescarteMenu(null); }}
                                         placeholder={descarteMotivo === 'outro' ? 'Descreva (obrigatório)' : 'Observação (opcional)'}
-                                        className="w-40 rounded border border-v4-border bg-v4-surface px-1.5 py-0.5 text-[11px] text-v4-text"
+                                        className="w-full rounded border border-v4-border bg-v4-surface px-1.5 py-1 text-[11px] text-v4-text"
                                       />
-                                      <button onClick={() => descartar(l.id, descarteMotivo, descarteObs)} className="rounded bg-v4-error px-2 py-0.5 text-[11px] font-semibold text-white">Descartar</button>
-                                      <button onClick={() => setDescarteMenu(null)} title="Cancelar" className="rounded px-1 text-v4-text-muted hover:text-v4-text"><X size={11} /></button>
+                                      <span className="flex justify-end gap-1.5">
+                                        <button onClick={() => setDescarteMenu(null)} className="rounded px-2 py-1 text-[11px] text-v4-text-muted hover:text-v4-text">Cancelar</button>
+                                        <button onClick={() => descartar(l.id, descarteMotivo, descarteObs)} className="rounded bg-v4-error px-2.5 py-1 text-[11px] font-semibold text-white">Descartar</button>
+                                      </span>
                                     </span>
-                                  ) : (
-                                    <button
-                                      onClick={(ev) => {
-                                        ev.stopPropagation();
-                                        setDescarteMotivo(''); setDescarteObs(''); setDescarteMenu(l.id);
-                                      }}
-                                      title="Descartar (tira do funil) — pede o motivo da perda"
-                                      className="mr-2 inline-flex items-center gap-1 rounded-md border border-v4-border px-2 py-1 text-[11px] font-medium text-v4-text-muted transition hover:border-v4-error hover:text-v4-error"
-                                    >
-                                      Descartar <X size={11} />
-                                    </button>
                                   )}
+                                  </span>
                                   <ChevronDown size={16} className={`inline text-v4-text-muted transition ${openLead === l.id ? 'rotate-180' : ''}`} />
                                 </td>
                               </tr>
