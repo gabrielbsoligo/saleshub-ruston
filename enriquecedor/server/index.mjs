@@ -2579,7 +2579,7 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
 // (caso OL Plastic → "Smart Web Serviços Digitais", que também anuncia um neurologista).
 // Conta de terceiro NÃO é medida pelo id (contaria os anúncios dos outros clientes):
 // mede pelo domínio do site, que só lista criativos que apontam pra ele.
-const ANUNCIANTE_GENERICO = new Set(['servicos', 'digitais', 'digital', 'comercio', 'industria', 'importacao', 'exportacao', 'solucoes', 'empresa', 'grupo', 'brasil', 'marketing', 'publicidade', 'agencia', 'tecnologia', 'consultoria', 'participacoes', 'administracao', 'representacoes']);
+const ANUNCIANTE_GENERICO = new Set(['ltda', 'eireli', 'servicos', 'digitais', 'digital', 'comercio', 'comercial', 'industria', 'importacao', 'exportacao', 'solucoes', 'empresa', 'grupo', 'brasil', 'brazil', 'marketing', 'publicidade', 'agencia', 'tecnologia', 'consultoria', 'participacoes', 'administracao', 'representacoes', 'empreendimentos', 'construtora', 'construcoes', 'construcao', 'incorporadora', 'incorporacoes', 'engenharia', 'imobiliaria', 'holding', 'sociedade', 'associacao', 'centro', 'educacional', 'educacao', 'ensino', 'colegio', 'escola', 'faculdade', 'telecom', 'software', 'informatica', 'sistemas', 'produtos', 'materiais', 'equipamentos', 'veiculos', 'distribuidora', 'contabilidade', 'farmacia', 'hotel', 'shopping', 'eletronicos', 'eletricos', 'tecnico', 'medio', 'saneamento', 'urbanismo', 'assistencia']);
 function anuncianteDaEmpresa(nomeAnunciante, nomes) {
   const toks = (s) => normText(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w) && !ANUNCIANTE_GENERICO.has(w));
   const adv = toks(nomeAnunciante);
@@ -4464,7 +4464,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'google-terceiro-2026-10-07',
+        versao: 'google-terceiro2-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
