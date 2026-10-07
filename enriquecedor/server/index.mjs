@@ -442,6 +442,10 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     return { url: urlFinal, handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
   };
   const consultas = [`site:${network}.com "${company}" ${cidade ?? ''}`.trim(), `${company} ${cidade ?? ''} ${network}`.trim()];
+  // Só as palavras distintivas da marca ("NIKKEYPAR COMERCIAL" → "nikkeypar"): o nome entre
+  // aspas com "comercial", "ltda" etc. quase nunca aparece no perfil.
+  const distintiva = toks.join(' ');
+  if (distintiva && distintiva !== normText(company)) consultas.push(`site:${network}.com "${distintiva}"`);
   // Marca curta/genérica ("PLANETA") não acha; o núcleo do domínio do site costuma ser o @ (planetahonda).
   if (core && core.length >= 4 && !toks.includes(core)) consultas.push(`site:${network}.com ${core}`);
   let okTotal = true;
@@ -1076,7 +1080,7 @@ async function fetchHtmlCached(url, ms = 10000) {
         if (r2.ok) { html = await r2.text(); status = r2.status; }
       } catch { /* fica com o stub */ }
     }
-    val = { ok: res.ok || (res.status >= 300 && res.status < 400), bloqueado: BLOQUEIO_HTTP.has(res.status), status, finalUrl, destinoHtml: dest, html: html.slice(0, 600_000) };
+    val = { ok: res.ok || (res.status >= 300 && res.status < 400), bloqueado: BLOQUEIO_HTTP.has(res.status), status, finalUrl, destinoHtml: dest, html: html.length > 600_000 ? html.slice(0, 300_000) + html.slice(-300_000) : html };
   } catch {
     val = null;
   }
@@ -3939,6 +3943,31 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
             await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { site_url: audit.siteUrl });
             row.site_url = audit.siteUrl;
           }
+          // Redes que o PRÓPRIO site linka valem mais que a busca do F2: entram no lead quando o
+          // campo está vazio ou veio da busca (nunca por cima de valor validado pelo operador).
+          try {
+            const ch = { ...(row.chaves_busca ?? {}) };
+            const patchRedes = {};
+            for (const [rede, col, link, existe] of [
+              ['instagram', 'company_instagram', audit.siteInstagram, instagramExiste],
+              ['facebook', 'company_facebook', audit.siteFacebook, facebookExiste],
+            ]) {
+              if (!link || ch[rede]?.validacao === 'validado') continue;
+              const atual = row[col];
+              const rejeitados = (ch[rede]?.rejeitados ?? []).map((x) => String(x).toLowerCase());
+              const handle = rede === 'facebook' ? (fbCanonica(link)?.nome ?? '') : instagramHandle(link);
+              if (handle && rejeitados.includes(handle)) continue;
+              if (atual && ch[rede]?.origem !== 'busca' && ch[rede]?.origem) continue;
+              if (atual && String(atual).replace(/\/+$/, '').toLowerCase() === String(link).replace(/\/+$/, '').toLowerCase()) continue;
+              if (!(await existe(link))) continue;
+              patchRedes[col] = link;
+              ch[rede] = { ...(ch[rede] ?? {}), origem: 'site', confianca: 'alta' };
+            }
+            if (Object.keys(patchRedes).length) {
+              await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { ...patchRedes, chaves_busca: ch });
+              Object.assign(row, patchRedes, { chaves_busca: ch });
+            }
+          } catch { /* não trava o F3 */ }
         }
       }
     } catch { /* site não encontrado */ }
@@ -4365,7 +4394,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'wa-js-2026-10-07',
+        versao: 'redes-site-f3-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
