@@ -363,6 +363,10 @@ function isPersonName(nome) {
 // servir, `Marca cidade instagram`; pontua cada resultado: @ parecido com a
 // marca ou com o domínio do site, marca no título, cidade/domínio na descrição.
 // Exige 2 sinais e devolve alta/média.
+const ESTRANGEIRO_RE = /[\u0600-\u06FF\u0590-\u05FF\u0400-\u04FF\u0370-\u03FF\u0E00-\u0E7F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/;
+const PAIS_FORA_RE = /\b(dubai|uae|emirates|abu dhabi|qatar|doha|riyadh|usa|united states|new york|miami|london|uk|paris|france|angers|madrid|barcelona|spain|lisboa|lisbon|porto|portugal|italia|italy|roma|milano|berlin|germany|mexico|cdmx|argentina|buenos aires|chile|santiago|colombia|bogota|peru|lima|canada|toronto|australia|sydney|istanbul|turkey|india|mumbai|delhi|singapore|hong kong|tokyo|japan|china|shanghai)\b/;
+const PT_RE = /\b(de|da|do|das|dos|para|com|em|e|sua|seu|nossa|nosso|nossos|voce|você|produtos|servicos|serviços|empresa|loja|atendimento|qualidade|desde|anos|entrega|orcamento|orçamento|fabrica|fábrica|industria|indústria|solucoes|soluções)\b/g;
+
 async function findCompanySocial(company, network, rejeitados = [], { cidade = null, siteDomain = null } = {}) {
   const domainRe = network === 'instagram' ? /instagram\.com\//i : /facebook\.com\//i;
   const badPath =
@@ -395,7 +399,13 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     if (resultMatchesCompany(r, company)) { score += 2; sinais.add('marca_no_titulo'); }
     if (cidade && normText(cidade).length >= 3 && texto.includes(normText(cidade))) { score += 1; sinais.add('cidade'); }
     if (siteDomain && texto.includes(normText(siteDomain))) { score += 2; sinais.add('dominio_na_bio'); }
-    const positivos = [...sinais].filter((x) => x !== 'handle_extra').length;
+    // Marca curta/genérica bate em perfil de qualquer país ("SADEL" → @sadel.ae, Dubai).
+    // Perfil estrangeiro (escrita não latina, país/cidade de fora, @ com sufixo de país) é
+    // descartado; sem NENHUM sinal de Brasil/português, @ + título não bastam.
+    if (ESTRANGEIRO_RE.test(`${r.title} ${r.desc}`) || PAIS_FORA_RE.test(texto) || /\.(ae|uk|us|fr|es|it|de|pt|mx|ar|cl|co|ca|au|tr|sa|qa)$/i.test(handle)) return null;
+    const sinalBr = sinais.has('cidade') || sinais.has('dominio_na_bio') || /\b(brasil|brazil)\b|\.com\.br\b/.test(texto) || (texto.match(PT_RE) ?? []).length >= 2;
+    if (!sinalBr) { score -= 2; sinais.add('sem_sinal_br'); }
+    const positivos = [...sinais].filter((x) => x !== 'handle_extra' && x !== 'sem_sinal_br').length;
     if (positivos < 2 || score < 5) return null;
     const forte = sinais.has('handle_marca') || sinais.has('handle_dominio') || sinais.has('dominio_na_bio');
     return { url: stripQuery(r.url), handle, score, sinais: [...sinais], confianca: (forte && sinais.has('marca_no_titulo')) || score >= 7 ? 'alta' : 'media' };
@@ -4159,7 +4169,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'fb-share-2026-10-07',
+        versao: 'social-br-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
