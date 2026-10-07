@@ -4394,7 +4394,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'redes-site-f3-2026-10-07',
+        versao: 'promover-redes-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4414,6 +4414,39 @@ const server = http.createServer(async (req, res) => {
       const cnpj = url.pathname.split('/').pop();
       const r = await fetchCnpj(cnpj);
       return send(res, 200, r);
+    }
+
+    if (url.pathname === '/api/ops/promover-redes-site' && req.method === 'POST') {
+      // ops: leads cujo site linka Instagram/Facebook e o campo do lead está VAZIO →
+      // preenche com o link do site (só se o perfil existe e não foi rejeitado).
+      const tk = SERVICE_KEY || tokenAtual();
+      const auds = (await sbSelect(tk, 'enriquecedor_site_audits', 'or=(site_instagram.not.is.null,site_facebook.not.is.null)&select=lead_id,site_instagram,site_facebook&limit=2000')) ?? [];
+      const ids = auds.map((a) => a.lead_id);
+      const leads = [];
+      for (let i = 0; i < ids.length; i += 150) leads.push(...((await sbSelect(tk, 'enriquecedor_leads', `id=in.(${ids.slice(i, i + 150).join(',')})&select=id,razao_social,company_instagram,company_facebook,chaves_busca`)) ?? []));
+      const porId = new Map(leads.map((l) => [l.id, l]));
+      const feitos = [];
+      const pulados = [];
+      for (const a of auds) {
+        const l = porId.get(a.lead_id);
+        if (!l) continue;
+        const ch = { ...(l.chaves_busca ?? {}) };
+        const patch = {};
+        for (const [rede, col, link, existe] of [['instagram', 'company_instagram', a.site_instagram, instagramExiste], ['facebook', 'company_facebook', a.site_facebook, facebookExiste]]) {
+          if (!link || l[col]) continue;
+          const handle = rede === 'facebook' ? (fbCanonica(link)?.nome ?? '') : instagramHandle(link);
+          const rej = (ch[rede]?.rejeitados ?? []).map((x) => String(x).toLowerCase());
+          if (handle && rej.includes(handle)) { pulados.push({ lead: l.razao_social, rede, link, motivo: 'rejeitado' }); continue; }
+          if (!(await existe(link))) { pulados.push({ lead: l.razao_social, rede, link, motivo: 'perfil_inexistente' }); continue; }
+          patch[col] = link;
+          ch[rede] = { ...(ch[rede] ?? {}), origem: 'site', confianca: 'alta' };
+        }
+        if (Object.keys(patch).length) {
+          await sbPatch(tk, 'enriquecedor_leads', `id=eq.${l.id}`, { ...patch, chaves_busca: ch, updated_at: new Date().toISOString() });
+          feitos.push({ lead: l.razao_social, ...patch });
+        }
+      }
+      return send(res, 200, { feitos, pulados });
     }
 
     if (url.pathname === '/api/ops/rede-existe' && req.method === 'POST') {

@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Ponte pro MOTOR (Railway), que tem token Kommo próprio e vivo: enquanto o token
   // das edges não for reposto, as operações de card saem por lá. Auth = login do
   // usuário de integração, igual à esteira.
-  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar', 'motor-preencher-cards', 'motor-site-audit', 'motor-rede-existe'].includes(String(body.acao))) {
+  if (['motor-campos', 'motor-card-prep', 'motor-token-heal', 'motor-socios', 'motor-anunciantes', 'motor-anuncios-google', 'motor-anuncios', 'motor-cadencia-preparar', 'motor-preencher-cards', 'motor-site-audit', 'motor-rede-existe', 'motor-promover-redes'].includes(String(body.acao))) {
     const { data: sess, error: authErr } = await sb.auth.signInWithPassword({
       email: Deno.env.get('ENRIQ_INTEG_EMAIL')!,
       password: Deno.env.get('ENRIQ_INTEG_SENHA')!,
@@ -124,6 +124,7 @@ Deno.serve(async (req) => {
       : body.acao === 'motor-preencher-cards' ? '/api/cadencia/preencher-cards' // ops: CAD * + responsável nos cards existentes
       : body.acao === 'motor-site-audit' ? '/api/site-audit' // teste/ops: descoberta + auditoria do site como o F3 faz
       : body.acao === 'motor-rede-existe' ? '/api/ops/rede-existe' // teste/ops: o perfil IG/FB existe?
+      : body.acao === 'motor-promover-redes' ? '/api/ops/promover-redes-site' // ops: redes do site → lead (campos vazios)
       : '/api/kommo/token-heal'
     const payload = body.acao === 'motor-card-prep'
       ? { kommoLeadId: body.kommoLeadId, nome: body.nome, tags: body.tags, campos: body.campos, nota: body.nota }
