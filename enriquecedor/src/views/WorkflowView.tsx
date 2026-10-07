@@ -32,7 +32,14 @@ import { LeadDetail } from './LeadDetail';
 // A cada aprovação, o lead avança pro próximo F.
 
 const SEG = SEGMENTO;
-const DESDE_ARQUITETO = 2; // atalho pro arquiteto liberado a partir do F3 (Diagnóstico digital)
+// F5 (Redes sociais) e F6 (Cliente oculto) ainda não existem: ficam visíveis em
+// cinza ("em breve") e são PULADAS — do F4 o lead vai direto pro F7.
+const EM_BREVE = new Set([4, 5]);
+const proximaEtapa = (i: number) => {
+  let n = i + 1;
+  while (EM_BREVE.has(n)) n += 1;
+  return Math.min(n, ETAPAS.length - 1);
+};
 
 interface Etapa {
   f: string;
@@ -521,7 +528,7 @@ export function WorkflowView({
   const avancar = (id: string) => {
     const l = leads.find((x) => x.id === id);
     if (l && !podeSair(l)) { toast.error(`${l.empresa}: ${motivoBloqueio(l)}.`); return; }
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, etapa: Math.min(l.etapa + 1, ETAPAS.length - 1) } : l)));
+    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, etapa: proximaEtapa(l.etapa) } : l)));
   };
   // Seleção por checkbox — permite avançar VÁRIOS leads de uma fase de uma vez.
   const [marcados, setMarcados] = useState<Record<string, boolean>>({});
@@ -539,7 +546,7 @@ export function WorkflowView({
     const alvo = leads.filter((l) => l.etapa === fase && marcados[l.id] && !l.descartado);
     const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
     avisoFicaram(alvo.length - aptos.size, fase);
-    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: l.etapa + 1 } : l)));
+    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: proximaEtapa(l.etapa) } : l)));
     setMarcados((prev) => {
       const next = { ...prev };
       leads.forEach((l) => {
@@ -553,17 +560,12 @@ export function WorkflowView({
     const alvo = leads.filter((l) => l.etapa === fase && !l.descartado);
     const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
     avisoFicaram(alvo.length - aptos.size, fase);
-    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: l.etapa + 1 } : l)));
+    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, etapa: proximaEtapa(l.etapa) } : l)));
   };
   const descartar = (id: string) => {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: true } : l)));
   };
   const restaurar = (id: string) => setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, descartado: false } : l)));
-  const enviarArquiteto = (id: string) => {
-    const l = leads.find((x) => x.id === id);
-    if (l && !podeSair(l)) { toast.error(`${l.empresa}: ${motivoBloqueio(l)}.`); return; }
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, auditadoAte: l.etapa, etapa: ARQ, parcial: true } : l)));
-  };
   // Importa pro Kommo (funil Outbound Cadência SDNA, etapa Fila) os leads do F8
   // informados — cria card + contato + nota com a cadência validada; quem já tem
   // card é pulado. O disparo do passo 1 continua manual no Kommo.
@@ -607,12 +609,6 @@ export function WorkflowView({
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads.filter((l) => l.etapa === IMPORTAR && !l.descartado).map((l) => l.id).join(','), importadosTick]);
-  const enviarFaseArquiteto = (fase: number) => {
-    const alvo = leads.filter((l) => l.etapa === fase && !l.descartado);
-    const aptos = new Set(alvo.filter(podeSair).map((l) => l.id));
-    avisoFicaram(alvo.length - aptos.size, fase);
-    setLeads((prev) => prev.map((l) => (aptos.has(l.id) ? { ...l, auditadoAte: fase, etapa: ARQ, parcial: true } : l)));
-  };
   // Reparo do legado: leads que passaram por F2/F3/F4 sem a auditoria rodar (ou
   // com erro) — enfileira o que falta sem mover ninguém. Some quando N chega a 0.
   const reparo = (() => {
@@ -713,7 +709,7 @@ export function WorkflowView({
           return (
             <Fragment key={i}>
               {/* Faixa do funil + botão de play na lateral direita */}
-              <div style={{ width }} className="mx-auto flex items-center gap-2">
+              <div style={{ width }} className={`mx-auto flex items-center gap-2 ${EM_BREVE.has(i) ? 'pointer-events-none opacity-40 grayscale blur-[0.6px]' : ''}`} aria-disabled={EM_BREVE.has(i) || undefined}>
                 <button
                   onClick={() => {
                     setOpenF(aberto ? null : i);
@@ -726,6 +722,7 @@ export function WorkflowView({
                     <p className="flex items-center gap-2 text-sm font-semibold text-v4-text">
                       <span className="rounded bg-v4-red px-1.5 py-0.5 text-[11px] font-bold text-white">{e.f}</span>
                       {e.nome}
+                      {EM_BREVE.has(i) && <span className="rounded border border-v4-border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-v4-text-muted">em breve</span>}
                     </p>
                     <p className="mt-0.5 truncate text-[11px] text-v4-text-muted">Audita: {e.auditado}</p>
                   </div>
@@ -789,15 +786,7 @@ export function WorkflowView({
                               : autoFase === i ? <><Loader2 size={13} className="animate-spin" /> Rodando todos… (parar)</> : <><Play size={13} /> Auditar todos (auto, 1 por vez)</>}
                           </button>
                         )}
-                        {i >= DESDE_ARQUITETO && i < ARQ && (
-                          <button
-                            onClick={() => enviarFaseArquiteto(i)}
-                            title="Enviar todos os leads desta fase direto ao arquiteto (enriquecimento parcial)"
-                            className="flex items-center gap-1.5 rounded-lg border border-v4-red px-3 py-1.5 text-xs font-medium text-v4-red transition hover:bg-[rgba(230,57,70,0.12)]"
-                          >
-                            <Sparkles size={13} /> Enviar fase pro arquiteto
-                          </button>
-                        )}
+                        
                         {i === IMPORTAR && (
                           <>
                             <button
@@ -957,30 +946,18 @@ export function WorkflowView({
                                         avancar(l.id);
                                       }}
                                       disabled={!podeSair(l)}
-                                      title={podeSair(l) ? `Passar para ${ETAPAS[i + 1].f} · ${ETAPAS[i + 1].nome}` : `Aguardando: ${motivoBloqueio(l)}`}
+                                      title={podeSair(l) ? `Passar para ${ETAPAS[proximaEtapa(i)].f} · ${ETAPAS[proximaEtapa(i)].nome}` : `Aguardando: ${motivoBloqueio(l)}`}
                                       className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${podeSair(l) ? 'border-v4-success text-v4-success hover:bg-[rgba(34,197,94,0.12)]' : 'cursor-not-allowed border-v4-border text-v4-text-disabled'}`}
                                     >
                                       Avançar <ArrowRight size={11} />
                                     </button>
                                   )}
-                                  {i >= DESDE_ARQUITETO && i < ARQ && (
-                                    <button
-                                      onClick={(ev) => {
-                                        ev.stopPropagation();
-                                        enviarArquiteto(l.id);
-                                      }}
-                                      disabled={!podeSair(l)}
-                                      title={podeSair(l) ? 'Enviar direto ao arquiteto agora (com o que já foi auditado)' : `Aguardando: ${motivoBloqueio(l)}`}
-                                      className={`mr-2 inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition ${podeSair(l) ? 'border-v4-red text-v4-red hover:bg-[rgba(230,57,70,0.12)]' : 'cursor-not-allowed border-v4-border text-v4-text-disabled'}`}
-                                    >
-                                      <Sparkles size={11} /> Arquiteto
-                                    </button>
-                                  )}
+                                  
                                   {i > 0 &&
                                     (voltarMenu === l.id ? (
                                       <span className="mr-2 inline-flex items-center gap-0.5 rounded-md border border-v4-warning/60 px-1.5 py-1 align-middle">
                                         <span className="text-[10px] text-v4-text-muted">Voltar p/</span>
-                                        {ETAPAS.slice(0, i).map((et, alvo) => (
+                                        {ETAPAS.slice(0, i).map((et, alvo) => EM_BREVE.has(alvo) ? null : (
                                           <button
                                             key={et.f}
                                             onClick={(ev) => {

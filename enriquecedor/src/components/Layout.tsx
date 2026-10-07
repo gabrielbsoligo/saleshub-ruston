@@ -56,6 +56,10 @@ function MotorChip({ onClick }: { onClick: () => void }) {
   );
 }
 
+// Telas que ainda são maquete (o Arquiteto da aba é uma entrega fictícia):
+// ficam no menu em cinza, desativadas, com "em breve".
+const EM_BREVE = new Set<View>(['arquiteto']);
+
 interface LayoutProps {
   currentView: View;
   onNavigate: (view: View) => void;
@@ -97,12 +101,17 @@ export function Layout({ currentView, onNavigate, onNovoProjeto, children }: Lay
               <button
                 key={item.id}
                 onClick={() => onNavigate(item.id)}
+                disabled={EM_BREVE.has(item.id)}
+                title={EM_BREVE.has(item.id) ? 'Em breve — por enquanto o caminho é o F7 do Workflow' : undefined}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  active ? 'bg-v4-red-muted text-v4-red-hover' : 'text-v4-text-muted hover:bg-v4-surface hover:text-v4-text'
+                  EM_BREVE.has(item.id)
+                    ? 'cursor-not-allowed text-v4-text-muted opacity-40 grayscale blur-[0.5px]'
+                    : active ? 'bg-v4-red-muted text-v4-red-hover' : 'text-v4-text-muted hover:bg-v4-surface hover:text-v4-text'
                 }`}
               >
                 <Icon size={18} />
                 {item.label}
+                {EM_BREVE.has(item.id) && <span className="ml-auto rounded border border-v4-border px-1.5 text-[10px] font-semibold uppercase tracking-wide">em breve</span>}
               </button>
             );
           })}
