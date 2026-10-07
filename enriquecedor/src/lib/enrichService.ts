@@ -7,7 +7,7 @@ import { computeDores, whatsappAudit } from './dores';
 import { leadsRepo } from './leadsRepo';
 import { decisionMakersRepo } from './decisionMakersRepo';
 import { redeHandle } from './contactSelection';
-import { facebookHandle, hostOf as hostDe, marcaAtual, metaTermoAtual, overridesBusca, registrarAnuncianteResolvido } from './chavesBusca';
+import { facebookHandle, hostOf as hostDe, marcaAtual, metaTermoAtual, overridesBusca, registrarAnuncianteResolvido, anuncianteDaEmpresa } from './chavesBusca';
 import { medir, registrarMetrica } from './metricas';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -893,8 +893,21 @@ export async function resolverAnunciantes(
     if (siteDomain) {
       const g = j.google;
       const rej = new Set(ov.googleAnuncianteRejeitados);
-      const advs = ((g?.anunciantes ?? []) as Array<{ id: string; nome: string }>).filter((a) => !rej.has(a.id));
-      if (g?.ok && advs.length) {
+      const todos = ((g?.anunciantes ?? []) as Array<{ id: string; nome: string }>).filter((a) => !rej.has(a.id));
+      const advs = todos.filter((a) => anuncianteDaEmpresa(a.nome, lead));
+      if (g?.ok && !advs.length && todos.length) {
+        // Conta de agência/revenda: não vira o anunciante da empresa (seria medida com os
+        // anúncios dos outros clientes). Registra como terceiro; o Google fica pelo domínio.
+        const e = lead.chavesBusca?.google_anunciante ?? {};
+        if (e.validacao !== 'validado') {
+          lead.chavesBusca = { ...(lead.chavesBusca ?? {}), google_anunciante: { ...e, valor: null, nome: null, validacao: null, origem: 'terceiro', terceiro: { id: todos[0].id, nome: todos[0].nome || null } } };
+        }
+        lead.anuncios = {
+          ...(lead.anuncios ?? { meta: null }),
+          checkedAt: lead.anuncios?.checkedAt ?? new Date().toISOString(),
+          google: googleDe(g, { domain: siteDomain, advertiserId: null }),
+        };
+      } else if (g?.ok && advs.length) {
         Object.assign(lead, registrarAnuncianteResolvido(lead, 'google_anunciante', { id: advs[0].id, nome: advs[0].nome || null, origem: 'dominio' }));
         // A consulta por domínio já é a medição do Google — aproveita e grava.
         lead.anuncios = {

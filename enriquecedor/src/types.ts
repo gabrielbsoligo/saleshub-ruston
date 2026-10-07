@@ -128,6 +128,9 @@ export interface ChaveBuscaEstado {
   validacao?: 'validado' | null; // validado pelo operador → a re-busca não sobrescreve
   origem?: string | null; // planilha | receita | email | busca | gmn | site | manual | validado
   confianca?: 'alta' | 'media' | null; // site/instagram/facebook: quão certo o motor está do valor descoberto
+  // google_anunciante: conta que anuncia o domínio mas NÃO é da empresa (agência/revenda).
+  // Não é medida pelo id (traria anúncios de outros clientes); o Google é medido pelo domínio.
+  terceiro?: { id: string; nome: string | null } | null;
   rejeitados?: string[]; // domínio / @ / slug / cid descartados — nunca voltam
 }
 export type ChavesBusca = Partial<Record<ChaveBuscaId, ChaveBuscaEstado>>;

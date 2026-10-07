@@ -2574,6 +2574,26 @@ async function googleTransparency({ domain = null, advertiserId = null }) {
   });
 }
 
+// O anunciante do Google é a PRÓPRIA empresa? (nome bate com a marca ou a razão social)
+// Senão é conta de terceiro — agência/revenda que roda anúncios de vários clientes
+// (caso OL Plastic → "Smart Web Serviços Digitais", que também anuncia um neurologista).
+// Conta de terceiro NÃO é medida pelo id (contaria os anúncios dos outros clientes):
+// mede pelo domínio do site, que só lista criativos que apontam pra ele.
+const ANUNCIANTE_GENERICO = new Set(['servicos', 'digitais', 'digital', 'comercio', 'industria', 'importacao', 'exportacao', 'solucoes', 'empresa', 'grupo', 'brasil', 'marketing', 'publicidade', 'agencia', 'tecnologia', 'consultoria', 'participacoes', 'administracao', 'representacoes']);
+function anuncianteDaEmpresa(nomeAnunciante, nomes) {
+  const toks = (s) => normText(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w) && !ANUNCIANTE_GENERICO.has(w));
+  const adv = toks(nomeAnunciante);
+  if (!adv.length) return false;
+  const compactAdv = adv.join('');
+  for (const n of nomes.filter(Boolean)) {
+    const t = toks(n);
+    if (t.some((x) => adv.includes(x))) return true;
+    const compact = normText(n).replace(/[^a-z0-9]/g, '');
+    if (compact.length >= 5 && (compactAdv.includes(compact) || compact.includes(compactAdv))) return true;
+  }
+  return false;
+}
+
 // --- DataStone: organograma (diretoria + gerência) + porte ------------------
 // Endpoint público /v1/companies/?cnpj= . Diretoria vem dos sócios (partners);
 // gerência vem dos funcionários ATUAIS de gestão (related_company_members),
@@ -4098,10 +4118,18 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
         }
         if (precisaGoogle) {
           const rej = new Set(chaves.google_anunciante?.rejeitados ?? []);
-          const adv = (rg?.anunciantes ?? []).find((a) => !rej.has(a.id)) ?? null;
-          chaves.google_anunciante = { ...(chaves.google_anunciante ?? {}), valor: adv?.id ?? null, nome: adv?.nome ?? null, validacao: null, origem: adv ? 'dominio' : 'nao_encontrado' };
+          const candidatos = (rg?.anunciantes ?? []).filter((a) => !rej.has(a.id));
+          const nomesEmpresa = [chaves.marca?.valor, row.nome_fantasia, row.razao_social, marcaDe(row.razao_social ?? row.company_name_raw), siteDomain?.split('.')[0]];
+          const adv = candidatos.find((a) => anuncianteDaEmpresa(a.nome, nomesEmpresa)) ?? null;
+          const terceiro = !adv && candidatos.length ? candidatos[0] : null;
+          chaves.google_anunciante = {
+            ...(chaves.google_anunciante ?? {}),
+            valor: adv?.id ?? null, nome: adv?.nome ?? null, validacao: null,
+            origem: adv ? 'dominio' : terceiro ? 'terceiro' : 'nao_encontrado',
+            terceiro: terceiro ? { id: terceiro.id, nome: terceiro.nome || null } : null,
+          };
           googleAdvertiser = adv?.id ?? null;
-          if (rg?.ok) googleDominio = rg; // já é a medição por domínio
+          if (rg?.ok) googleDominio = rg; // já é a medição por domínio (vale também pra conta de terceiro)
         }
         await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { chaves_busca: chaves });
         row.chaves_busca = chaves;
@@ -4120,7 +4148,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
         googleAdvertiser ? googleTransparency({ advertiserId: googleAdvertiser }).catch(() => null) : Promise.resolve(googleDominio),
       ]);
       const google = ag?.ok
-        ? { url: ag.url, advertiserId: googleAdvertiser, domain: googleAdvertiser ? null : siteDomain, anunciantes: ag.anunciantes ?? [], criativos: ag.criativos ?? 0, totalTexto: ag.totalTexto ?? null, formatos: ag.formatos ?? { video: 0, imagem: 0, texto: 0 }, amostra: ag.amostra ?? [], semAnuncios: !!ag.semAnuncios, viaProxy: !!ag.viaProxy }
+        ? { url: ag.url, advertiserId: googleAdvertiser, domain: googleAdvertiser ? null : siteDomain, anunciantes: ag.anunciantes ?? [], criativos: ag.criativos ?? 0, totalTexto: googleAdvertiser ? (ag.totalTexto ?? null) : null, formatos: ag.formatos ?? { video: 0, imagem: 0, texto: 0 }, amostra: ag.amostra ?? [], semAnuncios: !!ag.semAnuncios, viaProxy: !!ag.viaProxy, contaTerceiro: row.chaves_busca?.google_anunciante?.terceiro ?? null }
         : (row.anuncios?.google ?? null);
       if (an?.meta) {
         anunciosMeta = an.meta;
@@ -4436,7 +4464,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'site-variante-2026-10-07',
+        versao: 'google-terceiro-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,

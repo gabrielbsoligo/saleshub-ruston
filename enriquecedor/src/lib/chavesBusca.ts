@@ -79,7 +79,8 @@ export function facebookHandle(url: string | null | undefined): string | null {
     return n.replace(/-\d{6,}$/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   }
   const h = url?.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null;
-  return h && !/^\d+$/.test(h) && h.length > 2 ? h.toLowerCase() : null;
+  // profile.php?id=… não tem @ (é só o id)
+  return h && !/^\d+$/.test(h) && h.length > 2 && !/^profile\.php$/i.test(h) ? h.toLowerCase() : null;
 }
 
 // Termo padrão da Meta Ad Library: handle do Facebook (como a empresa se anuncia)
@@ -183,6 +184,12 @@ export function chaveAtual(lead: Lead, audit: SiteAudit | null, chave: ChaveBusc
     case 'google_anunciante': {
       const id = googleAdvertiserIdDe(e.valor);
       const rot: Record<string, string> = { dominio: 'Transparency Center pelo domínio do site', manual: 'manual' };
+      if (!id && e.origem === 'terceiro' && e.terceiro?.id) {
+        return {
+          chave, valor: `${e.terceiro.nome ?? e.terceiro.id} (${e.terceiro.id}) · conta de terceiro`, link: googleAnuncianteUrl(e.terceiro.id), validado, rejeitados,
+          origem: 'agência/revenda anunciando o site — medido só pelo domínio (não pela conta)', padrao: false,
+        };
+      }
       return {
         chave, valor: id ? (e.nome ? `${e.nome} (${id})` : id) : null, link: id ? googleAnuncianteUrl(id) : null, validado, rejeitados,
         origem: id ? (e.origem && rot[e.origem]) ?? e.origem ?? '—' : e.origem === 'nao_encontrado' ? 'nenhum anunciante pro domínio' : '—', padrao: false,
@@ -287,6 +294,26 @@ export function definirChave(lead0: Lead, chave: ChaveBuscaId, valor: string): L
       return comEstado(lead, chave, { valor: id, nome: null, validacao: 'validado', origem: 'manual' });
     }
   }
+}
+
+// O anunciante do Google é a própria empresa? Mesmo critério do motor (anuncianteDaEmpresa):
+// nome do anunciante com palavra distintiva da marca/razão social/domínio. Senão é conta
+// de terceiro (agência que anuncia vários clientes) — medida só pelo domínio.
+const ANUNCIANTE_GENERICO = new Set(['ltda', 'eireli', 'servicos', 'digitais', 'digital', 'comercio', 'industria', 'importacao', 'exportacao', 'solucoes', 'empresa', 'grupo', 'brasil', 'marketing', 'publicidade', 'agencia', 'tecnologia', 'consultoria', 'participacoes', 'administracao', 'representacoes', 'empreendimentos', 'construtora', 'incorporadora', 'engenharia', 'imobiliaria']);
+const normN = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+export function anuncianteDaEmpresa(nomeAnunciante: string | null | undefined, lead: Lead): boolean {
+  const toks = (s: string | null | undefined) => normN(s ?? '').split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !ANUNCIANTE_GENERICO.has(w) && !['dos', 'das', 'para', 'com'].includes(w));
+  const adv = toks(nomeAnunciante);
+  if (!adv.length) return false;
+  const compactAdv = adv.join('');
+  const dominio = hostOf(lead.siteUrl)?.split('.')[0] ?? null;
+  for (const n of [marcaAtual(lead), lead.nomeFantasia, lead.razaoSocial, dominio]) {
+    if (!n) continue;
+    if (toks(n).some((x) => adv.includes(x))) return true;
+    const compact = normN(n).replace(/[^a-z0-9]/g, '');
+    if (compact.length >= 5 && (compactAdv.includes(compact) || compact.includes(compactAdv))) return true;
+  }
+  return false;
 }
 
 // Grava o resultado do resolvedor automático (motor /api/anunciantes/resolver):
