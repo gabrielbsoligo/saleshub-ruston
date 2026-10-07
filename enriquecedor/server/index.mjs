@@ -1406,7 +1406,7 @@ async function lemitEnrich(cnpj) {
     emails: allEmails(e.emails),
     endereco: fmtEndereco(e.endereco),
     dataFundacao: e.data_fundacao ?? null,
-    nomeFantasia: e.nome_fantasia ?? null,
+    nomeFantasia: e.nome_fantasia || null,
     carros: (e.carros || []).map((c) => ({ marca: c.marca ?? null, ano: c.ano_modelo ?? c.ano_fabricacao ?? null, placa: c.placa ?? null })),
   };
 
@@ -3663,7 +3663,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
     aptoCadencia: true,
     leadId,
     kommoLeadId: row.kommo_lead_id ?? null,
-    empresa: row.nome_fantasia ?? row.razao_social ?? row.company_name_raw ?? null,
+    empresa: row.nome_fantasia || row.razao_social || row.company_name_raw || null,
     falhas,
     falhaPrimaria: { ...primaria, ...fr1 },
     falhaSecundaria: fr2 ? { ...secundaria, ...fr2 } : null,
@@ -3696,7 +3696,7 @@ async function gerarEmailCadencia({ leadId, passo, sdrNome, sdrCargo, token }) {
   const prompt =
     `Você escreve e-mails de prospecção outbound B2B em português brasileiro pra V4 Ruston (assessoria de marketing). ` +
     `Remetente: ${sdrNome || 'SDR'}${sdrCargo ? `, ${sdrCargo}` : ''}.\n\n` +
-    `EMPRESA-ALVO: ${row.nome_fantasia ?? row.razao_social ?? row.company_name_raw}\n` +
+    `EMPRESA-ALVO: ${row.nome_fantasia || row.razao_social || row.company_name_raw}\n` +
     `FALHA VERIFICADA NA AUDITORIA: ${fr?.falha ?? falhas[0].codigo}\n` +
     `IMPACTO PRÁTICO: ${fr?.impacto ?? ''}\n` +
     `TODAS AS FALHAS DETECTADAS: ${falhas.map((f) => f.codigo).join(', ')}\n` +
@@ -4206,7 +4206,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       }
       const [an, ag] = await Promise.all([
         anunciosHeadless({
-          company: marcaDe(row.nome_fantasia ?? row.razao_social ?? row.company_name_raw),
+          company: marcaDe(row.nome_fantasia || row.razao_social || row.company_name_raw),
           fbHandle: row.company_facebook ? (row.company_facebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null) : null,
           siteDomain,
           cidade: row.cidade,
@@ -4534,7 +4534,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'nome-exibicao3-2026-10-07',
+        versao: 'fantasia-vazia-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
