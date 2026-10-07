@@ -793,7 +793,11 @@ async function validarCandidatoSite(c, { nome, companyName, cidade, cnpj }) {
   if (c.source === 'busca' && !sinais.includes('cnpj_no_site') && cobertura < 0.6 && !(bloqueado && domBate)) return null; // busca só com o nome inteiro
   score += { validado: 50, gmn: 15, email: 12, planilha: 8, busca: 0 }[c.source] ?? 0;
   const confianca = sinais.includes('cnpj_no_site') || (tituloBate && domBate && (cobertura >= 0.6 || c.source !== 'busca')) ? 'alta' : score >= 15 ? 'media' : null;
-  return { url: toRoot(r.finalUrl || tentada), source: c.source, score, sinais, confianca, html: bloqueado ? null : r.html };
+  // Mantém a variante que respondeu (www/https): o domínio sem www pode nem ter certificado
+  // (caso Veibras: só https://www… é válido) e a auditoria cairia em "fora do ar".
+  let urlOk;
+  try { urlOk = new URL(r.finalUrl || tentada).origin; } catch { urlOk = toRoot(r.finalUrl || tentada); }
+  return { url: urlOk, source: c.source, score, sinais, confianca, html: bloqueado ? null : r.html };
 }
 
 // Descobre o SITE INSTITUCIONAL investigando de verdade (não confia na planilha):
@@ -1194,12 +1198,32 @@ async function auditUrl(url) {
   let res;
   const notes = [];
   let viaProxy = null;
+  const hdrs = { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } };
+  let falha0 = null;
   try {
-    res = await fetchWithTimeout(url, { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8', 'accept-language': 'pt-BR,pt;q=0.9' } }, 12000);
-  } catch (e) {
+    res = await fetchWithTimeout(url, hdrs, 12000);
+    if (res.status >= 500 && res.status !== 503) falha0 = `HTTP ${res.status}`;
+    else if (res.status === 503 && !WAF_RE.test(res.headers.get('server') ?? '')) falha0 = 'HTTP 503';
+  } catch (e0) {
+    falha0 = String(e0?.cause?.code || e0?.message || 'erro').slice(0, 60);
+    res = undefined;
+  }
+  if (falha0) {
+    // Certificado inválido / erro só numa variante (ex.: domínio sem www, caso Veibras): tenta as outras.
+    let host = '';
+    try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* url inválida */ }
+    for (const alt of host ? [`https://www.${host}`, `https://${host}`, `http://www.${host}`, `http://${host}`] : []) {
+      if (alt.replace(/\/+$/, '') === String(url).replace(/\/+$/, '')) continue;
+      try {
+        const r = await fetchWithTimeout(alt, hdrs, 12000);
+        if (r.ok || (r.status >= 300 && r.status < 400)) { res = r; notes.push(`${url} não abriu (${falha0}) — auditado ${alt}.`); break; }
+      } catch { /* próxima */ }
+    }
+  }
+  if (!res) {
     // Host não responde pro IP do Railway: tenta pelo navegador com o proxy antes de dar "fora do ar".
     const h = proxyConfig() ? await fetchHtmlHeadless(url, { proxy: proxyConfig() }).catch(() => null) : null;
-    if (!(h && h.status != null && h.status < 400 && h.html)) throw e;
+    if (!(h && h.status != null && h.status < 400 && h.html)) throw new Error(`site não respondeu: ${url}`);
     viaProxy = h;
     notes.push('O site não respondeu ao servidor direto — auditado via navegador/proxy.');
   }
@@ -4412,7 +4436,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-categoria-2026-10-07',
+        versao: 'site-variante-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
