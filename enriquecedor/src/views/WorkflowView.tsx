@@ -348,6 +348,32 @@ export function WorkflowView({
       }
       return mudou ? next : prev;
     });
+  // Legado: lead que passou por F2/F3/F4 sem o funil gravar status (esteira pelo
+  // Kommo, botões do LeadDetail) — infere "ok" dos dados em vez de re-rodar.
+  useEffect(() => {
+    if (!selId || !importada) return;
+    const faltando = leads.filter((l) => !l.descartado && FASES_EXEC.some((f) => f < l.etapa && !stOf(f, l.id)));
+    if (!faltando.length) return;
+    let vivo = true;
+    void leadsRepo.auditoriasFeitas(faltando.map((l) => l.id)).then((feitas) => {
+      if (!vivo) return;
+      setExecStatus((prev) => {
+        const next = { ...prev };
+        let mudou = false;
+        for (const l of faltando) {
+          const d = feitas[l.id];
+          if (!d) continue;
+          for (const f of FASES_EXEC) {
+            const feito = f === 1 ? d.f2 : f === 2 ? d.f3 : d.f4;
+            if (f < l.etapa && feito && !next[`${f}:${l.id}`]) { next[`${f}:${l.id}`] = 'ok'; mudou = true; }
+          }
+        }
+        return mudou ? next : prev;
+      });
+    }).catch(() => {});
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId, importada, leads.length]);
   useEffect(() => {
     if (!worker || !selId || !importada) return;
     const pid = selId;

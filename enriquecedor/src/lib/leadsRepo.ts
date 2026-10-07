@@ -36,6 +36,33 @@ export const leadsRepo = {
     return (data ?? []).map(fromRow);
   },
 
+  /**
+   * O que já foi auditado, inferido dos DADOS (não do status do projeto): F2 = tem
+   * decisores; F3 = tem briefing e auditoria de site; F4 = mediu a Meta. Serve pra
+   * leads enriquecidos pela esteira/LeadDetail antes do funil gravar status — sem
+   * re-rodar (e pagar) o que já está feito.
+   */
+  async auditoriasFeitas(ids: string[]): Promise<Record<string, { f2: boolean; f3: boolean; f4: boolean }>> {
+    const out: Record<string, { f2: boolean; f3: boolean; f4: boolean }> = {};
+    if (!ids.length || !supabaseConfigured) return out;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const [{ data: leads }, { data: decs }, { data: auds }] = await Promise.all([
+        supabase.from('enriquecedor_leads').select('id, briefing, anuncios').in('id', lote),
+        supabase.from('enriquecedor_decision_makers').select('lead_id').in('lead_id', lote),
+        supabase.from('enriquecedor_site_audits').select('lead_id').in('lead_id', lote),
+      ]);
+      const comDecisor = new Set((decs ?? []).map((d) => String(d.lead_id)));
+      const comAudit = new Set((auds ?? []).map((a) => String(a.lead_id)));
+      for (const r of leads ?? []) {
+        const id = String(r.id);
+        const an = r.anuncios as { meta?: unknown } | null;
+        out[id] = { f2: comDecisor.has(id), f3: r.briefing != null && comAudit.has(id), f4: !!an?.meta };
+      }
+    }
+    return out;
+  },
+
   /** Quem já tem card no Kommo, em UMA consulta (F8 — antes era 1 GET por lead). */
   async kommoIds(ids: string[]): Promise<Record<string, string>> {
     if (!ids.length) return {};
