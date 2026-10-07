@@ -112,7 +112,7 @@ const ACENTOS_NOME: Record<string, string> = { sao: 'são', jose: 'josé', joao:
 const acentuaNome = (l: string) => ACENTOS_NOME[l] ?? l.replace(/([aeiou])cao$/, '$1ção').replace(/([aeiou])coes$/, '$1ções');
 export function nomeExibicao(nome: string | null | undefined): string {
   let s = String(nome || '').replace(/\s+/g, ' ').trim();
-  s = s.replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\/?a|s\.a\.?|me|mei)\.?\s*$/i, '').replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp)\b\.?/gi, '').trim();
+  s = s.replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\s?\/?\s?a|s\.a\.?|me|mei)\.?\s*$/i, '').replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\/a)\b\.?/gi, '').trim();
   if (!s || /[a-zà-ÿ]/.test(s)) return s;
   return s.split(' ').map((w, i) => {
     const l = w.toLocaleLowerCase('pt-BR');
