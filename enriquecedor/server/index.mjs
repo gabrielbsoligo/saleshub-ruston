@@ -412,7 +412,9 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
     // O que sobra do @ tirando a marca e palavras de ramo/sufixo ("construtora",
     // "oficial", "br"...): "construtoraalfa" → "" (é a marca); "alfafestas" → "festas"
     // (é OUTRO negócio que só compartilha uma palavra).
-    const RAMO_RE = /(construtora|incorporadora|engenharia|imoveis|imobiliaria|empreendimentos|oficial|official|brasil|br|sp|rj|mg|pr|sc|rs|ba|go|df|ltda|sa|group|grupo|company|store|shop)/g;
+    // Palavras que acompanham a marca no @ sem mudar de negócio: ramo, tipo de
+    // estabelecimento, montadora/bandeira (concessionária "hondadaitan"), UF/cidade.
+    const RAMO_RE = /(construtora|incorporadora|engenharia|imoveis|imobiliaria|empreendimentos|oficial|official|brasil|br|sp|sjc|sjcampos|rj|mg|pr|sc|rs|ba|go|df|ltda|sa|group|grupo|company|store|shop|hotel|colegio|escola|clinica|laboratorio|lab|farmacia|drogaria|loja|lojas|odonto|motors|motos|moto|veiculos|auto|autos|concessionaria|honda|toyota|fiat|chevrolet|volkswagen|vw|ford|hyundai|nissan|renault|jeep|peugeot|citroen|yamaha|mitsubishi|kia|bmw|audi|mercedes|suzuki|caoa|chery|byd|gwm|volvo|ram)/g;
     const residuo = (hk.includes(chaveMarca) ? hk.replace(chaveMarca, '') : toks.reduce((acc, t) => acc.replace(t, ''), hk)).replace(RAMO_RE, '');
     // marcas curtas (MRV, JHSF) valem: o resíduo é quem barra "mrvfans"/"alfafestas"
     if (chaveMarca.length >= 3 && (hk.includes(chaveMarca) || (hk.length >= 3 && chaveMarca.includes(hk))) && residuo.length < 4) { score += 4; sinais.add('handle_marca'); }
@@ -602,6 +604,17 @@ async function discoverSociosSocial({ company, socios, cidade = null, rejeitados
       let h = await fetchHtmlHeadless(urlSite).catch(() => null);
       if (!ok(h) && proxyConfig()) h = await fetchHtmlHeadless(urlSite, { proxy: proxyConfig() }).catch(() => null);
       if (ok(h)) sinais = sinaisDoSite(h.html);
+    }
+  }
+  // Ícones de rede montados por JavaScript (caso Daitan): o HTML estático não tem o link.
+  // Sem Instagram nem Facebook no estático → lê o site pelo navegador e extrai de novo.
+  if (urlSite && (!sinais || (!sinais.instagram && !sinais.facebook))) {
+    const okH = (x) => x && x.status != null && x.status < 400 && x.html && !WAF_RE.test(x.html.slice(0, 5000));
+    let h = await fetchHtmlHeadless(urlSite).catch(() => null);
+    if (!okH(h) && proxyConfig()) h = await fetchHtmlHeadless(urlSite, { proxy: proxyConfig() }).catch(() => null);
+    if (okH(h)) {
+      const s2 = sinaisDoSite(h.html);
+      if (s2.instagram || s2.facebook) sinais = { ...(sinais ?? {}), ...s2, metaPageId: sinais?.metaPageId ?? s2.metaPageId };
     }
   }
   if (sinais?.facebook && /facebook\.com\/share/i.test(sinais.facebook)) sinais = { ...sinais, facebook: await resolverFacebookShare(sinais.facebook) };
@@ -4328,7 +4341,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'site-legado-2026-10-07',
+        versao: 'social-js-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
