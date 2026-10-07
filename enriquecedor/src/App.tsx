@@ -3,6 +3,7 @@ import { Login } from './components/Login';
 import { Layout } from './components/Layout';
 import { NovoProjetoModal } from './components/NovoProjetoModal';
 import { useAuth } from './lib/auth';
+import { vigiarVersao } from './lib/versao';
 import type { View } from './types';
 import { Dashboard } from './views/Dashboard';
 import { LeadsView } from './views/LeadsView';
@@ -18,6 +19,9 @@ export default function App() {
   const [projetoInicial, setProjetoInicial] = useState<string | null>(null);
   const [leadBackView, setLeadBackView] = useState<View>('leads');
   const [novoProjetoOpen, setNovoProjetoOpen] = useState(false);
+
+  // Deploy novo → a aba recarrega sozinha (ou avisa, se estiver editando algo).
+  useEffect(() => vigiarVersao(), []);
 
   // Link direto pro lead: /enriquecedor/#lead=<id> abre a página do lead —
   // dá pra mandar o link e a pessoa cai direto no lead enriquecido.
