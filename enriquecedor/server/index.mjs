@@ -1140,7 +1140,7 @@ function analyzeForm(html) {
 
 // Lê a home pelo navegador (Playwright) — para sites que respondem 403/429 ao
 // fetch simples (WAF/anti-bot). Devolve {status, html, finalUrl} ou null.
-async function fetchHtmlHeadless(url, { proxy = null } = {}) {
+async function fetchHtmlHeadless(url, { proxy = null, interagir = false } = {}) {
   return runHeadless(async () => {
     const browser = await getBrowser();
     if (!browser) return null;
@@ -1148,10 +1148,20 @@ async function fetchHtmlHeadless(url, { proxy = null } = {}) {
     try {
       ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 800 }, ...(proxy ? { proxy } : {}) });
       const page = await ctx.newPage();
+      const requests = [];
+      if (interagir) page.on('request', (req) => { const u = req.url(); if (requests.length < 400) requests.push(u); });
       const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => null);
       await page.waitForTimeout(2500);
+      if (interagir) {
+        // Plugins de "atrasar JS" (LiteSpeed, WP Rocket, Perfmatters) só carregam os scripts
+        // — inclusive o botão de WhatsApp — depois do primeiro movimento/rolagem do visitante.
+        await page.mouse.move(400, 300).catch(() => {});
+        await page.mouse.wheel(0, 700).catch(() => {});
+        await page.keyboard.press('Tab').catch(() => {});
+        await page.waitForTimeout(3500);
+      }
       const html = await page.content().catch(() => '');
-      return { status: resp ? resp.status() : null, html, finalUrl: page.url() };
+      return { status: resp ? resp.status() : null, html, finalUrl: page.url(), requests };
     } catch {
       return null;
     } finally {
@@ -1217,7 +1227,21 @@ async function auditUrl(url) {
       notes.push(`Site responde (HTTP ${res.status}) mas bloqueia robôs — WhatsApp/pixel não verificados automaticamente.`);
     }
   }
-  const { buttons, hasWhatsappWidget } = analyzeWhatsapp(html);
+  let { buttons, hasWhatsappWidget } = analyzeWhatsapp(html);
+  // Nenhum sinal de WhatsApp no HTML estático: pode ser widget carregado por script que só
+  // roda depois da interação (caso Tecmag: LiteSpeed "delay JS"). Confere pelo navegador.
+  if (isOnline && !bloqueado && buttons.length === 0 && !hasWhatsappWidget && html) {
+    const h = await fetchHtmlHeadless(finalUrl, { interagir: true }).catch(() => null);
+    if (h?.html) {
+      const r2 = analyzeWhatsapp(h.html);
+      const viaRede = (h.requests ?? []).some((u) => /whatsapp|wa\.me|joinchat|click-to-chat|wati\.io|getbutton\.io|elfsight|chaty|zapchat|wpp/i.test(u));
+      if (r2.buttons.length || r2.hasWhatsappWidget || viaRede) {
+        buttons = r2.buttons;
+        hasWhatsappWidget = r2.hasWhatsappWidget || (viaRede && !r2.buttons.length);
+        notes.push('WhatsApp carregado por script (só aparece depois de o visitante interagir) — detectado via navegador.');
+      }
+    }
+  }
   const form = analyzeForm(html);
   const siteSocials = extractSiteSocials(html);
   if (siteSocials.facebook && /facebook\.com\/share/i.test(siteSocials.facebook)) siteSocials.facebook = await resolverFacebookShare(siteSocials.facebook);
@@ -4341,7 +4365,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'social-js-2026-10-07',
+        versao: 'wa-js-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
