@@ -52,7 +52,9 @@ export function hostOf(url: string | null | undefined): string | null {
 // jurídicos, com siglas soltas juntadas ("R. D. C. Construtora" → "RDC Construtora").
 export function marcaPadrao(lead: Lead): string {
   const nome = (lead.nomeFantasia || lead.razaoSocial || lead.companyNameRaw || '').trim();
-  let t = nome.replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
+  // "OL PLASTIC - IMPORTACAO, EXPORTACAO E COMERCIO..." → a marca é o que vem antes do traço.
+  const antes = nome.split(/\s+[-–—]\s+/)[0];
+  let t = (antes && antes.length >= 3 ? antes : nome).replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
   t = t.replace(/\b(ltda|limitada|s\/?a|eireli|epp|mei|me)\b/gi, '').replace(/\s+/g, ' ').trim();
   const out: string[] = [];
   let acc = '';

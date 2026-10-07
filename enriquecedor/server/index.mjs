@@ -405,8 +405,12 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
   const pontuar = (r) => {
     if (!domainRe.test(r.url) || badPath.test(r.url)) return null;
     const handle = handleDe(r.url);
-    if (!handle || bloqueados.has(handle)) return null;
-    const hk = handle.replace(/[^a-z0-9]/g, '');
+    if (!handle && !(network === 'facebook' && fbCanonica(r.url)?.id)) return null;
+    if (handle && bloqueados.has(handle)) return null;
+    // Página sem @ (facebook.com/profile.php?id=… ou só id): o nome da página no título
+    // ("Pallets OL-Plastic | Pindamonhangaba SP") faz o papel do @.
+    const semArroba = !handle || /^\d{5,}$/.test(handle);
+    const hk = semArroba ? normText(String(r.title || '').split(/\s+[|·•–—-]\s+/)[0]).replace(/[^a-z0-9]/g, '') : handle.replace(/[^a-z0-9]/g, '');
     const sinais = new Set();
     let score = 0;
     // O que sobra do @ tirando a marca e palavras de ramo/sufixo ("construtora",
@@ -448,6 +452,8 @@ async function findCompanySocial(company, network, rejeitados = [], { cidade = n
   if (distintiva && distintiva !== normText(company)) consultas.push(`site:${network}.com "${distintiva}"`);
   // Marca curta/genérica ("PLANETA") não acha; o núcleo do domínio do site costuma ser o @ (planetahonda).
   if (core && core.length >= 4 && !toks.includes(core)) consultas.push(`site:${network}.com ${core}`);
+  // A página costuma listar o site no "Sobre"/bio: busca pelo próprio domínio.
+  if (siteDomain) consultas.push(`site:${network}.com "${String(siteDomain).replace(/^www\./, '')}"`);
   let okTotal = true;
   let melhor = null;
   for (const q of consultas) {
@@ -3079,6 +3085,9 @@ async function kommoNote(kommoLeadId, text) {
 
 // Nome de marca pra buscas (aproximação server-side do adSearchTerm do app).
 function marcaDe(nome) {
+  // "OL PLASTIC - IMPORTACAO, EXPORTACAO E COMERCIO..." → a marca é o que vem antes do traço.
+  const antesDoTraco = String(nome || '').split(/\s+[-–—]\s+/)[0];
+  if (antesDoTraco && antesDoTraco.length >= 3 && antesDoTraco.length < String(nome || '').length) nome = antesDoTraco;
   const limpo = String(nome || '')
     .replace(/\b(ltda|limitada|s\/?a\.?|eireli|me|epp|holding|participacoes|participações|empreendimentos?|imobiliaria|imobiliária|incorporadora|incorporacoes|incorporações|construtora|construcoes|construções)\b/gi, '')
     .replace(/[^\p{L}\p{N} ]/gu, ' ')
@@ -4394,7 +4403,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'promover-redes-2026-10-07',
+        versao: 'marca-traco-2026-10-07',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
