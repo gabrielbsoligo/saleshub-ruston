@@ -3204,7 +3204,7 @@ function marcaDe(nome) {
 // em caixa mista é respeitado. Mesma regra em src/lib/cadencia.ts (nomeExibicao).
 const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'para', 'com']);
 // Receita grava sem acento: devolve o das palavras comuns em nome de empresa + o sufixo -ção/-ções.
-const PALAVRAS_CURTAS = new Set(['sul', 'sol', 'mar', 'luz', 'rio', 'bom', 'boa', 'lar', 'paz', 'pet', 'bar', 'oca', 'ilha', 'ceu', 'via', 'ana', 'eva', 'ema', 'uni', 'net', 'web', 'top', 'max', 'mix', 'pro', 'eco', 'bio', 'geo', 'art', 'gas', 'som', 'mel', 'pao', 'cia', 'ltd']);
+const PALAVRAS_CURTAS = new Set(['sul', 'sol', 'mar', 'luz', 'rio', 'bom', 'boa', 'lar', 'paz', 'pet', 'bar', 'oca', 'ilha', 'ceu', 'via', 'ana', 'eva', 'ema', 'uni', 'net', 'web', 'top', 'max', 'mix', 'pro', 'eco', 'bio', 'geo', 'art', 'gas', 'som', 'mel', 'pao', 'cia', 'ltd', 'elo', 'faz', 'dia', 'ser', 'ver', 'ano', 'uno', 'duo', 'tri', 'ama', 'ela', 'ele', 'meu', 'seu', 'nos', 'vez', 'luz']);
 const ACENTOS_NOME = { seguranca: 'segurança', armazens: 'armazéns', laboratorio: 'laboratório', analises: 'análises', imobiliarios: 'imobiliários', viaria: 'viária', negocios: 'negócios', solucao: 'solução', diagnostico: 'diagnóstico', eletrico: 'elétrico', hidraulica: 'hidráulica', agua: 'água', familia: 'família', distribuicao: 'distribuição', sao: 'são', jose: 'josé', joao: 'joão', comercio: 'comércio', industria: 'indústria', industrias: 'indústrias', farmacia: 'farmácia', terapeutica: 'terapêutica', eletronicos: 'eletrônicos', eletronica: 'eletrônica', eletricos: 'elétricos', eletrica: 'elétrica', tecnica: 'técnica', tecnico: 'técnico', servicos: 'serviços', saude: 'saúde', clinica: 'clínica', medico: 'médico', medica: 'médica', odontologica: 'odontológica', agricola: 'agrícola', logistica: 'logística', automoveis: 'automóveis', veiculos: 'veículos', imoveis: 'imóveis', imobiliaria: 'imobiliária', contabil: 'contábil', plasticos: 'plásticos', plastica: 'plástica', plastico: 'plástico', metalurgica: 'metalúrgica', mecanica: 'mecânica', quimica: 'química', grafica: 'gráfica', otica: 'ótica', optica: 'óptica', ribeirao: 'ribeirão', jacarei: 'jacareí', taubate: 'taubaté', guaratingueta: 'guaratinguetá', cacapava: 'caçapava', pecas: 'peças', acucar: 'açúcar', cafe: 'café', colegio: 'colégio', alimenticios: 'alimentícios', alimenticia: 'alimentícia', area: 'área', academico: 'acadêmico', pratica: 'prática', economica: 'econômica', basica: 'básica', fisica: 'física', estetica: 'estética', tecnologica: 'tecnológica', sustentavel: 'sustentável', moveis: 'móveis', ceramica: 'cerâmica', vidracaria: 'vidraçaria', acos: 'aços', aco: 'aço', pao: 'pão', brasilia: 'brasília', paraiba: 'paraíba', goias: 'goiás', parana: 'paraná', ceara: 'ceará', amapa: 'amapá', piaui: 'piauí', maranhao: 'maranhão', uniao: 'união', gestao: 'gestão', visao: 'visão', precisao: 'precisão', razao: 'razão', construcoes: 'construções', incorporacoes: 'incorporações', solucoes: 'soluções' };
 const acentuaNome = (l) => ACENTOS_NOME[l] ?? l.replace(/([aeiou])cao$/, '$1ção').replace(/([aeiou])coes$/, '$1ções');
 function nomeExibicao(nome) {
@@ -4558,7 +4558,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'nome-pontas-2026-10-08',
+        versao: 'nome-pontas2-2026-10-08',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
