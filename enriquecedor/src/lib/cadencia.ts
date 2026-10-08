@@ -113,16 +113,19 @@ export const nome1De = (cfg: CadenciaConfig, d: DecisionMaker): string => cortaP
 // sem sufixo societário e, se veio TUDO EM MAIÚSCULA da Receita, em caixa normal com acento
 // ("CEMEF ENGENHARIA LTDA" → "Cemef Engenharia"). Sigla curta/sem vogal fica maiúscula.
 const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'para', 'com']);
-const ACENTOS_NOME: Record<string, string> = { sao: 'são', jose: 'josé', joao: 'joão', comercio: 'comércio', industria: 'indústria', industrias: 'indústrias', farmacia: 'farmácia', terapeutica: 'terapêutica', eletronicos: 'eletrônicos', eletronica: 'eletrônica', eletricos: 'elétricos', eletrica: 'elétrica', tecnica: 'técnica', tecnico: 'técnico', servicos: 'serviços', saude: 'saúde', clinica: 'clínica', medico: 'médico', medica: 'médica', odontologica: 'odontológica', agricola: 'agrícola', logistica: 'logística', automoveis: 'automóveis', veiculos: 'veículos', imoveis: 'imóveis', imobiliaria: 'imobiliária', contabil: 'contábil', plasticos: 'plásticos', plastica: 'plástica', plastico: 'plástico', metalurgica: 'metalúrgica', mecanica: 'mecânica', quimica: 'química', grafica: 'gráfica', otica: 'ótica', optica: 'óptica', ribeirao: 'ribeirão', jacarei: 'jacareí', taubate: 'taubaté', guaratingueta: 'guaratinguetá', cacapava: 'caçapava', pecas: 'peças', acucar: 'açúcar', cafe: 'café', colegio: 'colégio', alimenticios: 'alimentícios', alimenticia: 'alimentícia', area: 'área', academico: 'acadêmico', pratica: 'prática', economica: 'econômica', basica: 'básica', fisica: 'física', estetica: 'estética', tecnologica: 'tecnológica', sustentavel: 'sustentável', moveis: 'móveis', ceramica: 'cerâmica', vidracaria: 'vidraçaria', acos: 'aços', aco: 'aço', pao: 'pão', brasilia: 'brasília', paraiba: 'paraíba', goias: 'goiás', parana: 'paraná', ceara: 'ceará', amapa: 'amapá', piaui: 'piauí', maranhao: 'maranhão', uniao: 'união', gestao: 'gestão', visao: 'visão', precisao: 'precisão', razao: 'razão', construcoes: 'construções', incorporacoes: 'incorporações', solucoes: 'soluções' };
+const PALAVRAS_CURTAS = new Set(['sul', 'sol', 'mar', 'luz', 'rio', 'bom', 'boa', 'lar', 'paz', 'pet', 'bar', 'oca', 'ilha', 'ceu', 'via', 'ana', 'eva', 'ema', 'uni', 'net', 'web', 'top', 'max', 'mix', 'pro', 'eco', 'bio', 'geo', 'art', 'gas', 'som', 'mel', 'pao', 'cia', 'ltd']);
+const ACENTOS_NOME: Record<string, string> = { seguranca: 'segurança', armazens: 'armazéns', laboratorio: 'laboratório', analises: 'análises', imobiliarios: 'imobiliários', viaria: 'viária', negocios: 'negócios', solucao: 'solução', diagnostico: 'diagnóstico', eletrico: 'elétrico', hidraulica: 'hidráulica', agua: 'água', familia: 'família', distribuicao: 'distribuição', sao: 'são', jose: 'josé', joao: 'joão', comercio: 'comércio', industria: 'indústria', industrias: 'indústrias', farmacia: 'farmácia', terapeutica: 'terapêutica', eletronicos: 'eletrônicos', eletronica: 'eletrônica', eletricos: 'elétricos', eletrica: 'elétrica', tecnica: 'técnica', tecnico: 'técnico', servicos: 'serviços', saude: 'saúde', clinica: 'clínica', medico: 'médico', medica: 'médica', odontologica: 'odontológica', agricola: 'agrícola', logistica: 'logística', automoveis: 'automóveis', veiculos: 'veículos', imoveis: 'imóveis', imobiliaria: 'imobiliária', contabil: 'contábil', plasticos: 'plásticos', plastica: 'plástica', plastico: 'plástico', metalurgica: 'metalúrgica', mecanica: 'mecânica', quimica: 'química', grafica: 'gráfica', otica: 'ótica', optica: 'óptica', ribeirao: 'ribeirão', jacarei: 'jacareí', taubate: 'taubaté', guaratingueta: 'guaratinguetá', cacapava: 'caçapava', pecas: 'peças', acucar: 'açúcar', cafe: 'café', colegio: 'colégio', alimenticios: 'alimentícios', alimenticia: 'alimentícia', area: 'área', academico: 'acadêmico', pratica: 'prática', economica: 'econômica', basica: 'básica', fisica: 'física', estetica: 'estética', tecnologica: 'tecnológica', sustentavel: 'sustentável', moveis: 'móveis', ceramica: 'cerâmica', vidracaria: 'vidraçaria', acos: 'aços', aco: 'aço', pao: 'pão', brasilia: 'brasília', paraiba: 'paraíba', goias: 'goiás', parana: 'paraná', ceara: 'ceará', amapa: 'amapá', piaui: 'piauí', maranhao: 'maranhão', uniao: 'união', gestao: 'gestão', visao: 'visão', precisao: 'precisão', razao: 'razão', construcoes: 'construções', incorporacoes: 'incorporações', solucoes: 'soluções' };
 const acentuaNome = (l: string) => ACENTOS_NOME[l] ?? l.replace(/([aeiou])cao$/, '$1ção').replace(/([aeiou])coes$/, '$1ções');
 export function nomeExibicao(nome: string | null | undefined): string {
   let s = String(nome || '').replace(/\s+/g, ' ').trim();
   s = s.replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\s?\/?\s?a|s\.a\.?|me|mei)\.?\s*$/i, '').replace(/\s*[-–—,]?\s*\b(ltda|limitada|eireli|epp|s\/a)\b\.?/gi, '').trim();
+  // conectivo solto nas pontas (sobra de "CONSTRUTORA E INCORPORADORA" removidos pela marca)
+  s = s.replace(/^(?:(?:e|de|da|do|das|dos|&)\s+)+/i, '').replace(/(?:\s+(?:e|de|da|do|das|dos|&))+$/i, '').trim();
   if (!s || /[a-zà-ÿ]/.test(s)) return s;
   return s.split(' ').map((w, i) => {
     const l = w.toLocaleLowerCase('pt-BR');
     if (i > 0 && CONECTIVOS_NOME.has(l)) return l;
-    if (/\d/.test(w) || w.length <= 2 || !/[aeiouyáéíóúâêôãõà]/i.test(l)) return w;
+    if (/\d/.test(w) || w.length <= 2 || !/[aeiouyáéíóúâêôãõà]/i.test(l) || (l.length === 3 && !ACENTOS_NOME[l] && !PALAVRAS_CURTAS.has(l))) return w;
     const a = acentuaNome(l);
     return a.charAt(0).toLocaleUpperCase('pt-BR') + a.slice(1);
   }).join(' ');
@@ -133,7 +136,7 @@ function marcaDaRazao(nome: string): string {
   if (antes && antes.length >= 3 && antes.length < nome.length) nome = antes;
   const limpo = nome
     .replace(/\b(ltda|limitada|s\/?a\.?|eireli|me|epp|holding|participacoes|participações|empreendimentos?|imobiliaria|imobiliária|incorporadora|incorporacoes|incorporações|construtora|construcoes|construções)\b/gi, '')
-    .replace(/[^\p{L}\p{N} ]/gu, ' ')
+    .replace(/[^\p{L}\p{N}' ]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   return limpo || nome;
@@ -172,7 +175,7 @@ export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaCo
   const decisor = (decisorId ? dests.find((p) => p.id === decisorId) : null) ?? dests[0] ?? null;
   const nome1 = decisor ? nome1De(cfg, decisor) || 'tudo bem?' : 'tudo bem?';
   const sdr = cortaPalavra((cfg.sdrNome ?? '').trim() || '[SDR]', LIMITES.sdr);
-  const fantasia = cortaPalavra((cfg.fantasia ?? '').trim() || fantasiaPadrao(lead), LIMITES.fantasia);
+  const fantasia = nomeExibicao(cortaPalavra((cfg.fantasia ?? '').trim() || fantasiaPadrao(lead), LIMITES.fantasia));
   const fraseFalha = cortaPalavra((cfg.fraseFalha ?? '').trim() || f1?.falha || '', LIMITES.fraseFalha);
   const fraseImpacto = cortaPalavra((cfg.fraseImpacto ?? '').trim() || f1?.impacto || '', LIMITES.fraseImpacto);
   const rotuloSecundaria = f2 ? cortaPalavra((cfg.rotuloSecundaria ?? '').trim() || f2.rotulo, LIMITES.rotulo) : null;
