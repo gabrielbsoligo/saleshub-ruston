@@ -317,15 +317,16 @@ async function runBot(botId: number, kommoLeadId: number) {
 }
 
 async function nomeResponsavel(kommoLeadId: string, cacheUsers: Map<number, string>) {
-  const r = await kommo('GET', `/api/v4/leads/${kommoLeadId}`)
+  const r = await kommo('GET', `/api/v4/leads/${kommoLeadId}?with=contacts`)
   const uid = Number(r.body?.responsible_user_id ?? 0)
-  if (!uid) return { sdrNome: null, uid: null }
+  const nContatos = (r.body?._embedded?.contacts ?? []).length
+  if (!uid) return { sdrNome: null, uid: null, nContatos }
   if (!cacheUsers.size) {
     const ru = await kommo('GET', '/api/v4/users?limit=250')
     for (const u of ru.body?._embedded?.users ?? []) cacheUsers.set(Number(u.id), String(u.name ?? ''))
   }
   const nome = (cacheUsers.get(uid) ?? '').split(/\s+/)[0] || null
-  return { sdrNome: nome, uid }
+  return { sdrNome: nome, uid, nContatos }
 }
 
 // Card do Kommo → lead do enriquecedor + decisor destinatário (13/09: 1 card por
@@ -364,7 +365,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   // Card que recebe: o do decisor destinatário (novo) ou o do lead (legado).
   const cardId = String(opts.decisor?.kommo_lead_id ?? lead.kommo_lead_id)
 
-  const { sdrNome, uid } = await nomeResponsavel(cardId, cacheUsers)
+  const { sdrNome, uid, nContatos } = await nomeResponsavel(cardId, cacheUsers)
   const rp = await fetch(`${MOTOR_URL}/api/cadencia/preparar`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
@@ -409,6 +410,14 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   if (opts.dryRun) return linha
 
   const botId = botDoResponsavel(tpl, uid)
+  // O Salesbot manda o modelo pra TODOS os contatos do card, com os campos do card
+  // ({{1}} = decisor principal): com 2+ contatos, os outros recebem "Oi <principal>".
+  // Outros decisores ficam na Empresa ligada ao card, não no card.
+  if (nContatos > 1) {
+    const motivo = `card com ${nContatos} contatos — o bot mandaria a mensagem com o nome do principal pra todos; deixe só o decisor principal no card (os outros na Empresa)`
+    await finaliza({ status: 'falhou', erro: motivo })
+    return { ...linha, pulado: motivo }
+  }
   if (tpl.review_status !== 'aprovado' || !botId) {
     const motivo = tpl.review_status !== 'aprovado' ? 'template sem aprovação da Meta' : `sem bot deste modelo no WhatsApp do responsável do card (${sdrNome ?? uid ?? 'sem responsável'})`
     await finaliza({ status: 'falhou', erro: motivo })
