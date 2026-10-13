@@ -3349,8 +3349,10 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
     try {
       const row = (await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`))?.[0];
       if (!row) { resultados.push({ leadId, pulado: 'não encontrado' }); continue; }
-      // 1 card POR DESTINATÁRIO (decisores escolhidos no F2): cada um recebe a
-      // cadência com o próprio {{1}}. Quem já tem card (decisor.kommo_lead_id) é pulado.
+      // 1 card POR EMPRESA (09/10): os decisores escolhidos no F2 entram como CONTATOS
+      // do card — o principal (is_primary) é o contato principal e é quem recebe a
+      // cadência ({{1}} dele); os demais ficam vinculados pro SDR. Antes era 1 card por
+      // decisor, o que espalhava a mesma empresa em vários cards na Fila.
       const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=id,nome,cargo,is_primary,selecionado,phone_whatsapp,phone_personal,kommo_lead_id`)) ?? [];
       const destinatarios = destinatariosDe(decisores);
       const nomeCard = nomeExibicao(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw);
@@ -3359,63 +3361,72 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
         ? `\nCadencia validada${cc.validadoPor ? ` por ${cc.validadoPor}` : ''}${cc.sdrNome ? ` - SDR: ${cc.sdrNome}` : ''}. Gancho principal: ${cc.falhaPrimaria ?? row.falha_primaria ?? '-'}${cc.falhaSecundaria ? ` / secundario: ${cc.falhaSecundaria}` : ''}.`
         : '';
       const foneEmpresa = foneParaKommo(row, []).fone;
-      // Sem decisor nenhum: card único da empresa (comportamento antigo).
-      const alvos = destinatarios.length ? destinatarios : [null];
-      if (!destinatarios.length && row.kommo_lead_id) { resultados.push({ leadId, empresa: nomeCard, pulado: `já no Kommo (${row.kommo_lead_id})` }); continue; }
-      let primeiroCard = row.kommo_lead_id ?? null;
-      for (const d of alvos) {
-        if (d?.kommo_lead_id) { resultados.push({ leadId, empresa: nomeCard, decisor: d.nome, pulado: `já no Kommo (${d.kommo_lead_id})` }); continue; }
+      const jaTemCard = row.kommo_lead_id || decisores.find((d) => d.kommo_lead_id)?.kommo_lead_id;
+      if (jaTemCard) { resultados.push({ leadId, empresa: nomeCard, pulado: `já no Kommo (${jaTemCard})` }); continue; }
+      const principal = destinatarios[0] ?? null;
+      const contatoDe = (d, comFoneEmpresa) => {
         const { fone: foneDec } = d ? foneParaKommo(row, [d]) : { fone: null };
-        const fone = foneDec ?? foneEmpresa;
-        const nomeContato = d?.nome || nomeCard;
-        const primeiro = d ? nome1De(cc, d) : null;
-        const contato = { name: String(nomeContato).slice(0, 250) };
-        if (fone) contato.custom_fields_values = [{ field_code: 'PHONE', values: [{ value: fone, enum_code: 'WORK' }] }];
-        const rc = await kommoApi('POST', '/api/v4/leads/complex', [{
-          name: String(d && destinatarios.length > 1 ? `${nomeCard} · ${primeiro}` : nomeCard).slice(0, 250),
-          pipeline_id: funil.id,
-          status_id: funil.etapas['Fila'],
-          ...(responsavelKommoId ? { responsible_user_id: Number(responsavelKommoId) } : {}), // card do SDR que importou
-          _embedded: { contacts: [contato] },
-        }]);
-        const kommoId = rc.body?.[0]?.id ?? rc.body?._embedded?.leads?.[0]?.id ?? null;
-        if (!rc.ok || !kommoId) {
-          resultados.push({ leadId, empresa: nomeCard, decisor: d?.nome ?? null, erro: `Kommo HTTP ${rc.status}: ${JSON.stringify(rc.body).slice(0, 150)}` });
-          continue;
-        }
-        if (d) await sbPatch(token, 'enriquecedor_decision_makers', `id=eq.${d.id}`, { kommo_lead_id: String(kommoId) }).catch(() => {});
-        if (!primeiroCard) {
-          primeiroCard = String(kommoId);
-          await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { kommo_lead_id: String(kommoId), updated_at: new Date().toISOString() });
-        }
-        const linhaDec = d ? `\nDestinatario: ${d.nome}${d.cargo ? ` (${d.cargo})` : ''} - primeiro nome na mensagem: ${primeiro}${!foneDec ? (fone ? ' - SEM telefone pessoal, usando o da empresa' : ' - SEM TELEFONE') : ''}.` : '';
-        await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).${linhaDec}${linhaCad}\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
-
-        // Espelho no controle de leads do SalesHub (canal outbound) — 1 por CNPJ (só o primeiro card).
-        const cnpj = row.cnpj ?? onlyDigits(row.cnpj_raw);
-        const jaTem = cnpj ? await sbSelect(token, 'leads', `cnpj=eq.${cnpj}&select=id&limit=1`) : null;
-        if (!jaTem?.length) {
-          await sbUpsert(token, 'leads', [{
-            empresa: nomeCard,
-            nome_contato: nomeContato === nomeCard ? null : nomeContato,
-            telefone: fone,
-            cnpj: cnpj || null,
-            canal: 'outbound',
-            fonte: 'enriquecedor',
-            kommo_id: String(kommoId),
-            kommo_link: `https://${sub}.kommo.com/leads/detail/${kommoId}`,
-            kommo_pipeline_id: funil.id,
-            kommo_status_id: funil.etapas['Fila'],
-            data_cadastro: new Date().toISOString().slice(0, 10),
-          }]).catch((e) => console.warn('[importar] public.leads falhou:', String(e?.message || e).slice(0, 120)));
-        }
-
-        // Variáveis da cadência visíveis no card desde já (CAD *) + responsável.
-        const pre = await preencherCardCadencia({ leadId, decisorId: d?.id ?? null, kommoLeadId: String(kommoId), token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
-        criados += 1;
-        resultados.push({ leadId, empresa: nomeCard, decisor: d?.nome ?? null, kommo_lead_id: String(kommoId), fone: fone ?? 'SEM TELEFONE — completar no card', cadencia: pre });
-        await sleep(250); // folga de rate na Kommo
+        const fone = foneDec ?? (comFoneEmpresa ? foneEmpresa : null);
+        const c = { name: String(d?.nome || nomeCard).slice(0, 250) };
+        if (fone) c.custom_fields_values = [{ field_code: 'PHONE', values: [{ value: fone, enum_code: 'WORK' }] }];
+        return { c, fone, foneDec };
+      };
+      const cp = contatoDe(principal, true);
+      const rc = await kommoApi('POST', '/api/v4/leads/complex', [{
+        name: String(nomeCard).slice(0, 250),
+        pipeline_id: funil.id,
+        status_id: funil.etapas['Fila'],
+        ...(responsavelKommoId ? { responsible_user_id: Number(responsavelKommoId) } : {}), // card do SDR que importou
+        _embedded: { contacts: [cp.c] },
+      }]);
+      const kommoId = rc.body?.[0]?.id ?? rc.body?._embedded?.leads?.[0]?.id ?? null;
+      if (!rc.ok || !kommoId) {
+        resultados.push({ leadId, empresa: nomeCard, erro: `Kommo HTTP ${rc.status}: ${JSON.stringify(rc.body).slice(0, 150)}` });
+        continue;
       }
+      // Card ↔ decisor principal (o carteiro resolve o {{1}} por aqui); o lead aponta pro card.
+      if (principal) await sbPatch(token, 'enriquecedor_decision_makers', `id=eq.${principal.id}`, { kommo_lead_id: String(kommoId) }).catch(() => {});
+      await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { kommo_lead_id: String(kommoId), updated_at: new Date().toISOString() });
+      // Demais decisores: contato próprio (com o telefone dele) vinculado ao MESMO card.
+      const vinculados = [];
+      for (const d of destinatarios.slice(1)) {
+        const { c, fone } = contatoDe(d, false);
+        const rk = await kommoApi('POST', '/api/v4/contacts', [c]);
+        const cid = rk.body?._embedded?.contacts?.[0]?.id ?? null;
+        if (cid) await kommoApi('POST', `/api/v4/leads/${kommoId}/link`, [{ to_entity_id: Number(cid), to_entity_type: 'contacts' }]);
+        vinculados.push(`${d.nome}${d.cargo ? ` (${d.cargo})` : ''}${fone ? ` ${fone}` : ' - sem telefone'}`);
+      }
+      const primeiro = principal ? nome1De(cc, principal) : null;
+      const linhaDec = principal
+        ? `\nContato principal (recebe a cadencia): ${principal.nome}${principal.cargo ? ` (${principal.cargo})` : ''} - primeiro nome na mensagem: ${primeiro}${!cp.foneDec ? (cp.fone ? ' - SEM telefone pessoal, usando o da empresa' : ' - SEM TELEFONE') : ''}.`
+        : '';
+      const linhaOutros = vinculados.length ? `\nOutros decisores vinculados ao card: ${vinculados.join('; ')}.` : '';
+      await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).${linhaDec}${linhaOutros}${linhaCad}\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
+
+      // Espelho no controle de leads do SalesHub (canal outbound) — 1 por CNPJ.
+      const cnpj = row.cnpj ?? onlyDigits(row.cnpj_raw);
+      const jaTem = cnpj ? await sbSelect(token, 'leads', `cnpj=eq.${cnpj}&select=id&limit=1`) : null;
+      if (!jaTem?.length) {
+        await sbUpsert(token, 'leads', [{
+          empresa: nomeCard,
+          nome_contato: principal?.nome ?? null,
+          telefone: cp.fone,
+          cnpj: cnpj || null,
+          canal: 'outbound',
+          fonte: 'enriquecedor',
+          kommo_id: String(kommoId),
+          kommo_link: `https://${sub}.kommo.com/leads/detail/${kommoId}`,
+          kommo_pipeline_id: funil.id,
+          kommo_status_id: funil.etapas['Fila'],
+          data_cadastro: new Date().toISOString().slice(0, 10),
+        }]).catch((e) => console.warn('[importar] public.leads falhou:', String(e?.message || e).slice(0, 120)));
+      }
+
+      // Variáveis da cadência visíveis no card desde já (CAD *) + responsável.
+      const pre = await preencherCardCadencia({ leadId, decisorId: principal?.id ?? null, kommoLeadId: String(kommoId), token, sdrNome, responsavelKommoId }).catch((e) => ({ ok: false, erro: String(e?.message || e) }));
+      criados += 1;
+      resultados.push({ leadId, empresa: nomeCard, decisor: principal?.nome ?? null, outrosContatos: vinculados.length, kommo_lead_id: String(kommoId), fone: cp.fone ?? 'SEM TELEFONE — completar no card', cadencia: pre });
+      await sleep(250); // folga de rate na Kommo
     } catch (err) {
       resultados.push({ leadId, erro: String(err?.message || err).slice(0, 200) });
     }
@@ -3541,7 +3552,8 @@ const montarCorpo = (corpo, vars) =>
 // e recebe as mensagens com o próprio {{1}}.
 function destinatariosDe(decisores) {
   const all = decisores ?? [];
-  const sel = all.filter((d) => d.selecionado);
+  // o principal primeiro: ele é o contato principal do card (único que recebe a cadência)
+  const sel = all.filter((d) => d.selecionado).sort((x, y) => Number(!!y.is_primary) - Number(!!x.is_primary));
   if (sel.length) return sel;
   const prim = all.find((d) => d.is_primary);
   return prim ? [prim] : all.slice(0, 1);
@@ -4558,7 +4570,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'nome-pontas2-2026-10-08',
+        versao: 'card-por-empresa-2026-10-13',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,

@@ -99,9 +99,10 @@ export function cortaPalavra(s: string, max: number): string {
 
 // Destinatários da cadência = decisores ESCOLHIDOS no F2 (selecionado). Sem
 // escolha, o primário; sem primário, o primeiro. Mesma regra do motor
-// (destinatariosDe) — cada um vira um card no Kommo e recebe as mensagens.
+// (destinatariosDe) — a empresa vira 1 card no Kommo; o primeiro (principal) recebe as
+// mensagens e os demais entram como contatos vinculados.
 export function destinatarios(people: DecisionMaker[]): DecisionMaker[] {
-  const sel = people.filter((p) => p.selecionado);
+  const sel = people.filter((p) => p.selecionado).sort((x, y) => Number(!!y.isPrimary) - Number(!!x.isPrimary));
   if (sel.length) return sel;
   const prim = people.find((p) => p.isPrimary);
   return prim ? [prim] : people.slice(0, 1);
