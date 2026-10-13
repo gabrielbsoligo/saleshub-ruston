@@ -2955,7 +2955,7 @@ function CadenciaSection({
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">3 · Quem recebe, quem assina, marca</p>
                 <div className="mb-3">
                   <span className="mb-1 block text-[11px] text-v4-text-muted">
-                    Destinatários — os decisores escolhidos no F2. A empresa vira UM card no Kommo: o primeiro (principal) é o contato que recebe a cadência com o {'{{1}}'} dele; os demais entram como contatos vinculados ao card.
+                    Destinatários — os decisores escolhidos no F2. A empresa vira UM card no Kommo: o primeiro (principal) é o único contato do card e recebe a cadência com o {'{{1}}'} dele; os demais ficam na Empresa ligada ao card (não recebem as mensagens).
                   </span>
                   {dests.length === 0 ? (
                     <p className="text-xs text-v4-warning">Nenhum decisor neste lead — sem destinatário não há cadência. Rode/complete o F2.</p>

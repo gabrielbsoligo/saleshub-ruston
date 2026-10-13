@@ -3393,20 +3393,32 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
       // Card ↔ decisor principal (o carteiro resolve o {{1}} por aqui); o lead aponta pro card.
       if (principal) await sbPatch(token, 'enriquecedor_decision_makers', `id=eq.${principal.id}`, { kommo_lead_id: String(kommoId) }).catch(() => {});
       await sbPatch(token, 'enriquecedor_leads', `id=eq.${leadId}`, { kommo_lead_id: String(kommoId), updated_at: new Date().toISOString() });
-      // Demais decisores: contato próprio (com o telefone dele) vinculado ao MESMO card.
+      // Demais decisores: contato próprio (com o telefone dele) numa EMPRESA do Kommo ligada
+      // ao card — NÃO no card. O Salesbot manda o modelo pra TODOS os contatos do card com
+      // os campos do card ({{1}} = principal): contato extra no card recebia "Oi <principal>"
+      // (caso Sakura, 13/10). Na empresa, o SDR vê todos e o bot só fala com o principal.
       const vinculados = [];
-      for (const d of destinatarios.slice(1)) {
-        const { c, fone } = contatoDe(d, false);
-        const rk = await kommoApi('POST', '/api/v4/contacts', [c]);
-        const cid = rk.body?._embedded?.contacts?.[0]?.id ?? null;
-        if (cid) await kommoApi('POST', `/api/v4/leads/${kommoId}/link`, [{ to_entity_id: Number(cid), to_entity_type: 'contacts' }]);
-        vinculados.push(`${d.nome}${d.cargo ? ` (${d.cargo})` : ''}${fone ? ` ${fone}` : ' - sem telefone'}`);
+      if (destinatarios.length > 1) {
+        const rco = await kommoApi('POST', '/api/v4/companies', [{ name: String(nomeCard).slice(0, 250), ...(responsavelKommoId ? { responsible_user_id: Number(responsavelKommoId) } : {}) }]);
+        const companyId = rco.body?._embedded?.companies?.[0]?.id ?? null;
+        if (companyId) {
+          await kommoApi('POST', `/api/v4/leads/${kommoId}/link`, [{ to_entity_id: Number(companyId), to_entity_type: 'companies' }]);
+          const contatoPrincipalId = rc.body?.[0]?.contact_id ?? null;
+          if (contatoPrincipalId) await kommoApi('POST', `/api/v4/companies/${companyId}/link`, [{ to_entity_id: Number(contatoPrincipalId), to_entity_type: 'contacts' }]);
+          for (const d of destinatarios.slice(1)) {
+            const { c, fone } = contatoDe(d, false);
+            const rk = await kommoApi('POST', '/api/v4/contacts', [c]);
+            const cid = rk.body?._embedded?.contacts?.[0]?.id ?? null;
+            if (cid) await kommoApi('POST', `/api/v4/companies/${companyId}/link`, [{ to_entity_id: Number(cid), to_entity_type: 'contacts' }]);
+            vinculados.push(`${d.nome}${d.cargo ? ` (${d.cargo})` : ''}${fone ? ` ${fone}` : ' - sem telefone'}`);
+          }
+        }
       }
       const primeiro = principal ? nome1De(cc, principal) : null;
       const linhaDec = principal
         ? `\nContato principal (recebe a cadencia): ${principal.nome}${principal.cargo ? ` (${principal.cargo})` : ''} - primeiro nome na mensagem: ${primeiro}${!cp.foneDec ? (cp.fone ? ' - SEM telefone pessoal, usando o da empresa' : ' - SEM TELEFONE') : ''}.`
         : '';
-      const linhaOutros = vinculados.length ? `\nOutros decisores vinculados ao card: ${vinculados.join('; ')}.` : '';
+      const linhaOutros = vinculados.length ? `\nOutros decisores (na empresa ligada ao card, NAO recebem a cadencia): ${vinculados.join('; ')}.` : '';
       await kommoNote(kommoId, `ENRIQUECEDOR — lead importado pra cadência outbound (etapa Fila).${linhaDec}${linhaOutros}${linhaCad}\nMova pra "Passo 1 enviado" pra disparar a mensagem 1.\nLead completo: ${linkDoLead(leadId)}`);
 
       // Espelho no controle de leads do SalesHub (canal outbound) — 1 por CNPJ.
@@ -4578,7 +4590,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'card-por-empresa2-2026-10-13',
+        versao: 'card-por-empresa3-2026-10-13',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
