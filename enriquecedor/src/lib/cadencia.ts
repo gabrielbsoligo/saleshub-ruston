@@ -142,7 +142,9 @@ function marcaDaRazao(nome: string): string {
     .trim();
   return limpo || nome;
 }
-export const fantasiaPadrao = (lead: Lead): string => nomeExibicao(lead.nomeFantasia || marcaDaRazao(lead.razaoSocial || lead.companyNameRaw || ''));
+// nome fantasia sem letras ("-", ".") não vale como nome — mesma regra do motor (fantasiaOk)
+const fantasiaOk = (s: string | null | undefined) => (/\p{L}{2,}/u.test(String(s ?? '')) ? String(s).trim() : '');
+export const fantasiaPadrao = (lead: Lead): string => nomeExibicao(fantasiaOk(lead.nomeFantasia) || marcaDaRazao(lead.razaoSocial || lead.companyNameRaw || ''));
 
 /** Config efetiva pra edição: o que está salvo + padrões derivados das opções (nada é inventado). */
 export function configEfetiva(lead: Lead, _people: DecisionMaker[], pac: PacoteCadencia | null): CadenciaConfig {

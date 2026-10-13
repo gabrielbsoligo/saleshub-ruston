@@ -3202,6 +3202,8 @@ function marcaDe(nome) {
 // ("CEMEF ENGENHARIA LTDA" → "Cemef Engenharia"). Sigla curta/sem vogal fica em
 // maiúscula (OL, GTK, SJC); conectivo fica minúsculo (de, da, do…). Nome já escrito
 // em caixa mista é respeitado. Mesma regra em src/lib/cadencia.ts (nomeExibicao).
+// Nome fantasia da Receita às vezes é "-", "." ou "***": sem letras não vale como nome.
+const fantasiaOk = (s) => (/\p{L}{2,}/u.test(String(s ?? '')) ? String(s).trim() : '');
 const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'para', 'com']);
 // Receita grava sem acento: devolve o das palavras comuns em nome de empresa + o sufixo -ção/-ções.
 const PALAVRAS_CURTAS = new Set(['sul', 'sol', 'mar', 'luz', 'rio', 'bom', 'boa', 'lar', 'paz', 'pet', 'bar', 'oca', 'ilha', 'ceu', 'via', 'ana', 'eva', 'ema', 'uni', 'net', 'web', 'top', 'max', 'mix', 'pro', 'eco', 'bio', 'geo', 'art', 'gas', 'som', 'mel', 'pao', 'cia', 'ltd', 'elo', 'faz', 'dia', 'ser', 'ver', 'ano', 'uno', 'duo', 'tri', 'ama', 'ela', 'ele', 'meu', 'seu', 'nos', 'vez', 'luz']);
@@ -3338,6 +3340,7 @@ function foneParaKommo(row, decisores) {
 // Importa leads enriquecidos pro Kommo: card no funil da cadência (etapa Fila),
 // contato com telefone do decisor, nota com o link, espelho em public.leads
 // (controle do SalesHub, canal outbound). Idempotente: pula quem já tem card.
+const _importandoKommo = new Set();
 async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, sdrNome = null }) {
   const funil = await funilCadencia();
   if (!funil || !funil.etapas['Fila']) return { ok: false, error: `funil "${FUNIL_CADENCIA_NOME}" não encontrado no Kommo` };
@@ -3346,6 +3349,9 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
   let criados = 0;
 
   for (const leadId of leadIds ?? []) {
+    // Importação disparada 2x ao mesmo tempo (duplo clique / duas abas) criava 2 cards da mesma empresa.
+    if (_importandoKommo.has(leadId)) { resultados.push({ leadId, pulado: 'importação deste lead já em andamento' }); continue; }
+    _importandoKommo.add(leadId);
     try {
       const row = (await sbSelect(token, 'enriquecedor_leads', `id=eq.${leadId}&select=*`))?.[0];
       if (!row) { resultados.push({ leadId, pulado: 'não encontrado' }); continue; }
@@ -3355,7 +3361,7 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
       // decisor, o que espalhava a mesma empresa em vários cards na Fila.
       const decisores = (await sbSelect(token, 'enriquecedor_decision_makers', `lead_id=eq.${leadId}&select=id,nome,cargo,is_primary,selecionado,phone_whatsapp,phone_personal,kommo_lead_id`)) ?? [];
       const destinatarios = destinatariosDe(decisores);
-      const nomeCard = nomeExibicao(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw);
+      const nomeCard = nomeExibicao(fantasiaOk(row.nome_fantasia) || marcaDe(row.razao_social || row.company_name_raw || '') || row.company_name_raw);
       const cc = row.cadencia_config && typeof row.cadencia_config === 'object' ? row.cadencia_config : null;
       const linhaCad = cc?.validadoEm
         ? `\nCadencia validada${cc.validadoPor ? ` por ${cc.validadoPor}` : ''}${cc.sdrNome ? ` - SDR: ${cc.sdrNome}` : ''}. Gancho principal: ${cc.falhaPrimaria ?? row.falha_primaria ?? '-'}${cc.falhaSecundaria ? ` / secundario: ${cc.falhaSecundaria}` : ''}.`
@@ -3429,6 +3435,8 @@ async function importarLeadsKommo({ leadIds, token, responsavelKommoId = null, s
       await sleep(250); // folga de rate na Kommo
     } catch (err) {
       resultados.push({ leadId, erro: String(err?.message || err).slice(0, 200) });
+    } finally {
+      _importandoKommo.delete(leadId);
     }
   }
   return { ok: true, criados, total: (leadIds ?? []).length, resultados };
@@ -3631,7 +3639,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
   let sdr = cortaPalavra(String(cfg?.sdrNome || sdrNome || '').trim(), 20);
   if (!sdr) { sdr = '[SDR]'; avisos.push('sdrNome não informado — preencha {{2}} antes do disparo'); }
   // nomeExibicao de novo depois do corte: o corte em 40 pode deixar um "e"/"de" solto no fim
-  const fantasia = nomeExibicao(cortaPalavra(String(cfg?.fantasia ?? '').trim() || nomeExibicao(row.nome_fantasia || marcaDe(row.razao_social || row.company_name_raw || '')), 40));
+  const fantasia = nomeExibicao(cortaPalavra(String(cfg?.fantasia ?? '').trim() || nomeExibicao(fantasiaOk(row.nome_fantasia) || marcaDe(row.razao_social || row.company_name_raw || '')), 40));
 
   const fr1 = frasesDaFalha(primaria, catalogo);
   if (!fr1) return { ok: false, error: `falha '${primaria.codigo}' sem registro no catálogo` };
@@ -3699,7 +3707,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
     aptoCadencia: true,
     leadId,
     kommoLeadId: row.kommo_lead_id ?? null,
-    empresa: row.nome_fantasia || row.razao_social || row.company_name_raw || null,
+    empresa: fantasiaOk(row.nome_fantasia) || row.razao_social || row.company_name_raw || null,
     falhas,
     falhaPrimaria: { ...primaria, ...fr1 },
     falhaSecundaria: fr2 ? { ...secundaria, ...fr2 } : null,
@@ -3732,7 +3740,7 @@ async function gerarEmailCadencia({ leadId, passo, sdrNome, sdrCargo, token }) {
   const prompt =
     `Você escreve e-mails de prospecção outbound B2B em português brasileiro pra V4 Ruston (assessoria de marketing). ` +
     `Remetente: ${sdrNome || 'SDR'}${sdrCargo ? `, ${sdrCargo}` : ''}.\n\n` +
-    `EMPRESA-ALVO: ${row.nome_fantasia || row.razao_social || row.company_name_raw}\n` +
+    `EMPRESA-ALVO: ${fantasiaOk(row.nome_fantasia) || row.razao_social || row.company_name_raw}\n` +
     `FALHA VERIFICADA NA AUDITORIA: ${fr?.falha ?? falhas[0].codigo}\n` +
     `IMPACTO PRÁTICO: ${fr?.impacto ?? ''}\n` +
     `TODAS AS FALHAS DETECTADAS: ${falhas.map((f) => f.codigo).join(', ')}\n` +
@@ -3842,7 +3850,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
     // SITE PRIMEIRO (em paralelo com DataStone/Lemit): descobre e valida o site pelo
     // conteúdo e lê DELE as redes que a própria empresa publica e o id da página
     // Meta. A busca web de redes só entra como fallback, ancorada no domínio.
-    const marcaF2 = chaves.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw);
+    const marcaF2 = chaves.marca?.valor?.trim() || fantasiaOk(row.nome_fantasia) || marcaDe(row.razao_social ?? row.company_name_raw);
     const siteP = discoverSite({
       companyName: row.razao_social ?? row.company_name_raw,
       nomeFantasia: marcaF2,
@@ -4014,7 +4022,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       // Chaves de busca do operador valem também aqui: site validado é forçado,
       // domínios/fichas apagados nunca voltam, marca manual é o nome de busca.
       const chavesSite = row.chaves_busca && typeof row.chaves_busca === 'object' ? row.chaves_busca : {};
-      const marcaF3 = chavesSite.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw);
+      const marcaF3 = chavesSite.marca?.valor?.trim() || fantasiaOk(row.nome_fantasia) || marcaDe(row.razao_social ?? row.company_name_raw);
       // Google Meu Negócio CONFERIDO (marca no título / telefone conhecido / cidade)
       // antes do site: a ficha certa é a fonte mais forte do site real.
       const telefones = [
@@ -4213,7 +4221,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       const precisaGoogle = !googleAdvertiser && chaves.google_anunciante?.validacao !== 'validado' && siteDomain;
       if (precisaMeta || precisaGoogle) {
         const [rm, rg] = await Promise.all([
-          precisaMeta ? resolverMetaPageId(row.company_facebook, { marca: chaves.marca?.valor?.trim() || row.nome_fantasia || marcaDe(row.razao_social ?? row.company_name_raw) }).catch(() => null) : null,
+          precisaMeta ? resolverMetaPageId(row.company_facebook, { marca: chaves.marca?.valor?.trim() || fantasiaOk(row.nome_fantasia) || marcaDe(row.razao_social ?? row.company_name_raw) }).catch(() => null) : null,
           precisaGoogle ? googleTransparency({ domain: siteDomain }).catch(() => null) : null,
         ]);
         if (precisaMeta) {
@@ -4242,7 +4250,7 @@ async function runEsteira({ leadId, kommoLeadId, token, fases = null }) {
       }
       const [an, ag] = await Promise.all([
         anunciosHeadless({
-          company: marcaDe(row.nome_fantasia || row.razao_social || row.company_name_raw),
+          company: marcaDe(fantasiaOk(row.nome_fantasia) || row.razao_social || row.company_name_raw),
           fbHandle: row.company_facebook ? (row.company_facebook.match(/facebook\.com\/([^/?#]+)/i)?.[1] ?? null) : null,
           siteDomain,
           cidade: row.cidade,
@@ -4570,7 +4578,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'card-por-empresa-2026-10-13',
+        versao: 'card-por-empresa2-2026-10-13',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
