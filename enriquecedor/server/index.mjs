@@ -4590,7 +4590,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'card-por-empresa3-2026-10-13',
+        versao: 'buscar-cnpj-2026-10-15',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4643,6 +4643,36 @@ const server = http.createServer(async (req, res) => {
         }
       }
       return send(res, 200, { feitos, pulados });
+    }
+
+    if (url.pathname === '/api/ops/buscar-cnpj' && req.method === 'POST') {
+      // ops: acha o CNPJ (e o ramo) de empresas que só têm NOME na base. Busca web
+      // "<nome> cnpj [cidade]" (cache 14 d + ritmo do Brave) e devolve os CNPJs que
+      // aparecem nos resultados + os trechos (o ramo da empresa costuma estar ali).
+      // {itens:[{id, nome, cidade?}]} (até 25 por chamada) → {resultados:[{id, cnpjs:[{cnpj,n}], trechos:[…]}]}
+      const body = await readJson(req);
+      const itens = (Array.isArray(body?.itens) ? body.itens : []).slice(0, 25);
+      const RE_CNPJ = /\b(\d{2})\.?(\d{3})\.?(\d{3})\/?(\d{4})-?(\d{2})\b/g;
+      const resultados = [];
+      for (const it of itens) {
+        const nome = String(it?.nome || '').trim();
+        if (!nome) { resultados.push({ id: it?.id ?? null, erro: 'sem nome' }); continue; }
+        const q = `"${nome.slice(0, 80)}" cnpj${it?.cidade ? ` ${String(it.cidade).slice(0, 40)}` : ''}`;
+        const r = await rawSearch(q);
+        const cont = new Map();
+        for (const x of r.results ?? []) {
+          for (const m of `${x.title} ${x.desc} ${x.url}`.matchAll(RE_CNPJ)) {
+            const c = m.slice(1, 6).join('');
+            if (c.length === 14 && !/^(\d)\1+$/.test(c)) cont.set(c, (cont.get(c) || 0) + 1);
+          }
+        }
+        resultados.push({
+          id: it?.id ?? null, consulta: q, ok: !!r.ok, cache: !!r.cache, note: r.note ?? null,
+          cnpjs: [...cont.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([cnpj, n]) => ({ cnpj, n })),
+          trechos: (r.results ?? []).slice(0, 5).map((x) => ({ url: x.url, t: String(x.title || '').slice(0, 140), d: String(x.desc || '').slice(0, 260) })),
+        });
+      }
+      return send(res, 200, { ok: true, resultados });
     }
 
     if (url.pathname === '/api/ops/rede-existe' && req.method === 'POST') {
