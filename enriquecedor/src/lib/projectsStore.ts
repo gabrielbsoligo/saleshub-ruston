@@ -116,6 +116,13 @@ if (typeof window !== 'undefined') {
 
 const pendentes = new Map<string, ReturnType<typeof setTimeout>>();
 const emVoo = new Map<string, Promise<unknown>>(); // POST do debounce já disparado (clearTimeout não cancela)
+// Quem precisa saber o que FOI CONFIRMADO no banco (não só agendado) assina aqui:
+// recebe o snapshot exato daquele request quando o upsert termina sem erro.
+const confirmacoes = new Set<(p: Projeto) => void>();
+export function aoConfirmarGravacao(cb: (p: Projeto) => void): () => void {
+  confirmacoes.add(cb);
+  return () => { confirmacoes.delete(cb); };
+}
 function persistir(p: Projeto) {
   if (!supabaseConfigured) return;
   const t = pendentes.get(p.id);
@@ -123,7 +130,10 @@ function persistir(p: Projeto) {
   pendentes.set(p.id, setTimeout(() => {
     pendentes.delete(p.id);
     const req: Promise<void> = Promise.resolve(supabase.from('enriquecedor_projetos').upsert({ ...toRow(p), updated_at: new Date().toISOString() }))
-      .then(({ error }) => { if (error) console.warn('[projetos] falha ao gravar', p.nome, error.message); })
+      .then(({ error }) => {
+        if (error) { console.warn('[projetos] falha ao gravar', p.nome, error.message); return; }
+        confirmacoes.forEach((cb) => cb(p));
+      })
       .finally(() => { if (emVoo.get(p.id) === req) emVoo.delete(p.id); });
     emVoo.set(p.id, req);
   }, 600));

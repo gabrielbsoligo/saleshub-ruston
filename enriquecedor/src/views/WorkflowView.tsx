@@ -7,6 +7,7 @@ import {
   finalizarImportacao,
   atualizarProjeto,
   salvarProjetoAgora,
+  aoConfirmarGravacao,
   excluirProjeto,
   ARQ,
   SEGMENTO,
@@ -230,11 +231,14 @@ export function WorkflowView({
   const projeto = selId ? projetos.find((p) => p.id === selId) ?? null : null;
   const importada = !!projeto?.importada;
   // Estado ATUAL (pra callbacks assíncronos não usarem closure velha) e BASE = último
-  // estado CONFIRMADO (lido do projeto ao abrir, ou gravado com sucesso pelo CAS) —
-  // nunca o que o autosave só agendou (merge de 3 vias com o banco).
+  // estado CONFIRMADO no banco por esta aba: lido ao abrir o projeto, gravado pelo CAS
+  // ou autosave que TERMINOU sem erro (agendar/falhar não avança) — merge de 3 vias.
   const estadoRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
   estadoRef.current = { leads, leadStatus: execStatus };
   const baseRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
+  useEffect(() => aoConfirmarGravacao((p) => {
+    if (p.id === selId) baseRef.current = { leads: p.leads, leadStatus: p.leadStatus ?? {} };
+  }), [selId]);
 
   // preserva o projeto aberto ao navegar (ex.: abrir o LeadDetail e voltar)
   useEffect(() => {

@@ -168,6 +168,20 @@ describe('mesclarProjeto (3 vias: esta aba x banco x base)', () => {
     expect(r.leads.map((l) => l.id)).toEqual(['L0', 'LA']);
   });
 
+  it('autosave confirmou etapa 2 (base = 2); outra aba voltou pra 1 e gravou; adicionar preserva o 1', () => {
+    const base = est([w('L0', 2)]);
+    const local = est([w('L0', 2)]);
+    const remoto = est([w('L0', 1)]);
+    expect(mesclarProjeto(local, remoto, base, []).leads[0].etapa).toBe(1);
+  });
+
+  it('descarte confirmado por esta aba e restauração feita por outra aba: fica restaurado', () => {
+    const base = est([w('L0', 1, { descartado: true, motivoDescarte: 'sem_fit' })]);
+    const local = est([w('L0', 1, { descartado: true, motivoDescarte: 'sem_fit' })]);
+    const remoto = est([w('L0', 1)]);
+    expect(mesclarProjeto(local, remoto, base, []).leads[0].descartado).toBeUndefined();
+  });
+
   it('novo que já existe (mesmo id) não duplica', () => {
     expect(mesclarProjeto(est([w('A')]), est([]), est([]), [w('A')]).leads).toHaveLength(1);
   });
