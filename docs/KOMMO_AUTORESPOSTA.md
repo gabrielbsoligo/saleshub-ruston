@@ -60,7 +60,7 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 ## Implantação (ordem; nada disso foi feito ainda)
 
 1. **Migration 157** (`supabase/migration_157_autoresposta_triagem.sql`) — aditiva; cria as 3
-   tabelas (padrões, config, triagem, trabalho, ritmo), 23 padrões, config dos 2 funis (inativos, modo observar, etapas de disparo elegíveis),
+   tabelas (padrões, config, triagem, trabalho, ritmo), 24 padrões, config dos 2 funis (inativos, modo observar, etapas de disparo elegíveis),
    RPCs e cron da varredura (dispara só com funil ativo e pendência).
 2. **Segredo**: gerar um valor aleatório e gravar em `integracao_config` (`key = autoresposta_secret`)
    e no secret da edge `KOMMO_AUTORESPOSTA_SECRET`. Nunca no repo.
@@ -86,8 +86,8 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 
 ## Teste (antes de ligar em produção)
 
-- `deno test --allow-read supabase/functions/kommo-autoresposta/` (27 casos: regras puras com os
-  padrões lidos do SQL + fluxo completo com repositório/Kommo falsos) e `deno check …/index.ts`.
+- `deno test --allow-read supabase/functions/kommo-autoresposta/` (40 casos: regras puras com os
+  padrões lidos do SQL, fluxo completo com repositório/Kommo falsos e cliente HTTP) e `deno check …/index.ts`.
 - Com a edge no ar e `modo = observar`, três leads de teste no funil:
   "Mensagem automática: fora do horário de atendimento" → `autoresposta`, estado `observado`;
   "Oi, pode falar" → `humano`, `observado`; "ok" em ≤60 s → `indeterminado`; sem 2ª mensagem, a

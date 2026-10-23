@@ -10,7 +10,9 @@ const PADROES: Padrao[] = [
   { id: 1, padrao: '^\\[(audio|midia)\\]$', tipo: 'humano' },
   { id: 3, padrao: 'agradec\\w* (sua mensagem|seu contato)', tipo: 'autoresposta' },
   { id: 7, padrao: 'mensagem automatica', tipo: 'autoresposta' },
+  { id: 24, padrao: 'atendimento (esta|está) sendo transferido', tipo: 'autoresposta' },
 ]
+const copia = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
 
 // ── repositório em memória
 type LinhaFake = Linha & { lease_ate: number | null; extra: Record<string, unknown> }
@@ -28,18 +30,18 @@ function repoFake(cfg: Cfg | null = cfgBase) {
       async criarTrabalho(leadId: number) { const t = { id: seq++, kommo_lead_id: leadId, tentativas: 0, estado: 'pendente', erro: null }; trabalhos.push(t); return t },
       async concluirTrabalho(id: number, estado: string, erro: string | null = null) { const t = trabalhos.find((x) => x.id === id)!; t.estado = estado; t.erro = erro; if (estado === 'pendente') t.tentativas++ },
       async trabalhosPendentes(n: number) { return trabalhos.filter((t) => t.estado === 'pendente').slice(0, n) },
-      async linhasDoLead(leadId: number) { return linhas.filter((l) => l.kommo_lead_id === leadId) },
+      async linhasDoLead(leadId: number) { return copia(linhas.filter((l) => l.kommo_lead_id === leadId)) },
       async criarLinhas(novas: Partial<Linha>[]) { for (const n of novas) if (!linhas.some((l) => l.kommo_lead_id === n.kommo_lead_id && l.mensagem_id === n.mensagem_id)) linhas.push(Object.assign({ id: seq++, texto: null, hash: null, decidido_em: null, claim_token: null, efeito_fase: null, tentativas: 0, lease_ate: null, extra: {} }, n) as LinhaFake) },
-      async linha(leadId: number, m: string) { return linhas.find((l) => l.kommo_lead_id === leadId && l.mensagem_id === m)! },
-      async decidir(id: number, dec: any) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || (l.lease_ate && l.lease_ate > Date.now())) return null; Object.assign(l, dec); return l },
+      async linha(leadId: number, m: string) { return copia(linhas.find((l) => l.kommo_lead_id === leadId && l.mensagem_id === m)!) },
+      async decidir(id: number, dec: any) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || l.decidido_em || (l.lease_ate && l.lease_ate > Date.now())) return null; Object.assign(l, dec); return copia(l) },
       async outrosLeadsComHash(hash: string, leadId: number) { return new Set(linhas.filter((l) => l.hash === hash && l.kommo_lead_id !== leadId).map((l) => l.kommo_lead_id)).size },
       async superar(leadId: number, exceto: number | null, antesDe: string | null, motivo: string) { for (const l of linhas) if (l.kommo_lead_id === leadId && l.id !== exceto && ['pendente', 'falhou'].includes(l.estado_efeito) && (!antesDe || l.recebido_em < antesDe)) { l.estado_efeito = 'superado'; l.extra.motivo_efeito = motivo } },
-      async claim(id: number, leaseS: number) { const l = linhas.find((x) => x.id === id)!; const livre = ['pendente', 'falhou'].includes(l.estado_efeito) || (l.estado_efeito === 'em_andamento' && (l.lease_ate ?? 0) < Date.now()); if (!livre) return null; l.estado_efeito = 'em_andamento'; l.lease_ate = Date.now() + leaseS * 1000; l.claim_token = crypto.randomUUID(); return l.claim_token },
+      async claim(id: number, leaseS: number) { const l = linhas.find((x) => x.id === id)!; const livre = ['pendente', 'falhou'].includes(l.estado_efeito) || (l.estado_efeito === 'em_andamento' && (l.lease_ate ?? 0) < Date.now()); if (!livre) return null; l.estado_efeito = 'em_andamento'; l.lease_ate = Date.now() + leaseS * 1000; l.claim_token = crypto.randomUUID(); return { token: l.claim_token, linha: copia(l) } },
       async renovar(id: number, token: string, leaseS: number) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token || l.estado_efeito !== 'em_andamento' || (l.lease_ate ?? 0) < Date.now()) return false; l.lease_ate = Date.now() + leaseS * 1000; return true },
-      async fase(id: number, token: string, fase: string) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token) return false; l.efeito_fase = fase; return true },
-      async fim(id: number, token: string, estado: Linha['estado_efeito'], extra: Record<string, unknown>) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token) return false; l.estado_efeito = estado; l.lease_ate = null; Object.assign(l.extra, extra); if ('efeito_fase' in extra) l.efeito_fase = String(extra.efeito_fase); return true },
+      async fase(id: number, token: string, fase: string, extra: Record<string, unknown> = {}) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token) return false; l.efeito_fase = fase; Object.assign(l, extra); return true },
+      async fim(id: number, token: string, estado: Linha['estado_efeito'], extra: Record<string, unknown>) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token) return false; l.estado_efeito = estado; l.lease_ate = null; Object.assign(l.extra, extra); Object.assign(l, extra); if (['aplicado', 'observado', 'superado'].includes(estado)) l.claim_token = null; return true },
       async acerto() {},
-      async pendentesEfeito(n: number) { return linhas.filter((l) => (l.classificacao === 'indeterminado' && l.estado_efeito === 'pendente') || ['pendente', 'falhou'].includes(l.estado_efeito) || (l.estado_efeito === 'em_andamento' && (l.lease_ate ?? 0) < Date.now())).slice(0, n) },
+      async pendentesEfeito(n: number) { return copia(linhas.filter((l) => (l.classificacao === 'indeterminado' && l.estado_efeito === 'pendente') || ['pendente', 'falhou'].includes(l.estado_efeito) || (l.estado_efeito === 'em_andamento' && (l.lease_ate ?? 0) < Date.now())).slice(0, n)) },
     } as Repo,
   }
   return st
@@ -131,8 +133,8 @@ Deno.test('#3 posse: segundo worker não altera decisão nem aplica; dono vencid
   // dono vencido: claim de A, lease expira, B reassume; fim de A não grava
   const st2 = repoFake(); await st2.repo.criarLinhas([{ kommo_lead_id: 1, mensagem_id: 'x', pipeline_id: PIPE, status_id_origem: D1, recebido_em: new Date((T0 - 5) * 1000).toISOString(), classificacao: 'humano', regras: ['R1'], estado_efeito: 'pendente', modo: 'aplicar' } as any])
   const lx = st2.linhas[0]
-  const tokA = await st2.repo.claim(lx.id, 300); lx.lease_ate = Date.now() - 1 // expira
-  const tokB = await st2.repo.claim(lx.id, 300)
+  const tokA = (await st2.repo.claim(lx.id, 300))?.token; lx.lease_ate = Date.now() - 1 // expira
+  const tokB = (await st2.repo.claim(lx.id, 300))?.token
   assert(tokA && tokB && tokA !== tokB)
   assertEquals(await st2.repo.fim(lx.id, tokA!, 'aplicado', {}), false)
   assertEquals(await st2.repo.fim(lx.id, tokB!, 'aplicado', {}), true)
@@ -223,4 +225,80 @@ Deno.test('processarTrabalho: funil sem config → trabalho descartado', async (
   const t = await st.repo.criarTrabalho(1)
   const r = await processarTrabalho(deps(st.repo, k.fn), t)
   assertEquals(r.skipped, true); assertEquals(st.trabalhos[0].estado, 'descartado')
+})
+
+
+// ── 4ª rodada ──────────────────────────────────────────────────────────────────────────────
+Deno.test('R4#1 decisão concorrente: B tenta regravar depois de A decidir → recusado; o efeito usa a fotografia do claim', async () => {
+  const st = repoFake()
+  const kA = kommoFake({ texto: 'Oi, pode falar', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 1000] }) // humano (lento)
+  let tentativaB: Linha | null | undefined
+  const repoA: Repo = { ...st.repo, async decidir(id, dec) {
+    const r = await st.repo.decidir(id, dec)                       // A grava humano
+    tentativaB = await st.repo.decidir(id, { ...dec, classificacao: 'autoresposta', regras: ['R3:3'] }) // B chega depois com outra decisão
+    return r
+  } }
+  const r = await receberWebhook(deps(repoA, kA.fn), 1)
+  assertEquals(tentativaB, null, 'B não pode sobrescrever uma decisão final')
+  assertEquals(st.linhas[0].classificacao, 'humano'); assertEquals(r.estado, 'aplicado')
+  assertEquals(kA.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
+})
+
+Deno.test('R4#1 chamador com fotografia velha: claim devolve a decisão do banco e é ela que vale', async () => {
+  const st = repoFake()
+  await st.repo.criarLinhas([{ kommo_lead_id: 1, mensagem_id: 'x', pipeline_id: PIPE, status_id_origem: D1, recebido_em: new Date((T0 - 5) * 1000).toISOString(), classificacao: 'autoresposta', regras: ['R1:3'], decidido_em: 'x', estado_efeito: 'pendente', modo: 'aplicar' } as any])
+  const velha = { ...copia(st.linhas[0]), classificacao: 'humano' } as Linha // chamador acha que é humano
+  const k = kommoFake({})
+  const r = await aplicarEfeito(deps(st.repo, k.fn), velha)
+  assertEquals(r.estado, 'aplicado'); assert(!k.escritas.some((e) => e.body?.status_id), 'não pode mover: no banco é autoresposta')
+  assert(k.escritas.some((e) => e.body?._embedded?.tags))
+})
+
+Deno.test('R4#2 reconciliação da nota não regride a fase: GET notas 503 mantém nota_enviando; retomada seguinte não duplica', async () => {
+  const st = repoFake(); const notas: string[] = []
+  const k1 = kommoFake({ texto: 'Mensagem automática: fora do horário', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 10], notas })
+  const k1fn: KommoFn = async (m, p, b, o) => { const r = await k1.fn(m, p, b, o); if (m === 'POST' && p.includes('/notes')) return { ok: false, status: 0, body: null }; return r }
+  await receberWebhook(deps(st.repo, k1fn), 1)
+  assertEquals(st.linhas[0].efeito_fase, 'nota_enviando'); assertEquals(notas.length, 1)
+  const k2 = kommoFake({ texto: 'Mensagem automática: fora do horário', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 10], notas, tags: ['autoresposta'], falhar: { notas: 503 } })
+  await varrer(deps(st.repo, k2.fn))
+  assertEquals(st.linhas[0].estado_efeito, 'falhou'); assertEquals(st.linhas[0].efeito_fase, 'nota_enviando', 'fase não pode regredir'); assertEquals(notas.length, 1)
+  const k3 = kommoFake({ texto: 'Mensagem automática: fora do horário', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 10], notas, tags: ['autoresposta'] })
+  await varrer(deps(st.repo, k3.fn))
+  assertEquals(st.linhas[0].estado_efeito, 'aplicado'); assertEquals(notas.length, 1, 'nota não pode duplicar')
+})
+
+Deno.test('R4#3 PATCH de status aceito com resposta perdida → destino registrado antes; retomada reconcilia como aplicado/movido', async () => {
+  const st = repoFake()
+  const k1 = kommoFake({ texto: 'Oi, pode falar', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 1000] })
+  let moveu = false
+  const k1fn: KommoFn = async (m, p, b, o) => { const r = await k1.fn(m, p, b, o); if (m === 'PATCH' && (b as any)?.status_id) { moveu = true; return { ok: false, status: 0, body: null } } return r }
+  const r1 = await receberWebhook(deps(st.repo, k1fn), 1)
+  assertEquals(r1.estado, 'falhou'); assertEquals(st.linhas[0].efeito_fase, 'status_enviando'); assertEquals((st.linhas[0] as any).movido_para, RESP); assert(moveu)
+  const k2 = kommoFake({ texto: 'Oi, pode falar', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 1000], leadStatus: RESP }) // o Kommo aplicou
+  await varrer(deps(st.repo, k2.fn))
+  assertEquals(st.linhas[0].estado_efeito, 'aplicado'); assertEquals((st.linhas[0] as any).movido, true); assertEquals((st.linhas[0] as any).movido_para, RESP)
+  assertEquals(k2.escritas.length, 0, 'não repete o PATCH')
+})
+
+Deno.test('R4#5 continuação de conversa: "ok" rápido (R2 pendente) + "Quero entender" na janela → humano agora; anterior superada', async () => {
+  const st = repoFake()
+  const k1 = kommoFake({ texto: 'ok', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 10] })
+  const r1 = await receberWebhook(deps(st.repo, k1.fn), 1)
+  assertEquals(r1.classificacao, 'indeterminado')
+  const k2 = kommoFake({ texto: 'Quero entender', ins: [{ id: 'm1', ts: T0 - 5 }, { id: 'm2', ts: T0 - 1 }], outs: [T0 - 10] })
+  const r2 = await receberWebhook(deps(st.repo, k2.fn, T0), 1)
+  assertEquals(r2.classificacao, 'humano'); assertEquals(r2.estado, 'aplicado')
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'm1')!.estado_efeito, 'superado')
+  assertEquals(k2.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
+})
+
+Deno.test('R4#5 continuação de BOT (menu + "transferido") não vira humano: a 2ª mensagem é decidida sozinha e casa R1', async () => {
+  const st = repoFake()
+  const k1 = kommoFake({ texto: 'Agradecemos sua mensagem. Escolha uma opção', ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 10] })
+  await receberWebhook(deps(st.repo, k1.fn), 1)
+  assertEquals(st.linhas[0].classificacao, 'autoresposta')
+  const k2 = kommoFake({ texto: 'Seu atendimento está sendo transferido.', ins: [{ id: 'm1', ts: T0 - 5 }, { id: 'm2', ts: T0 + 2000 }], outs: [T0 - 10], tags: ['autoresposta'] })
+  const r2 = await receberWebhook(deps(st.repo, k2.fn, T0 + 2001), 1)
+  assertEquals(r2.classificacao, 'autoresposta'); assert(!k2.escritas.some((e) => e.body?.status_id), 'não pode mover')
 })

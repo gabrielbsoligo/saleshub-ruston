@@ -67,7 +67,8 @@ INSERT INTO public.autoresposta_padroes (padrao, descricao, tipo) VALUES
   ('obrigad[oa] por entrar em contato|obrigad[oa] pelo (seu )?contato', 'agradecimento 2', 'autoresposta'),
   ('que maravilha ter voce aqui|que bom ter voce aqui|feliz(es)? (pelo|com) seu contato', 'saudação institucional 2', 'autoresposta'),
   ('pode passar sua (duvida|pergunta|solicitacao)|envie (por texto )?sua (solicitacao|demanda|duvida)|me conte como podemos', 'convite padrão a descrever a demanda', 'autoresposta'),
-  ('somos (especialistas|especializad|referencia|do grupo|a |o |uma |um )[a-z ]{3,60}(em|no|na|de)\b.*(atendimento|servic|produt|solu|experienc)', 'pitch institucional', 'autoresposta')
+  ('somos (especialistas|especializad|referencia|do grupo|a |o |uma |um )[a-z ]{3,60}(em|no|na|de)\b.*(atendimento|servic|produt|solu|experienc)', 'pitch institucional', 'autoresposta'),
+  ('atendimento (esta|está) sendo transferido|transferindo (o |seu )?atendimento|aguarde (um momento|que )?(um atendente|ser[aá] atendido)', 'continuação de bot (transferência/aguarde)', 'autoresposta')
 ON CONFLICT (padrao) DO NOTHING;
 
 -- 2) Config por funil. modo 'observar' = classifica e registra, NÃO mexe no Kommo (validação);
@@ -182,19 +183,19 @@ REVOKE EXECUTE ON FUNCTION public.autoresposta_padrao_acerto(integer) FROM PUBLI
 GRANT  EXECUTE ON FUNCTION public.autoresposta_padrao_acerto(integer) TO service_role;
 
 -- Claim atômico do EFEITO de uma linha: só um worker (bot ou varredura) aplica por vez; lease
--- expirada pode ser retomada. Devolve o TOKEN de posse (uuid) ou NULL. Toda gravação posterior
--- do efeito (fase/fim) é condicional ao token; renovação idem.
+-- expirada pode ser retomada. Devolve a LINHA (jsonb, já com claim_token) como ficou no banco sob
+-- a posse — o efeito usa essa fotografia (decisão/fase/origem), nunca a do chamador — ou NULL.
 DROP FUNCTION IF EXISTS public.autoresposta_claim(bigint, integer);
 CREATE OR REPLACE FUNCTION public.autoresposta_claim(p_id bigint, p_lease_s integer DEFAULT 300)
-RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_token uuid := gen_random_uuid(); n int;
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_token uuid := gen_random_uuid(); v_row jsonb;
 BEGIN
   UPDATE autoresposta_triagem
      SET estado_efeito = 'em_andamento', lease_ate = now() + make_interval(secs => p_lease_s), claim_token = v_token
    WHERE id = p_id
-     AND (estado_efeito IN ('pendente','falhou') OR (estado_efeito = 'em_andamento' AND lease_ate < now()));
-  GET DIAGNOSTICS n = ROW_COUNT;
-  RETURN CASE WHEN n = 1 THEN v_token ELSE NULL END;
+     AND (estado_efeito IN ('pendente','falhou') OR (estado_efeito = 'em_andamento' AND lease_ate < now()))
+  RETURNING to_jsonb(autoresposta_triagem.*) INTO v_row;
+  RETURN v_row;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.autoresposta_claim(bigint, integer) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.autoresposta_claim(bigint, integer) TO service_role;

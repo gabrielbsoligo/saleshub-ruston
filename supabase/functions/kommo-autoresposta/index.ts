@@ -9,14 +9,15 @@
 //   passo 1: gravar campo "Triagem Resposta" = {{message_text}}  (o webhook do bot não manda o texto)
 //   passo 2: webhook POST  <edge>/kommo-autoresposta?s=<segredo>  (payload padrão do Kommo: leads[...][id])
 //
-// Este arquivo é só o WIRING: HTTP + segredo, repositório Supabase (service_role) e cliente Kommo
-// (timeout, Retry-After, backoff, ritmo COMPARTILHADO por conta via RPC autoresposta_reservar).
-// A lógica vive em motor.ts (testada com fakes) e triagem.ts (regras puras).
+// Este arquivo é só o WIRING: HTTP + segredo, repositório Supabase (service_role) e o cliente Kommo
+// (cliente.ts: ritmo por conta, Retry-After, backoff, fail closed). A lógica vive em motor.ts
+// (testada com fakes) e triagem.ts (regras puras).
 // Segredo: header x-autoresposta-secret OU ?s= (o bot só consegue query string). Deploy com
 // --no-verify-jwt (o bot e o cron não têm JWT do Supabase).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { extrairLeadId, type Cfg, type Padrao } from './triagem.ts'
-import { LeituraFalhou, Throttled, receberWebhook, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, receberWebhook, varrer, type Deps, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { clienteKommo } from './cliente.ts'
 
 const KOMMO_BASE = 'https://financeirorustonengenhariacombr.kommo.com'
 const SECRET = Deno.env.get('KOMMO_AUTORESPOSTA_SECRET') ?? ''
@@ -24,47 +25,7 @@ const CAMPO_TEXTO = Deno.env.get('KOMMO_AUTORESPOSTA_CAMPO') ?? 'Triagem Respost
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const sb = () => createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
 type Db = ReturnType<typeof sb>
-const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const must = <T,>(r: { data: T | null; error: { message: string } | null }, etapa: string): T => { if (r.error) throw new LeituraFalhou(etapa, r.error.message); return r.data as T }
-
-// ── cliente Kommo: ritmo por CONTA (RPC reserva um slot de 200 ms compartilhado entre webhooks e
-//    cron), timeout 15 s, Retry-After respeitado, backoff em 429/5xx/rede; POST só retenta se pedido.
-function clienteKommo(db: Db, token: string): KommoFn {
-  const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-  return async (m, p, body, opts = {}) => {
-    const etapa = opts.etapa ?? p
-    const maxTent = 1 + (opts.retries ?? (m === 'GET' ? 3 : 1))
-    for (let t = 1; t <= maxTent; t++) {
-      const slot = await db.rpc('autoresposta_reservar', { p_ms: 200 })
-      if (!slot.error && Number(slot.data) > 0) await dormir(Math.min(Number(slot.data), 5000))
-      let r: Response
-      try {
-        r = await fetch(KOMMO_BASE + p, { method: m, headers: H, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15000) })
-      } catch (e) {
-        if (m !== 'GET' && !(opts.retries && opts.retries > 0)) return { ok: false, status: 0, body: { erro: `rede: ${(e as Error).message}` } } // POST/PATCH ambíguo: quem chamou reconcilia
-        if (t === maxTent) throw new LeituraFalhou(etapa, `rede: ${(e as Error).message}`)
-        await dormir(500 * 2 ** t); continue
-      }
-      if (r.status === 429) {
-        const ra = Number(r.headers.get('retry-after') ?? 0)
-        const esperaS = ra > 0 ? ra : 2 ** t
-        if (opts.pararEm429) throw new Throttled(esperaS)
-        if (t === maxTent) throw new LeituraFalhou(etapa, 'HTTP 429')
-        await dormir(Math.min(esperaS, 20) * 1000); continue
-      }
-      if (r.status >= 500) {
-        if (m !== 'GET' && !(opts.retries && opts.retries > 0)) return { ok: false, status: r.status, body: null }
-        if (t === maxTent) throw new LeituraFalhou(etapa, `HTTP ${r.status}`)
-        await dormir(500 * 2 ** t); continue
-      }
-      const texto = r.status === 204 ? '' : await r.text()
-      let parsed: any = null
-      if (texto) { try { parsed = JSON.parse(texto) } catch { if (r.ok) throw new LeituraFalhou(etapa, 'resposta não é JSON') } }
-      return { ok: r.ok, status: r.status, body: parsed }
-    }
-    throw new LeituraFalhou(etapa, 'esgotou retentativas')
-  }
-}
 
 // ── repositório Supabase (service_role); todo erro vira LeituraFalhou (nunca decisão silenciosa)
 function repoSupabase(db: Db): Repo {
@@ -84,8 +45,8 @@ function repoSupabase(db: Db): Repo {
     async criarLinhas(linhas) { must(await db.from(T).upsert(linhas, { onConflict: 'kommo_lead_id,mensagem_id', ignoreDuplicates: true }), 'criar_linhas') },
     async linha(leadId, mensagemId) { return must(await db.from(T).select('*').eq('kommo_lead_id', leadId).eq('mensagem_id', mensagemId).single(), 'linha') as Linha },
     async decidir(id, dec) {
-      // só grava se a linha está livre: pendente e sem lease viva (decisão imutável sob posse)
-      const r = await db.from(T).update(dec).eq('id', id).eq('estado_efeito', 'pendente').or(`lease_ate.is.null,lease_ate.lt.${agoraIso()}`).select('*').maybeSingle()
+      // só grava se a linha está livre: pendente, sem lease viva e SEM decisão final (imutável depois)
+      const r = await db.from(T).update(dec).eq('id', id).eq('estado_efeito', 'pendente').is('decidido_em', null).or(`lease_ate.is.null,lease_ate.lt.${agoraIso()}`).select('*').maybeSingle()
       if (r.error) throw new LeituraFalhou('decidir', r.error.message)
       return (r.data as Linha | null) ?? null
     },
@@ -99,9 +60,15 @@ function repoSupabase(db: Db): Repo {
       if (antesDe) q = q.lt('recebido_em', antesDe)
       must(await q, 'superar')
     },
-    async claim(id, leaseS) { const r = await db.rpc('autoresposta_claim', { p_id: id, p_lease_s: leaseS }); if (r.error) throw new LeituraFalhou('claim', r.error.message); return (r.data as string | null) || null },
+    async claim(id, leaseS) {
+      const r = await db.rpc('autoresposta_claim', { p_id: id, p_lease_s: leaseS })
+      if (r.error) throw new LeituraFalhou('claim', r.error.message)
+      const linha = r.data as Linha | null
+      if (!linha || !linha.claim_token) return null
+      return { token: linha.claim_token, linha }
+    },
     async renovar(id, token, leaseS) { const r = await db.rpc('autoresposta_renovar', { p_id: id, p_token: token, p_lease_s: leaseS }); if (r.error) throw new LeituraFalhou('renovar', r.error.message); return !!r.data },
-    async fase(id, token, fase) { const r = await db.from(T).update({ efeito_fase: fase }).eq('id', id).eq('claim_token', token).select('id'); if (r.error) throw new LeituraFalhou('fase', r.error.message); return (r.data?.length ?? 0) === 1 },
+    async fase(id, token, fase, extra = {}) { const r = await db.from(T).update({ efeito_fase: fase, ...extra }).eq('id', id).eq('claim_token', token).select('id'); if (r.error) throw new LeituraFalhou('fase', r.error.message); return (r.data?.length ?? 0) === 1 },
     async fim(id, token, estado, extra) {
       const final = ['aplicado', 'observado', 'superado'].includes(estado)
       const r = await db.from(T).update({ estado_efeito: estado, lease_ate: null, claim_token: final ? null : token, resolvido_em: final ? agoraIso() : null, ...extra }).eq('id', id).eq('claim_token', token).select('id')
@@ -125,7 +92,13 @@ Deno.serve(async (req) => {
   try {
     const tok = await db.from('integracao_config').select('value').eq('key', 'kommo_access_token').single()
     if (tok.error || !tok.data?.value) return json({ error: 'Kommo sem access_token' }, 500)
-    const deps: Deps = { repo: repoSupabase(db), kommo: clienteKommo(db, tok.data.value), agora: () => Math.floor(Date.now() / 1000), campoTexto: CAMPO_TEXTO, leaseS: 300, maxTentativas: 5 }
+    const kommo = clienteKommo({
+      base: KOMMO_BASE, token: tok.data.value,
+      fetch: (u, init) => fetch(u, init),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      reservar: async (ms) => { const r = await db.rpc('autoresposta_reservar', { p_ms: ms }); if (r.error) throw new Error(r.error.message); return Number(r.data ?? 0) },
+    })
+    const deps: Deps = { repo: repoSupabase(db), kommo, agora: () => Math.floor(Date.now() / 1000), campoTexto: CAMPO_TEXTO, leaseS: 300, maxTentativas: 5 }
     if ((url.searchParams.get('acao') ?? 'triar') === 'varrer') return json(await varrer(deps))
 
     let payload: Record<string, unknown> = {}
@@ -136,7 +109,7 @@ Deno.serve(async (req) => {
     if (!leadId) return json({ error: 'lead id ausente', recebido: Object.keys(payload).slice(0, 10) }, 400)
     return json(await receberWebhook(deps, leadId))
   } catch (e) {
-    if (e instanceof Throttled) return json({ error: 'Kommo limitou (429)', esperar_s: e.esperaS }, 503)
+    if (e instanceof Throttled) return json({ error: 'Kommo limitou (429) ou ritmo saturado; trabalho fica para a varredura', esperar_s: e.esperaS }, 503)
     if (e instanceof LeituraFalhou) return json({ error: 'leitura falhou; pendência registrada para a varredura', etapa: e.etapa, detalhe: e.message }, 503)
     return json({ error: (e as Error).message }, 500)
   }

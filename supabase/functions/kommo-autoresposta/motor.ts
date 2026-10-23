@@ -39,14 +39,15 @@ export interface Repo {
   linhasDoLead(leadId: number): Promise<Linha[]>
   criarLinhas(linhas: Partial<Linha>[]): Promise<void>       // ignora duplicadas (lead+mensagem)
   linha(leadId: number, mensagemId: string): Promise<Linha>
-  /** grava a decisão só se a linha está livre (pendente e sem lease viva) — devolve a linha após a gravação */
+  /** grava a decisão só se a linha está livre (pendente, sem lease viva E sem decisão final) — devolve a linha após a gravação */
   decidir(id: number, dec: { texto: string; texto_norm: string; hash: string; repeticoes: number; padrao_id: number | null; classificacao: Linha['classificacao']; regras: string[]; decidido_em: string | null; intervalo_s: number | null; ultimo_disparo_em: string | null; modo: string; tentativas?: number }): Promise<Linha | null>
   outrosLeadsComHash(hash: string, leadId: number, desde: string): Promise<number>
   superar(leadId: number, excetoId: number | null, antesDe: string | null, motivo: string): Promise<void>
   // efeito
-  claim(id: number, leaseS: number): Promise<string | null>  // token ou null
+  /** claim atômico: devolve o token E a fotografia da linha como ficou no banco sob a posse (decisão, fase, origem) */
+  claim(id: number, leaseS: number): Promise<{ token: string; linha: Linha } | null>
   renovar(id: number, token: string, leaseS: number): Promise<boolean>
-  fase(id: number, token: string, fase: string): Promise<boolean>
+  fase(id: number, token: string, fase: string, extra?: Record<string, unknown>): Promise<boolean>
   fim(id: number, token: string, estado: Linha['estado_efeito'], extra: Record<string, unknown>): Promise<boolean>
   acerto(padraoId: number): Promise<void>
   pendentesEfeito(limite: number): Promise<Linha[]>          // pendente/falhou/lease vencida + indeterminados
@@ -142,9 +143,13 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
   let linha = linhaIn
   if (['aplicado', 'observado', 'superado'].includes(linha.estado_efeito)) return { ok: true, repetida: true, classificacao: linha.classificacao, estado: linha.estado_efeito }
   const msgTs = Math.floor(new Date(linha.recebido_em).getTime() / 1000)
-  const depois = ins.filter((i) => i.id !== linha.mensagem_id && i.ts >= msgTs).length
   const ultimoDisparo = [...outs].reverse().find((o) => o <= msgTs) ?? null
   const intervaloS = ultimoDisparo ? msgTs - ultimoDisparo : null
+  // "2ª mensagem" = OUTRA mensagem do lead desde o disparo (antes ou depois desta), exceto as que já
+  // foram classificadas como autoresposta (menu + "transferindo" é o bot, não conversa): uma
+  // pendência R2 anterior ('ok') seguida de 'quero entender' resolve humano nesta chamada.
+  const bots = new Set((await repo.linhasDoLead(linha.kommo_lead_id)).filter((l) => l.classificacao === 'autoresposta').map((l) => l.mensagem_id))
+  const depois = ins.filter((i) => i.id !== linha.mensagem_id && i.ts >= (ultimoDisparo ?? 0) && !bots.has(i.id)).length
 
   // decisão só enquanto a linha está livre (pendente, sem lease): depois do claim ela é imutável
   if (linha.estado_efeito === 'pendente' && (linha.classificacao === 'indeterminado' || !linha.decidido_em)) {
@@ -192,11 +197,13 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
   return { ok: true, classificacao: linha.classificacao, regras: linha.regras, intervalo_s: intervaloS, ...efeito }
 }
 
-export async function aplicarEfeito(deps: Deps, linha: Linha): Promise<Resultado> {
+export async function aplicarEfeito(deps: Deps, linhaChamador: Linha): Promise<Resultado> {
   const { repo, kommo } = deps
-  const token = await repo.claim(linha.id, deps.leaseS)
-  if (!token) return { estado: 'em_andamento', motivo: 'outro worker está aplicando' }
-  const faseAnterior = linha.efeito_fase // antes de qualquer gravação de fase (reconciliação da nota)
+  const posse = await repo.claim(linhaChamador.id, deps.leaseS)
+  if (!posse) return { estado: 'em_andamento', motivo: 'outro worker está aplicando' }
+  const { token, linha } = posse // fotografia do banco sob a posse: decisão/fase/origem valem daqui, não do chamador
+  if (linha.classificacao === 'indeterminado') { await repo.fim(linha.id, token, 'pendente', {}); return { estado: 'pendente', motivo: 'sem decisão final sob a posse' } }
+  const faseAnterior = linha.efeito_fase // antes de qualquer gravação de fase (reconciliações)
   const fim = async (estado: Linha['estado_efeito'], extra: Record<string, unknown> = {}) => {
     const ok = await repo.fim(linha.id, token, estado, extra)
     return ok ? { estado, ...extra } : { estado: 'perdeu_posse', motivo: 'lease expirou e outro worker reassumiu; nada gravado' }
@@ -209,15 +216,22 @@ export async function aplicarEfeito(deps: Deps, linha: Linha): Promise<Resultado
     const lead = leadValido(await kommo('GET', `/api/v4/leads/${linha.kommo_lead_id}`, undefined, { etapa: 'lead_revalidar', retries: 1 }), 'lead_revalidar')
     if (!lead) return await fim('superado', { motivo_efeito: 'lead não existe mais' })
     await renova()
+    // reconciliação de um PATCH de status ambíguo (aceito, resposta perdida): o destino pretendido
+    // foi gravado antes do PATCH; se o lead está lá, foi escrita nossa → aplicado (com movido_para)
+    const destino = (linha as any).movido_para
+    if (faseAnterior === 'status_enviando' && destino && Number(lead.status_id) === Number(destino) && Number(lead.pipeline_id) === Number(linha.pipeline_id)) {
+      return await fim('aplicado', { movido: true, erro: null, efeito_fase: 'concluido', motivo_efeito: 'reconciliado: lead já no destino pretendido' })
+    }
     const pode = podeAplicar(cfg, lead, linha.status_id_origem)
     if (!pode.ok) return await fim(cfg.modo === 'observar' && pode.motivo !== 'funil desligado' ? 'observado' : 'superado', { motivo_efeito: pode.motivo })
     if (cfg.modo !== 'aplicar') return await fim('observado', { motivo_efeito: 'modo observar' })
 
     if (linha.classificacao === 'humano') {
       if (!cfg.status_respondeu) return await fim('observado', { motivo_efeito: 'funil sem status_respondeu' })
-      if (!(await repo.fase(linha.id, token, 'status_enviando'))) return await fim('falhou', { erro: 'posse perdida' })
-      const r = await kommo('PATCH', `/api/v4/leads/${linha.kommo_lead_id}`, { status_id: cfg.status_respondeu, pipeline_id: cfg.pipeline_id }, { etapa: 'patch_status', retries: 1 })
-      if (!r.ok) return await fim('falhou', { erro: `PATCH status → HTTP ${r.status}`, tentativas: Number(linha.tentativas ?? 0) + 1 })
+      // destino pretendido ANTES do PATCH (jornal): resposta perdida é reconciliada na retomada
+      if (!(await repo.fase(linha.id, token, 'status_enviando', { movido_para: cfg.status_respondeu }))) return await fim('falhou', { erro: 'posse perdida' })
+      const r = await kommo('PATCH', `/api/v4/leads/${linha.kommo_lead_id}`, { status_id: cfg.status_respondeu, pipeline_id: cfg.pipeline_id }, { etapa: 'patch_status', retries: 0 })
+      if (!r.ok) return await fim('falhou', { erro: r.status === 0 ? 'PATCH status: resposta perdida (reconciliar na retomada)' : `PATCH status → HTTP ${r.status}`, tentativas: Number(linha.tentativas ?? 0) + 1 })
       return await fim('aplicado', { movido: true, movido_para: cfg.status_respondeu, erro: null, efeito_fase: 'concluido' })
     }
     // autoresposta: tag (mesclada) + nota com marcador; nota NÃO se repete (POST não é idempotente):
@@ -229,14 +243,22 @@ export async function aplicarEfeito(deps: Deps, linha: Linha): Promise<Resultado
       if (!r.ok) return await fim('falhou', { erro: `PATCH tag → HTTP ${r.status}`, tentativas: Number(linha.tentativas ?? 0) + 1 })
       await renova()
     }
-    if (!(await repo.fase(linha.id, token, 'tag_ok'))) return await fim('falhou', { erro: 'posse perdida' })
     const marca = marcador(linha.mensagem_id)
     let notaExiste = false
-    if (faseAnterior === 'nota_enviando') { // tentativa anterior ambígua: reconcilia
-      const notas = await kommo('GET', `/api/v4/leads/${linha.kommo_lead_id}/notes?limit=50&order[created_at]=desc`, undefined, { etapa: 'notas', retries: 1 })
-      if (!notas.ok && notas.status !== 204) throw new LeituraFalhou('notas', `HTTP ${notas.status}`)
-      notaExiste = ((notas.body?._embedded?.notes ?? []) as any[]).some((n) => String(n?.params?.text ?? '').includes(marca))
-    }
+    if (faseAnterior === 'nota_enviando') {
+      // tentativa anterior ambígua: reconcilia SEM regredir a fase (se a consulta falhar, continua
+      // 'nota_enviando' e a próxima retomada reconcilia de novo). Envelope validado; se houver
+      // mais páginas e o marcador não apareceu, não se prova ausência → não posta.
+      const notas = await kommo('GET', `/api/v4/leads/${linha.kommo_lead_id}/notes?limit=250&order[created_at]=desc`, undefined, { etapa: 'notas', retries: 1 })
+      if (notas.status === 204) notaExiste = false
+      else {
+        if (!notas.ok) throw new LeituraFalhou('notas', `HTTP ${notas.status}`)
+        const lista = notas.body?._embedded?.notes
+        if (!Array.isArray(lista)) throw new LeituraFalhou('notas', 'envelope inesperado')
+        notaExiste = lista.some((n: any) => String(n?.params?.text ?? '').includes(marca))
+        if (!notaExiste && notas.body?._links?.next) throw new LeituraFalhou('notas', 'marcador não achado na 1ª página e há mais páginas')
+      }
+    } else if (!(await repo.fase(linha.id, token, 'tag_ok'))) return await fim('falhou', { erro: 'posse perdida' })
     if (!notaExiste) {
       if (!(await repo.fase(linha.id, token, 'nota_enviando'))) return await fim('falhou', { erro: 'posse perdida' })
       const nota = await kommo('POST', `/api/v4/leads/${linha.kommo_lead_id}/notes`, [{ note_type: 'common', params: { text: `Triagem automática: resposta classificada como AUTORESPOSTA (${linha.regras.join(', ')}). Lead mantido na etapa. ${marca}` } }], { etapa: 'nota', retries: 0 })
@@ -265,12 +287,12 @@ export async function varrer(deps: Deps, limite = 40): Promise<Resultado> {
     }
     for (const l of await repo.pendentesEfeito(limite)) {
       const cfg = await repo.config(l.pipeline_id)
-      if (!cfg || !cfg.ativo) { const tk = await repo.claim(l.id, deps.leaseS); if (tk) await repo.fim(l.id, tk, 'superado', { motivo_efeito: 'funil desligado' }); out.push({ id: l.id, resultado: 'superado (funil desligado)' }); continue }
+      if (!cfg || !cfg.ativo) { const ps = await repo.claim(l.id, deps.leaseS); if (ps) await repo.fim(l.id, ps.token, 'superado', { motivo_efeito: 'funil desligado' }); out.push({ id: l.id, resultado: 'superado (funil desligado)' }); continue }
       const msgTs = Math.floor(new Date(l.recebido_em).getTime() / 1000)
       if (l.classificacao === 'indeterminado' && deps.agora() < msgTs + cfg.espera_s && !(l.regras ?? []).includes('texto_vazio')) continue
       try {
         const lead = leadValido(await kommoLote('GET', `/api/v4/leads/${l.kommo_lead_id}`, undefined, { etapa: 'lead' }), 'lead')
-        if (!lead) { const tk = await repo.claim(l.id, deps.leaseS); if (tk) await repo.fim(l.id, tk, 'superado', { motivo_efeito: 'lead não existe' }); continue }
+        if (!lead) { const ps = await repo.claim(l.id, deps.leaseS); if (ps) await repo.fim(l.id, ps.token, 'superado', { motivo_efeito: 'lead não existe' }); continue }
         const de = msgTs - 14 * 86400
         const ins = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in').map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? e.id), ts: Number(e.created_at) }))
         const outs = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out').map((e) => Number(e.created_at))

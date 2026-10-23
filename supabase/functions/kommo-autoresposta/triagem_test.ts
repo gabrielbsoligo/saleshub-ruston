@@ -13,8 +13,8 @@ let m: RegExpExecArray | null, id = 0
 while ((m = re.exec(bloco))) PADROES.push({ id: ++id, padrao: m[1].replace(/''/g, "'"), tipo: m[2] as Padrao['tipo'] })
 const CFG: Pick<Cfg, 'janela_rapida_s' | 'repeticao_min' | 'r3_min_palavras'> = { janela_rapida_s: 60, repeticao_min: 3, r3_min_palavras: 6 }
 
-Deno.test('seeds: 23 padrões lidos do SQL, todos compilam em JavaScript e nenhum usa \\y', () => {
-  assertEquals(PADROES.length, 23)
+Deno.test('seeds: 24 padrões lidos do SQL, todos compilam em JavaScript e nenhum usa \\y', () => {
+  assertEquals(PADROES.length, 24)
   for (const p of PADROES) {
     assert(compilar(p) !== null, `regex inválida em JS: ${p.padrao}`)
     assert(!p.padrao.includes('\\y'), `\\y é do Postgres, não do JS: ${p.padrao}`)
