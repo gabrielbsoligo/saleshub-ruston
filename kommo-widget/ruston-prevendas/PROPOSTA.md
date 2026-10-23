@@ -1,10 +1,10 @@
-# Widget único de pré-vendas: proposta (fatia 1, rev. 2)
+# Widget único de pré-vendas: proposta (fatia 1, rev. 3)
 
 **Escopo:** um widget Kommo (`ruston-prevendas`) que junta **notify + PRÓXIMO + click-to-call**, para a conta `financeirorustonengenhariacombr`.
 
 **Status:** proposta para o Gabriel decidir. **Nada foi criado ou alterado no Kommo**; só fiz leituras via GET.
 
-A rev. 2 incorpora a revisão do Vedor (9 pontos). O que mudou está no fim do arquivo.
+A rev. 2 incorpora a 1ª revisão do Vedor (9 pontos) e a rev. 3 a 2ª (3 pontos). O que mudou está no fim do arquivo.
 
 ---
 
@@ -96,24 +96,44 @@ Separar **três coisas** que hoje estão misturadas no tipo:
    - 5 Recuperar no-show;
    - 6 Pré-reunião;
    - 7 Prospecção quente (G1, G2, G3, G4);
-   - 8 Prospecção outbound (G5, G9);
+   - 7b Prospecção **sem origem** (G9): **neutra**, logo depois da quente e **sem** a janela do outbound. O banner mostra "origem não informada: preencha o campo";
+   - 8 Prospecção outbound (**só G5**);
    - 9 sem classificação (avulsas, SEM TAREFA, ALERTA).
 2. **Grupo de origem**, só nos níveis 4, 5 e 7: G1 → G2 → G3 → G4 → G5 → G9.
 3. **Vencimento**, mais atrasada primeiro.
 4. **id da tarefa** (desempate estável).
 
-**Janela do outbound:** o nível 8 só fica elegível depois das **16h**, ou antes disso se os níveis 1 a 7 estiverem vazios. O horário é configurável.
+**Janela do outbound:**
+- **só o nível 8 (G5)** fica restrito: elegível depois das **16h**, ou antes disso se os níveis 1 a 7b estiverem vazios. O horário é configurável;
+- a origem vazia ou desconhecida (G9) **nunca** herda essa janela.
+- **Teste:** prospecção com origem vazia às 10h aparece na fila (nível 7b); prospecção Outbound às 10h, com outra tarefa elegível, não aparece.
 
 **Configuração:** v1 na aba de configuração do widget (admin), com nível por momento, ordem dos grupos, mapa da Origem, `antecedencia_min`, `outbound_apos` e lista de tipos legados. v2 por SDR ou time no SalesHub.
 
 ### 2.4 Como o widget sabe o momento e a ação de cada tarefa (classificador)
-A classificação por tipo não funciona (§1). O classificador fica **no servidor** (endpoint `prevendas-classificar`, mesma edge e mesma autenticação do click-to-call). Ele recebe os ids das tarefas candidatas e devolve `{momento, acao, origem_grupo}` por tarefa, usando, nesta ordem:
+A classificação por tipo não funciona (§1). O classificador é uma **função compartilhada no servidor** (`_shared/classificar.ts`), usada por:
+- (a) o endpoint `prevendas-classificar`, que o widget chama;
+- (b) o `kommo-call-note`, que é job de servidor autenticado por `KOMMO_SYNC_SECRET`, chama a função **direto** e **não** depende de JWT do navegador.
+
+Ela devolve `{momento, acao, origem_grupo}` por tarefa, usando, nesta ordem:
 1. **Slot da cadência:** o planner já guarda o mapa **slot → id da tarefa** de cada reunião, na coluna `reunioes.cadencia_task_ids` (jsonb, lido como `v_map` no `plan_reconcile`). Daí T5/T6 = anti no-show + ligar; T4 = anti no-show + WhatsApp (closer); T3 = pré-reunião + WhatsApp; R1/R3 = recuperar + ligar; R2 = recuperar + WhatsApp.
 2. **Produtor conhecido sem slot:** Retorno (texto `Retorno`, tipo 1) = follow-up, **do closer**; textos `CADENCIA: lead respondeu…` = conexão + ligar; `CADENCIA: classificar…` = follow-up.
 3. **Tipo novo de momento**, quando a tarefa já nasceu com ele.
 4. **Fallback:** sem classificação (nível 9). Nunca é chute.
 
 A **origem** sai do campo 975168 do lead, lido no servidor (réplica `kommo.leads` do SalesHub, `custom_fields`) para **todas** as candidatas antes de ordenar. Não depende de consultas no navegador limitadas às 12 primeiras.
+
+**Três camadas de autorização, separadas:**
+1. **Identidade (todos os endpoints):** JWT descartável válido (algoritmo, assinatura, `exp`/`iat`, conta permitida) + `kommo_user_id` mapeado para membro **ativo**.
+2. **Leitura (`prevendas-classificar`):**
+   - os ids vêm do navegador e **não são confiáveis**;
+   - o servidor confere **cada** tarefa: da conta permitida, **aberta** e com `responsible_user_id` = usuário autenticado, ou usuário gestor autorizado;
+   - só depois lê o lead (origem) e a cadência com credencial de servidor;
+   - ids que não passam são **descartados** e contados como "negados" na resposta, sem dado.
+   - **Não exige** discador, ramal nem token de provedor. Um SDR sem discador configurado tem notify e PRÓXIMO normalmente.
+3. **Discagem (`prevendas-dial`, fatia 3):** as camadas 1 + a autorização de recurso do §4.2 + discador configurado.
+
+Testes negativos da leitura: tarefa de outro usuário, tarefa concluída e tarefa de outra conta; nenhuma devolve dado.
 
 **Leitura completa das tarefas** no widget:
 - paginação de `/api/v4/tasks` (250 por página) até o fim das abertas do SDR, com deduplicação por id;
@@ -182,7 +202,16 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
 
 ### 4.3 Idempotência e estado da chamada (contra ligação duplicada)
 - O widget gera uma `chave_tentativa` (UUID) por clique e reenvia **a mesma** chave em retry.
-- O proxy grava a tentativa em `prevendas_discagem` **antes** de discar. A tabela tem chave única `(chave_tentativa)` e índice parcial que impede **duas tentativas ativas do mesmo usuário**.
+- O proxy grava a tentativa em `prevendas_discagem` **antes** de discar. A tabela tem:
+  - chave única `(chave_tentativa)`;
+  - **dono** (conta + `kommo_user_id`);
+  - **payload imutável** (lead, contato, telefone E.164, provedor) com hash;
+  - índice parcial que impede **duas tentativas ativas do mesmo usuário**.
+- **Chave repetida:**
+  - mesmo dono e mesmo payload: devolve o estado existente;
+  - **outro dono:** `403`, sem revelar nada da tentativa;
+  - mesmo dono e **payload diferente:** `409 conflito`, **sem discar**.
+- **GET de estado e encerramento** (`GET/POST prevendas-dial/{chave}[/encerrar]`): exigem identidade válida **e** que o autenticado seja o dono da tentativa (ou gestor autorizado). Outro usuário recebe `404`.
 - **Estados:** `pedida → discando → em_curso | falhou | incerta → encerrada`.
 - **Reenvio** com a mesma chave devolve o estado existente e **não redisca**.
 - **Timeout ou resposta perdida** viram `incerta`. **Nunca há rediscagem automática.** O estado é reconciliado depois:
@@ -219,7 +248,10 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
   - contato que não é do lead;
   - telefone que não é do contato;
   - duas tentativas simultâneas;
-  - reenvio da mesma chave.
+  - reenvio da mesma chave (devolve o estado);
+  - mesma chave por **outro usuário** (403);
+  - mesma chave com **outro telefone/lead** (409, não disca);
+  - GET de estado e encerramento por outro usuário (404).
 - Corpo do `manual_call/dial` do 3C e formato do click2call.
 - **Ligação real só para o número do próprio Gabriel, com o OK dele.**
 
@@ -253,3 +285,8 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
 7. PATCH da reconciliação confirmado: só `complete_till` (§3).
 8. Mapa da Origem, grupo "Sem origem", falta de "Inbound" e chave de desempate (§2.2, §2.3).
 9. Leitura paginada, origem de todas as candidatas antes de ordenar e "fila parcial" (§2.4).
+
+### O que mudou na rev. 3 (2ª revisão do Vedor)
+1. A leitura (`prevendas-classificar`) confere cada tarefa (conta, aberta, dona = usuário) antes de ler dados; o GET de estado e o encerramento exigem ser o dono; a idempotência fica vinculada ao dono e ao payload (403/409), com testes negativos (§2.4, §4.3, §4.6).
+2. Três camadas separadas: identidade, leitura (não exige discador) e discagem. O classificador é função compartilhada no servidor; o `kommo-call-note` usa a função direto, sem JWT (§2.4).
+3. Origem desconhecida (G9) ganha nível neutro 7b, fora da janela do outbound, com teste (§2.3).
