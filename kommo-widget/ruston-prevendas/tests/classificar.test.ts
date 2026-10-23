@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classificar, grupoDaOrigem, mapaSlots, momentoDaEtapa, TIPO } from '../../../supabase/functions/_shared/prevendas_classificar.ts'
+import { classificar, grupoDaOrigem, mapaSlots, TIPO } from '../../../supabase/functions/_shared/prevendas_classificar.ts'
 
 const t = (id: number, tipo: number | null, text = '') => ({ id, task_type_id: tipo, text })
 
@@ -24,15 +24,21 @@ test('produtores conhecidos', () => {
   assert.equal(classificar(t(7, TIPO.SEM_TAREFA, 'SEM TAREFA — x'), null, { etapa: 'FOLLOW 1', origem: null }).momento, 'sem_classificacao')
 })
 
-test('tipo novo de momento (config) e etapa do lead', () => {
+test('tipo novo de momento (config)', () => {
   assert.equal(classificar(t(8, 999), null, null, { 999: 'speed_to_lead' }).urgente, true)
-  assert.equal(classificar(t(9, 1, 'ligar'), null, { etapa: 'SPEED TO LEAD', origem: 'Inbound' }).momento, 'speed_to_lead')
-  assert.equal(classificar(t(10, 1), null, { etapa: 'CONEXÃO REALIZADA', origem: null }).momento, 'conexao')
-  assert.equal(classificar(t(11, 1), null, { etapa: 'NOSHOW', origem: null }).momento, 'recuperar')
-  assert.equal(classificar(t(12, 1), null, { etapa: 'ENTRADA', origem: 'Outbound' }).momento, 'prospeccao')
-  assert.equal(classificar(t(13, 1), null, { etapa: 'REUNIÃO MARCADA', origem: null }).momento, 'sem_classificacao')
-  assert.equal(momentoDaEtapa('Follow 3'), 'follow_up')
-  assert.equal(momentoDaEtapa('No-Show'), 'recuperar')
+  assert.equal(classificar(t(8, 999), null, null, { 999: 'follow_up' }).momento, 'follow_up')
+})
+
+test('NEGATIVO: a etapa do lead NÃO define o momento da tarefa (contrato §2.4)', () => {
+  // tarefa manual futura num lead em SPEED TO LEAD não vira urgente
+  const c = classificar(t(9, 2 /* Meeting */), null, { etapa: 'SPEED TO LEAD', origem: 'Inbound' })
+  assert.equal(c.momento, 'sem_classificacao'); assert.equal(c.urgente, false); assert.equal(c.grupo, 'G2')
+  // "Follow" de outro funil não vira follow-up de pré-vendas
+  assert.equal(classificar(t(10, 1), null, { etapa: 'Follow 2', origem: null }).momento, 'sem_classificacao')
+  // Cliente oculto fora do slot T0 continua sem classificação
+  assert.equal(classificar(t(11, TIPO.CLIENTE_OCULTO), null, { etapa: 'NOSHOW', origem: null }).momento, 'sem_classificacao')
+  // a ação ainda vem do tipo legado
+  assert.equal(classificar(t(12, TIPO.LIGACAO), null, { etapa: 'ENTRADA', origem: 'Outbound' }).acao, 'ligar')
 })
 
 test('origem → grupo; vazio/desconhecido = G9 (nunca outbound)', () => {

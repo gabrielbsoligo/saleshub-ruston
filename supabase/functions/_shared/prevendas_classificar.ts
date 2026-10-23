@@ -15,7 +15,7 @@ export interface Tarefa {
   text: string | null
 }
 export interface LeadInfo {
-  etapa: string | null        // nome da etapa (status) do lead
+  etapa: string | null        // nome da etapa (status) do lead — só exibição
   origem: string | null       // valor do campo "Origem do lead" (975168)
 }
 export interface Classificacao {
@@ -23,7 +23,7 @@ export interface Classificacao {
   acao: Acao
   grupo: Grupo
   urgente: boolean            // entra na fila assim que criada (speed to lead, "Ligar AGORA")
-  fonte: 'slot' | 'produtor' | 'tipo' | 'etapa' | 'nenhuma'
+  fonte: 'slot' | 'produtor' | 'tipo' | 'nenhuma'
   motivo: string
 }
 
@@ -68,22 +68,11 @@ export function acaoDoTipo(tipo: number | null): Acao {
   return 'outro'
 }
 
-// etapa do funil de pré-vendas (Pre Vendas, PV-Inbound, PV-Retomada, USA...) → momento
-export function momentoDaEtapa(etapa: string | null): Momento | null {
-  const e = norm(etapa)
-  if (!e) return null
-  if (e.includes('speed to lead')) return 'speed_to_lead'
-  if (/^follow/.test(e)) return 'follow_up'
-  if (e.includes('conex')) return 'conexao'
-  if (/no.?show/.test(e)) return 'recuperar'
-  if (/^(entrada|base|novo lead|contato inicial|ativacao|richlist|leads de entrada|etapa de leads de entrada)/.test(e)) return 'prospeccao'
-  return null
-}
-
 /**
  * Ordem de decisão (a primeira que casar vence):
  *  1) slot da cadência  2) produtor conhecido (texto/tipo)  3) tipo novo de momento (config)
- *  4) etapa do lead      5) nenhuma → sem_classificacao
+ *  4) nenhuma → sem_classificacao. A ETAPA do lead NÃO define o momento (descreve o lead, não a tarefa;
+ *     PROPOSTA §2.4) — só é exibida. Um mapa explícito etapa→momento por pipeline exige aprovação do Gabriel.
  * A AÇÃO vem do slot/produtor; senão, do tipo legado. A origem nunca altera a ação.
  */
 export function classificar(
@@ -115,10 +104,6 @@ export function classificar(
   if (tipo != null && tiposMomento[tipo]) {
     const m = tiposMomento[tipo]
     return { momento: m, acao: acaoDoTipo(tipo), grupo, urgente: m === 'speed_to_lead', fonte: 'tipo', motivo: 'tipo de momento' }
-  }
-  const me = momentoDaEtapa(lead?.etapa ?? null)
-  if (me) {
-    return { momento: me, acao: acaoDoTipo(tipo), grupo, urgente: me === 'speed_to_lead', fonte: 'etapa', motivo: `etapa ${lead?.etapa}` }
   }
   return { momento: 'sem_classificacao', acao: acaoDoTipo(tipo), grupo, urgente: false, fonte: 'nenhuma', motivo: 'sem regra' }
 }

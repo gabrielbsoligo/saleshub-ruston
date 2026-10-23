@@ -290,3 +290,14 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
 1. A leitura (`prevendas-classificar`) confere cada tarefa (conta, aberta, dona = usuário) antes de ler dados; o GET de estado e o encerramento exigem ser o dono; a idempotência fica vinculada ao dono e ao payload (403/409), com testes negativos (§2.4, §4.3, §4.6).
 2. Três camadas separadas: identidade, leitura (não exige discador) e discagem. O classificador é função compartilhada no servidor; o `kommo-call-note` usa a função direto, sem JWT (§2.4).
 3. Origem desconhecida (G9) ganha nível neutro 7b, fora da janela do outbound, com teste (§2.3).
+
+### Implementação (fatia 2): mudança de desenho após a revisão de código do Vedor
+- **A fila vem do servidor, lida da réplica do Kommo** (`kommo.tasks/leads/stages`, sincronizada a cada 1–2 min pelo kommo-sync), via `public.prevendas_fila(user)`. Antes, o navegador enviava ids ao classificador.
+- **O servidor não recebe ids do navegador:** devolve só as tarefas abertas do usuário do JWT. Isso elimina a autorização por id (§2.4) e o risco de dado alheio.
+- **Zero chamadas à API do Kommo por SDR:** resolve o limite de 7 req/s.
+- **Todas as tarefas são reclassificadas a cada ciclo:** sem cache de 5 min e sem tarefa não classificada.
+- **Slots por join SQL,** sem corte de data; erro de banco devolve 503.
+- **Frescor:** `kommo.sync_status` (tarefas). Atraso acima de 10 min gera aviso.
+- **Sem servidor:** modo degradado lê o Kommo pela sessão (paginado, respeita 429 e Retry-After) e ordena por vencimento, com aviso.
+- **Várias abas:** uma líder consulta; as outras usam o snapshot. Há variação aleatória no intervalo.
+- **A etapa do lead NÃO define o momento** (fica só como exibição). Um mapa explícito etapa → momento por pipeline fica como decisão do Gabriel.

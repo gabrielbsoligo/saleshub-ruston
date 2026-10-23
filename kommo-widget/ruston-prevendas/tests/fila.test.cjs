@@ -62,19 +62,43 @@ test('fila vazia devolve a próxima futura', () => {
   assert.equal(r.futura.id, 2)
 })
 
-test('candidatas: recentes/urgentes primeiro; backlog antigo não empurra a de agora para fora', () => {
-  const tarefas = []
-  for (let i = 0; i < 600; i++) tarefas.push({ id: i + 1, complete_till: AGORA - 30 * 86400 - i, created_at: AGORA - 40 * 86400 })
-  tarefas.push({ id: 9001, complete_till: AGORA - 60, created_at: AGORA - 3 * 86400 })          // anti no-show de agora
-  tarefas.push({ id: 9002, complete_till: AGORA + 7200, created_at: AGORA - 5 * 60 })          // criada agora (Ligar AGORA)
-  tarefas.push({ id: 9003, complete_till: AGORA + 86400, created_at: AGORA - 86400 })          // futura distante: fora
-  const c = Fila.candidatas(tarefas, AGORA, 10, 500)
-  const lista = c.lista.map((t) => t.id)
-  assert.ok(lista.includes(9001)); assert.ok(lista.includes(9002)); assert.ok(!lista.includes(9003))
-  assert.equal(lista.length, 500); assert.equal(c.parcial, true)
-})
-
 test('modo local: só reconhece o "Ligar AGORA"', () => {
   assert.equal(Fila.classificarLocal({ text: 'CADENCIA: lead respondeu com interesse' }).urgente, true)
   assert.equal(Fila.classificarLocal({ text: 'qualquer' }).momento, 'sem_classificacao')
+})
+
+test('P10: tarefa de nível 9 não segura o outbound antes das 16h', () => {
+  const r = Fila.ordenar([it(1, 'prospeccao', 'G5', -5), it(2, 'sem_classificacao', 'G9', -5)], CFG, AGORA, M10H)
+  assert.deepEqual(ids(r), [1, 2])
+})
+
+test('P9: sem nada vencido, a próxima futura é navegável (e pula a entidade aberta)', () => {
+  const fut = { id: 5, etype: 'leads', eid: 50, due: AGORA + 3600 }
+  const p = Fila.proximoDe([], fut, null)
+  assert.equal(p.item.id, 5); assert.equal(p.futura, true)
+  assert.equal(Fila.proximoDe([], fut, { etype: 'leads', eid: 50 }), null)
+  const f1 = { id: 1, etype: 'leads', eid: 10 }, f2 = { id: 2, etype: 'leads', eid: 20 }
+  assert.equal(Fila.proximoDe([f1, f2], fut, { etype: 'leads', eid: 10 }).item.id, 2)
+})
+
+test('P7: backlog grande não inunda nem repete notificações', () => {
+  const tarefas = []
+  for (let i = 1; i <= 805; i++) tarefas.push({ id: i, due: AGORA - 2 * 86400 })        // backlog antigo
+  for (let i = 900; i < 912; i++) tarefas.push({ id: i, due: AGORA + 60 })              // vencendo agora (12)
+  let visto = {}
+  const c1 = Fila.paraNotificar(tarefas, visto, AGORA, 15, 5)
+  assert.equal(c1.mostrar.length, 5); assert.equal(c1.resumidas, 7)                       // backlog não notifica
+  visto = c1.visto
+  const c2 = Fila.paraNotificar(tarefas, visto, AGORA + 45, 15, 5)
+  assert.equal(c2.mostrar.length, 0); assert.equal(c2.resumidas, 0)                       // nada repete
+  // o visto guarda só ids abertos: quando a tarefa fecha, sai
+  const c3 = Fila.paraNotificar(tarefas.filter((t) => t.id !== 900), c2.visto, AGORA + 90, 15, 5)
+  assert.equal(c3.visto[900], undefined); assert.equal(c3.visto[901], 1)
+})
+
+test('P1: liderança entre abas', () => {
+  assert.equal(Fila.devoLiderar(null, 'a', 1000), true)
+  assert.equal(Fila.devoLiderar({ aba: 'b', ate: 5000 }, 'a', 1000), false)
+  assert.equal(Fila.devoLiderar({ aba: 'b', ate: 500 }, 'a', 1000), true)       // expirou
+  assert.equal(Fila.devoLiderar({ aba: 'a', ate: 5000 }, 'a', 1000), true)      // já é desta aba
 })
