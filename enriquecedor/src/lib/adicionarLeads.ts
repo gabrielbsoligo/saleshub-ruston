@@ -18,6 +18,8 @@ export interface ResultadoEntrada {
   /** Já existiam no banco (enriquecidos por outro projeto): mantêm id, dados e PERFIL. */
   jaExistiam: number;
   perfilDivergente: number; // desses, quantos têm perfil diferente do deste projeto
+  /** Tirados na hora de gravar: outra aba adicionou o mesmo CNPJ/telefone ao projeto no meio do caminho. */
+  removidosNaGravacao?: number;
 }
 
 /**
@@ -97,6 +99,7 @@ export function resumoEntrada(r: ResultadoEntrada): string {
   if (r.jaNoProjeto) partes.push(`${r.jaNoProjeto} já estava(m) no projeto`);
   if (r.telefoneNoProjeto) partes.push(`${r.telefoneNoProjeto} com telefone de lead que já está no projeto`);
   if (r.telefoneNoLote) partes.push(`${r.telefoneNoLote} com telefone repetido na lista (ficou o primeiro)`);
+  if (r.removidosNaGravacao) partes.push(`${r.removidosNaGravacao} não entraram: outra aba acabou de adicionar o mesmo CNPJ/telefone neste projeto`);
   if (r.jaExistiam) partes.push(`${r.jaExistiam} já enriquecido(s) em outro projeto (mantidos como estavam${r.perfilDivergente ? `; ${r.perfilDivergente} com outro perfil de auditoria` : ''})`);
   return partes.join(' · ');
 }

@@ -150,6 +150,24 @@ describe('mesclarProjeto (3 vias: esta aba x banco x base)', () => {
     expect(r.leadStatus).toEqual({ '1:A': 'ok', '1:B': 'erro' });
   });
 
+  it('autosave ainda pendente (base confirmada = etapa 1, local = etapa 2, banco = etapa 1): a edição local fica', () => {
+    const base = est([w('L0', 1)], { '1:L0': 'run' });
+    const local = est([w('L0', 2)], { '1:L0': 'ok' });
+    const remoto = est([w('L0', 1)], { '1:L0': 'run' });
+    const r = mesclarProjeto(local, remoto, base, []);
+    expect(r.leads[0].etapa).toBe(2);
+    expect(r.leadStatus['1:L0']).toBe('ok');
+  });
+
+  it('re-mesclagem após gravar: evento ok recebido durante o UPDATE não regride para o run do snapshot enviado', () => {
+    const snapshot = est([w('L0', 1)], { '1:L0': 'run' }); // o que foi mandado gravar
+    const salvo = est([w('L0', 1), w('LA')], { '1:L0': 'run' }); // o que o banco confirmou
+    const atual = est([w('L0', 1)], { '1:L0': 'ok' }); // a UI já recebeu o job concluído
+    const r = mesclarProjeto(atual, salvo, snapshot, []);
+    expect(r.leadStatus['1:L0']).toBe('ok');
+    expect(r.leads.map((l) => l.id)).toEqual(['L0', 'LA']);
+  });
+
   it('novo que já existe (mesmo id) não duplica', () => {
     expect(mesclarProjeto(est([w('A')]), est([]), est([]), [w('A')]).leads).toHaveLength(1);
   });

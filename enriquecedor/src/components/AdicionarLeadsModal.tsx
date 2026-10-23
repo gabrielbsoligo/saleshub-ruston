@@ -27,8 +27,8 @@ export function AdicionarLeadsModal({
   leadsAtuais: WfLead[];
   modoInicial?: Modo;
   onClose: () => void;
-  /** Persiste o vínculo no projeto; o modal só confirma sucesso quando resolve. */
-  onAdicionados: (novos: WfLead[]) => Promise<void>;
+  /** Persiste o vínculo no projeto e devolve o que de fato entrou; o modal só confirma sucesso quando resolve. */
+  onAdicionados: (novos: WfLead[]) => Promise<{ vinculados: WfLead[]; removidos: number }>;
 }) {
   const [modo, setModo] = useState<Modo>(modoInicial);
   const [ocupado, setOcupado] = useState(false);
@@ -46,9 +46,14 @@ export function AdicionarLeadsModal({
       const rows = await obterLinhas();
       if (!rows) return;
       setProg({ done: 0, total: rows.length });
-      const r: ResultadoEntrada = await entrarLeads(projeto, rows, leadsAtuais, 'adicao', setProg);
+      let r: ResultadoEntrada = await entrarLeads(projeto, rows, leadsAtuais, 'adicao', setProg);
       if (r.novos.length) {
-        await onAdicionados(r.novos); // só é sucesso depois que o projeto gravou
+        // só é sucesso depois que o projeto gravou — e com o que de fato ficou vinculado
+        // (outra aba pode ter adicionado o mesmo CNPJ/telefone no meio do caminho)
+        const fim = await onAdicionados(r.novos);
+        r = { ...r, novos: fim.vinculados, removidosNaGravacao: fim.removidos };
+      }
+      if (r.novos.length) {
         toast.success(resumoEntrada(r), { duration: 8000 });
         onClose();
       } else {

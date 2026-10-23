@@ -230,7 +230,8 @@ export function WorkflowView({
   const projeto = selId ? projetos.find((p) => p.id === selId) ?? null : null;
   const importada = !!projeto?.importada;
   // Estado ATUAL (pra callbacks assíncronos não usarem closure velha) e BASE = último
-  // estado que esta aba leu do projeto ou mandou gravar (merge de 3 vias com o banco).
+  // estado CONFIRMADO (lido do projeto ao abrir, ou gravado com sucesso pelo CAS) —
+  // nunca o que o autosave só agendou (merge de 3 vias com o banco).
   const estadoRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
   estadoRef.current = { leads, leadStatus: execStatus };
   const baseRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
@@ -271,10 +272,7 @@ export function WorkflowView({
 
   // persiste no store a cada mudança do funil (execStatus vai no campo leadStatus)
   useEffect(() => {
-    if (selId && importada) {
-      atualizarProjeto(selId, { leads, leadStatus: execStatus });
-      baseRef.current = { leads, leadStatus: execStatus };
-    }
+    if (selId && importada) atualizarProjeto(selId, { leads, leadStatus: execStatus });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, execStatus]);
 
@@ -719,21 +717,31 @@ export function WorkflowView({
             // Grava com compare-and-swap: relê o projeto do banco e mescla em 3 vias
             // (esta aba × banco × base) — outra aba pode ter avançado/descartado leads ou
             // acrescentado outros enquanto a Triagem rodava; os novos são revalidados
-            // (CNPJ/telefone) contra esses. O modal só diz "sucesso" depois da gravação.
-            let removidos = 0;
+            // (CNPJ/telefone) contra esses. O modal só diz "sucesso" depois da gravação,
+            // e recebe o que de fato ficou vinculado.
+            let vinculados: WfLead[] = [];
+            let snapshot: EstadoProjeto = estadoRef.current;
             const salvo = await salvarProjetoAgora(projeto.id, async (remoto) => {
+              // par consistente por tentativa: estado local e base lidos no mesmo instante
               const local = estadoRef.current;
-              const conhecidos = new Set([...local.leads, ...baseRef.current.leads].map((l) => l.id));
+              const base = baseRef.current;
+              snapshot = local;
+              const conhecidos = new Set([...local.leads, ...base.leads].map((l) => l.id));
               const soNoBanco = remoto.leads.filter((l) => !conhecidos.has(l.id)).map((l) => l.id);
               const rev = await revalidarNovos(novos, soNoBanco);
-              removidos = rev.removidos;
-              return mesclarProjeto(local, { leads: remoto.leads, leadStatus: remoto.leadStatus ?? {} }, baseRef.current, rev.novos);
+              vinculados = rev.novos;
+              return mesclarProjeto(local, { leads: remoto.leads, leadStatus: remoto.leadStatus ?? {} }, base, rev.novos);
             });
-            baseRef.current = { leads: salvo.leads, leadStatus: salvo.leadStatus };
-            setLeads(salvo.leads);
-            setExecStatus(salvo.leadStatus);
+            // O que ESTA aba recebeu/mudou enquanto a gravação aguardava (ex.: job
+            // concluído via Realtime) não pode regredir: re-mescla o estado atual sobre
+            // o gravado, usando o snapshot enviado como base; diferenças seguem pelo autosave.
+            const confirmado: EstadoProjeto = { leads: salvo.leads, leadStatus: salvo.leadStatus };
+            baseRef.current = confirmado;
+            const final = mesclarProjeto(estadoRef.current, confirmado, snapshot, []);
+            setLeads(final.leads);
+            setExecStatus(final.leadStatus);
             setOpenF(0);
-            if (removidos) toast(`${removidos} lead(s) não entraram: outra aba acabou de adicionar o mesmo CNPJ/telefone neste projeto.`, { duration: 8000 });
+            return { vinculados, removidos: novos.length - vinculados.length };
           }}
         />
       )}
