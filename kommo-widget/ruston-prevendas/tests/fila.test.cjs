@@ -102,3 +102,23 @@ test('P1: liderança entre abas', () => {
   assert.equal(Fila.devoLiderar({ aba: 'b', ate: 500 }, 'a', 1000), true)       // expirou
   assert.equal(Fila.devoLiderar({ aba: 'a', ate: 5000 }, 'a', 1000), true)      // já é desta aba
 })
+
+test('verificação ao vivo: excluída, concluída ou de outro dono sai; válida ganha prazo/texto atuais', () => {
+  const tarefas = [{ id: 1, due: 10, texto: 'a' }, { id: 2, due: 20 }, { id: 3, due: 30 }, { id: 4, due: 40 }, { id: 5, due: 50 }]
+  const vivas = [
+    { id: 1, is_completed: false, responsible_user_id: 7, complete_till: 99, text: 'novo' },
+    { id: 2, is_completed: true, responsible_user_id: 7 },
+    { id: 3, is_completed: false, responsible_user_id: 8 },
+    // 4 não veio: excluída no Kommo
+  ]
+  const r = Fila.mesclarVerificacao(tarefas, [1, 2, 3, 4], vivas, 7)
+  assert.deepEqual([...r.invalidas].sort(), [2, 3, 4])
+  assert.deepEqual([...r.tarefas].map((t) => t.id), [1, 5])          // 5 não foi conferida: fica
+  assert.equal(r.tarefas[0].due, 99); assert.equal(r.tarefas[0].texto, 'novo'); assert.equal(r.tarefas[0].verificada, true)
+})
+
+test('marcas locais escondem tarefas até expirar', () => {
+  const t = [{ id: 1 }, { id: 2 }]
+  assert.deepEqual([...Fila.semMarcadas(t, { 1: 1000 }, 1500, 1000)].map((x) => x.id), [2])
+  assert.deepEqual([...Fila.semMarcadas(t, { 1: 1000 }, 2500, 1000)].map((x) => x.id), [1, 2])   // expirou
+})

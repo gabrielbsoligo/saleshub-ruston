@@ -301,3 +301,17 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
 - **Sem servidor:** modo degradado lê o Kommo pela sessão (paginado, respeita 429 e Retry-After) e ordena por vencimento, com aviso.
 - **Várias abas:** uma líder consulta; as outras usam o snapshot. Há variação aleatória no intervalo.
 - **A etapa do lead NÃO define o momento** (fica só como exibição). Um mapa explícito etapa → momento por pipeline fica como decisão do Gabriel.
+
+### Implementação, rodada 2 da revisão de código: limite da réplica e verificação ao vivo
+- **Limite declarado:** a réplica do Kommo reflete a **última sincronização**. Ela não confirma em tempo real o dono nem se a tarefa está aberta, e **não remove tarefas excluídas**. Além disso, o `kommo-sync` atual pode marcar `done` mesmo se a gravação em lote falhar. São dois bugs **pré-existentes** no sync, reportados ao Gabriel e ao Engenheiro do SalesHub, fora do escopo deste widget.
+- **Mitigação no widget (verificação ao vivo):** a cada ciclo, a aba líder confere no Kommo, pela sessão do SDR e numa única chamada, **as 20 primeiras** da fila (e a próxima futura).
+  - O que estiver excluído, concluído ou com outro dono sai e ganha uma marca local de 30 min, compartilhada entre as abas.
+  - O que estiver válido ganha prazo e texto atuais.
+  - A réplica decide **ordem e classificação**; o Kommo decide **se a tarefa existe, está aberta e é do usuário**.
+- **Concluir:** grava uma marca local compartilhada, para que a réplica atrasada não ressuscite a tarefa.
+- **Snapshot entre abas:**
+  - tem revisão própria por mutação;
+  - a idade dos dados (`dadosEm`) fica separada do estado da tentativa (`falha`);
+  - as abas seguidoras mostram a falha.
+- **429 e Retry-After:** viram uma pausa compartilhada entre as abas, inclusive com leitura parcial e no botão Atualizar. O modo degradado lê no máximo 4 páginas, a 1,5 s cada.
+- **Função SQL:** devolve um envelope JSON `{itens, total, truncado}`, imune ao `max_rows` do PostgREST.

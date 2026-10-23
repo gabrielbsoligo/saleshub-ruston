@@ -35,6 +35,8 @@ function ambiente() {
     clearTimeout: (h) => timers.delete(h),
   }
   ctx.window.Notification = undefined
+  // roteador do Kommo falso: navegar = mudar o caminho
+  ctx.AMOCRM = ctx.window.AMOCRM = { Router: { navigate: (p) => { ctx.location.pathname = p } } }
   let Widget
   ctx.define = (deps, f) => { Widget = f(ctx.$) }
   // jQuery falso: só $.ajax para a API do Kommo (modo degradado / PATCH)
@@ -142,4 +144,106 @@ test('segunda aba não consulta enquanto a líder estiver ativa (usa o snapshot)
   a.$authorizedAjax = () => { chamadas++; return { then() {} } }
   env.rodarTimers()
   assert.equal(chamadas, 0)
+})
+
+// ---- roteador do jQuery falso (API do Kommo pela sessão) ----
+function kommo(env, handler) {
+  env.ctx.__kommo = (o) => {
+    const r = handler(o) || { status: 0 }
+    const ok = r.status >= 200 && r.status < 300
+    return {
+      done(fn) { if (ok) fn(r.body, 'ok', { status: r.status }); return this },
+      fail(fn) { if (!ok) fn({ status: r.status, getResponseHeader: (h) => (r.headers || {})[h] ?? null }); return this },
+    }
+  }
+}
+const SNAP = 'rpv_snap_financeirorustonengenhariacombr_11420911'
+const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, complete_till: AGORA - 60, text: 't' + id })
+
+test('verificação ao vivo: tarefa excluída/reatribuída no Kommo some mesmo se a réplica ainda a tiver', () => {
+  const env = ambiente()
+  kommo(env, (o) => (o.url.includes('filter[id]') ? { status: 200, body: { _embedded: { tasks: [viva(1)] } } } : { status: 0 }))
+  const w = instanciar(env, [{ ok: true, tarefas: [tarefa(1), tarefa(2)], frescor: { atraso_s: 30, status: 'done' } }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const snap = JSON.parse(env.ctx.localStorage.getItem(SNAP))
+  assert.deepEqual(snap.tarefas.map((t) => t.id), [1])
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+test('concluir: a réplica atrasada (ainda com a tarefa aberta) não a ressuscita no ciclo seguinte', () => {
+  const env = ambiente()
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') return { status: 200, body: {} }
+    if (o.url.includes('filter[id]')) return { status: 200, body: { _embedded: { tasks: [viva(1), viva(2)] } } }   // verificação ainda "atrasada" também
+    return { status: 0 }
+  })
+  const resp = { ok: true, tarefas: [tarefa(1), tarefa(2)], frescor: { atraso_s: 30, status: 'done' } }
+  const w = instanciar(env, [resp, resp])
+  w.callbacks.init(); env.rodarTimers('t')
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  // abre o 1º (avancar) e conclui
+  clique({ target: { closest: () => ({ getAttribute: () => 'avancar' }) } })
+  assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+  clique({ target: { closest: () => ({ getAttribute: () => 'concluir' }) } })
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(SNAP)).tarefas.map((t) => t.id), [2])
+  env.rodarTimers('i')                                  // próximo ciclo com a réplica antiga [1,2]
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(SNAP)).tarefas.map((t) => t.id), [2])
+})
+
+test('outra aba recebe a mutação (revisão nova) e o estado de falha, preservando a idade dos dados', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, tarefas: [tarefa(1), tarefa(2)], frescor: { atraso_s: 1, status: 'done' } }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const storage = env.ouvintes.find((o) => o[0] === 'w:storage')[1]
+  // outra aba concluiu a tarefa 2 no mesmo segundo: mesma idade, revisão nova
+  const s = JSON.parse(env.ctx.localStorage.getItem(SNAP))
+  const dadosEm = s.dadosEm
+  s.tarefas = s.tarefas.filter((t) => t.id !== 2); s.rev = 'outra-rev'
+  env.ctx.localStorage.setItem(SNAP, JSON.stringify(s))
+  storage({ key: SNAP })
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+  // a líder (outra aba) registrou falha: esta aba mostra o aviso com a hora real dos dados
+  s.rev = 'falha-rev'; s.falha = { em: AGORA, msg: 'Não consegui atualizar a fila (503 / 0).' }
+  env.ctx.localStorage.setItem(SNAP, JSON.stringify(s))
+  storage({ key: SNAP })
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  clique({ target: { closest: () => ({ getAttribute: () => 'painel' }) } })
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Não consegui atualizar a fila/)
+  assert.equal(JSON.parse(env.ctx.localStorage.getItem(SNAP)).dadosEm, dadosEm)
+})
+
+test('destroy com requisição pendente não trava o próximo init', () => {
+  const env = ambiente()
+  const w = instanciar(env, [])
+  let chamadas = 0; const pendentes = []
+  w.$authorizedAjax = () => { chamadas++; return { then: (ok) => { pendentes.push(ok) } } }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(chamadas, 1)
+  w.callbacks.destroy()
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(chamadas, 2)                              // novo ciclo saiu
+  pendentes[0]({ ok: true, tarefas: [tarefa(9)] })     // resposta ANTIGA (antes do destroy) chega depois: ignorada
+  assert.equal(env.ctx.localStorage.getItem(SNAP), null)
+})
+
+test('429 com Retry-After numa página posterior pausa todas as abas (inclusive o Atualizar)', () => {
+  const env = ambiente()
+  const pagina1 = Array.from({ length: 250 }, (_, i) => ({ id: i + 1, entity_type: 'leads', entity_id: i + 1, complete_till: AGORA - 60 }))
+  let gets = 0
+  kommo(env, (o) => {
+    if (!o.url.includes('responsible_user_id')) return { status: 0 }
+    gets++
+    return o.url.includes('page=1') ? { status: 200, body: { _embedded: { tasks: pagina1 } } } : { status: 429, headers: { 'Retry-After': '120' } }
+  })
+  const w = instanciar(env, [{ erro: 'falha_banco', status: 503 }])
+  w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('t')                 // página 1, depois página 2 (429)
+  const pausa = JSON.parse(env.ctx.localStorage.getItem('rpv_pausa_financeirorustonengenhariacombr_11420911'))
+  assert.ok(pausa > Date.now() + 100 * 1000)
+  assert.equal(JSON.parse(env.ctx.localStorage.getItem(SNAP)).tarefas.length, 250)   // parcial publicado, com aviso
+  const antes = gets
+  env.rodarTimers('i')
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  clique({ target: { closest: () => ({ getAttribute: () => 'atualizar' }) } })
+  assert.equal(gets, antes)                              // nem o ciclo nem o Atualizar furam a pausa
 })

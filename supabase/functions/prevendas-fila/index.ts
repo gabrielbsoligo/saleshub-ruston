@@ -2,6 +2,8 @@
 // POST (sem corpo) com header X-Auth-Token (JWT descartável do Kommo via self.$authorizedAjax).
 // Resposta: { ok, tarefas: [...classificadas], parcial, frescor: {atraso_s, status} }
 //
+// LIMITE: a réplica reflete a última sincronização (não o dono/abertura em tempo real) e não remove
+// tarefas excluídas — o widget confere no Kommo o topo da fila antes de oferecer (verificação ao vivo).
 // Desenho (rev. após revisão do Vedor): o servidor NÃO recebe ids do navegador nem chama a API do Kommo.
 // Lê da RÉPLICA (kommo.tasks/leads/stages, sincronizada a cada ~1–2 min) as tarefas ABERTAS do PRÓPRIO
 // usuário autenticado (função SQL public.prevendas_fila, migration_160), e classifica com o módulo puro.
@@ -57,7 +59,10 @@ Deno.serve(async (req) => {
   let tiposMomento: Record<number, Momento> = {}
   try { tiposMomento = JSON.parse(Deno.env.get('PREVENDAS_TIPOS_MOMENTO') ?? '{}') } catch { tiposMomento = {} }
 
-  const linhas = (fila.data ?? []) as any[]
+  // envelope jsonb {itens,total,truncado}: imune ao max_rows do PostgREST (não é 'returns table')
+  const env = (fila.data ?? {}) as { itens?: any[]; total?: number; truncado?: boolean }
+  if (!Array.isArray(env.itens)) return json({ erro: 'falha_banco' }, 503, origin)
+  const linhas = env.itens
   const tarefas = linhas.map((r) => {
     const lead = r.entity_type === 'leads' ? { etapa: r.etapa ?? null, origem: r.origem ?? null } : null
     const c = classificar({ id: Number(r.task_id), task_type_id: r.task_type_id == null ? null : Number(r.task_type_id), text: r.texto }, r.slot ?? null, lead, tiposMomento)
@@ -68,11 +73,12 @@ Deno.serve(async (req) => {
       ...c,
     }
   })
-  const f = (fres.data ?? [])[0] ?? null
+  const f = (fres.data && typeof fres.data === 'object' && 'status' in (fres.data as any)) ? fres.data as any : null
   return json({
     ok: true,
     tarefas,
-    parcial: linhas.length >= LIMITE,
+    parcial: !!env.truncado,
+    total: Number(env.total ?? linhas.length),
     frescor: f ? { atraso_s: Number(f.atraso_s), status: f.status, erro: f.erro ? 'sync_com_erro' : null } : { atraso_s: null, status: 'desconhecido', erro: null },
   }, 200, origin)
 })
