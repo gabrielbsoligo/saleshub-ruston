@@ -350,8 +350,13 @@ export interface RoletaStatusRow {
   atende_canal?: boolean;
 }
 
-/** Canais que NÃO contam ponto no rodízio de closers (roleta_config.canais_sem_ponto; padrão recomendação). */
-export const ROLETA_CANAIS_SEM_PONTO_PADRAO: LeadCanal[] = ['recomendacao'];
+/** Capacidade do rodízio por canal, lida do banco (migration_156). legado = schema antigo, sem canais. */
+export interface RoletaCapacidade {
+  modo: 'canal' | 'legado' | 'indisponivel';
+  /** roleta_config.canais_sem_ponto efetivo (vazio no legado: tudo pontua). */
+  canaisSemPonto: string[];
+}
+export const ROLETA_CAPACIDADE_LEGADO: RoletaCapacidade = { modo: 'legado', canaisSemPonto: [] };
 /** O closer atende este canal? (canais null/vazio = todos) */
 export const roletaAtendeCanal = (r: { canais?: LeadCanal[] | null }, canal: LeadCanal | string | null | undefined) =>
   !r.canais || r.canais.length === 0 || !canal || r.canais.includes(canal as LeadCanal);

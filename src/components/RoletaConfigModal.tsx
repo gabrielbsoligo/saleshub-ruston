@@ -3,7 +3,7 @@ import { X, RotateCcw, Repeat } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAppStore } from "../store";
 import { supabase } from "../lib/supabase";
-import { CANAL_LABELS, ROLETA_CANAIS_SEM_PONTO_PADRAO, type LeadCanal, type RoletaCloser } from "../types";
+import { CANAL_LABELS, type LeadCanal, type RoletaCloser } from "../types";
 
 const CANAIS: LeadCanal[] = Object.keys(CANAL_LABELS) as LeadCanal[];
 
@@ -13,9 +13,12 @@ interface Props {
 }
 
 export const RoletaConfigModal: React.FC<Props> = ({ open, onClose }) => {
-  const { members, roleta, roletaReset, roletaSetAtivo, updateRoletaOrdem, roletaSetCanais } = useAppStore();
+  const { members, roleta, roletaCapacidade, roletaReset, roletaSetAtivo, updateRoletaOrdem, roletaSetCanais } = useAppStore();
   const [rows, setRows] = useState<RoletaCloser[]>([]);
   const [loading, setLoading] = useState(false);
+  const [salvandoCanais, setSalvandoCanais] = useState<string | null>(null); // closer com RPC de canais em voo
+  const comCanal = roletaCapacidade.modo !== 'legado';
+  const semPonto = roletaCapacidade.canaisSemPonto;
 
   // Todos os closers elegíveis (role closer/gestor, ativos no time)
   const closers = useMemo(
@@ -54,14 +57,24 @@ export const RoletaConfigModal: React.FC<Props> = ({ open, onClose }) => {
     fetchRows();
   };
 
-  // Canais que o closer atende: lista vazia/null = todos. Clicar num chip alterna.
+  // Canais que o closer atende: lista vazia/null = todos. Clicar num chip alterna. Enquanto a
+  // RPC de um closer está em voo, os chips dele ficam travados (dois cliques rápidos partiam do
+  // mesmo snapshot e o segundo desfazia o primeiro); o estado local é atualizado na hora.
   const handleCanal = async (memberId: string, canal: LeadCanal) => {
+    if (salvandoCanais) return;
     const atuais = cfgByMember.get(memberId)?.canais ?? [];
     const base = atuais.length ? atuais : CANAIS; // "todos" vira lista explícita ao tirar um
     const next = base.includes(canal) ? base.filter((c) => c !== canal) : [...base, canal];
     if (!next.length) { toast.error("O closer precisa atender pelo menos um canal (ou tire-o do rodízio)."); return; }
-    await roletaSetCanais(memberId, next.length === CANAIS.length ? [] : next);
-    fetchRows();
+    setSalvandoCanais(memberId);
+    try {
+      const gravar = next.length === CANAIS.length ? [] : next;
+      setRows((prev) => prev.map((r) => (r.member_id === memberId ? { ...r, canais: gravar.length ? gravar : null } : r)));
+      await roletaSetCanais(memberId, gravar);
+      await fetchRows();
+    } finally {
+      setSalvandoCanais(null);
+    }
   };
 
   const handleReset = async () => {
@@ -130,19 +143,20 @@ export const RoletaConfigModal: React.FC<Props> = ({ open, onClose }) => {
                     />
                   </div>
                   {/* Canais que atende (chip aceso = atende) + recebidas no ciclo por canal */}
-                  {ativo && (
+                  {ativo && comCanal && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {CANAIS.map((c) => {
                         const on = atende(c);
                         const n = porCanal[c] ?? 0;
-                        const semPonto = ROLETA_CANAIS_SEM_PONTO_PADRAO.includes(c);
+                        const naoPontua = semPonto.includes(c);
+                        const travado = salvandoCanais === m.id;
                         return (
-                          <button key={c} onClick={() => handleCanal(m.id, c)}
-                            title={`${on ? "Atende" : "Não atende"} ${CANAL_LABELS[c]}${semPonto ? " (não pontua)" : ""} · ${n} no ciclo`}
-                            className={`px-1.5 py-0.5 rounded text-[10px] border transition ${
+                          <button key={c} onClick={() => handleCanal(m.id, c)} disabled={travado}
+                            title={`${on ? "Atende" : "Não atende"} ${CANAL_LABELS[c]}${naoPontua ? " (não pontua)" : ""} · ${n} no ciclo`}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border transition disabled:opacity-40 ${
                               on ? "border-[var(--color-v4-red)]/60 bg-[var(--color-v4-red)]/10 text-white" : "border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] opacity-50 line-through"
                             }`}>
-                            {CANAL_LABELS[c]}{n ? <span className="ml-1 opacity-70">{n}</span> : null}{semPonto && on ? <span className="ml-0.5 opacity-60">∅</span> : null}
+                            {CANAL_LABELS[c]}{n ? <span className="ml-1 opacity-70">{n}</span> : null}{naoPontua && on ? <span className="ml-0.5 opacity-60">∅</span> : null}
                           </button>
                         );
                       })}
@@ -158,7 +172,9 @@ export const RoletaConfigModal: React.FC<Props> = ({ open, onClose }) => {
 
         <div className="px-5 py-4 border-t border-[var(--color-v4-border)] flex items-center justify-between">
           <p className="text-[10px] text-[var(--color-v4-text-muted)] max-w-[60%]">
-            O próximo é sempre quem tem menos reuniões entre os que atendem o canal do lead. Recomendação (∅) aparece na conta por canal, mas não pontua.
+            {comCanal
+              ? `O próximo é quem tem menos reuniões entre os que atendem o canal do lead. ${semPonto.length ? `${semPonto.map((c) => (CANAL_LABELS as Record<string, string>)[c] ?? c).join(", ")} (∅) não pontua e é distribuído à parte.` : "Todos os canais pontuam."}`
+              : "O próximo é sempre quem tem menos reuniões. Furar a ordem rebalanceia sozinho."}
           </p>
           <button onClick={handleReset}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-v4-surface)] border border-[var(--color-v4-border)] hover:border-[var(--color-v4-red)] text-white text-xs">

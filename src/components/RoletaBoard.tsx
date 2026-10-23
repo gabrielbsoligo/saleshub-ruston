@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Repeat, ChevronDown, ChevronRight, PauseCircle, Power, CheckCircle2, XCircle, CircleDot } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAppStore } from "../store";
-import { CANAL_LABELS, ROLETA_CANAIS_SEM_PONTO_PADRAO, type RoletaStatusRow } from "../types";
+import { CANAL_LABELS, type RoletaStatusRow } from "../types";
 import { RoletaPanelSdr } from "./RoletaPanelSdr";
 
 const KOMMO_BASE = "https://financeirorustonengenhariacombr.kommo.com";
@@ -25,8 +25,10 @@ type LogRow = { reuniao_id: string | null; closer_id: string | null;
 const rotuloCanal = (c: string | null | undefined) => (c && (CANAL_LABELS as Record<string, string>)[c]) || c || "—";
 
 const RoletaBoardCloser: React.FC = () => {
-  const { currentUser } = useAppStore();
+  const { currentUser, roletaCapacidade } = useAppStore();
   const isGestor = currentUser?.role === "gestor";
+  const comCanal = roletaCapacidade.modo !== "legado";
+  const semPonto = roletaCapacidade.canaisSemPonto;
   const [rows, setRows] = useState<CloserRow[]>([]);
   const [log, setLog] = useState<LogRow[]>([]);
   const [empresas, setEmpresas] = useState<Record<string, string>>({});
@@ -34,10 +36,19 @@ const RoletaBoardCloser: React.FC = () => {
   const [toggling, setToggling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    let { data: status, error: stErr } = await supabase.rpc("get_roleta_status_canal"); // + canais e quebra por canal (migration_156)
-    if (stErr) ({ data: status } = await supabase.rpc("get_roleta_status"));
+    // Schema novo (migration_156) ou legado: as colunas canais/canal só existem no novo. O store
+    // já decidiu o modo em fetchRoleta (roletaCapacidade); aqui só segue a mesma decisão.
+    let status: RoletaStatusRow[] | null = null;
+    if (comCanal) {
+      const r = await supabase.rpc("get_roleta_status_canal");
+      if (r.error) { console.error("get_roleta_status_canal:", r.error.message); return; } // mantém a tela anterior
+      status = r.data as RoletaStatusRow[];
+    } else {
+      const r = await supabase.rpc("get_roleta_status");
+      status = (r.data || []) as RoletaStatusRow[];
+    }
     const [{ data: closers }, { data: cfg }] = await Promise.all([
-      supabase.from("roleta_closers").select("member_id, ativo, ordem, canais, team_members(name)"),
+      supabase.from("roleta_closers").select(comCanal ? "member_id, ativo, ordem, canais, team_members(name)" : "member_id, ativo, ordem, team_members(name)"),
       supabase.from("roleta_config").select("reset_ts").eq("id", true).maybeSingle(),
     ]);
     const st = (status || []) as RoletaStatusRow[];
@@ -64,10 +75,10 @@ const RoletaBoardCloser: React.FC = () => {
     const reset = cfg?.reset_ts;
     if (reset) {
       const { data: lg } = await supabase.from("roleta_closer_log")
-        .select("reuniao_id, closer_id, evento, ciclo_ts, created_at, canal")
+        .select(comCanal ? "reuniao_id, closer_id, evento, ciclo_ts, created_at, canal" : "reuniao_id, closer_id, evento, ciclo_ts, created_at")
         .gte("ciclo_ts", reset).neq("evento", "reset")
         .order("created_at", { ascending: false });
-      const rowsLg = (lg || []) as LogRow[];
+      const rowsLg = (lg || []) as unknown as LogRow[];
       setLog(rowsLg);
       const rids = [...new Set(rowsLg.map(l => l.reuniao_id).filter(Boolean))] as string[];
       if (rids.length) {
@@ -79,7 +90,7 @@ const RoletaBoardCloser: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, comCanal]);
 
   const toggleAtivo = async (memberId: string, novoAtivo: boolean) => {
     setToggling(memberId);
@@ -172,8 +183,8 @@ const RoletaBoardCloser: React.FC = () => {
                   {/* por canal no ciclo (∅ = canal que não pontua, ex.: recomendação) */}
                   <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-1 flex flex-wrap gap-x-2">
                     {Object.entries(r.por_canal as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([c, n]) => (
-                      <span key={c} title={ROLETA_CANAIS_SEM_PONTO_PADRAO.includes(c as any) ? "não pontua" : "pontua"}>
-                        <span className="text-white">{n}</span> {rotuloCanal(c)}{ROLETA_CANAIS_SEM_PONTO_PADRAO.includes(c as any) ? "∅" : ""}
+                      <span key={c} title={semPonto.includes(c) ? "não pontua" : "pontua"}>
+                        <span className="text-white">{n}</span> {rotuloCanal(c)}{semPonto.includes(c) ? "∅" : ""}
                       </span>
                     ))}
                     {r.canais && r.canais.length > 0 && <span className="opacity-70">· atende: {r.canais.map(rotuloCanal).join(", ")}</span>}
@@ -208,7 +219,9 @@ const RoletaBoardCloser: React.FC = () => {
           <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">
             O balanço conta as reuniões <span className="text-emerald-400">realizadas</span> (marcadas menos <span className="text-red-400">no-show</span>).
             Distribui na hora por marcada; quando dá no-show, sai da conta e o closer volta a receber até emparelhar. Total do pill = realizadas líquidas do ciclo.
-            Reuniões de <span className="text-white">recomendação</span> (∅) aparecem por canal, mas não pontuam; cada closer só é "próximo" nos canais que atende (configurar em Reuniões → Rodízio).
+            {comCanal && (semPonto.length
+              ? <>Reuniões de <span className="text-white">{semPonto.map(rotuloCanal).join(", ")}</span> (∅) aparecem por canal, mas não pontuam e são distribuídas à parte; cada closer só é "próximo" nos canais que atende (configurar em Reuniões → Rodízio).</>
+              : <>Todos os canais pontuam; cada closer só é "próximo" nos canais que atende (configurar em Reuniões → Rodízio).</>)}
           </div>
         </div>
       )}
