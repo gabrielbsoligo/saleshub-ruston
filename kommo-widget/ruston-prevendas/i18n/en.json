@@ -1,0 +1,20 @@
+{
+  "widget": {
+    "name": "Ruston Pre-sales",
+    "description": "Single SDR widget: task alerts and a NEXT button ordered by moment, lead source and due time.",
+    "short_description": "Task alerts + ordered NEXT button."
+  },
+  "settings": {
+    "endpoint": "Endereço do classificador (SalesHub). Ex.: https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/prevendas-classificar",
+    "usuarios": "IDs de usuário do Kommo que veem o widget, separados por vírgula. Vazio = todos. (Em teste: só o Gabriel.)",
+    "position": "Posição: bottom-right (padrão), bottom-left, top-right ou top-left",
+    "offset": "Distância da borda em pixels (padrão 96)",
+    "poll_seconds": "Atualização da fila em segundos (mínimo 15, padrão 45)",
+    "antecedencia_min": "Minutos antes do vencimento em que a tarefa entra na fila (padrão 10)",
+    "outbound_apos": "Horário a partir do qual a prospecção outbound entra na fila (padrão 16:00). Antes disso, só se não houver mais nada.",
+    "grupos": "Ordem dos grupos de origem: G1 Indicação, G2 Inbound, G3 Base própria, G4 Leadbroker, G5 Outbound, G9 Sem origem (padrão G1,G2,G3,G4,G5,G9)",
+    "sound": "Som no aviso de tarefa? Y ou N (padrão Y)",
+    "lookahead_min": "Avisar tarefas que vencem nos próximos X minutos (padrão 15)",
+    "atalho": "Atalho Alt+N para o próximo? Y ou N (padrão Y)"
+  }
+}
