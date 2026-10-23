@@ -108,3 +108,15 @@ test('marcas locais escondem tarefas até expirar', () => {
   assert.deepEqual([...Fila.semMarcadas(t, { 1: 1000 }, 1500, 1000)].map((x) => x.id), [2])
   assert.deepEqual([...Fila.semMarcadas(t, { 1: 1000 }, 2500, 1000)].map((x) => x.id), [1, 2])   // expirou
 })
+
+test('regras de frescor: leitura só substitui se for mais nova; falha só sai com leitura posterior', () => {
+  assert.equal(Fila.leituraMaisNova(100, 0), true)
+  assert.equal(Fila.leituraMaisNova(100, 100), false)
+  assert.equal(Fila.leituraMaisNova(99, 100), false)
+  assert.equal(Fila.leituraMaisNova(101, 100), true)
+  const f = { em: 200, msg: 'x' }
+  assert.equal(Fila.falhaApos(f, 150), f)
+  assert.equal(Fila.falhaApos(f, 200), f)
+  assert.equal(Fila.falhaApos(f, 201), null)
+  assert.equal(Fila.falhaApos(null, 1), null)
+})

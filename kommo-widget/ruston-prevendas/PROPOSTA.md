@@ -352,3 +352,9 @@ Conferir um lote limitado em cima de uma réplica não confiável gerava casos s
 - **Origem pendente** tem etiqueta própria ("prioridade provisória"), distinta de "origem não informada".
 - **Dedup por id** depois da paginação: fica a versão com `updated_at` maior.
 - A edge passou no type-check do Deno (`deno check`).
+
+### Implementação, rodada 6 da revisão de código
+- Uma leitura só substitui os dados se for **estritamente mais nova** (`Fila.leituraMaisNova`), com ou sem falha registrada. Vale para o servidor e para o degradado (início da leitura).
+- A falha só é limpa por uma leitura **posterior** a ela (`Fila.falhaApos`): cache de antes da falha não comprova recuperação.
+- Notificação só sai com dados recentes **e** sem falha, no líder e nas seguidoras.
+- Testes cobrem, depois de uma falha: cache 30 s mais velho (dentro de 3 ciclos), cache com o mesmo `gerado_em` e leitura posterior. Em cada caso conferem falha, `dadosEm`, ids e ações.

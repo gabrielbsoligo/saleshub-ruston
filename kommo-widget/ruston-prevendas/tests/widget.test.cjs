@@ -56,7 +56,9 @@ function instanciar(env, respostas, settings = {}) {
   w.params = { cdn_path: '/w' }
   let n = 0
   w.$authorizedAjax = () => {
-    const r = respostas[Math.min(n++, respostas.length - 1)]
+    const idx = Math.min(n++, respostas.length - 1)
+    // como o servidor real: toda leitura ok traz gerado_em; nos testes, carimbo crescente se o caso não definir
+    const r = respostas[idx] && respostas[idx].ok && respostas[idx].gerado_em == null ? { ...respostas[idx], gerado_em: AGORA + n } : respostas[idx]
     return { then: (ok, err) => (r.erro ? err({ status: r.status || 401, responseJSON: { erro: r.erro } }) : ok(r)) }
   }
   return w
@@ -323,4 +325,31 @@ test('P4: origem pendente tem etiqueta própria (não "origem não informada")',
   const html = env.elems['rpv-root'].innerHTML
   assert.equal((html.match(/>origem pendente</g) || []).length, 1)
   assert.equal((html.match(/>origem não informada</g) || []).length, 1)
+})
+
+// ---- frescor depois de falha: resposta igual/anterior não substitui nem limpa a falha ----
+function cenarioFalha(terceira) {
+  const env = ambiente()
+  const w = instanciar(env, [
+    { ok: true, itens: [tarefa(1), tarefa(2)], gerado_em: AGORA },       // leitura atual
+    { erro: 'falha_banco', status: 503 },                                // refresh falha (servidor + Kommo)
+    terceira,
+  ])
+  w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('i'); env.rodarTimers('i')
+  return { env, snap: JSON.parse(env.ctx.localStorage.getItem(SNAP)) }
+}
+test('após falha: cache ANTERIOR (−30 s, ainda dentro de 3 ciclos) é ignorado — falha, dadosEm, ids e ações preservados', () => {
+  const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(9)], em_andamento: true, gerado_em: AGORA - 30 })
+  assert.ok(snap.falha); assert.equal(snap.dadosEm, AGORA); assert.deepEqual(snap.itens.map((t) => t.id), [1, 2])
+  assert.match(env.elems['rpv-root'].innerHTML, /rpv-pill off/)
+})
+test('após falha: cache com o MESMO gerado_em também é ignorado', () => {
+  const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(9)], em_andamento: true, gerado_em: AGORA })
+  assert.ok(snap.falha); assert.equal(snap.dadosEm, AGORA); assert.deepEqual(snap.itens.map((t) => t.id), [1, 2])
+  assert.match(env.elems['rpv-root'].innerHTML, /rpv-pill off/)
+})
+test('após falha: só uma leitura POSTERIOR à falha limpa a falha e reabilita as ações', () => {
+  const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(3)], gerado_em: Math.floor(Date.now() / 1000) + 5 })
+  assert.equal(snap.falha, null); assert.deepEqual(snap.itens.map((t) => t.id), [3])
+  assert.match(env.elems['rpv-root'].innerHTML, /data-act="avancar"/)
 })

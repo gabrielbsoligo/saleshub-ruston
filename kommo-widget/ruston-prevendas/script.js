@@ -108,6 +108,12 @@
       return !lock || !lock.aba || lock.ate < agoraMs || lock.aba === aba;
     }
 
+    /** Só uma leitura estritamente mais nova que os dados atuais pode substituí-los. */
+    function leituraMaisNova(lidoEm, dadosEm) { return !dadosEm || (lidoEm > dadosEm); }
+
+    /** A falha continua até chegar uma leitura POSTERIOR a ela (mesmo segundo ou antes não conta). */
+    function falhaApos(falha, lidoEm) { return falha && !(lidoEm > falha.em) ? falha : null; }
+
     /** Remove tarefas marcadas localmente (concluídas/invalidadas) enquanto a marca vale (ttl ms). */
     function semMarcadas(tarefas, marcas, agoraMs, ttlMs) {
       return tarefas.filter(function (t) { var m = marcas[t.id]; return !(m && agoraMs - m < ttlMs); });
@@ -123,7 +129,7 @@
     return {
       ordenar: ordenar, nivel: nivel, minutos: minutos, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
-      semMarcadas: semMarcadas, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
+      semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
     };
   })();
 
@@ -280,18 +286,20 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
-            if (r.gerado_em && state.dadosEm && r.gerado_em < state.dadosEm && !state.falha) { state.carregando = false; return; }   // resposta mais velha que a atual: ignora
+            if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] }, r.gerado_em || 0);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
           if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
+          var inicioLeitura = agoraS();
           lerKommo(g, function (e2, lista, parcial) {
             if (!vivo(g)) return;
+            if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
             publicar({ itens: lista.map(deKommo), modo: 'degradado',
-                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial });
+                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, inicioLeitura);
           });
         });
       }
@@ -299,10 +307,11 @@
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
       // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
       function publicar(snap, lidoEm) {
-        snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS(); snap.falha = null;
+        snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
+        snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
         lsSet('snap', snap); aplicar(snap);
-        if (dadosRecentes()) notificar(true); else state.notif = [];   // dados vencidos: sem notificações
+        if (dadosRecentes() && !state.falha) notificar(true); else state.notif = [];
         render();
       }
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
@@ -320,7 +329,7 @@
       }
       function carregarSnapshot() {
         var s = lsGet('snap', null);
-        if (s && s.rev !== state.rev) { aplicar(s); if (dadosRecentes()) notificar(false); else state.notif = []; render(); }
+        if (s && s.rev !== state.rev) { aplicar(s); if (dadosRecentes() && !state.falha) notificar(false); else state.notif = []; render(); }
       }
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
