@@ -33,25 +33,34 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 
 ## Como a edge se protege
 
+- **Trabalho durável**: cada webhook vira uma linha em `autoresposta_trabalho` ANTES de qualquer
+  leitura no Kommo; leitura que falha ou evento ainda não visível deixam o trabalho pendente e o
+  cron o retoma (até 5 tentativas).
 - **Identidade por mensagem**: 1 linha em `autoresposta_triagem` por evento `incoming_chat_message`
-  do Kommo (`UNIQUE (kommo_lead_id, mensagem_id)`), não por texto. O texto vem do campo que o bot
-  gravou (último valor); mensagens novas geram linhas novas.
-- **Decisão ≠ efeito**: `classificacao` (decisão) e `estado_efeito` (pendente → em_andamento →
-  aplicado | observado | superado | falhou). Antes de qualquer efeito: **claim atômico** (RPC
-  `autoresposta_claim`, lease de 90 s) e **releitura do lead** (funil ligado, mesma etapa de origem,
-  etapa dentro de `etapas_origem`). Pendência superada por humano/outro fluxo não move nada.
+  do Kommo (`UNIQUE (kommo_lead_id, mensagem_id)`), não por texto. Toda mensagem nova ganha linha;
+  a mais recente recebe o texto do campo e é decidida; as anteriores sem texto ficam `superado`.
+- **Decisão ≠ efeito**: `classificacao` (decisão, imutável depois do claim) e `estado_efeito`
+  (pendente → em_andamento → aplicado | observado | superado | falhou). Antes de qualquer efeito:
+  **claim atômico com token** (RPC `autoresposta_claim`, lease de 300 s renovada entre chamadas) e
+  **releitura de config e lead** (funil ligado, modo, mesma etapa de origem, etapa em
+  `etapas_origem`). Toda gravação do efeito é condicional ao token; fases gravadas
+  (`status_enviando`, `tag_ok`, `nota_enviando`): a nota leva o marcador `[triagem:<mensagem>]` e,
+  após resposta ambígua, é reconciliada pela listagem de notas em vez de repetida.
 - **Leitura que falha nunca decide**: campo, eventos, padrões ou config indisponíveis → 503 e/ou
   pendência que a varredura retoma (até 5 tentativas). Texto vazio fica pendente e, após as
   tentativas, vale como mídia (humano).
-- **Kommo**: timeout 15 s, retentativa com backoff em 429/5xx/rede, ritmo ≥200 ms entre chamadas,
-  varredura em lotes de 40 e parada no primeiro 429.
+- **Kommo**: ritmo por CONTA (RPC `autoresposta_reservar`: 1 slot/200 ms compartilhado entre
+  webhooks e cron), timeout 15 s, `Retry-After` respeitado, backoff em 429/5xx/rede só para GET;
+  POST/PATCH ambíguos não se repetem às cegas; varredura em lotes de 40 e parada no primeiro 429.
+- **Formato**: resposta 200 com envelope inesperado, campo inexistente ou regex inválida ativa são
+  falha recuperável (503 + pendência), nunca evidência de "sem disparo"/"sem padrão".
 - **Dados pessoais**: `autoresposta_triagem` só é legível por gestor; padrões/config por membros
   ativos (edição só gestor); anon sem acesso; RPCs só `service_role`.
 
 ## Implantação (ordem; nada disso foi feito ainda)
 
 1. **Migration 157** (`supabase/migration_157_autoresposta_triagem.sql`) — aditiva; cria as 3
-   tabelas, 23 padrões, config dos 2 funis (inativos, modo observar, etapas de disparo elegíveis),
+   tabelas (padrões, config, triagem, trabalho, ritmo), 23 padrões, config dos 2 funis (inativos, modo observar, etapas de disparo elegíveis),
    RPCs e cron da varredura (dispara só com funil ativo e pendência).
 2. **Segredo**: gerar um valor aleatório e gravar em `integracao_config` (`key = autoresposta_secret`)
    e no secret da edge `KOMMO_AUTORESPOSTA_SECRET`. Nunca no repo.
@@ -77,8 +86,8 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 
 ## Teste (antes de ligar em produção)
 
-- `deno test --allow-read supabase/functions/kommo-autoresposta/triagem_test.ts` (10 casos, lê os
-  padrões do SQL) e `deno check supabase/functions/kommo-autoresposta/index.ts`.
+- `deno test --allow-read supabase/functions/kommo-autoresposta/` (27 casos: regras puras com os
+  padrões lidos do SQL + fluxo completo com repositório/Kommo falsos) e `deno check …/index.ts`.
 - Com a edge no ar e `modo = observar`, três leads de teste no funil:
   "Mensagem automática: fora do horário de atendimento" → `autoresposta`, estado `observado`;
   "Oi, pode falar" → `humano`, `observado`; "ok" em ≤60 s → `indeterminado`; sem 2ª mensagem, a
@@ -93,5 +102,5 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 Desligar: `UPDATE autoresposta_config SET ativo = false;` — a varredura marca as pendências como
 superadas e nada mais é aplicado; reativar o gatilho antigo no Kommo. Movimentos já feitos ficam em
 `autoresposta_triagem` (`status_id_origem` → `movido_para`, `resolvido_em`) para reversão seletiva;
-tags/notas em leads marcados como autoresposta idem. Banco: DROP das 3 tabelas e das 2 funções +
+tags/notas em leads marcados como autoresposta idem. Banco: DROP das 5 tabelas e das 4 funções +
 `SELECT cron.unschedule('autoresposta-varrer')`.

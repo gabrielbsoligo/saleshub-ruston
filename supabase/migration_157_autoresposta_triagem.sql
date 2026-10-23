@@ -15,7 +15,7 @@
 -- Modelo: 1 linha por MENSAGEM (identidade = id do evento incoming do Kommo), com DECISÃO
 -- (classificacao) separada do EFEITO (estado_efeito, com claim/lease). Textos são dado pessoal:
 -- leitura só para GESTOR. ADITIVA e idempotente. Reverter: DROP das 3 tabelas e das 2 funções
--- + cron.unschedule('autoresposta-varrer'); movimentos já feitos ficam registrados em
+-- (5 tabelas, 4 funções) + cron.unschedule('autoresposta-varrer'); movimentos já feitos ficam registrados em
 -- autoresposta_triagem (status_id_origem → movido_para) para reversão seletiva.
 
 -- 1) Padrões (regex em semântica JAVASCRIPT — a edge usa new RegExp; use \b, nunca \y —,
@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS public.autoresposta_triagem (
   modo              TEXT NOT NULL DEFAULT 'observar',
   estado_efeito     TEXT NOT NULL DEFAULT 'pendente' CHECK (estado_efeito IN ('pendente','em_andamento','aplicado','observado','superado','falhou')),
   lease_ate         TIMESTAMPTZ,                   -- claim do worker que está aplicando
+  claim_token       UUID,                          -- posse: toda gravação do efeito é condicional ao token
+  efeito_fase       TEXT,                          -- status_enviando | tag_enviando | tag_ok | nota_enviando | concluido
   tentativas        INTEGER NOT NULL DEFAULT 0,
   motivo_efeito     TEXT,
   movido            BOOLEAN NOT NULL DEFAULT false,
@@ -143,6 +145,34 @@ DROP POLICY IF EXISTS autoresposta_triagem_gestor ON public.autoresposta_triagem
 CREATE POLICY autoresposta_triagem_gestor ON public.autoresposta_triagem FOR SELECT TO authenticated
   USING (get_user_role() IS NOT DISTINCT FROM 'gestor');
 
+-- 3b) Trabalho = um webhook (ou retomada) por lead, gravado ANTES de qualquer leitura no Kommo:
+--     se a leitura falhar ou o evento ainda não estiver visível, fica pendente e o cron retoma.
+CREATE TABLE IF NOT EXISTS public.autoresposta_trabalho (
+  id             BIGSERIAL PRIMARY KEY,
+  kommo_lead_id  BIGINT NOT NULL,
+  estado         TEXT NOT NULL DEFAULT 'pendente' CHECK (estado IN ('pendente','concluido','descartado')),
+  tentativas     INTEGER NOT NULL DEFAULT 0,
+  erro           TEXT,
+  criado_em      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS autoresposta_trabalho_pend_idx ON public.autoresposta_trabalho (criado_em) WHERE estado = 'pendente';
+ALTER TABLE public.autoresposta_trabalho ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.autoresposta_trabalho FROM anon, PUBLIC;
+GRANT SELECT ON public.autoresposta_trabalho TO authenticated;
+DROP POLICY IF EXISTS autoresposta_trabalho_gestor ON public.autoresposta_trabalho;
+CREATE POLICY autoresposta_trabalho_gestor ON public.autoresposta_trabalho FOR SELECT TO authenticated
+  USING (get_user_role() IS NOT DISTINCT FROM 'gestor');
+
+-- 3c) Ritmo por CONTA do Kommo: um slot a cada N ms, compartilhado entre webhooks e cron.
+CREATE TABLE IF NOT EXISTS public.autoresposta_ritmo (
+  id        BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  proxima_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO public.autoresposta_ritmo (id) VALUES (true) ON CONFLICT (id) DO NOTHING;
+ALTER TABLE public.autoresposta_ritmo ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.autoresposta_ritmo FROM anon, PUBLIC, authenticated;
+
 -- 4) Funções da edge (só service_role)
 CREATE OR REPLACE FUNCTION public.autoresposta_padrao_acerto(p_id integer)
 RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
@@ -152,20 +182,49 @@ REVOKE EXECUTE ON FUNCTION public.autoresposta_padrao_acerto(integer) FROM PUBLI
 GRANT  EXECUTE ON FUNCTION public.autoresposta_padrao_acerto(integer) TO service_role;
 
 -- Claim atômico do EFEITO de uma linha: só um worker (bot ou varredura) aplica por vez; lease
--- expirada pode ser retomada. Devolve true se este chamador ficou com a linha.
-CREATE OR REPLACE FUNCTION public.autoresposta_claim(p_id bigint, p_lease_s integer DEFAULT 90)
-RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE n int;
+-- expirada pode ser retomada. Devolve o TOKEN de posse (uuid) ou NULL. Toda gravação posterior
+-- do efeito (fase/fim) é condicional ao token; renovação idem.
+DROP FUNCTION IF EXISTS public.autoresposta_claim(bigint, integer);
+CREATE OR REPLACE FUNCTION public.autoresposta_claim(p_id bigint, p_lease_s integer DEFAULT 300)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_token uuid := gen_random_uuid(); n int;
 BEGIN
   UPDATE autoresposta_triagem
-     SET estado_efeito = 'em_andamento', lease_ate = now() + make_interval(secs => p_lease_s)
+     SET estado_efeito = 'em_andamento', lease_ate = now() + make_interval(secs => p_lease_s), claim_token = v_token
    WHERE id = p_id
      AND (estado_efeito IN ('pendente','falhou') OR (estado_efeito = 'em_andamento' AND lease_ate < now()));
   GET DIAGNOSTICS n = ROW_COUNT;
-  RETURN n = 1;
+  RETURN CASE WHEN n = 1 THEN v_token ELSE NULL END;
 END $$;
 REVOKE EXECUTE ON FUNCTION public.autoresposta_claim(bigint, integer) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.autoresposta_claim(bigint, integer) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.autoresposta_renovar(p_id bigint, p_token uuid, p_lease_s integer DEFAULT 300)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n int;
+BEGIN
+  UPDATE autoresposta_triagem SET lease_ate = now() + make_interval(secs => p_lease_s)
+   WHERE id = p_id AND claim_token = p_token AND estado_efeito = 'em_andamento' AND lease_ate >= now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n = 1;
+END $$;
+REVOKE EXECUTE ON FUNCTION public.autoresposta_renovar(bigint, uuid, integer) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.autoresposta_renovar(bigint, uuid, integer) TO service_role;
+
+-- Reserva um slot de p_ms no ritmo da conta e devolve quantos ms o chamador deve esperar.
+CREATE OR REPLACE FUNCTION public.autoresposta_reservar(p_ms integer DEFAULT 200)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_prox timestamptz; v_espera integer;
+BEGIN
+  UPDATE autoresposta_ritmo
+     SET proxima_em = GREATEST(proxima_em, now()) + make_interval(secs => p_ms / 1000.0)
+   WHERE id = true
+   RETURNING proxima_em - make_interval(secs => p_ms / 1000.0) INTO v_prox;
+  v_espera := GREATEST(0, (EXTRACT(EPOCH FROM (v_prox - now())) * 1000)::integer);
+  RETURN v_espera;
+END $$;
+REVOKE EXECUTE ON FUNCTION public.autoresposta_reservar(integer) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.autoresposta_reservar(integer) TO service_role;
 
 -- 5) Varredura (cron a cada 2 min): retoma indeterminados vencidos, texto vazio, efeitos
 --    pendentes/falhos e leases expirados. Só dispara se houver funil ATIVO e pendência.
@@ -182,10 +241,11 @@ BEGIN
                      'x-autoresposta-secret', (SELECT value FROM integracao_config WHERE key='autoresposta_secret')),
         body    := '{}'::jsonb)
       WHERE EXISTS (SELECT 1 FROM autoresposta_config WHERE ativo)
-        AND EXISTS (SELECT 1 FROM autoresposta_triagem
-                     WHERE (classificacao='indeterminado' AND resolvido_em IS NULL)
-                        OR estado_efeito IN ('pendente','falhou')
-                        OR (estado_efeito='em_andamento' AND lease_ate < now()))
+        AND (EXISTS (SELECT 1 FROM autoresposta_trabalho WHERE estado = 'pendente')
+             OR EXISTS (SELECT 1 FROM autoresposta_triagem
+                         WHERE (classificacao='indeterminado' AND resolvido_em IS NULL)
+                            OR estado_efeito IN ('pendente','falhou')
+                            OR (estado_efeito='em_andamento' AND lease_ate < now())))
     $job$);
   END IF;
 END $$;

@@ -26,6 +26,10 @@ export async function sha1(s: string): Promise<string> {
 export function compilar(p: Padrao): RegExp | null {
   try { return new RegExp(p.padrao, 'i') } catch { return null }
 }
+// Ids dos padrões ativos que NÃO compilam em JS: com algum inválido a decisão não roda (fail closed).
+export function validarPadroes(padroes: Padrao[]): number[] {
+  return padroes.filter((p) => compilar(p) === null).map((p) => p.id)
+}
 
 // Padrão que casa, sobre o texto normalizado E o original. Os de tipo 'humano' (áudio, cartão de
 // contato, pedido de proposta, "pode me ligar"…) têm prioridade e encerram como humano.
