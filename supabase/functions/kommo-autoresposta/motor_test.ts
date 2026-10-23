@@ -1,7 +1,7 @@
 // deno test --allow-read supabase/functions/kommo-autoresposta/motor_test.ts
 // Fluxo completo (webhook → decisão → efeito → varredura) com repositório e Kommo FALSOS, sem rede.
 import { assert, assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { LeituraFalhou, Throttled, aplicarEfeito, processarTrabalho, receberWebhook, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, aplicarEfeito, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
 import type { Cfg, Padrao } from './triagem.ts'
 
 const PIPE = 14062116, RESP = 108545256, D1 = 108545280, D2 = 108545284
@@ -301,4 +301,33 @@ Deno.test('R4#5 continuação de BOT (menu + "transferido") não vira humano: a 
   const k2 = kommoFake({ texto: 'Seu atendimento está sendo transferido.', ins: [{ id: 'm1', ts: T0 - 5 }, { id: 'm2', ts: T0 + 2000 }], outs: [T0 - 10], tags: ['autoresposta'] })
   const r2 = await receberWebhook(deps(st.repo, k2.fn, T0 + 2001), 1)
   assertEquals(r2.classificacao, 'autoresposta'); assert(!k2.escritas.some((e) => e.body?.status_id), 'não pode mover')
+})
+
+
+// ── 5ª rodada ──────────────────────────────────────────────────────────────────────────────
+Deno.test('R5 ultimoDisparoAte: mesmo resultado em ordem crescente, decrescente e permutada', () => {
+  const ts = T0 - 5
+  for (const outs of [[T0 - 1000, T0 - 10], [T0 - 10, T0 - 1000], [T0 - 10, T0 + 50, T0 - 1000], [T0 + 50, T0 - 1000, T0 - 10]]) assertEquals(ultimoDisparoAte(outs, ts), T0 - 10)
+  assertEquals(ultimoDisparoAte([], ts), null); assertEquals(ultimoDisparoAte([T0 + 1], ts), null)
+})
+
+Deno.test('R5 varredura com eventos fora de ordem: conversa anterior ao último disparo não conta; R3 decide autoresposta sem mover', async () => {
+  for (const ordem of ['asc', 'desc', 'perm'] as const) {
+    const txt = 'Nossa equipe recebeu a sua solicitação e vai analisar o pedido com carinho hoje'
+    // agora o mesmo cenário chegando pela VARREDURA como pendência R2 (sem hash prévio nos outros leads)
+    const st2 = repoFake()
+    await st2.repo.criarLinhas([{ kommo_lead_id: 1, mensagem_id: 'm1', pipeline_id: PIPE, status_id_origem: D1, recebido_em: new Date((T0 - 5) * 1000).toISOString(), classificacao: 'indeterminado', regras: ['R2:5s'], estado_efeito: 'pendente', modo: 'aplicar', texto: txt } as any,
+      ...[2, 3].map((lead) => ({ kommo_lead_id: lead, mensagem_id: 'z' + lead, pipeline_id: PIPE, status_id_origem: D1, recebido_em: new Date((T0 - 100) * 1000).toISOString(), classificacao: 'autoresposta', regras: ['R1'], estado_efeito: 'aplicado', modo: 'aplicar', hash: null } as any))])
+    // hash dos outros = hash do texto (a decisão calcula o sha1 do normalizado; os fakes guardam o que recebem)
+    const { normalizar, sha1 } = await import('./triagem.ts')
+    const h = await sha1(normalizar(txt)); for (const l of st2.linhas) if (l.kommo_lead_id !== 1) l.hash = h
+    const outsAsc = [T0 - 1000, T0 - 10], outsDesc = [T0 - 10, T0 - 1000], outsPerm = [T0 - 10, T0 - 2000, T0 - 1000]
+    const outs = ordem === 'asc' ? outsAsc : ordem === 'desc' ? outsDesc : outsPerm
+    const k2 = kommoFake({ texto: txt, ins: ordem === 'desc' ? [{ id: 'm1', ts: T0 - 5 }, { id: 'old', ts: T0 - 900 }] : [{ id: 'old', ts: T0 - 900 }, { id: 'm1', ts: T0 - 5 }], outs })
+    await varrer(deps(st2.repo, k2.fn, T0 + 200))
+    const l = st2.linhas.find((x) => x.kommo_lead_id === 1)!
+    assertEquals(l.classificacao, 'autoresposta', `ordem ${ordem}`)
+    assertEquals(l.intervalo_s, 5, `ordem ${ordem}: intervalo deve ser do disparo T0-10`)
+    assert(!k2.escritas.some((e) => e.body?.status_id), `ordem ${ordem}: não pode mover`)
+  }
 })

@@ -55,6 +55,12 @@ export interface Repo {
 export type Deps = { repo: Repo; kommo: KommoFn; agora: () => number; campoTexto: string; leaseS: number; maxTentativas: number }
 
 const TAG_AUTO = 'autoresposta'
+// último disparo (outgoing) ANTES da mensagem — independente da ordem em que os eventos vieram
+export const ultimoDisparoAte = (outs: number[], ts: number): number | null => {
+  let m: number | null = null
+  for (const o of outs) if (Number.isFinite(o) && o <= ts && (m === null || o > m)) m = o
+  return m
+}
 const iso = (s: number) => new Date(s * 1000).toISOString()
 const marcador = (mensagemId: string) => `[triagem:${mensagemId}]`
 
@@ -122,7 +128,7 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
   const ultima = ins[ins.length - 1]
   if (novas.length) {
     await repo.criarLinhas(novas.map((i) => {
-      const disparo = [...outs].reverse().find((o) => o <= i.ts) ?? null
+      const disparo = ultimoDisparoAte(outs, i.ts)
       return { kommo_lead_id: leadId, mensagem_id: i.id, pipeline_id: pipeline, status_id_origem: statusAtual, recebido_em: iso(i.ts), ultimo_disparo_em: disparo ? iso(disparo) : null, intervalo_s: disparo ? i.ts - disparo : null, modo: cfg.modo, classificacao: 'indeterminado', regras: ['nova'], estado_efeito: 'pendente' }
     }))
     // mensagens anteriores à última que acabaram de ganhar linha não têm texto (o campo guarda só o
@@ -143,7 +149,7 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
   let linha = linhaIn
   if (['aplicado', 'observado', 'superado'].includes(linha.estado_efeito)) return { ok: true, repetida: true, classificacao: linha.classificacao, estado: linha.estado_efeito }
   const msgTs = Math.floor(new Date(linha.recebido_em).getTime() / 1000)
-  const ultimoDisparo = [...outs].reverse().find((o) => o <= msgTs) ?? null
+  const ultimoDisparo = ultimoDisparoAte(outs, msgTs) // não depende da ordem dos eventos (webhook ordena; cron não)
   const intervaloS = ultimoDisparo ? msgTs - ultimoDisparo : null
   // "2ª mensagem" = OUTRA mensagem do lead desde o disparo (antes ou depois desta), exceto as que já
   // foram classificadas como autoresposta (menu + "transferindo" é o bot, não conversa): uma

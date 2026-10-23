@@ -86,7 +86,7 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 
 ## Teste (antes de ligar em produção)
 
-- `deno test --allow-read supabase/functions/kommo-autoresposta/` (40 casos: regras puras com os
+- `deno test --allow-read supabase/functions/kommo-autoresposta/` (42 casos: regras puras com os
   padrões lidos do SQL, fluxo completo com repositório/Kommo falsos e cliente HTTP) e `deno check …/index.ts`.
 - Com a edge no ar e `modo = observar`, três leads de teste no funil:
   "Mensagem automática: fora do horário de atendimento" → `autoresposta`, estado `observado`;
