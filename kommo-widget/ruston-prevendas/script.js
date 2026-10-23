@@ -1,9 +1,10 @@
 /**
  * Ruston Pré-vendas — widget único do Kommo (Web SDK): NOTIFY + PRÓXIMO (+ click-to-call na fatia 3).
  *
- * - FILA: vem do servidor (edge prevendas-fila), autenticada pelo token descartável do Kommo
- *   ($authorizedAjax). O servidor lê da réplica do Kommo SÓ as tarefas abertas do próprio usuário e já as
- *   classifica (momento, ação, origem). Zero chamadas à API do Kommo por SDR no modo normal.
+ * - FILA: vem do servidor (edge prevendas-fila), autenticada pelo token descartável do Kommo ($authorizedAjax).
+ *   O servidor é a AUTORIDADE: monta a ordem pela réplica + descoberta ao vivo, e SÓ emite as tarefas que
+ *   conferiu no Kommo (existe, aberta, do usuário, mesma entidade). O widget só exibe e age sobre o emitido;
+ *   com dados velhos ou falha, as ações ficam suspensas. Vazão: cache de 40 s por usuário no servidor.
  * - MODO DEGRADADO (servidor indisponível): lê as próprias tarefas pela sessão do Kommo, paginado, com
  *   respeito a 429/Retry-After, e ordena só por vencimento (aviso visível).
  * - Várias abas: uma "líder" por usuário consulta; as outras usam o resultado compartilhado (localStorage).
@@ -107,27 +108,6 @@
       return !lock || !lock.aba || lock.ate < agoraMs || lock.aba === aba;
     }
 
-    /**
-     * Verificação ao vivo: `vivas` = resposta do Kommo (GET /api/v4/tasks?filter[id][]=...) para os ids
-     * conferidos. Tarefa ausente (excluída), concluída ou de outro responsável vira inválida; as válidas
-     * ganham prazo/texto atuais. Ids não conferidos ficam como estão.
-     */
-    function mesclarVerificacao(tarefas, conferidos, vivas, uid) {
-      var porId = {}, invalidas = [];
-      (vivas || []).forEach(function (v) { porId[v.id] = v; });
-      var conf = {}; conferidos.forEach(function (id) { conf[id] = 1; });
-      var saida = [];
-      tarefas.forEach(function (t) {
-        if (!conf[t.id]) { saida.push(t); return; }
-        var v = porId[t.id];
-        if (!v || v.is_completed || String(v.responsible_user_id) !== String(uid)) { invalidas.push(t.id); return; }
-        var n = {}; for (var k in t) n[k] = t[k];
-        n.due = v.complete_till || 0; n.texto = v.text != null ? v.text : t.texto; n.verificada = true;
-        saida.push(n);
-      });
-      return { tarefas: saida, invalidas: invalidas };
-    }
-
     /** Remove tarefas marcadas localmente (concluídas/invalidadas) enquanto a marca vale (ttl ms). */
     function semMarcadas(tarefas, marcas, agoraMs, ttlMs) {
       return tarefas.filter(function (t) { var m = marcas[t.id]; return !(m && agoraMs - m < ttlMs); });
@@ -142,7 +122,7 @@
 
     return {
       ordenar: ordenar, nivel: nivel, minutos: minutos, proximoDe: proximoDe, paraNotificar: paraNotificar,
-      devoLiderar: devoLiderar, classificarLocal: classificarLocal, mesclarVerificacao: mesclarVerificacao,
+      devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
     };
   })();
@@ -162,15 +142,16 @@
         sound: 'Y', lookahead_min: 15, atalho: 'Y'
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
-      // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s → ≤ 0,7 req/s por usuário só durante falha
+      // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
       var MAX_PAGINAS_DEGRADADO = 4, PASSO_PAGINA_MS = 1500, MAX_NOTIF_CICLO = 5, ATRASO_MAX_S = 600;
-      var VERIFICAR_TOPO = 20, MARCA_TTL_MS = 30 * 60 * 1000;
+      var MARCA_TTL_MS = 2 * 60 * 1000;          // só "concluí agora", até o servidor refletir
       var ABA = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
       var state = {
         booted: false, destruido: false, geracao: 0, timers: [], ouvintes: [],
         uid: null, sub: 'acc', base: '', audio: null,
-        tarefas: [], modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
+        itens: [], futuraSrv: null, pendentes: 0, ordenada: true,
+        modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
         fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false
       };
 
@@ -208,11 +189,13 @@
       function key(n) { return NS + '_' + n + '_' + state.sub + '_' + state.uid; }
       function lsGet(n, d) { try { var v = localStorage.getItem(key(n)); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
       function lsSet(n, v) { try { localStorage.setItem(key(n), JSON.stringify(v)); } catch (e) {} }
-      function vivo(g) { return !state.destruido && g === state.geracao; }   // callbacks antigos não renderizam
+      function vivo(g) { return !state.destruido && g === state.geracao; }
       function ativoParaEsteUsuario() { var u = cfg().usuarios; return !u.length || u.indexOf(String(state.uid)) !== -1; }
       function intervalo(fn, ms) { var h = setInterval(fn, ms); state.timers.push({ t: 'i', h: h }); return h; }
       function atraso(fn, ms) { var h = setTimeout(fn, ms); state.timers.push({ t: 't', h: h }); return h; }
       function ouvir(alvo, ev, fn, opt) { alvo.addEventListener(ev, fn, opt); state.ouvintes.push([alvo, ev, fn, opt]); }
+      // ações só com dados confirmados e recentes (servidor/degradado ok, sem falha, < 3 ciclos)
+      function podeAgir() { return !state.falha && state.dadosEm && (agoraS() - state.dadosEm) < cfg().poll * 3 && (state.modo === 'servidor' || state.modo === 'degradado'); }
 
       // ---------------- navegação ----------------
       function seg(etype) { return { leads: 'leads', contacts: 'contacts', companies: 'companies', customers: 'customers' }[etype] || 'leads'; }
@@ -227,27 +210,26 @@
         return m ? { etype: m[1], eid: parseInt(m[2], 10) } : null;
       }
 
-      // ---------------- fonte 1: servidor (réplica, classificada) ----------------
-      function lerServidor(cb) {
+      // ---------------- fonte 1: servidor (autoridade do que é emitido) ----------------
+      function lerServidor(forcar, cb) {
         var c = cfg();
-        if (!c.endpoint) { cb('sem_endpoint'); return; }
+        if (!c.endpoint) { cb({ erro: 'sem_endpoint' }); return; }
         var req;
-        try { req = self.$authorizedAjax({ url: c.endpoint, method: 'POST', contentType: 'application/json', dataType: 'json', data: '{}' }); }
-        catch (e) { cb('sem_authorizedAjax'); return; }
-        if (!req || typeof req.then !== 'function') { cb('sem_promessa'); return; }
+        try {
+          req = self.$authorizedAjax({ url: c.endpoint, method: 'POST', contentType: 'application/json', dataType: 'json',
+            data: JSON.stringify({ antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos, forcar: !!forcar }) });
+        } catch (e) { cb({ erro: 'sem_authorizedAjax' }); return; }
+        if (!req || typeof req.then !== 'function') { cb({ erro: 'sem_promessa' }); return; }
         req.then(function (r) {
-          if (!r || !r.ok) { cb('resposta'); return; }
+          if (!r || !r.ok) { cb({ erro: 'resposta' }); return; }
           cb(null, r);
         }, function (x) {
-          var cod = 'erro';
-          try { cod = (x && x.responseJSON && x.responseJSON.erro) || (x && x.status) || 'erro'; } catch (e) {}
-          cb(cod);
+          var j = (x && x.responseJSON) || {};
+          cb({ erro: j.erro || (x && x.status) || 'erro', retryAfter: j.retry_after || 0 });
         });
       }
 
-      // ---------------- fonte 2 (degradada): API do Kommo pela sessão ----------------
-      // Guarda de geração em cada página (destroy no meio não agenda mais nada); 429/Retry-After em
-      // qualquer página vira pausa compartilhada entre abas.
+      // ---------------- fonte 2 (degradada): API do Kommo pela sessão (autoritativa para o próprio usuário) ----
       function lerKommo(g, cb) {
         var todas = [], pagina = 1;
         function prox() {
@@ -272,36 +254,11 @@
         }
         prox();
       }
-
       function deKommo(t) {
         var k = Fila.classificarLocal(t);
-        return { id: t.id, entity_type: t.entity_type || 'leads', entity_id: t.entity_id, due: t.complete_till || 0, criada: t.created_at || 0,
-                 texto: t.text || '', lead_nome: null, etapa: null, momento: k.momento, grupo: k.grupo, urgente: k.urgente, acao: k.acao, fonte: 'local', motivo: '' };
+        return { id: t.id, entity_type: t.entity_type || 'leads', entity_id: t.entity_id, due: t.complete_till || 0,
+                 texto: t.text || '', lead_nome: null, etapa: null, momento: k.momento, grupo: k.grupo, urgente: k.urgente, acao: k.acao };
       }
-
-      // ---------------- verificação ao vivo (topo da fila) ----------------
-      // A réplica decide ordem/classificação; o Kommo decide se a tarefa ainda existe, está aberta e é minha.
-      // 1 GET por ciclo (só a líder), pela sessão do SDR.
-      function verificarTopo(g, tarefas, cb) {
-        var base = Fila.semMarcadas(tarefas, lsGet('marcas', {}), Date.now(), MARCA_TTL_MS);
-        var ordem = ordenarItens(base);
-        var ids = ordem.fila.concat(ordem.futura ? [ordem.futura] : []).slice(0, VERIFICAR_TOPO).map(function (q) { return q.id; });
-        if (!ids.length) { cb(base, true); return; }
-        $.ajax({ url: '/api/v4/tasks?' + ids.map(function (id) { return 'filter[id][]=' + encodeURIComponent(id); }).join('&') + '&limit=50', method: 'GET', dataType: 'json' })
-          .done(function (data, ts, xhr) {
-            if (!vivo(g)) return;
-            var vivas = (xhr && xhr.status === 204) ? [] : ((data && data._embedded && data._embedded.tasks) || []);
-            var r = Fila.mesclarVerificacao(base, ids, vivas, state.uid);
-            if (r.invalidas.length) { var m = lsGet('marcas', {}); r.invalidas.forEach(function (id) { m[id] = Date.now(); }); lsSet('marcas', podarMarcas(m)); }
-            cb(r.tarefas, true);
-          })
-          .fail(function (xhr) {
-            if (!vivo(g)) return;
-            if (xhr && xhr.status === 429) { var ra = parseInt(xhr.getResponseHeader && xhr.getResponseHeader('Retry-After'), 10); pausar(isNaN(ra) ? 60 : ra); }
-            cb(base, false);
-          });
-      }
-      function podarMarcas(m) { var agora = Date.now(); Object.keys(m).forEach(function (k) { if (agora - m[k] >= MARCA_TTL_MS) delete m[k]; }); return m; }
 
       // ---------------- ciclo (só a aba líder consulta) ----------------
       function pausar(seg) { lsSet('pausa', Date.now() + Math.min(600, Math.max(5, seg)) * 1000); }
@@ -315,54 +272,45 @@
         lsSet('lider', { aba: ABA, ate: Date.now() + cfg().poll * 2500 });
         state.carregando = true;
         if (manual) render();
-        lerServidor(function (err, r) {
+        lerServidor(manual, function (err, r) {
           if (!vivo(g)) return;
           if (!err) {
             var aviso = '';
             if (r.frescor && (r.frescor.status !== 'done' || r.frescor.erro || (r.frescor.atraso_s != null && r.frescor.atraso_s > ATRASO_MAX_S))) {
-              aviso = 'Réplica do Kommo atrasada' + (r.frescor.atraso_s != null ? ' (' + Math.round(r.frescor.atraso_s / 60) + ' min)' : '') + ': tarefas novas podem faltar.';
+              aviso = 'Réplica do Kommo atrasada' + (r.frescor.atraso_s != null ? ' (' + Math.round(r.frescor.atraso_s / 60) + ' min)' : '') + '.';
             }
-            verificarTopo(g, r.tarefas || [], function (lista, verificou) {
-              publicar({ tarefas: lista, modo: 'servidor', aviso: aviso + (verificou ? '' : ' Topo da fila não conferido no Kommo agora.'), parcial: !!r.parcial });
-            });
+            publicar({ itens: r.itens || [], futura: r.futura || null, pendentes: r.pendentes || 0, ordenada: true, modo: 'servidor', aviso: aviso, parcial: false });
             return;
           }
+          if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
+          // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
           lerKommo(g, function (e2, lista, parcial) {
             if (!vivo(g)) return;
-            if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err + ' / ' + e2.status + ').'); return; }
-            publicar({ tarefas: Fila.semMarcadas(lista.map(deKommo), lsGet('marcas', {}), Date.now(), MARCA_TTL_MS), modo: 'degradado',
-                       aviso: 'Classificação indisponível (' + err + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial });
+            if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
+            publicar({ itens: lista.map(deKommo), futura: null, pendentes: 0, ordenada: false, modo: 'degradado',
+                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial });
           });
         });
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
-
-      // sucesso: dados novos (dadosEm = agora)
       function publicar(snap) {
         snap.rev = novaRev(); snap.dadosEm = agoraS(); snap.falha = null;
         state.carregando = false;
-        lsSet('snap', snap);
-        aplicar(snap);
-        notificar(true);
-        render();
+        lsSet('snap', snap); aplicar(snap); notificar(true); render();
       }
-      // falha: mantém os dados antigos (e a idade real deles), registra a falha e propaga às outras abas
+      // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
-        var s = lsGet('snap', null) || { tarefas: state.tarefas, modo: state.modo, aviso: '', parcial: state.parcial, dadosEm: state.dadosEm };
+        var s = lsGet('snap', null) || { itens: [], futura: null, pendentes: 0, ordenada: true, modo: state.modo, aviso: '', dadosEm: 0 };
         s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
         state.carregando = false;
-        lsSet('snap', s);
-        aplicar(s);
-        render();
+        lsSet('snap', s); aplicar(s); render();
       }
-      // mutação local (concluir): nova revisão, mesma idade dos dados
       function mutar(fn) {
         var s = lsGet('snap', null);
         if (!s) return;
         fn(s); s.rev = novaRev();
-        lsSet('snap', s);
-        aplicar(s);
+        lsSet('snap', s); aplicar(s);
       }
       function carregarSnapshot() {
         var s = lsGet('snap', null);
@@ -371,40 +319,41 @@
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
         state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null;
-        state.tarefas = Fila.semMarcadas(s.tarefas || [], lsGet('marcas', {}), Date.now(), MARCA_TTL_MS);
+        state.itens = s.itens || []; state.futuraSrv = s.futura || null; state.pendentes = s.pendentes || 0; state.ordenada = s.ordenada !== false;
         montar();
       }
 
       // ---------------- montagem ----------------
-      function itensDe(tarefas) {
-        var now = agoraS(), snooze = lsGet('snooze', {});
-        return tarefas.filter(function (t) { return t.entity_id && !(snooze[t.id] && snooze[t.id] > now); })
-          .map(function (t) {
-            return { id: t.id, due: t.due || 0, momento: t.momento, grupo: t.grupo || 'G9', urgente: !!t.urgente, acao: t.acao,
-                     etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa };
-          });
-      }
-      function ordenarItens(tarefas) {
-        var c = cfg();
-        return Fila.ordenar(itensDe(tarefas), { antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos }, agoraS(), minutoDoDia());
+      function paraQ(t) {
+        return { id: t.id, due: t.due || 0, momento: t.momento, grupo: t.grupo || 'G9', urgente: !!t.urgente, acao: t.acao,
+                 etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa };
       }
       function montar() {
-        var r = ordenarItens(state.tarefas);
-        state.fila = r.fila; state.futura = r.futura;
-        // card "atual": troca pelo objeto novo (prazo/momento/etapa atualizados) ou some se a tarefa saiu
+        var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
+        var ok = function (t) { return t && t.entity_id && !(snooze[t.id] && snooze[t.id] > now); };
+        var itens = Fila.semMarcadas(state.itens, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
+        if (state.ordenada) {
+          // servidor já ordenou e conferiu; aqui só tiramos pulos/concluídas
+          state.fila = itens;
+          var fut = state.futuraSrv && Fila.semMarcadas([state.futuraSrv], marcas, Date.now(), MARCA_TTL_MS).filter(ok)[0];
+          state.futura = fut ? paraQ(fut) : null;
+        } else {
+          var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos }, now, minutoDoDia());
+          state.fila = r.fila; state.futura = r.futura;
+        }
         if (state.atual) {
           var alvo = state.atual.id, novo = null;
-          r.fila.concat(r.futura ? [r.futura] : []).forEach(function (q) { if (q.id === alvo) novo = q; });
-          if (!novo) state.tarefas.forEach(function (x) { if (x.id === alvo) novo = { id: x.id, due: x.due || 0, momento: x.momento, grupo: x.grupo || 'G9', urgente: !!x.urgente, acao: x.acao, etype: x.entity_type || 'leads', eid: x.entity_id, texto: x.texto || '', nome: x.lead_nome, etapa: x.etapa }; });
-          state.atual = novo;
+          state.fila.concat(state.futura ? [state.futura] : []).forEach(function (q) { if (q.id === alvo) novo = q; });
+          state.atual = novo;     // fora do que foi confirmado: o card some
         }
       }
 
-      // ---------------- notify ----------------
+      // ---------------- notify (só sobre itens confirmados) ----------------
       function notificar(souLider) {
         var c = cfg(), now = agoraS();
-        var r = Fila.paraNotificar(state.tarefas, lsGet('visto', {}), now, c.lookahead, MAX_NOTIF_CICLO);
-        var abertas = {}; state.tarefas.forEach(function (t) { abertas[t.id] = 1; });
+        var base = state.itens.concat(state.futuraSrv ? [state.futuraSrv] : []);
+        var r = Fila.paraNotificar(base, lsGet('visto', {}), now, c.lookahead, MAX_NOTIF_CICLO);
+        var abertas = {}; base.forEach(function (t) { abertas[t.id] = 1; });
         var pilha = lsGet('notif', []).filter(function (n) { return abertas[n.id]; });
         if (souLider) {
           r.mostrar.forEach(function (t) {
@@ -417,31 +366,30 @@
             } catch (e) {}
           });
           if (r.mostrar.length) som();
-          lsSet('visto', r.visto);
-          state.resumoNotif = r.resumidas;
-          lsSet('notif', pilha.slice(0, 8));
+          lsSet('visto', r.visto); state.resumoNotif = r.resumidas; lsSet('notif', pilha.slice(0, 8));
         }
         state.notif = pilha.slice(0, 8);
       }
       function initAudio() { if (state.audio || !state.base) return; try { state.audio = new Audio(state.base + '/notify.mp3'); state.audio.preload = 'auto'; } catch (e) {} }
       function som() { if (!cfg().sound || !state.audio) return; try { state.audio.currentTime = 0; var p = state.audio.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
 
-      // ---------------- ações ----------------
+      // ---------------- ações (só com dados confirmados e recentes) ----------------
       function concluirEProximo(q) {
-        if (!q) return;
+        if (!q || !podeAgir()) { render(); return; }
         var g = state.geracao;
         $.ajax({ url: '/api/v4/tasks/' + encodeURIComponent(q.id), method: 'PATCH', contentType: 'application/json', dataType: 'json',
                  data: JSON.stringify({ is_completed: true, result: { text: 'Concluída pelo PRÓXIMO' } }) })
           .done(function () {
             if (!vivo(g)) return;
-            // marca local compartilhada: a réplica atrasada não ressuscita a tarefa nas próximas leituras
-            var m = lsGet('marcas', {}); m[q.id] = Date.now(); lsSet('marcas', podarMarcas(m));
-            mutar(function (s) { s.tarefas = (s.tarefas || []).filter(function (t) { return t.id !== q.id; }); });
+            var m = lsGet('marcas', {}), agora = Date.now();
+            Object.keys(m).forEach(function (k) { if (agora - m[k] >= MARCA_TTL_MS) delete m[k]; });
+            m[q.id] = agora; lsSet('marcas', m);
+            mutar(function (s) { s.itens = (s.itens || []).filter(function (t) { return t.id !== q.id; }); if (s.futura && s.futura.id === q.id) s.futura = null; });
             state.atual = null; montar(); avancar();
+            ciclo(g, true);   // pede a próxima leva já conferida (forcar respeita o mínimo de 5 s no servidor)
           })
           .fail(function (x) { if (vivo(g)) alert('Não consegui concluir a tarefa (' + ((x && x.status) || 'erro') + ').'); });
       }
-
       function pular(q) {
         if (!q) return;
         var s = lsGet('snooze', {}), now = agoraS();
@@ -450,6 +398,7 @@
         state.atual = null; montar(); avancar();
       }
       function avancar() {
+        if (!podeAgir()) { render(); return; }
         var p = Fila.proximoDe(state.fila, state.futura, entidadeAtual());
         if (!p) { render(); return; }
         state.atual = p.item;
@@ -472,7 +421,7 @@
 '.rpv-h .tt{flex:1}.rpv-h button{background:none;border:0;color:#8C8A88;cursor:pointer;font-size:14px}' +
 '.rpv-b{padding:9px 12px}.rpv-b .nm{font-weight:700;font-size:13px;margin-bottom:3px}.rpv-b .mt{color:#5C6066;display:flex;gap:6px;flex-wrap:wrap;align-items:center}' +
 '.rpv-acts{display:flex;gap:6px;padding:0 12px 10px}.rpv-acts button{flex:1;border-radius:7px;border:1px solid #E2E1DE;background:#fff;padding:6px;cursor:pointer;font-weight:600;font-size:12px}' +
-'.rpv-acts .pri{background:#E30613;border-color:#E30613;color:#fff}' +
+'.rpv-acts button[disabled]{opacity:.5;cursor:default}.rpv-acts .pri{background:#E30613;border-color:#E30613;color:#fff}' +
 '.rpv-list{max-height:300px;overflow-y:auto}.rpv-it{display:flex;gap:8px;padding:8px 12px;border-bottom:1px solid #F4F3F1;cursor:pointer}.rpv-it:hover{background:#FAFAF9}' +
 '.rpv-it .pos{width:16px;color:#A5A3A0;text-align:right}.rpv-it .bd{flex:1;min-width:0}.rpv-it .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
 '.rpv-tag{border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;background:#EEF3F8;color:#5C6E80}.rpv-tag.m1{background:#FFE9E9;color:#B4232B}.rpv-tag.m2,.rpv-tag.m3{background:#FFF1E0;color:#A35300}' +
@@ -495,7 +444,7 @@
 
       function render() {
         if (state.destruido || !ativoParaEsteUsuario()) return;
-        var c = raiz(), now = agoraS(), conf = cfg(), html = '';
+        var c = raiz(), now = agoraS(), conf = cfg(), html = '', agir = podeAgir();
 
         state.notif.slice(0, 3).forEach(function (n) {
           html += '<div class="rpv-card rpv-ntf"><div class="rpv-h"><span class="tt">🔔 ' + esc(Fila.ROTULO[n.momento] || 'Tarefa') + '</span>' +
@@ -510,15 +459,17 @@
           html += '<div class="rpv-card"><div class="rpv-b"><div class="nm">' + esc(nomeDe(at)) + '</div><div class="mt">' + tag(at) +
                   '<span' + (at.due && at.due < now ? ' class="rpv-late"' : '') + '>' + esc(fmtQuando(at.due, now)) + '</span>' + (at.etapa ? '<span>' + esc(at.etapa) + '</span>' : '') + '</div>' +
                   '<div class="mt" style="margin-top:4px">' + esc(String(at.texto).slice(0, 160)) + '</div></div>' +
-                  '<div class="rpv-acts"><button class="pri" data-act="concluir">Concluir e próximo</button><button data-act="pular">Pular 15 min</button></div></div>';
+                  '<div class="rpv-acts"><button class="pri" data-act="concluir"' + (agir ? '' : ' disabled') + '>Concluir e próximo</button><button data-act="pular">Pular 15 min</button></div></div>';
         }
 
         if (state.open) {
-          html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
+          html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + (state.pendentes ? ' (+' + state.pendentes + ')' : '') + '</span>' +
                   '<button data-act="atualizar" title="Atualizar">↻</button><button data-act="painel" title="Fechar">×</button></div>';
-          if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Mostrando a lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + '.</div>';
+          if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
+          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + '): ações suspensas até atualizar.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
-          if (state.parcial) html += '<div class="rpv-warn">Fila parcial: há tarefas demais; mostrando as primeiras por vencimento.</div>';
+          if (state.parcial) html += '<div class="rpv-warn">Fila parcial: mostrando as primeiras por vencimento.</div>';
+          if (state.pendentes) html += '<div class="rpv-warn">+' + state.pendentes + ' tarefas ainda não conferidas no Kommo; aparecem à medida que a fila anda.</div>';
           if (!state.fila.length) {
             html += '<div class="rpv-b">' + (state.futura ? 'Nada vencido agora. Próxima às <b>' + esc(fmtQuando(state.futura.due, now)) + '</b> — o botão abre ela.' : 'Nenhuma tarefa pendente.') + '</div>';
           } else {
@@ -532,10 +483,10 @@
           html += '<div class="rpv-f"><span>' + esc(state.modo) + (state.dadosEm ? ' · dados das ' + hora(state.dadosEm) : '') + '</span>' + (conf.atalho ? '<span>Alt+N</span>' : '') + '</div></div>';
         }
 
-        var p = Fila.proximoDe(state.fila, state.futura, aqui);
+        var p = agir ? Fila.proximoDe(state.fila, state.futura, aqui) : null;
         var classe = p ? (p.futura ? ' fut' : '') : ' off';
         var rotulo = p && p.futura ? 'Próxima ' + hora(p.item.due) : 'Próximo';
-        html += '<span class="rpv-pill' + classe + '" title="' + esc(p ? nomeDe(p.item) + ' · ' + (Fila.ROTULO[p.item.momento] || '') : 'sem tarefas') + '">' +
+        html += '<span class="rpv-pill' + classe + '" title="' + esc(p ? nomeDe(p.item) + ' · ' + (Fila.ROTULO[p.item.momento] || '') : (agir ? 'sem tarefas' : 'fila desatualizada')) + '">' +
                 '<button class="rpv-go" ' + (p ? 'data-act="avancar"' : 'disabled') + '>➜ ' + esc(rotulo) + (state.fila.length ? '<span class="cnt">' + state.fila.length + '</span>' : '') + '</button>' +
                 '<button class="rpv-q" data-act="painel" title="Ver a fila">' + (state.open ? '▾' : '▴') + '</button></span>';
         c.innerHTML = html;
@@ -551,7 +502,7 @@
         else if (act === 'atualizar') ciclo(state.geracao, true);
         else if (act === 'concluir') concluirEProximo(state.atual);
         else if (act === 'pular') pular(state.atual);
-        else if (act === 'ir') { var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
+        else if (act === 'ir') { if (!podeAgir()) { render(); return; } var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
         else if (act === 'abrir') abrir(el.getAttribute('data-et'), el.getAttribute('data-eid'));
         else if (act === 'fechar-ntf') { var tid = Number(el.getAttribute('data-tid')); state.notif = state.notif.filter(function (n) { return n.id !== tid; }); lsSet('notif', state.notif); render(); }
       }
@@ -588,14 +539,13 @@
 
         carregarSnapshot(); render();
         atraso(function () { ciclo(g, false); }, Math.floor(Math.random() * 3000));          // jitter inicial
-        var passo = cfg().poll * 1000 + Math.floor(Math.random() * 5000);                     // jitter por aba
-        intervalo(function () { ciclo(g, false); }, passo);
+        intervalo(function () { ciclo(g, false); }, cfg().poll * 1000 + Math.floor(Math.random() * 5000));
         var ultima = location.pathname;
         intervalo(function () { if (location.pathname !== ultima) { ultima = location.pathname; render(); } }, 700);
       }
 
       function destruir() {
-        state.destruido = true; state.geracao++; state.carregando = false;   // requisições em voo viram órfãs (vivo(g) = false)
+        state.destruido = true; state.geracao++; state.carregando = false;
         state.timers.forEach(function (x) { if (x.t === 'i') clearInterval(x.h); else clearTimeout(x.h); });
         state.timers = [];
         state.ouvintes.forEach(function (o) { try { o[0].removeEventListener(o[1], o[2], o[3]); } catch (e) {} });

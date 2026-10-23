@@ -9,9 +9,10 @@ Substitui o **ruston-notify** e o **Ruston Próximo Lead**. Proposta e regras: `
 | `script.js` | widget (AMD). O bloco `Fila` é puro e testado em Node |
 | `manifest.json`, `i18n/`, `images/`, `notify.mp3` | pacote do Kommo |
 | `build-zip.mjs` | gera `dist/ruston-prevendas.zip` (só os arquivos do widget; UTF-8 sem BOM) |
-| `tests/` | `fila.test.cjs` (ordem, janela, notificação, liderança), `widget.test.cjs` (ciclo completo, degradado, destroy, multi-aba), `classificar.test.ts`, `jwt.test.ts` |
-| `../../supabase/functions/prevendas-fila/` | edge que devolve a fila **do próprio usuário** já classificada, lida da réplica do Kommo (zero chamadas à API do Kommo) |
-| `../../supabase/migration_160_prevendas_fila.sql` | funções SQL `prevendas_fila` e `prevendas_fila_frescor` (só leitura; só o service_role executa) |
+| `tests/` | `fila.test.cjs`, `widget.test.cjs` (ciclo completo em VM), `servidor.test.ts`, `paridade.test.mjs` (servidor × widget, 1000 casos), `classificar.test.ts`, `jwt.test.ts` |
+| `../../supabase/functions/prevendas-fila/` | edge **autoridade** da fila: réplica + descoberta ao vivo → ordena → **confere no Kommo o lote emitido** → emite só o confirmado; cache de 40 s por usuário |
+| `../../supabase/functions/_shared/prevendas_servidor.ts`, `prevendas_ordem.ts` | núcleo puro do servidor (juntar, lote, conferir, emitir) e a ordem portada do widget (paridade testada) |
+| `../../supabase/migration_160_prevendas_fila.sql` | `prevendas_fila` (envelope jsonb), `prevendas_fila_frescor`, `prevendas_slots` e a tabela `prevendas_cache` (só service_role) |
 | `../../supabase/functions/_shared/prevendas_classificar.ts` | classificador puro, também para o `kommo-call-note` no futuro |
 | `../../supabase/functions/_shared/kommo_jwt.ts` | verificação do JWT descartável do Kommo (HS256) |
 
@@ -19,6 +20,8 @@ Substitui o **ruston-notify** e o **Ruston Próximo Lead**. Proposta e regras: `
 ```bash
 node --test kommo-widget/ruston-prevendas/tests/fila.test.cjs
 node --test kommo-widget/ruston-prevendas/tests/widget.test.cjs
+node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/servidor.test.ts
+node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/paridade.test.mjs
 node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/classificar.test.ts
 node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/jwt.test.ts
 ```
@@ -44,7 +47,7 @@ Na **ordem**:
    supabase secrets set --project-ref iaompeiokjxbffwehhrx KOMMO_WIDGET_CLIENT_ID=… KOMMO_WIDGET_SECRET=… KOMMO_ACCOUNT_ID=34424367
    supabase functions deploy prevendas-fila --project-ref iaompeiokjxbffwehhrx --no-verify-jwt --use-api
    ```
-   `PREVENDAS_TIPOS_MOMENTO` é opcional (mapa de tipos novos → momento, quando existirem).
+   `KOMMO_API_TOKEN` já existe no projeto (usado para conferir o lote no Kommo). `PREVENDAS_TIPOS_MOMENTO` é opcional (mapa de tipos novos → momento, quando existirem).
 5. **Instalar a integração** e preencher **antes de salvar**:
    - `endpoint` = `https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/prevendas-fila`;
    - **`usuarios` = `11420911`**. Com essa lista, os outros usuários não carregam nada.
@@ -67,5 +70,5 @@ Nenhuma ligação; nada é criado. O único efeito colateral possível é o "Con
 ## Reverter
 - Desinstalar ou desativar a integração "Ruston Pré-vendas" no Kommo. Os widgets antigos continuam instalados e intocados.
 - Edge: `supabase functions delete prevendas-fila --project-ref iaompeiokjxbffwehhrx`, depois `supabase secrets unset KOMMO_WIDGET_CLIENT_ID KOMMO_WIDGET_SECRET KOMMO_ACCOUNT_ID`.
-- SQL: `drop function public.prevendas_fila(bigint,int); drop function public.prevendas_fila_frescor();`
+- SQL: `drop function public.prevendas_fila(bigint,int); drop function public.prevendas_fila_frescor(); drop function public.prevendas_slots(bigint[]); drop table public.prevendas_cache;`
 - Nenhuma tabela, cadência ou tipo de tarefa foi alterado nesta fatia; só duas funções de leitura foram adicionadas.

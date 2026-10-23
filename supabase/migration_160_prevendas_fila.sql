@@ -83,3 +83,27 @@ revoke all on function public.prevendas_fila(bigint, int) from public, anon, aut
 revoke all on function public.prevendas_fila_frescor() from public, anon, authenticated;
 grant execute on function public.prevendas_fila(bigint, int) to service_role;
 grant execute on function public.prevendas_fila_frescor() to service_role;
+
+-- slots da cadência para ids arbitrários (tarefas descobertas ao vivo, ausentes da réplica)
+create or replace function public.prevendas_slots(p_ids bigint[])
+returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_object_agg(e.value, e.key), '{}'::jsonb)
+    from reunioes r, jsonb_each_text(r.cadencia_task_ids) e
+   where jsonb_typeof(r.cadencia_task_ids) = 'object'
+     and e.value ~ '^[0-9]+$'
+     and (e.value)::bigint = any(p_ids);
+$$;
+revoke all on function public.prevendas_slots(bigint[]) from public, anon, authenticated;
+grant execute on function public.prevendas_slots(bigint[]) to service_role;
+
+-- cache/vazão por usuário: a edge devolve a última resposta se tiver < 40 s (mesma config), limitando as
+-- chamadas ao Kommo a ~2 por SDR por ciclo, independentemente de abas. Só o service_role acessa.
+create table if not exists public.prevendas_cache (
+  kommo_user bigint primary key,
+  chave      text not null,
+  resposta   jsonb not null,
+  em         timestamptz not null default now()
+);
+alter table public.prevendas_cache enable row level security;   -- sem policy: só service_role
+revoke all on public.prevendas_cache from anon, authenticated;

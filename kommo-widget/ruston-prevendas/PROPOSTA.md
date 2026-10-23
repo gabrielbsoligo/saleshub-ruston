@@ -315,3 +315,18 @@ O token do discador **nunca vai para o navegador.** O widget só pede "ligar par
   - as abas seguidoras mostram a falha.
 - **429 e Retry-After:** viram uma pausa compartilhada entre as abas, inclusive com leitura parcial e no botão Atualizar. O modo degradado lê no máximo 4 páginas, a 1,5 s cada.
 - **Função SQL:** devolve um envelope JSON `{itens, total, truncado}`, imune ao `max_rows` do PostgREST.
+
+### Implementação, rodada 3 da revisão de código: o servidor é a autoridade
+A verificação no navegador não autoriza o que o servidor já entregou. Por isso a edge `prevendas-fila` passou a:
+1. montar as candidatas pela réplica **e** pela **descoberta ao vivo** (tarefas do usuário alteradas nas últimas 3 h, numa chamada). Isso pega, por exemplo, o "Ligar AGORA" que um sync falho não gravou;
+2. ordenar com a configuração do widget (a ordem foi portada para TS, com teste de paridade em 1000 casos);
+3. **conferir no Kommo o lote que vai emitir** (as 25 primeiras + a próxima futura, que entra separada e nunca é cortada). Precisa existir, estar aberta, ser do usuário e estar na mesma entidade. O que sobe depois de uma invalidação é conferido também (até 2 rodadas);
+4. **emitir só o que foi confirmado**. O resto vira só uma contagem (`pendentes`). Kommo com 429 ou indisponível devolve 503 e nada é emitido;
+5. guardar um cache de 40 s por usuário (tabela `prevendas_cache`), o que dá cerca de 2 a 4 chamadas ao Kommo por SDR a cada ciclo.
+
+No widget:
+- a verificação no cliente e a marca de 30 min saíram; ficou só "concluí agora", com 2 min;
+- com falha ou dados velhos (mais de 3 ciclos), as ações (Próximo, Concluir, Ir) ficam suspensas;
+- 429 do servidor gera pausa compartilhada entre as abas, sem cair no modo degradado.
+
+**Risco remanescente:** tarefa criada há mais de 3 h, perdida pelo sync e nunca mais alterada não é descoberta. Isso depende da correção do kommo-sync, que foi reportada.
