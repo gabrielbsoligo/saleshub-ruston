@@ -79,6 +79,22 @@ export const leadsRepo = {
     return out;
   },
 
+  /** Vários leads por id (em lotes de 200). Usado no dedupe ao adicionar leads num projeto. */
+  async getMany(ids: string[]): Promise<Lead[]> {
+    if (!ids.length) return [];
+    if (!supabaseConfigured) {
+      const q = new Set(ids);
+      return readLocal<Lead>(LEADS_KEY).filter((l) => q.has(l.id));
+    }
+    const out: Lead[] = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from('enriquecedor_leads').select('*').in('id', ids.slice(i, i + 200));
+      if (error) throw erroLegivel(error);
+      out.push(...(data ?? []).map(fromRow));
+    }
+    return out;
+  },
+
   async get(id: string): Promise<Lead | null> {
     if (!supabaseConfigured) {
       return readLocal<Lead>(LEADS_KEY).find((l) => l.id === id) ?? null;

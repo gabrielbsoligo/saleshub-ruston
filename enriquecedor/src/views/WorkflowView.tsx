@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useRef } from 'react';
 import PQueue from 'p-queue';
 import toast from 'react-hot-toast';
-import { Filter, Check, ArrowRight, ChevronDown, X, Play, Loader2, CheckCircle2, AlertCircle, Circle, Clock, Sparkles, FolderOpen, UploadCloud, ArrowLeft, Trash2 } from 'lucide-react';
+import { Filter, Check, ArrowRight, ChevronDown, X, Play, Loader2, CheckCircle2, AlertCircle, Circle, Clock, Sparkles, FolderOpen, UploadCloud, ArrowLeft, Trash2, UserPlus, FileSpreadsheet } from 'lucide-react';
 import {
   useProjetos,
   finalizarImportacao,
@@ -15,7 +15,8 @@ import {
   type Projeto,
 } from '../lib/projectsStore';
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
-import { buildLeadsFromRows } from '../lib/importPipeline';
+import { entrarLeads, resumoEntrada } from '../lib/adicionarLeads';
+import { AdicionarLeadsModal } from '../components/AdicionarLeadsModal';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { lerFila, motorFetch, type FilaMotorInfo } from '../lib/motorClient';
 import { FilaMotor } from '../components/FilaMotor';
@@ -23,7 +24,6 @@ import { leadsRepo } from '../lib/leadsRepo';
 import { ETAPA_DA_FASE, FASE_DA_ETAPA, jobsRepo, workerAtivo, type Job } from '../lib/jobsRepo';
 import { GRUPOS_DESCARTE, MOTIVOS_DESCARTE, motivoLabel } from '../lib/motivosDescarte';
 import { registrarErro } from '../lib/errorLog';
-import { formatCnpj } from '../lib/validation';
 import type { Lead } from '../types';
 import { LeadDetail } from './LeadDetail';
 
@@ -221,6 +221,7 @@ export function WorkflowView({
   const [openLead, setOpenLead] = useState<string | null>(null); // menu suspenso do lead (dados auditados)
   const [voltarMenu, setVoltarMenu] = useState<string | null>(null); // lead com o seletor "voltar p/ fase" aberto
   const [importandoKommo, setImportandoKommo] = useState(false);
+  const [addModal, setAddModal] = useState<'lista' | 'manual' | null>(null); // adicionar leads num projeto já aberto
   // status da execução por fase — chave `${fase}:${id}`; persiste no projeto.
   const [execStatus, setExecStatus] = useState<Record<string, AuditStatus>>({});
 
@@ -680,6 +681,35 @@ export function WorkflowView({
         <b>F</b> para abrir a lista da fase e no <b>play</b> lateral para auditar em tempo real. A cada{' '}
         <b>aprovação</b>, os leads avançam pro próximo F — chegando menos leads, porém mais certos, nas fases caras.
       </p>
+      {/* Mais leads num projeto já aberto: lista nova (mesmo pipeline) ou cadastro manual.
+          Entram na Triagem (F1) e são deduplicados contra o projeto (CNPJ/telefone). */}
+      <div className="mb-3 flex flex-wrap gap-2">
+        <button
+          onClick={() => setAddModal('lista')}
+          className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-1.5 text-xs font-medium text-v4-text transition hover:border-v4-red hover:text-v4-red"
+        >
+          <FileSpreadsheet size={14} /> Adicionar lista
+        </button>
+        <button
+          onClick={() => setAddModal('manual')}
+          className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-1.5 text-xs font-medium text-v4-text transition hover:border-v4-red hover:text-v4-red"
+        >
+          <UserPlus size={14} /> Adicionar lead
+        </button>
+      </div>
+      {addModal && (
+        <AdicionarLeadsModal
+          projeto={projeto}
+          leadsAtuais={leads}
+          modoInicial={addModal}
+          onClose={() => setAddModal(null)}
+          onAdicionados={(novos) => {
+            // entram no fim da lista, na Triagem (F1); o efeito de persistência grava no projeto
+            setLeads((prev) => [...prev, ...novos.filter((n) => !prev.some((l) => l.id === n.id))]);
+            setOpenF(0);
+          }}
+        />
+      )}
 
       {worker === false && (
         <div className="mb-3 max-w-3xl rounded-xl border border-v4-warning/50 bg-[rgba(245,158,11,0.08)] px-4 py-2.5 text-xs text-v4-text">
@@ -1209,19 +1239,6 @@ function ProjetosGrid({ projetos, onOpen }: { projetos: Projeto[]; onOpen: (id: 
   );
 }
 
-// Projeção de um Lead real para o card do funil.
-function toWf(lead: Lead): WfLead {
-  return {
-    id: lead.id,
-    score: lead.score ?? 0,
-    empresa: lead.razaoSocial ?? lead.nomeFantasia ?? lead.companyNameRaw,
-    cnpj: formatCnpj(lead.cnpj ?? lead.cnpjRaw),
-    uf: lead.uf ?? '',
-    segmento: lead.segmento ?? null,
-    etapa: 0,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Tela de importação da lista (drag & drop) — pipeline REAL, igual ao "Importar lista":
 // parse → valida na Receita → salva → enriquece (site, sócios, contatos, empreendimentos, GMN).
@@ -1248,40 +1265,18 @@ function ImportarListaTela({ projeto, onVoltar }: { projeto: Projeto; onVoltar: 
       }
       setStage('validando');
       setProg({ done: 0, total: res.rows.length });
-      const built = await buildLeadsFromRows(res.rows, setProg);
-      const selected = built.filter((l) => l.dataQuality !== 'invalido');
-      if (!selected.length) {
-        toast.error('Nenhum lead válido (todos com CNPJ inválido).');
+      // No IMPORT roda só a TRIAGEM (F1): valida CNPJ/Receita, deduplica e salva
+      // (entrarLeads — o mesmo caminho de "Adicionar lista/lead" num projeto aberto).
+      // As demais fases (F2 Qualificação, F3 Diagnóstico, F4 Anúncios) rodam DENTRO
+      // do funil, 1 por vez — pra auditar cada etapa.
+      const r = await entrarLeads(projeto, res.rows, [], setProg);
+      if (!r.novos.length) {
+        toast.error(r.invalidos === res.rows.length ? 'Nenhum lead válido (todos com CNPJ inválido).' : `Nenhum lead entrou: ${resumoEntrada(r)}`);
         setStage('idle');
         return;
       }
-      // No IMPORT roda só a TRIAGEM (F1): valida CNPJ/Receita e salva. As demais
-      // fases (F2 Qualificação, F3 Diagnóstico, F4 Anúncios) rodam DENTRO do funil,
-      // 1 por vez — pra auditar cada etapa. Sobrescreve por CNPJ.
-      for (const l of selected) l.perfil = projeto.perfil; // perfil de auditoria do projeto
-      // CNPJ repetido na planilha derruba o upsert em lote (Postgres: "ON CONFLICT DO
-      // UPDATE command cannot affect row a second time"). Fica a primeira ocorrência.
-      const vistos = new Set<string>();
-      const unicos = selected.filter((l) => {
-        const k = l.cnpj ?? l.cnpjRaw;
-        if (!k || vistos.has(k)) return false;
-        vistos.add(k);
-        return true;
-      });
-      const repetidos = selected.length - unicos.length;
-      // Devolve os leads como ficaram no banco: CNPJ já existente mantém o id e o
-      // enriquecimento (site, redes, chaves validadas, briefing) — só a planilha atualiza.
-      const gravados = await leadsRepo.upsertMany(unicos);
-      const wf = gravados.map(toWf);
-      finalizarImportacao(projeto.id, wf, {}); // sem status: as fases rodam no funil
-      const desc = built.length - selected.length;
-      toast.success(
-        `${wf.length} leads na Triagem (F1)` +
-        (desc > 0 ? ` · ${desc} inválidos descartados` : '') +
-        (repetidos > 0 ? ` · ${repetidos} CNPJ(s) repetido(s) na planilha (ficou o primeiro)` : '') +
-        '. Agora rode as fases no funil.',
-        { duration: 8000 },
-      );
+      finalizarImportacao(projeto.id, r.novos, {}); // sem status: as fases rodam no funil
+      toast.success(`${resumoEntrada(r)}. Agora rode as fases no funil.`, { duration: 8000 });
     } catch (e) {
       // Erro do PostgREST é um objeto {message, details, hint, code}, não um Error.
       const err = e as { message?: string; details?: string; hint?: string; code?: string };
