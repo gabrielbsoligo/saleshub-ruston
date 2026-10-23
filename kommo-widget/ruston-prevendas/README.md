@@ -9,10 +9,10 @@ Substitui o **ruston-notify** e o **Ruston Próximo Lead**. Proposta e regras: `
 | `script.js` | widget (AMD). O bloco `Fila` é puro e testado em Node |
 | `manifest.json`, `i18n/`, `images/`, `notify.mp3` | pacote do Kommo |
 | `build-zip.mjs` | gera `dist/ruston-prevendas.zip` (só os arquivos do widget; UTF-8 sem BOM) |
-| `tests/` | `fila.test.cjs`, `widget.test.cjs` (ciclo completo em VM), `servidor.test.ts`, `paridade.test.mjs` (servidor × widget, 1000 casos), `classificar.test.ts`, `jwt.test.ts` |
-| `../../supabase/functions/prevendas-fila/` | edge **autoridade** da fila: réplica + descoberta ao vivo → ordena → **confere no Kommo o lote emitido** → emite só o confirmado; cache de 40 s por usuário |
-| `../../supabase/functions/_shared/prevendas_servidor.ts`, `prevendas_ordem.ts` | núcleo puro do servidor (juntar, lote, conferir, emitir) e a ordem portada do widget (paridade testada) |
-| `../../supabase/migration_160_prevendas_fila.sql` | `prevendas_fila` (envelope jsonb), `prevendas_fila_frescor`, `prevendas_slots` e a tabela `prevendas_cache` (só service_role) |
+| `tests/` | `fila.test.cjs`, `widget.test.cjs` (ciclo completo em VM), `servidor.test.ts`, `classificar.test.ts`, `jwt.test.ts` |
+| `../../supabase/functions/prevendas-fila/` | edge: lê **ao vivo** no Kommo a lista de tarefas abertas do usuário (fonte autoritativa), classifica com dados de lead (réplica/API) e slots; cache 40 s, trava por usuário, orçamento de vazão da conta |
+| `../../supabase/functions/_shared/prevendas_servidor.ts` | núcleo puro do servidor (montarItens, leadsFaltando) |
+| `../../supabase/migration_160_prevendas_fila.sql` | `prevendas_leads`, `prevendas_slots`, `prevendas_fila_frescor`, cache/trava (`prevendas_cache`, `prevendas_travar/gravar/liberar`) e orçamento (`prevendas_vazao`, `prevendas_consumir`); tudo só service_role |
 | `../../supabase/functions/_shared/prevendas_classificar.ts` | classificador puro, também para o `kommo-call-note` no futuro |
 | `../../supabase/functions/_shared/kommo_jwt.ts` | verificação do JWT descartável do Kommo (HS256) |
 
@@ -21,7 +21,6 @@ Substitui o **ruston-notify** e o **Ruston Próximo Lead**. Proposta e regras: `
 node --test kommo-widget/ruston-prevendas/tests/fila.test.cjs
 node --test kommo-widget/ruston-prevendas/tests/widget.test.cjs
 node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/servidor.test.ts
-node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/paridade.test.mjs
 node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/classificar.test.ts
 node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/jwt.test.ts
 ```
@@ -70,5 +69,5 @@ Nenhuma ligação; nada é criado. O único efeito colateral possível é o "Con
 ## Reverter
 - Desinstalar ou desativar a integração "Ruston Pré-vendas" no Kommo. Os widgets antigos continuam instalados e intocados.
 - Edge: `supabase functions delete prevendas-fila --project-ref iaompeiokjxbffwehhrx`, depois `supabase secrets unset KOMMO_WIDGET_CLIENT_ID KOMMO_WIDGET_SECRET KOMMO_ACCOUNT_ID`.
-- SQL: `drop function public.prevendas_fila(bigint,int); drop function public.prevendas_fila_frescor(); drop function public.prevendas_slots(bigint[]); drop table public.prevendas_cache;`
+- SQL: `drop function public.prevendas_leads(bigint[]), public.prevendas_slots(bigint[]), public.prevendas_fila_frescor(), public.prevendas_travar(bigint,int), public.prevendas_gravar(bigint,text,jsonb), public.prevendas_liberar(bigint), public.prevendas_consumir(int,numeric,numeric); drop table public.prevendas_cache, public.prevendas_vazao;`
 - Nenhuma tabela, cadência ou tipo de tarefa foi alterado nesta fatia; só duas funções de leitura foram adicionadas.

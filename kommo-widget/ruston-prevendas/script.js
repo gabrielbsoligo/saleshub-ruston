@@ -2,9 +2,9 @@
  * Ruston Pré-vendas — widget único do Kommo (Web SDK): NOTIFY + PRÓXIMO (+ click-to-call na fatia 3).
  *
  * - FILA: vem do servidor (edge prevendas-fila), autenticada pelo token descartável do Kommo ($authorizedAjax).
- *   O servidor é a AUTORIDADE: monta a ordem pela réplica + descoberta ao vivo, e SÓ emite as tarefas que
- *   conferiu no Kommo (existe, aberta, do usuário, mesma entidade). O widget só exibe e age sobre o emitido;
- *   com dados velhos ou falha, as ações ficam suspensas. Vazão: cache de 40 s por usuário no servidor.
+ *   O servidor lê AO VIVO no Kommo a lista de tarefas abertas do próprio usuário (fonte autoritativa) e a
+ *   classifica com dados de lead da réplica/API. O widget ordena e só age sobre essa lista; com dados velhos
+ *   ou falha, as ações ficam suspensas. Vazão: cache 40 s + trava por usuário + orçamento da conta no servidor.
  * - MODO DEGRADADO (servidor indisponível): lê as próprias tarefas pela sessão do Kommo, paginado, com
  *   respeito a 429/Retry-After, e ordena só por vencimento (aviso visível).
  * - Várias abas: uma "líder" por usuário consulta; as outras usam o resultado compartilhado (localStorage).
@@ -150,7 +150,7 @@
       var state = {
         booted: false, destruido: false, geracao: 0, timers: [], ouvintes: [],
         uid: null, sub: 'acc', base: '', audio: null,
-        itens: [], futuraSrv: null, pendentes: 0, ordenada: true,
+        itens: [], motivos: [],
         modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
         fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false
       };
@@ -217,7 +217,7 @@
         var req;
         try {
           req = self.$authorizedAjax({ url: c.endpoint, method: 'POST', contentType: 'application/json', dataType: 'json',
-            data: JSON.stringify({ antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos, forcar: !!forcar }) });
+            data: JSON.stringify({ forcar: !!forcar }) });
         } catch (e) { cb({ erro: 'sem_authorizedAjax' }); return; }
         if (!req || typeof req.then !== 'function') { cb({ erro: 'sem_promessa' }); return; }
         req.then(function (r) {
@@ -275,19 +275,20 @@
         lerServidor(manual, function (err, r) {
           if (!vivo(g)) return;
           if (!err) {
-            var aviso = '';
-            if (r.frescor && (r.frescor.status !== 'done' || r.frescor.erro || (r.frescor.atraso_s != null && r.frescor.atraso_s > ATRASO_MAX_S))) {
-              aviso = 'Réplica do Kommo atrasada' + (r.frescor.atraso_s != null ? ' (' + Math.round(r.frescor.atraso_s / 60) + ' min)' : '') + '.';
-            }
-            publicar({ itens: r.itens || [], futura: r.futura || null, pendentes: r.pendentes || 0, ordenada: true, modo: 'servidor', aviso: aviso, parcial: false });
+            var aviso = '', f = r.frescor_leads;
+            if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
+            if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
+            if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] });
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
+          if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
           lerKommo(g, function (e2, lista, parcial) {
             if (!vivo(g)) return;
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
-            publicar({ itens: lista.map(deKommo), futura: null, pendentes: 0, ordenada: false, modo: 'degradado',
+            publicar({ itens: lista.map(deKommo), modo: 'degradado',
                        aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial });
           });
         });
@@ -301,7 +302,7 @@
       }
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
-        var s = lsGet('snap', null) || { itens: [], futura: null, pendentes: 0, ordenada: true, modo: state.modo, aviso: '', dadosEm: 0 };
+        var s = lsGet('snap', null) || { itens: [], modo: state.modo, aviso: '', dadosEm: 0 };
         s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
         state.carregando = false;
         lsSet('snap', s); aplicar(s); render();
@@ -319,7 +320,7 @@
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
         state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null;
-        state.itens = s.itens || []; state.futuraSrv = s.futura || null; state.pendentes = s.pendentes || 0; state.ordenada = s.ordenada !== false;
+        state.itens = s.itens || []; state.motivos = s.motivos || [];
         montar();
       }
 
@@ -332,15 +333,8 @@
         var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
         var ok = function (t) { return t && t.entity_id && !(snooze[t.id] && snooze[t.id] > now); };
         var itens = Fila.semMarcadas(state.itens, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
-        if (state.ordenada) {
-          // servidor já ordenou e conferiu; aqui só tiramos pulos/concluídas
-          state.fila = itens;
-          var fut = state.futuraSrv && Fila.semMarcadas([state.futuraSrv], marcas, Date.now(), MARCA_TTL_MS).filter(ok)[0];
-          state.futura = fut ? paraQ(fut) : null;
-        } else {
-          var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos }, now, minutoDoDia());
-          state.fila = r.fila; state.futura = r.futura;
-        }
+        var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos }, now, minutoDoDia());
+        state.fila = r.fila; state.futura = r.futura;
         if (state.atual) {
           var alvo = state.atual.id, novo = null;
           state.fila.concat(state.futura ? [state.futura] : []).forEach(function (q) { if (q.id === alvo) novo = q; });
@@ -351,7 +345,7 @@
       // ---------------- notify (só sobre itens confirmados) ----------------
       function notificar(souLider) {
         var c = cfg(), now = agoraS();
-        var base = state.itens.concat(state.futuraSrv ? [state.futuraSrv] : []);
+        var base = state.itens;
         var r = Fila.paraNotificar(base, lsGet('visto', {}), now, c.lookahead, MAX_NOTIF_CICLO);
         var abertas = {}; base.forEach(function (t) { abertas[t.id] = 1; });
         var pilha = lsGet('notif', []).filter(function (n) { return abertas[n.id]; });
@@ -384,7 +378,7 @@
             var m = lsGet('marcas', {}), agora = Date.now();
             Object.keys(m).forEach(function (k) { if (agora - m[k] >= MARCA_TTL_MS) delete m[k]; });
             m[q.id] = agora; lsSet('marcas', m);
-            mutar(function (s) { s.itens = (s.itens || []).filter(function (t) { return t.id !== q.id; }); if (s.futura && s.futura.id === q.id) s.futura = null; });
+            mutar(function (s) { s.itens = (s.itens || []).filter(function (t) { return t.id !== q.id; }); });
             state.atual = null; montar(); avancar();
             ciclo(g, true);   // pede a próxima leva já conferida (forcar respeita o mínimo de 5 s no servidor)
           })
@@ -463,13 +457,12 @@
         }
 
         if (state.open) {
-          html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + (state.pendentes ? ' (+' + state.pendentes + ')' : '') + '</span>' +
+          html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
                   '<button data-act="atualizar" title="Atualizar">↻</button><button data-act="painel" title="Fechar">×</button></div>';
           if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
           else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + '): ações suspensas até atualizar.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
-          if (state.parcial) html += '<div class="rpv-warn">Fila parcial: mostrando as primeiras por vencimento.</div>';
-          if (state.pendentes) html += '<div class="rpv-warn">+' + state.pendentes + ' tarefas ainda não conferidas no Kommo; aparecem à medida que a fila anda.</div>';
+          if (state.parcial) html += '<div class="rpv-warn">Fila parcial' + (state.motivos && state.motivos.length ? ' (' + esc(state.motivos.join(', ')) + ')' : '') + ': algumas tarefas podem faltar.</div>';
           if (!state.fila.length) {
             html += '<div class="rpv-b">' + (state.futura ? 'Nada vencido agora. Próxima às <b>' + esc(fmtQuando(state.futura.due, now)) + '</b> — o botão abre ela.' : 'Nenhuma tarefa pendente.') + '</div>';
           } else {

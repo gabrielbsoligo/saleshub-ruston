@@ -267,13 +267,25 @@ test('com falha registrada, ações ficam suspensas (botão Próximo desabilitad
   assert.equal(patches, 0)
 })
 
-test('só o que o servidor emitiu aparece; pendentes viram contagem', () => {
+test('lista completa do servidor: o widget ordena; parcial e origem pendente aparecem com motivo', () => {
   const env = ambiente()
-  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], futura: tarefa(5, { due: AGORA + 3600 }), pendentes: 7, frescor: { atraso_s: 1, status: 'done' } }])
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2, { momento: 'anti_noshow', grupo: 'G9' })], parcial: true, motivos_parcial: ['vazao_leads'], origem_pendente: 3 }])
   w.callbacks.init(); env.rodarTimers('t')
   const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
   clique({ target: { closest: () => ({ getAttribute: () => 'painel' }) } })
   const html = env.elems['rpv-root'].innerHTML
-  assert.ok(html.includes('Sua fila · 1 (+7)'))
-  assert.ok(html.includes('+7 tarefas ainda não conferidas'))
+  assert.ok(html.includes('Fila parcial (vazao_leads)'))
+  assert.ok(html.includes('3 tarefa(s) com origem ainda não consultada'))
+  assert.ok(html.indexOf('Lead 2') < html.indexOf('Lead 1'))      // anti no-show antes do follow-up
+})
+
+test('servidor ocupado/em andamento: pausa curta e NÃO cai no modo degradado', () => {
+  const env = ambiente()
+  let gets = 0
+  kommo(env, () => { gets++; return { status: 200, body: { _embedded: { tasks: [] } } } })
+  const w = instanciar(env, [])
+  w.$authorizedAjax = () => ({ then: (ok, err) => err({ status: 503, responseJSON: { erro: 'ocupado', retry_after: 3 } }) })
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(gets, 0)
+  assert.ok(JSON.parse(env.ctx.localStorage.getItem('rpv_pausa_financeirorustonengenhariacombr_11420911')) > Date.now())
 })

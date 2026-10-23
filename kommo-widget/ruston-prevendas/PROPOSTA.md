@@ -330,3 +330,17 @@ No widget:
 - 429 do servidor gera pausa compartilhada entre as abas, sem cair no modo degradado.
 
 **Risco remanescente:** tarefa criada há mais de 3 h, perdida pelo sync e nunca mais alterada não é descoberta. Isso depende da correção do kommo-sync, que foi reportada.
+
+### Implementação, rodada 4 da revisão de código: lista viva do Kommo como fonte
+Conferir um lote limitado em cima de uma réplica não confiável gerava casos sem fim: falta de progresso entre ciclos, pulos, reclassificação, cortes, leads sem origem e concorrência. A causa foi eliminada:
+- **A lista de tarefas vem AO VIVO do Kommo:** abertas do usuário, paginadas até 3000. É a fonte autoritativa; nada da réplica decide o que é emitido.
+- **A réplica só fornece dados do LEAD** (nome, etapa, origem) para TODOS os leads da lista, numa consulta ao banco. Os faltantes vêm da API em lotes de 50, e por falta de orçamento ficam como `origem_pendente`, com aviso.
+- **Classificação com texto e tipo vivos.**
+- **O widget recebe a lista completa e ordena;** o pular funciona sem depender do servidor.
+- **Vazão:**
+  - cache de 40 s por usuário;
+  - **trava atômica por usuário** (`prevendas_travar`): uma execução por vez, e as concorrentes recebem o cache;
+  - **orçamento compartilhado da conta** (`prevendas_consumir`, balde de 6 fichas com recarga de 2/s) antes de cada GET. Sem ficha, o widget pausa por instantes e não cai no degradado.
+- **Incompletude nunca silenciosa:** `parcial` + `motivos_parcial` (limite de páginas, vazão, leads não consultados).
+- **Saíram:** a ordem no servidor e a paridade, o lote e as rodadas, os pendentes e a descoberta de 3 h. O risco de "tarefa perdida pelo sync" deixa de existir para a fila, porque a lista é viva.
+- **Custo:** cerca de 1 a 3 chamadas por SDR a cada 40 s; com 10 SDRs, cerca de 0,5 req/s. O balde limita a 2/s no agregado.

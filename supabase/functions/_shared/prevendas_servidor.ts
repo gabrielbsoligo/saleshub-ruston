@@ -1,85 +1,59 @@
-// Núcleo PURO do prevendas-fila (sem rede): junta réplica + descobertas, ordena, seleciona o lote a conferir,
-// aplica a conferência do Kommo e decide o que pode ser EMITIDO. Só sai o que o Kommo confirmou
-// (existe, aberta, do usuário, mesma entidade). Testado em kommo-widget/ruston-prevendas/tests/servidor.test.ts.
-import { ordenar, type CfgOrdem, type ItemOrdem } from './prevendas_ordem.ts'
-
-export interface Item extends ItemOrdem {
-  entity_type: string
-  entity_id: number
-  texto: string
-  lead_nome: string | null
-  etapa: string | null
-  acao: string
-  fonte: string
-  motivo: string
-}
+// Núcleo PURO do prevendas-fila (sem rede): transforma a lista VIVA de tarefas do Kommo (autoritativa) em itens
+// classificados, usando dados de lead (réplica ou API) e slots da cadência. Classifica SEMPRE com o texto/tipo
+// vivos. Testado em kommo-widget/ruston-prevendas/tests/servidor.test.ts.
+import { classificar, type Momento } from './prevendas_classificar.ts'
 
 export interface TarefaKommo {
   id: number
-  is_completed: boolean
-  responsible_user_id: number
-  complete_till: number | null
-  text: string | null
-  entity_type: string | null
-  entity_id: number | null
+  is_completed?: boolean
+  responsible_user_id?: number
+  task_type_id?: number | null
+  complete_till?: number | null
+  text?: string | null
+  entity_type?: string | null
+  entity_id?: number | null
+}
+export interface LeadDados { nome?: string | null; etapa?: string | null; origem?: string | null }
+
+export interface Item {
+  id: number; entity_type: string; entity_id: number; due: number; texto: string
+  lead_nome: string | null; etapa: string | null; origem_pendente: boolean
+  momento: Momento; acao: string; grupo: string; urgente: boolean; fonte: string; motivo: string
 }
 
-/** Junta a réplica com tarefas descobertas ao vivo (que a réplica pode ter perdido). Descoberta vence. */
-export function juntar(replica: Item[], descobertas: Item[]): Item[] {
-  const m = new Map<number, Item>()
-  for (const r of replica) m.set(r.id, r)
-  for (const d of descobertas) m.set(d.id, { ...(m.get(d.id) ?? {}), ...d })
-  return [...m.values()]
-}
-
-/** Lote a conferir: as K primeiras da fila e, SEPARADAMENTE, a próxima futura (nunca cortada pelo K). */
-export function lote(itens: Item[], cfg: CfgOrdem, agora: number, minuto: number, k: number) {
-  const o = ordenar(itens, cfg, agora, minuto)
-  const fila = o.fila.slice(0, k)
-  return { fila, futura: o.futura, ids: [...fila.map((i) => i.id), ...(o.futura ? [o.futura.id] : [])], totalFila: o.fila.length }
-}
-
-/**
- * Conferência: válida = existe no Kommo, aberta, responsável = uid, MESMA entidade (tipo e id).
- * Válidas ganham prazo/texto vivos. Devolve os ids inválidos (que devem sair) e as válidas atualizadas.
- */
-export function conferir(itens: Item[], ids: number[], vivas: TarefaKommo[], uid: number) {
-  const porId = new Map(vivas.map((v) => [Number(v.id), v]))
-  const alvo = new Set(ids)
-  const invalidas = new Set<number>()
-  const validas = new Map<number, Item>()
-  for (const it of itens) {
-    if (!alvo.has(it.id)) continue
-    const v = porId.get(it.id)
-    const mesmaEntidade = v && String(v.entity_type ?? '') === String(it.entity_type) && Number(v.entity_id) === Number(it.entity_id)
-    if (!v || v.is_completed || Number(v.responsible_user_id) !== Number(uid) || !mesmaEntidade) { invalidas.add(it.id); continue }
-    validas.set(it.id, { ...it, due: Number(v.complete_till) || 0, texto: v.text ?? it.texto })
-  }
-  return { invalidas, validas }
+/** Ids de lead que faltam (nem na réplica nem já buscados) — para buscar na API em lotes. */
+export function leadsFaltando(tarefas: TarefaKommo[], conhecidos: Record<string, LeadDados>): number[] {
+  const ids = new Set<number>()
+  for (const t of tarefas) if (t.entity_type === 'leads' && t.entity_id && !conhecidos[String(t.entity_id)]) ids.add(Number(t.entity_id))
+  return [...ids]
 }
 
 /**
- * Laço de emissão: ordena → confere o lote → remove inválidas → reordena e confere o que subiu, até `rodadas`.
- * `verificar(ids)` consulta o Kommo. Só itens confirmados são emitidos; o resto vira contagem `pendentes`.
+ * Só tarefas abertas do próprio usuário (a lista já vem filtrada pelo Kommo; aqui é defesa em profundidade).
+ * Lead sem dados (nem réplica nem API, por falta de orçamento) fica com origem_pendente=true — não é tratado
+ * como "origem não informada".
  */
-export async function emitir(
-  itens: Item[], cfg: CfgOrdem, agora: number, minuto: number, uid: number, k: number, rodadas: number,
-  verificar: (ids: number[]) => Promise<TarefaKommo[]>,
-) {
-  let base = itens
-  const confirmadas = new Map<number, Item>()
-  let sel = lote(base, cfg, agora, minuto, k)
-  for (let r = 0; r < rodadas; r++) {
-    const faltam = sel.ids.filter((id) => !confirmadas.has(id))
-    if (!faltam.length) break
-    const vivas = await verificar(faltam)
-    const c = conferir(base, faltam, vivas, uid)
-    for (const [id, it] of c.validas) confirmadas.set(id, it)
-    base = base.filter((i) => !c.invalidas.has(i.id)).map((i) => confirmadas.get(i.id) ?? i)
-    sel = lote(base, cfg, agora, minuto, k)
+export function montarItens(
+  tarefas: TarefaKommo[], uid: number, leads: Record<string, LeadDados>, slots: Record<string, string>,
+  tiposMomento: Record<number, Momento> = {},
+): Item[] {
+  const out: Item[] = []
+  for (const t of tarefas) {
+    if (t.is_completed || Number(t.responsible_user_id) !== Number(uid) || !t.entity_id) continue
+    const ehLead = t.entity_type === 'leads'
+    const l = ehLead ? leads[String(t.entity_id)] : undefined
+    const c = classificar(
+      { id: Number(t.id), task_type_id: t.task_type_id == null ? null : Number(t.task_type_id), text: t.text ?? null },
+      slots[String(t.id)] ?? null,
+      ehLead && l ? { etapa: l.etapa ?? null, origem: l.origem ?? null } : null,
+      tiposMomento,
+    )
+    out.push({
+      id: Number(t.id), entity_type: t.entity_type ?? 'leads', entity_id: Number(t.entity_id),
+      due: Number(t.complete_till) || 0, texto: t.text ?? '',
+      lead_nome: l?.nome ?? null, etapa: l?.etapa ?? null, origem_pendente: ehLead && !l,
+      ...c,
+    })
   }
-  // emite só o que foi confirmado, na ordem final; o que não deu tempo de conferir fica pendente
-  const fila = sel.fila.filter((i) => confirmadas.has(i.id))
-  const futura = sel.futura && confirmadas.has(sel.futura.id) ? sel.futura : null
-  return { fila, futura, pendentes: Math.max(0, sel.totalFila - fila.length), total: base.length }
+  return out
 }

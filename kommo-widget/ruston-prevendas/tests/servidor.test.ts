@@ -1,59 +1,33 @@
 // node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/servidor.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { conferir, emitir, juntar, lote, type Item, type TarefaKommo } from '../../../supabase/functions/_shared/prevendas_servidor.ts'
+import { leadsFaltando, montarItens } from '../../../supabase/functions/_shared/prevendas_servidor.ts'
 
-const AGORA = 1_800_000_000, M10H = 600, UID = 7
-const CFG = { antecedencia_min: 10, outbound_apos: '16:00', grupos: ['G1', 'G2', 'G3', 'G4', 'G5', 'G9'] }
-const it = (id: number, dueMin: number, extra: Partial<Item> = {}): Item => ({
-  id, due: AGORA + dueMin * 60, momento: 'follow_up', grupo: 'G1', urgente: false, entity_type: 'leads', entity_id: id * 10,
-  texto: 't' + id, lead_nome: 'L' + id, etapa: null, acao: 'outro', fonte: 'slot', motivo: '', ...extra,
-})
-const viva = (i: Item, extra: Partial<TarefaKommo> = {}): TarefaKommo => ({
-  id: i.id, is_completed: false, responsible_user_id: UID, complete_till: i.due, text: i.texto, entity_type: i.entity_type, entity_id: i.entity_id, ...extra,
+const UID = 7
+const t = (id: number, extra = {}) => ({ id, is_completed: false, responsible_user_id: UID, task_type_id: 1, complete_till: 1000 + id, text: 't' + id, entity_type: 'leads', entity_id: id * 10, ...extra })
+
+test('classifica com o texto/tipo VIVOS (edição para "Ligar AGORA" vira conexão urgente)', () => {
+  const [i] = montarItens([t(1, { text: 'CADENCIA: lead respondeu com interesse ("oi"). Ligar AGORA', complete_till: 999999 })], UID, { 10: { nome: 'L', origem: 'Recomendação' } }, {})
+  assert.equal(i.momento, 'conexao'); assert.equal(i.urgente, true); assert.equal(i.grupo, 'G1'); assert.equal(i.due, 999999)
 })
 
-test('conferir: só emite existente, aberta, do usuário e na mesma entidade', () => {
-  const itens = [it(1, -5), it(2, -5), it(3, -5), it(4, -5), it(5, -5)]
-  const vivas = [viva(itens[0], { complete_till: AGORA + 999, text: 'vivo' }), viva(itens[1], { is_completed: true }), viva(itens[2], { responsible_user_id: 8 }), viva(itens[3], { entity_id: 999 })]
-  const c = conferir(itens, [1, 2, 3, 4, 5], vivas, UID)
-  assert.deepEqual([...c.invalidas].sort(), [2, 3, 4, 5])          // 5 = excluída (não veio)
-  assert.equal(c.validas.get(1)!.due, AGORA + 999); assert.equal(c.validas.get(1)!.texto, 'vivo')
+test('defesa em profundidade: concluída ou de outro dono não vira item', () => {
+  const r = montarItens([t(1), t(2, { is_completed: true }), t(3, { responsible_user_id: 8 })], UID, {}, {})
+  assert.deepEqual(r.map((x) => x.id), [1])
 })
 
-test('juntar: descoberta ao vivo entra mesmo ausente da réplica (Ligar AGORA perdido no sync)', () => {
-  const r = juntar([it(1, -5)], [it(2, 120, { momento: 'conexao', urgente: true })])
-  assert.deepEqual(r.map((x) => x.id).sort(), [1, 2])
+test('slot da cadência e origem do lead', () => {
+  const [i] = montarItens([t(5, { task_type_id: 3732751 })], UID, { 50: { nome: 'X', etapa: 'REUNIÃO MARCADA', origem: 'Leadbroker' } }, { 5: 'T5' })
+  assert.equal(i.momento, 'anti_noshow'); assert.equal(i.acao, 'ligar'); assert.equal(i.grupo, 'G4'); assert.equal(i.lead_nome, 'X'); assert.equal(i.origem_pendente, false)
 })
 
-test('lote: a futura entra no conjunto mesmo com K elegíveis', () => {
-  const itens = Array.from({ length: 30 }, (_, i) => it(i + 1, -5)).concat([it(99, 120)])
-  const l = lote(itens, CFG, AGORA, M10H, 25)
-  assert.equal(l.fila.length, 25); assert.equal(l.futura!.id, 99); assert.ok(l.ids.includes(99)); assert.equal(l.ids.length, 26)
+test('lead sem dados fica com origem_pendente (não "sem origem")', () => {
+  const [i] = montarItens([t(9)], UID, {}, {})
+  assert.equal(i.origem_pendente, true)
+  const [c] = montarItens([t(9, { entity_type: 'contacts' })], UID, {}, {})
+  assert.equal(c.origem_pendente, false)      // contato não tem origem de lead
 })
 
-test('emitir: nada sem conferência sai; o que sobe após invalidação é conferido na rodada seguinte', async () => {
-  const itens = Array.from({ length: 30 }, (_, i) => it(i + 1, -60 + i))   // 1 é o mais atrasado
-  const consultas: number[][] = []
-  const verificar = async (ids: number[]) => {
-    consultas.push(ids)
-    // as 20 primeiras foram excluídas no Kommo; as demais existem
-    return itens.filter((i) => ids.includes(i.id) && i.id > 20).map((i) => viva(i))
-  }
-  const r = await emitir(itens, CFG, AGORA, M10H, UID, 25, 2, verificar)
-  assert.ok(r.fila.every((i) => i.id > 20))                                  // nenhuma excluída emitida
-  assert.deepEqual(r.fila.map((i) => i.id), [21, 22, 23, 24, 25, 26, 27, 28, 29, 30])
-  assert.equal(consultas.length, 2)                                          // 2ª rodada conferiu as que subiram
-  assert.equal(r.pendentes, 0)
-})
-
-test('emitir: o que não deu tempo de conferir vira pendente, não é emitido', async () => {
-  const itens = Array.from({ length: 60 }, (_, i) => it(i + 1, -60 + i))
-  const verificar = async (ids: number[]) => itens.filter((i) => ids.includes(i.id) && i.id > 25).map((i) => viva(i))
-  const r = await emitir(itens, CFG, AGORA, M10H, UID, 25, 1, verificar)   // só 1 rodada: as 25 primeiras eram inválidas
-  assert.equal(r.fila.length, 0); assert.ok(r.pendentes > 0)
-})
-
-test('emitir: falha do Kommo propaga (o chamador devolve 503, não emite nada)', async () => {
-  await assert.rejects(() => emitir([it(1, -5)], CFG, AGORA, M10H, UID, 25, 2, async () => { throw new Error('kommo 429') }), /429/)
+test('leadsFaltando: só leads ausentes, sem repetir', () => {
+  assert.deepEqual(leadsFaltando([t(1), t(2), t(1), t(3, { entity_type: 'contacts' })], { 10: {} }), [20])
 })
