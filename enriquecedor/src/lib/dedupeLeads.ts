@@ -1,7 +1,8 @@
 // Deduplicação de leads que ENTRAM num projeto (lista inicial, lista nova ou
-// cadastro manual) contra os que o projeto já tem. Módulo puro (sem Supabase).
+// cadastro manual) contra os que o projeto já tem, e mesclagem de três vias do
+// projeto entre abas. Módulo puro (sem Supabase), coberto por testes.
 //
-// Regras, nesta ordem:
+// Regras de dedupe, nesta ordem:
 //   1. CNPJ repetido dentro do próprio lote: fica a primeira ocorrência (o upsert
 //      em lote do Postgres derruba o lote com "cannot affect row a second time").
 //   2. CNPJ que já está no projeto (mesmo descartado): não entra de novo.
@@ -10,7 +11,7 @@
 //      com outro CNPJ (filial/MEI do sócio) ou lista repetida. A importação INICIAL
 //      não usa esta regra (duas empresas podem dividir uma central).
 import type { Lead } from '../types';
-import type { WfLead } from './projectsStore';
+import type { AuditStatus, WfLead } from './projectsStore';
 import { checkPhone, formatCnpj, normalizeCnpjDigits } from './validation';
 
 export interface LeadExistente {
@@ -26,8 +27,8 @@ export interface Dedupe {
   telefoneNoLote: number; // telefone repetido dentro da própria lista
 }
 
-const chaveCnpj = (v: string | null | undefined) => normalizeCnpjDigits(v) || null;
-const chaveFone = (v: string | null | undefined) => checkPhone(v).normalized;
+export const chaveCnpj = (v: string | null | undefined) => normalizeCnpjDigits(v) || null;
+export const chaveFone = (v: string | null | undefined) => checkPhone(v).normalized;
 
 export function deduplicar(lote: Lead[], existentes: LeadExistente[], opts: { porTelefone?: boolean } = {}): Dedupe {
   const cnpjsProjeto = new Set(existentes.map((e) => chaveCnpj(e.cnpj)).filter((k): k is string => !!k));
@@ -65,13 +66,49 @@ export function toWf(lead: Lead): WfLead {
   };
 }
 
-// Junta a lista de leads do projeto vinda do BANCO (pode ter leads que outra aba
-// acrescentou) com a desta aba (etapas mais recentes) e os novos. Ordem: os desta
-// aba, depois os que só existem no banco, depois os novos. Nunca perde ninguém.
-export function mesclarLeads(locais: WfLead[], remotos: WfLead[], novos: WfLead[]): WfLead[] {
+// ── Mesclagem de três vias do projeto (esta aba × banco × base) ──────────────
+// `base` é o último estado que ESTA aba leu ou gravou. Para cada lead presente
+// nos dois lados: se só o banco mudou desde a base, vale o banco (outra aba
+// avançou/descartou); se só esta aba mudou, vale esta aba; se os dois mudaram,
+// vale o mais adiantado (descartado > maior etapa > banco). Leads que só existem
+// de um lado entram sempre (o banco pode ter leads que outra aba acrescentou).
+const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const maisAdiantado = (a: WfLead, b: WfLead): WfLead => {
+  if (!!a.descartado !== !!b.descartado) return a.descartado ? a : b;
+  if (a.etapa !== b.etapa) return a.etapa > b.etapa ? a : b;
+  return b; // empate: o do banco (confirmado)
+};
+// Status: 'ok'/'erro' (terminou) vence 'run'/'fila' (em andamento).
+const FINAL = new Set<AuditStatus>(['ok', 'erro']);
+const statusMaisAdiantado = (local: AuditStatus | undefined, remoto: AuditStatus | undefined) =>
+  FINAL.has(remoto as AuditStatus) || !local ? remoto : FINAL.has(local) ? local : remoto;
+
+export interface EstadoProjeto {
+  leads: WfLead[];
+  leadStatus: Record<string, AuditStatus>;
+}
+
+export function mesclarProjeto(local: EstadoProjeto, remoto: EstadoProjeto, base: EstadoProjeto, novos: WfLead[]): EstadoProjeto {
+  const porIdBase = new Map(base.leads.map((l) => [l.id, l]));
+  const porIdRemoto = new Map(remoto.leads.map((l) => [l.id, l]));
   const porId = new Map<string, WfLead>();
-  for (const l of locais) porId.set(l.id, l);
-  for (const l of remotos) if (!porId.has(l.id)) porId.set(l.id, l);
-  for (const l of novos) if (!porId.has(l.id)) porId.set(l.id, l);
-  return [...porId.values()];
+  for (const l of local.leads) {
+    const r = porIdRemoto.get(l.id);
+    if (!r) { porId.set(l.id, l); continue; }
+    const b = porIdBase.get(l.id);
+    const localMudou = !igual(l, b);
+    const remotoMudou = !igual(r, b);
+    porId.set(l.id, !remotoMudou ? l : !localMudou ? r : maisAdiantado(l, r));
+  }
+  for (const r of remoto.leads) if (!porId.has(r.id)) porId.set(r.id, r);
+  for (const n of novos) if (!porId.has(n.id)) porId.set(n.id, n);
+
+  const leadStatus: Record<string, AuditStatus> = {};
+  for (const k of new Set([...Object.keys(remoto.leadStatus), ...Object.keys(local.leadStatus)])) {
+    const l = local.leadStatus[k], r = remoto.leadStatus[k], b = base.leadStatus[k];
+    const localMudou = l !== b, remotoMudou = r !== b;
+    const v = !remotoMudou ? l : !localMudou ? r : statusMaisAdiantado(l, r);
+    if (v) leadStatus[k] = v;
+  }
+  return { leads: [...porId.values()], leadStatus };
 }

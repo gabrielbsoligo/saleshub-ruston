@@ -115,15 +115,17 @@ if (typeof window !== 'undefined') {
 }
 
 const pendentes = new Map<string, ReturnType<typeof setTimeout>>();
+const emVoo = new Map<string, Promise<unknown>>(); // POST do debounce já disparado (clearTimeout não cancela)
 function persistir(p: Projeto) {
   if (!supabaseConfigured) return;
   const t = pendentes.get(p.id);
   if (t) clearTimeout(t);
   pendentes.set(p.id, setTimeout(() => {
     pendentes.delete(p.id);
-    void supabase.from('enriquecedor_projetos').upsert({ ...toRow(p), updated_at: new Date().toISOString() }).then(({ error }) => {
-      if (error) console.warn('[projetos] falha ao gravar', p.nome, error.message);
-    });
+    const req: Promise<void> = Promise.resolve(supabase.from('enriquecedor_projetos').upsert({ ...toRow(p), updated_at: new Date().toISOString() }))
+      .then(({ error }) => { if (error) console.warn('[projetos] falha ao gravar', p.nome, error.message); })
+      .finally(() => { if (emVoo.get(p.id) === req) emVoo.delete(p.id); });
+    emVoo.set(p.id, req);
   }, 600));
 }
 function write(next: Projeto[], mudou?: Projeto, removidoId?: string) {
@@ -159,30 +161,45 @@ export function finalizarImportacao(id: string, leads: WfLead[], leadStatus: Rec
   let mudou: Projeto | undefined;
   write(read().map((p) => (p.id === id ? (mudou = { ...p, importada: true, leads, leadStatus, doneF: [] }) : p)), mudou);
 }
-/** Relê os projetos do banco (outra aba pode ter mexido) e devolve o projeto pedido como está lá. */
-export async function recarregarProjeto(id: string): Promise<Projeto | null> {
-  carregando = null; // força nova leitura mesmo se uma estiver em andamento
-  await carregar();
-  return read().find((p) => p.id === id) ?? null;
+/** Lê UM projeto direto do banco (sem cache, sem fallback): erro de rede/ausência vira exceção. */
+async function lerProjetoDoBanco(id: string): Promise<{ projeto: Projeto; updatedAt: string | null }> {
+  if (!supabaseConfigured) {
+    const p = read().find((x) => x.id === id);
+    if (!p) throw new Error('projeto não encontrado');
+    return { projeto: p, updatedAt: null };
+  }
+  const { data, error } = await supabase.from('enriquecedor_projetos').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(`não deu pra reler o projeto: ${error.message}`);
+  if (!data) throw new Error('projeto não existe mais no banco');
+  return { projeto: fromRow(data as Row), updatedAt: (data as { updated_at?: string }).updated_at ?? null };
 }
 /**
- * Grava AGORA (sem debounce) e falha alto. Usado quando a tela precisa confirmar que
- * o vínculo ficou no banco antes de dizer "sucesso" (ex.: adicionar leads ao projeto).
+ * Grava AGORA com compare-and-swap: relê o projeto do banco, pede a `montar` o novo
+ * conteúdo a partir do que está lá e só grava se `updated_at` não mudou no meio
+ * (outra aba gravou → relê e refaz, até 5 vezes). Antes, espera um POST do debounce
+ * que já esteja em voo. Falha alto — quem chama só anuncia sucesso depois disto.
  */
-export async function salvarProjetoAgora(id: string, patch: Partial<Projeto>): Promise<Projeto> {
-  let mudou: Projeto | undefined;
-  const next = read().map((p) => (p.id === id ? (mudou = { ...p, ...patch }) : p));
-  if (!mudou) throw new Error('projeto não encontrado');
+export async function salvarProjetoAgora(id: string, montar: (remoto: Projeto) => Promise<Partial<Projeto>>): Promise<Projeto> {
   const t = pendentes.get(id);
   if (t) { clearTimeout(t); pendentes.delete(id); }
-  cache = next;
-  localStorage.setItem(KEY, JSON.stringify(next));
-  notify();
-  if (supabaseConfigured) {
-    const { error } = await supabase.from('enriquecedor_projetos').upsert({ ...toRow(mudou), updated_at: new Date().toISOString() });
-    if (error) throw new Error(`falha ao gravar o projeto: ${error.message}`);
+  await emVoo.get(id);
+  for (let tentativa = 1; tentativa <= 5; tentativa++) {
+    const { projeto: remoto, updatedAt } = await lerProjetoDoBanco(id);
+    const mudou: Projeto = { ...remoto, ...(await montar(remoto)) };
+    if (supabaseConfigured) {
+      const agora = new Date().toISOString();
+      let q = supabase.from('enriquecedor_projetos').update({ ...toRow(mudou), updated_at: agora }).eq('id', id);
+      if (updatedAt) q = q.eq('updated_at', updatedAt);
+      const { data, error } = await q.select('id');
+      if (error) throw new Error(`falha ao gravar o projeto: ${error.message}`);
+      if (!data?.length) continue; // alguém gravou entre a leitura e a escrita: refaz em cima do novo
+    }
+    cache = read().map((p) => (p.id === id ? mudou : p));
+    localStorage.setItem(KEY, JSON.stringify(cache));
+    notify();
+    return mudou;
   }
-  return mudou;
+  throw new Error('o projeto está sendo alterado em outra aba; tente de novo');
 }
 export function atualizarProjeto(id: string, patch: Partial<Projeto>) {
   let mudou: Projeto | undefined;

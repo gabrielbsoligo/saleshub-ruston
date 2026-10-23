@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deduplicar, mesclarLeads, toWf } from './dedupeLeads';
+import { deduplicar, mesclarProjeto, toWf } from './dedupeLeads';
 import type { Lead } from '../types';
 import type { WfLead } from './projectsStore';
 
@@ -102,17 +102,55 @@ describe('toWf', () => {
   });
 });
 
-describe('mesclarLeads', () => {
-  const w = (id: string, etapa = 0): WfLead => ({ id, score: 0, empresa: id, cnpj: '', uf: '', etapa });
-  it('não perde lead acrescentado por outra aba e mantém a etapa desta aba', () => {
-    const locais = [w('L0', 3)];
-    const remotos = [w('L0', 1), w('LB')];
-    const novos = [w('LA')];
-    const r = mesclarLeads(locais, remotos, novos);
-    expect(r.map((l) => l.id)).toEqual(['L0', 'LB', 'LA']);
-    expect(r[0].etapa).toBe(3);
+describe('mesclarProjeto (3 vias: esta aba x banco x base)', () => {
+  const w = (id: string, etapa = 0, extra: Partial<WfLead> = {}): WfLead => ({ id, score: 0, empresa: id, cnpj: '', uf: '', etapa, ...extra });
+  const est = (leads: WfLead[], leadStatus: Record<string, 'ok' | 'run' | 'erro' | 'fila'> = {}) => ({ leads, leadStatus });
+
+  it('lead acrescentado por outra aba não se perde; etapa avançada por ESTA aba é mantida', () => {
+    const base = est([w('L0', 1)]);
+    const local = est([w('L0', 3)]);
+    const remoto = est([w('L0', 1), w('LB')]);
+    const r = mesclarProjeto(local, remoto, base, [w('LA')]);
+    expect(r.leads.map((l) => l.id)).toEqual(['L0', 'LB', 'LA']);
+    expect(r.leads[0].etapa).toBe(3);
   });
+
+  it('avanço/descarte feito por OUTRA aba não é revertido por estado local antigo', () => {
+    const base = est([w('L0', 1), w('L1', 1)]);
+    const local = est([w('L0', 1), w('L1', 1)]); // esta aba não mexeu
+    const remoto = est([w('L0', 3), w('L1', 1, { descartado: true, motivoDescarte: 'sem_fit' })]);
+    const r = mesclarProjeto(local, remoto, base, []);
+    expect(r.leads.find((l) => l.id === 'L0')?.etapa).toBe(3);
+    expect(r.leads.find((l) => l.id === 'L1')?.descartado).toBe(true);
+  });
+
+  it('os dois mudaram: vale o mais adiantado (descartado > maior etapa > banco)', () => {
+    const base = est([w('A', 1), w('B', 1), w('C', 1)]);
+    const local = est([w('A', 2), w('B', 1, { descartado: true }), w('C', 2, { parcial: true })]);
+    const remoto = est([w('A', 3), w('B', 2), w('C', 2)]);
+    const r = mesclarProjeto(local, remoto, base, []);
+    expect(r.leads.find((l) => l.id === 'A')?.etapa).toBe(3);
+    expect(r.leads.find((l) => l.id === 'B')?.descartado).toBe(true);
+    expect(r.leads.find((l) => l.id === 'C')?.parcial).toBeUndefined(); // empate: banco
+  });
+
+  it('leadStatus: job concluído no banco não é sobrescrito por run/fila antigo desta aba', () => {
+    const base = est([], { '1:L0': 'run' });
+    const local = est([], { '1:L0': 'run' });
+    const remoto = est([], { '1:L0': 'ok', '2:LB': 'fila' });
+    const r = mesclarProjeto(local, remoto, base, []);
+    expect(r.leadStatus).toEqual({ '1:L0': 'ok', '2:LB': 'fila' });
+  });
+
+  it('leadStatus: mudança só local é preservada; os dois mudaram → terminado vence andamento', () => {
+    const base = est([], { '1:A': 'fila', '1:B': 'fila' });
+    const local = est([], { '1:A': 'ok', '1:B': 'run' });
+    const remoto = est([], { '1:A': 'fila', '1:B': 'erro' });
+    const r = mesclarProjeto(local, remoto, base, []);
+    expect(r.leadStatus).toEqual({ '1:A': 'ok', '1:B': 'erro' });
+  });
+
   it('novo que já existe (mesmo id) não duplica', () => {
-    expect(mesclarLeads([w('A')], [], [w('A')])).toHaveLength(1);
+    expect(mesclarProjeto(est([w('A')]), est([]), est([]), [w('A')]).leads).toHaveLength(1);
   });
 });

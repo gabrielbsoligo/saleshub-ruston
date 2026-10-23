@@ -95,6 +95,22 @@ export const leadsRepo = {
     return out;
   },
 
+  /** Leads já existentes no banco com estes CNPJs (dígitos). Usado na dedupe da adição. */
+  async findByCnpjs(cnpjs: string[]): Promise<Lead[]> {
+    if (!cnpjs.length) return [];
+    if (!supabaseConfigured) {
+      const q = new Set(cnpjs);
+      return readLocal<Lead>(LEADS_KEY).filter((l) => l.cnpj && q.has(l.cnpj));
+    }
+    const out: Lead[] = [];
+    for (let i = 0; i < cnpjs.length; i += 200) {
+      const { data, error } = await supabase.from('enriquecedor_leads').select('*').in('cnpj', cnpjs.slice(i, i + 200));
+      if (error) throw erroLegivel(error);
+      out.push(...(data ?? []).map(fromRow));
+    }
+    return out;
+  },
+
   async get(id: string): Promise<Lead | null> {
     if (!supabaseConfigured) {
       return readLocal<Lead>(LEADS_KEY).find((l) => l.id === id) ?? null;

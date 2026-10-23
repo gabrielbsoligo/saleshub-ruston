@@ -6,7 +6,6 @@ import {
   useProjetos,
   finalizarImportacao,
   atualizarProjeto,
-  recarregarProjeto,
   salvarProjetoAgora,
   excluirProjeto,
   ARQ,
@@ -17,8 +16,8 @@ import {
   type Projeto,
 } from '../lib/projectsStore';
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
-import { entrarLeads, resumoEntrada } from '../lib/adicionarLeads';
-import { mesclarLeads } from '../lib/dedupeLeads';
+import { entrarLeads, resumoEntrada, revalidarNovos } from '../lib/adicionarLeads';
+import { mesclarProjeto, type EstadoProjeto } from '../lib/dedupeLeads';
 import { AdicionarLeadsModal } from '../components/AdicionarLeadsModal';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { lerFila, motorFetch, type FilaMotorInfo } from '../lib/motorClient';
@@ -230,6 +229,11 @@ export function WorkflowView({
 
   const projeto = selId ? projetos.find((p) => p.id === selId) ?? null : null;
   const importada = !!projeto?.importada;
+  // Estado ATUAL (pra callbacks assíncronos não usarem closure velha) e BASE = último
+  // estado que esta aba leu do projeto ou mandou gravar (merge de 3 vias com o banco).
+  const estadoRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
+  estadoRef.current = { leads, leadStatus: execStatus };
+  const baseRef = useRef<EstadoProjeto>({ leads: [], leadStatus: {} });
 
   // preserva o projeto aberto ao navegar (ex.: abrir o LeadDetail e voltar)
   useEffect(() => {
@@ -252,9 +256,11 @@ export function WorkflowView({
     if (p?.importada) {
       setLeads(p.leads);
       setExecStatus(p.leadStatus ?? {});
+      baseRef.current = { leads: p.leads, leadStatus: p.leadStatus ?? {} };
     } else {
       setLeads([]);
       setExecStatus({});
+      baseRef.current = { leads: [], leadStatus: {} };
     }
     setOpenF(null);
     setExecFase(null);
@@ -265,7 +271,10 @@ export function WorkflowView({
 
   // persiste no store a cada mudança do funil (execStatus vai no campo leadStatus)
   useEffect(() => {
-    if (selId && importada) atualizarProjeto(selId, { leads, leadStatus: execStatus });
+    if (selId && importada) {
+      atualizarProjeto(selId, { leads, leadStatus: execStatus });
+      baseRef.current = { leads, leadStatus: execStatus };
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leads, execStatus]);
 
@@ -707,16 +716,24 @@ export function WorkflowView({
           modoInicial={addModal}
           onClose={() => setAddModal(null)}
           onAdicionados={async (novos) => {
-            // Outra aba pode ter acrescentado leads desde que este projeto foi aberto:
-            // relê do banco, junta (esta aba > banco > novos) e grava AGORA — o modal
-            // só diz "sucesso" depois que o vínculo está persistido.
-            const remoto = await recarregarProjeto(projeto.id);
-            const leadsMesclados = mesclarLeads(leads, remoto?.leads ?? [], novos);
-            const statusMesclado = { ...(remoto?.leadStatus ?? {}), ...execStatus };
-            await salvarProjetoAgora(projeto.id, { leads: leadsMesclados, leadStatus: statusMesclado });
-            setLeads(leadsMesclados);
-            setExecStatus(statusMesclado);
+            // Grava com compare-and-swap: relê o projeto do banco e mescla em 3 vias
+            // (esta aba × banco × base) — outra aba pode ter avançado/descartado leads ou
+            // acrescentado outros enquanto a Triagem rodava; os novos são revalidados
+            // (CNPJ/telefone) contra esses. O modal só diz "sucesso" depois da gravação.
+            let removidos = 0;
+            const salvo = await salvarProjetoAgora(projeto.id, async (remoto) => {
+              const local = estadoRef.current;
+              const conhecidos = new Set([...local.leads, ...baseRef.current.leads].map((l) => l.id));
+              const soNoBanco = remoto.leads.filter((l) => !conhecidos.has(l.id)).map((l) => l.id);
+              const rev = await revalidarNovos(novos, soNoBanco);
+              removidos = rev.removidos;
+              return mesclarProjeto(local, { leads: remoto.leads, leadStatus: remoto.leadStatus ?? {} }, baseRef.current, rev.novos);
+            });
+            baseRef.current = { leads: salvo.leads, leadStatus: salvo.leadStatus };
+            setLeads(salvo.leads);
+            setExecStatus(salvo.leadStatus);
             setOpenF(0);
+            if (removidos) toast(`${removidos} lead(s) não entraram: outra aba acabou de adicionar o mesmo CNPJ/telefone neste projeto.`, { duration: 8000 });
           }}
         />
       )}
