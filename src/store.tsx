@@ -729,8 +729,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // canal já carregadas) e sinaliza indisponibilidade — nunca "todos elegíveis" por engano.
     const nova = await supabase.rpc('get_roleta_status_canal');
     if (!nova.error) {
+      // modo canal só é publicado com o PAR válido (fila + configuração); erro ou ausência da
+      // config = indisponível, preservando o último par consistente (nunca presume recomendação).
       const cfg = await supabase.from('roleta_config').select('canais_sem_ponto').eq('id', true).maybeSingle();
-      setRoletaCapacidade({ modo: 'canal', canaisSemPonto: (cfg.data?.canais_sem_ponto as string[] | undefined) ?? ['recomendacao'] });
+      if (cfg.error || !cfg.data || !Array.isArray(cfg.data.canais_sem_ponto)) {
+        console.error('fetchRoleta (config indisponível, mantendo a última fila):', cfg.error?.message ?? 'roleta_config sem canais_sem_ponto');
+        setRoletaCapacidade((c) => ({ ...c, modo: 'indisponivel' }));
+        return;
+      }
+      setRoletaCapacidade({ modo: 'canal', canaisSemPonto: cfg.data.canais_sem_ponto as string[] });
       setRoleta((nova.data || []) as RoletaStatusRow[]);
       return;
     }

@@ -41,7 +41,7 @@ REVOKE ALL ON public.roleta_closer_log FROM anon, PUBLIC;
 GRANT SELECT ON public.roleta_closer_log TO authenticated;
 DROP POLICY IF EXISTS roleta_closer_log_membros ON public.roleta_closer_log;
 CREATE POLICY roleta_closer_log_membros ON public.roleta_closer_log FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM team_members tm WHERE tm.id = auth.uid() AND tm.active));
+  USING (EXISTS (SELECT 1 FROM team_members tm WHERE tm.auth_user_id = auth.uid() AND tm.active)); -- vínculo é auth_user_id, não id
 
 -- 2) Canal de uma reunião (mesma regra de Performance Closers) --------------------------
 CREATE OR REPLACE FUNCTION public.roleta_canal_reuniao(p_reuniao_id uuid)

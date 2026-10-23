@@ -88,9 +88,9 @@ const RoletaBoardCloser: React.FC = () => {
         setEmpresas(map);
       } else setEmpresas({});
     }
-  }, []);
+  }, [comCanal]); // o modo (canal × legado) muda depois do mount: load precisa enxergar o atual
 
-  useEffect(() => { load(); }, [load, comCanal]);
+  useEffect(() => { load(); }, [load]);
 
   const toggleAtivo = async (memberId: string, novoAtivo: boolean) => {
     setToggling(memberId);
