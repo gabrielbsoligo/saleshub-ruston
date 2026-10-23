@@ -1,0 +1,60 @@
+{
+  "widget": {
+    "name": "widget.name",
+    "description": "widget.description",
+    "short_description": "widget.short_description",
+    "version": "1.0.2",
+    "interface_version": 2,
+    "init_once": true,
+    "locale": [
+      "pt",
+      "en",
+      "es",
+      "ru"
+    ],
+    "installation": true,
+    "support": {
+      "link": "https://rustonassessoria.com",
+      "email": "bianchini@rustonassessoria.com"
+    }
+  },
+  "locations": [
+    "settings",
+    "lcard-0",
+    "ccard-0",
+    "llist-0",
+    "clist-0"
+  ],
+  "settings": {
+    "prioridade": {
+      "name": "settings.prioridade",
+      "type": "text",
+      "required": false
+    },
+    "antecedencia": {
+      "name": "settings.antecedencia",
+      "type": "text",
+      "required": false
+    },
+    "position": {
+      "name": "settings.position",
+      "type": "text",
+      "required": false
+    },
+    "poll_seconds": {
+      "name": "settings.poll_seconds",
+      "type": "text",
+      "required": false
+    },
+    "atalho": {
+      "name": "settings.atalho",
+      "type": "text",
+      "required": false
+    },
+    "offset": {
+      "name": "settings.offset",
+      "type": "text",
+      "required": false
+    }
+  }
+}

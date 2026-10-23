@@ -1,0 +1,15 @@
+{
+  "widget": {
+    "name": "Ruston Próximo Lead",
+    "description": "Botón de próxima tarea para el SDR: ordena la cola automáticamente y salta al siguiente lead con un clic. Las tareas de seguimiento vencidas pasan al frente; el resto sigue la fecha de vencimiento.",
+    "short_description": "Cola de tareas ordenada + botón de siguiente lead."
+  },
+  "settings": {
+    "prioridade": "Tipos de tarea ancladas a un horario que pasan al frente al vencer, separados por coma. Por defecto: Acompanhar, Reuniao, Diagnostico, ALERTA. El resto (Ligação, WhatsApp, Email) entra como cadencia, por vencimiento.",
+    "antecedencia": "Minutos antes del vencimiento en que la tarea de seguimiento pasa al frente (por defecto 5)",
+    "position": "Posición del botón: bottom-right (por defecto), bottom-left, top-right o top-left",
+    "poll_seconds": "Intervalo de actualización en segundos (mínimo 15, por defecto 45)",
+    "atalho": "¿Activar atajo Alt+N? Y o N (por defecto Y)",
+    "offset": "Distancia del borde en píxeles, para que el botón no cubra el chat (por defecto 96)"
+  }
+}

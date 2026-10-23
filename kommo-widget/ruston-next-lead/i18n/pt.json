@@ -1,0 +1,15 @@
+{
+  "widget": {
+    "name": "Ruston Próximo Lead",
+    "description": "Botão de próxima tarefa para o SDR: ordena a fila automaticamente e leva ao próximo lead com um clique. Tarefas de acompanhamento que venceram cortam a fila; o resto segue por ordem de vencimento.",
+    "short_description": "Fila de tarefas ordenada + botão de próximo lead."
+  },
+  "settings": {
+    "prioridade": "Tipos de tarefa ancorados em horário, que cortam a fila quando vence — separados por vírgula. Padrão: Acompanhar, Reuniao, Diagnostico, ALERTA. O resto (Ligação, WhatsApp, Email) entra como cadência, por vencimento. Casa sem acento e sem caixa, por trecho do nome.",
+    "antecedencia": "Quantos minutos antes do horário a tarefa de acompanhamento já entra na frente (padrão 5)",
+    "position": "Posição do botão: bottom-right (padrão), bottom-left, top-right ou top-left",
+    "poll_seconds": "Intervalo de atualização da fila em segundos (mínimo 15, padrão 45)",
+    "atalho": "Ativar atalho de teclado Alt+N para avançar? Y ou N (padrão Y)",
+    "offset": "Distância da borda em pixels, para o botão não cobrir a caixa de conversa (padrão 96)"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "widget": {
+    "name": "Ruston Next Lead",
+    "description": "Next-task button for SDRs: sorts the queue automatically and jumps to the next lead in one click. Overdue follow-up tasks cut the line; everything else follows due date.",
+    "short_description": "Sorted task queue + next lead button."
+  },
+  "settings": {
+    "prioridade": "Time-anchored task types that cut the line when due, comma separated. Default: Acompanhar, Reuniao, Diagnostico, ALERTA. Everything else (Ligação, WhatsApp, Email) is cadence, ordered by due date. Matches by substring, accent and case insensitive.",
+    "antecedencia": "Minutes before the due time a follow-up task jumps the queue (default 5)",
+    "position": "Button position: bottom-right (default), bottom-left, top-right or top-left",
+    "poll_seconds": "Queue refresh interval in seconds (min 15, default 45)",
+    "atalho": "Enable Alt+N keyboard shortcut? Y or N (default Y)",
+    "offset": "Distance from the edge in pixels, so the button doesn't cover the chat box (default 96)"
+  }
+}
