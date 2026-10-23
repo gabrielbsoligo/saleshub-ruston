@@ -118,7 +118,12 @@ export const leadsRepo = {
       for (const lead of leads) {
         const k = lead.cnpj ?? lead.cnpjRaw;
         const ex = byCnpj.get(k);
-        const next = ex ? { ...ex, cnpjRaw: lead.cnpjRaw, companyNameRaw: lead.companyNameRaw, revenueBandRaw: lead.revenueBandRaw, phoneRaw: lead.phoneRaw, emailRaw: lead.emailRaw, perfil: lead.perfil, updatedAt: new Date().toISOString() } : lead;
+        // Lead já existente: a planilha só atualiza o que veio preenchido (um cadastro
+        // manual só com CNPJ não pode apagar telefone/e-mail/nome) e o PERFIL fica o
+        // do projeto que enriqueceu primeiro — trocar perfil mudaria a auditoria dele.
+        const next = ex
+          ? { ...ex, cnpjRaw: lead.cnpjRaw || ex.cnpjRaw, companyNameRaw: lead.companyNameRaw || ex.companyNameRaw, revenueBandRaw: lead.revenueBandRaw ?? ex.revenueBandRaw, phoneRaw: lead.phoneRaw ?? ex.phoneRaw, emailRaw: lead.emailRaw ?? ex.emailRaw, perfil: ex.perfil ?? lead.perfil, updatedAt: new Date().toISOString() }
+          : lead;
         byCnpj.set(k, next);
         out.push(next);
       }
@@ -137,15 +142,17 @@ export const leadsRepo = {
     for (const lead of leads) {
       const r = lead.cnpj ? existentes.get(lead.cnpj) : undefined;
       if (!r) { novos.push(lead); out.push(lead); continue; }
-      const patch = {
-        cnpj_raw: lead.cnpjRaw,
-        company_name_raw: lead.companyNameRaw,
-        revenue_band_raw: lead.revenueBandRaw,
-        phone_raw: lead.phoneRaw,
-        email_raw: lead.emailRaw,
-        perfil: lead.perfil,
-        updated_at: new Date().toISOString(),
-      };
+      // Lead já existente (enriquecido por outro projeto): a planilha só atualiza o
+      // que veio preenchido — um cadastro manual só com CNPJ não pode apagar telefone,
+      // e-mail, nome ou faixa — e o PERFIL fica o de quem enriqueceu primeiro (trocar
+      // o perfil mudaria prompts/etapas da auditoria dele no outro projeto).
+      const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (lead.cnpjRaw) patch.cnpj_raw = lead.cnpjRaw;
+      if (lead.companyNameRaw) patch.company_name_raw = lead.companyNameRaw;
+      if (lead.revenueBandRaw != null) patch.revenue_band_raw = lead.revenueBandRaw;
+      if (lead.phoneRaw != null) patch.phone_raw = lead.phoneRaw;
+      if (lead.emailRaw != null) patch.email_raw = lead.emailRaw;
+      if (r.perfil == null && lead.perfil) patch.perfil = lead.perfil;
       const { error } = await supabase.from('enriquecedor_leads').update(patch).eq('id', String(r.id));
       if (error) throw erroLegivel(error);
       out.push({ ...fromRow(r), ...fromRow({ ...r, ...patch }) });

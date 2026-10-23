@@ -159,6 +159,31 @@ export function finalizarImportacao(id: string, leads: WfLead[], leadStatus: Rec
   let mudou: Projeto | undefined;
   write(read().map((p) => (p.id === id ? (mudou = { ...p, importada: true, leads, leadStatus, doneF: [] }) : p)), mudou);
 }
+/** Relê os projetos do banco (outra aba pode ter mexido) e devolve o projeto pedido como está lá. */
+export async function recarregarProjeto(id: string): Promise<Projeto | null> {
+  carregando = null; // força nova leitura mesmo se uma estiver em andamento
+  await carregar();
+  return read().find((p) => p.id === id) ?? null;
+}
+/**
+ * Grava AGORA (sem debounce) e falha alto. Usado quando a tela precisa confirmar que
+ * o vínculo ficou no banco antes de dizer "sucesso" (ex.: adicionar leads ao projeto).
+ */
+export async function salvarProjetoAgora(id: string, patch: Partial<Projeto>): Promise<Projeto> {
+  let mudou: Projeto | undefined;
+  const next = read().map((p) => (p.id === id ? (mudou = { ...p, ...patch }) : p));
+  if (!mudou) throw new Error('projeto não encontrado');
+  const t = pendentes.get(id);
+  if (t) { clearTimeout(t); pendentes.delete(id); }
+  cache = next;
+  localStorage.setItem(KEY, JSON.stringify(next));
+  notify();
+  if (supabaseConfigured) {
+    const { error } = await supabase.from('enriquecedor_projetos').upsert({ ...toRow(mudou), updated_at: new Date().toISOString() });
+    if (error) throw new Error(`falha ao gravar o projeto: ${error.message}`);
+  }
+  return mudou;
+}
 export function atualizarProjeto(id: string, patch: Partial<Projeto>) {
   let mudou: Projeto | undefined;
   write(read().map((p) => (p.id === id ? (mudou = { ...p, ...patch }) : p)), mudou);

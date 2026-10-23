@@ -6,6 +6,8 @@ import {
   useProjetos,
   finalizarImportacao,
   atualizarProjeto,
+  recarregarProjeto,
+  salvarProjetoAgora,
   excluirProjeto,
   ARQ,
   SEGMENTO,
@@ -16,6 +18,7 @@ import {
 } from '../lib/projectsStore';
 import { parseSpreadsheet } from '../lib/parseSpreadsheet';
 import { entrarLeads, resumoEntrada } from '../lib/adicionarLeads';
+import { mesclarLeads } from '../lib/dedupeLeads';
 import { AdicionarLeadsModal } from '../components/AdicionarLeadsModal';
 import { runAnuncios, enrichQualificacao, enrichDiagnostico, type FaseResult } from '../lib/enrichService';
 import { lerFila, motorFetch, type FilaMotorInfo } from '../lib/motorClient';
@@ -703,9 +706,16 @@ export function WorkflowView({
           leadsAtuais={leads}
           modoInicial={addModal}
           onClose={() => setAddModal(null)}
-          onAdicionados={(novos) => {
-            // entram no fim da lista, na Triagem (F1); o efeito de persistência grava no projeto
-            setLeads((prev) => [...prev, ...novos.filter((n) => !prev.some((l) => l.id === n.id))]);
+          onAdicionados={async (novos) => {
+            // Outra aba pode ter acrescentado leads desde que este projeto foi aberto:
+            // relê do banco, junta (esta aba > banco > novos) e grava AGORA — o modal
+            // só diz "sucesso" depois que o vínculo está persistido.
+            const remoto = await recarregarProjeto(projeto.id);
+            const leadsMesclados = mesclarLeads(leads, remoto?.leads ?? [], novos);
+            const statusMesclado = { ...(remoto?.leadStatus ?? {}), ...execStatus };
+            await salvarProjetoAgora(projeto.id, { leads: leadsMesclados, leadStatus: statusMesclado });
+            setLeads(leadsMesclados);
+            setExecStatus(statusMesclado);
             setOpenF(0);
           }}
         />
@@ -1269,7 +1279,7 @@ function ImportarListaTela({ projeto, onVoltar }: { projeto: Projeto; onVoltar: 
       // (entrarLeads — o mesmo caminho de "Adicionar lista/lead" num projeto aberto).
       // As demais fases (F2 Qualificação, F3 Diagnóstico, F4 Anúncios) rodam DENTRO
       // do funil, 1 por vez — pra auditar cada etapa.
-      const r = await entrarLeads(projeto, res.rows, [], setProg);
+      const r = await entrarLeads(projeto, res.rows, [], 'inicial', setProg);
       if (!r.novos.length) {
         toast.error(r.invalidos === res.rows.length ? 'Nenhum lead válido (todos com CNPJ inválido).' : `Nenhum lead entrou: ${resumoEntrada(r)}`);
         setStage('idle');

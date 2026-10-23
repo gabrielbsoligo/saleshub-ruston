@@ -27,7 +27,8 @@ export function AdicionarLeadsModal({
   leadsAtuais: WfLead[];
   modoInicial?: Modo;
   onClose: () => void;
-  onAdicionados: (novos: WfLead[]) => void;
+  /** Persiste o vínculo no projeto; o modal só confirma sucesso quando resolve. */
+  onAdicionados: (novos: WfLead[]) => Promise<void>;
 }) {
   const [modo, setModo] = useState<Modo>(modoInicial);
   const [ocupado, setOcupado] = useState(false);
@@ -35,13 +36,19 @@ export function AdicionarLeadsModal({
   const [drag, setDrag] = useState(false);
   const [form, setForm] = useState({ cnpj: '', companyName: '', phone: '', email: '', site: '', revenueBand: '' });
 
-  const processar = async (rows: RawLeadRow[], origem: string) => {
+  // Todo o caminho (ler arquivo → parse → Triagem → gravar → vincular ao projeto) fica
+  // dentro de um único try/finally, com a guarda de reentrada ligada desde o início.
+  const processar = async (obterLinhas: () => Promise<RawLeadRow[] | null>, origem: string) => {
+    if (ocupado) return;
     setOcupado(true);
-    setProg({ done: 0, total: rows.length });
+    setProg({ done: 0, total: 0 });
     try {
-      const r: ResultadoEntrada = await entrarLeads(projeto, rows, leadsAtuais, setProg);
+      const rows = await obterLinhas();
+      if (!rows) return;
+      setProg({ done: 0, total: rows.length });
+      const r: ResultadoEntrada = await entrarLeads(projeto, rows, leadsAtuais, 'adicao', setProg);
       if (r.novos.length) {
-        onAdicionados(r.novos);
+        await onAdicionados(r.novos); // só é sucesso depois que o projeto gravou
         toast.success(resumoEntrada(r), { duration: 8000 });
         onClose();
       } else {
@@ -57,22 +64,23 @@ export function AdicionarLeadsModal({
     }
   };
 
-  const importarArquivo = async (file: File) => {
-    if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
-      toast.error('Formato não suportado. Use CSV ou XLSX.');
-      return;
-    }
-    const res = parseSpreadsheet(await file.arrayBuffer());
-    if (res.missingColumns.length) {
-      toast.error(`Colunas obrigatórias ausentes: ${res.missingColumns.join(', ')}`);
-      return;
-    }
-    if (!res.rows.length) {
-      toast.error('Nenhuma linha encontrada na planilha.');
-      return;
-    }
-    await processar(res.rows, file.name);
-  };
+  const importarArquivo = (file: File) =>
+    processar(async () => {
+      if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
+        toast.error('Formato não suportado. Use CSV ou XLSX.');
+        return null;
+      }
+      const res = parseSpreadsheet(await file.arrayBuffer());
+      if (res.missingColumns.length) {
+        toast.error(`Colunas obrigatórias ausentes: ${res.missingColumns.join(', ')}`);
+        return null;
+      }
+      if (!res.rows.length) {
+        toast.error('Nenhuma linha encontrada na planilha.');
+        return null;
+      }
+      return res.rows;
+    }, file.name);
 
   const cnpjOk = isValidCnpj(normalizeCnpjDigits(form.cnpj));
   const salvarManual = async () => {
@@ -80,7 +88,7 @@ export function AdicionarLeadsModal({
       toast.error('CNPJ inválido (dígito verificador).');
       return;
     }
-    await processar([{ ...form }], 'manual');
+    await processar(async () => [{ ...form }], 'manual');
   };
 
   const campo = (k: keyof typeof form, label: string, placeholder: string, extra?: Partial<InputHTMLAttributes<HTMLInputElement>>) => (
