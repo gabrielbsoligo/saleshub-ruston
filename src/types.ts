@@ -331,6 +331,8 @@ export interface RoletaCloser {
   ordem: number;
   base_count: number;
   updated_at: string;
+  /** Canais de lead que o closer atende no rodízio. null = todos (migration_156). */
+  canais?: LeadCanal[] | null;
 }
 
 // Linha retornada por get_roleta_status() — 1ª linha = próximo
@@ -342,7 +344,17 @@ export interface RoletaStatusRow {
   recebidas: number;
   total: number;
   ativo?: boolean;   // roleta SDR: membro disponível on/off (get_roleta_status_sdr)
+  // get_roleta_status_canal (rodízio de closers, migration_156):
+  canais?: LeadCanal[] | null;            // quais canais atende (null = todos)
+  por_canal?: Record<string, number>;     // reuniões do ciclo por canal (inclui as que não pontuam)
+  atende_canal?: boolean;
 }
+
+/** Canais que NÃO contam ponto no rodízio de closers (roleta_config.canais_sem_ponto; padrão recomendação). */
+export const ROLETA_CANAIS_SEM_PONTO_PADRAO: LeadCanal[] = ['recomendacao'];
+/** O closer atende este canal? (canais null/vazio = todos) */
+export const roletaAtendeCanal = (r: { canais?: LeadCanal[] | null }, canal: LeadCanal | string | null | undefined) =>
+  !r.canais || r.canais.length === 0 || !canal || r.canais.includes(canal as LeadCanal);
 
 // Roleta SDR — visão granular (read-only via RPC)
 export type RoletaOrigem = 'roleta' | 'manual' | 'pre_roleta';

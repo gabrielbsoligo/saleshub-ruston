@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { X, Calendar, Check, Plus, Video, Repeat } from "lucide-react";
 import { DateInput } from "./ui/DateInput";
 import type { Lead } from "../types";
-import { CANAL_LABELS } from "../types";
+import { CANAL_LABELS, ROLETA_CANAIS_SEM_PONTO_PADRAO, roletaAtendeCanal } from "../types";
 import { useAppStore } from "../store";
 
 interface Props {
@@ -20,7 +20,11 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
   const { members, roleta } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const roletaMap = useMemo(() => new Map(roleta.map(r => [r.member_id, r])), [roleta]);
-  const proximo = roleta[0]; // menor contagem = próximo do rodízio
+  // Próximo do rodízio PARA ESTE CANAL: a fila já vem ordenada por pontuação; filtra quem
+  // atende o canal do lead (roleta_closers.canais; null = todos). Recomendação não pontua.
+  const elegiveis = useMemo(() => roleta.filter(r => roletaAtendeCanal(r, lead.canal)), [roleta, lead.canal]);
+  const proximo = elegiveis[0];
+  const canalSemPonto = ROLETA_CANAIS_SEM_PONTO_PADRAO.includes(lead.canal);
   const [date, setDate] = useState(initialDate || '');
   const [time, setTime] = useState(initialTime || '');
   const [closerId, setCloserId] = useState(initialCloserId || '');
@@ -71,8 +75,8 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
             <div className="flex items-center gap-2 rounded-lg bg-[var(--color-v4-red)]/10 border border-[var(--color-v4-red)]/30 px-3 py-2">
               <Repeat size={14} className="text-[var(--color-v4-red)] flex-shrink-0" />
               <span className="text-xs text-white">
-                Próximo do rodízio: <strong>{proximo.name}</strong>
-                <span className="text-[var(--color-v4-text-muted)]"> ({proximo.total} reuniõe{proximo.total === 1 ? "" : "s"})</span>
+                Próximo do rodízio ({CANAL_LABELS[lead.canal]}): <strong>{proximo.name}</strong>
+                <span className="text-[var(--color-v4-text-muted)]"> ({proximo.total} reuniõe{proximo.total === 1 ? "" : "s"}{canalSemPonto ? ' · este canal não pontua' : ''})</span>
               </span>
             </div>
           )}
@@ -84,10 +88,11 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
               {closers.map(c => {
                 const r = roletaMap.get(c.id);
                 const isNext = proximo?.member_id === c.id;
+                const foraDoCanal = r ? !roletaAtendeCanal(r, lead.canal) : false;
                 return (
                   <option key={c.id} value={c.id}>
                     {c.name}{c.google_calendar_connected ? ' 📅' : ''}
-                    {r ? ` · ${r.total}${isNext ? ' ◀ próximo' : ''}` : ''}
+                    {r ? ` · ${r.total}${isNext ? ' ◀ próximo' : ''}${foraDoCanal ? ' (não atende este canal)' : ''}` : ''}
                   </option>
                 );
               })}

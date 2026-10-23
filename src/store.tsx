@@ -53,6 +53,8 @@ interface AppState {
   roletaReset: () => Promise<void>;
   roletaSetAtivo: (memberId: string, ativo: boolean) => Promise<void>;
   updateRoletaOrdem: (memberId: string, ordem: number) => Promise<void>;
+  /** Canais que o closer atende no rodízio ([] = todos). Só gestor (RPC roleta_set_canais). */
+  roletaSetCanais: (memberId: string, canais: string[]) => Promise<void>;
 
   fetchMetas: () => Promise<void>;
   saveMeta: (m: Partial<Meta>) => Promise<void>;
@@ -717,10 +719,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ===================== ROLETA DE REUNIÕES =====================
   const fetchRoleta = useCallback(async () => {
-    const { data, error } = await supabase.rpc('get_roleta_status');
+    // get_roleta_status_canal = mesma fila/pontuação de get_roleta_status + canais atendidos e
+    // quebra por canal (migration_156). Se a migration ainda não subiu, cai na antiga.
+    let { data, error } = await supabase.rpc('get_roleta_status_canal');
+    if (error) ({ data, error } = await supabase.rpc('get_roleta_status'));
     if (error) { console.error('fetchRoleta:', error.message); return; }
     setRoleta((data || []) as RoletaStatusRow[]);
   }, []);
+
+  const roletaSetCanais = async (memberId: string, canais: string[]) => {
+    const { error } = await supabase.rpc('roleta_set_canais', { p_member_id: memberId, p_canais: canais });
+    if (error) { toast.error(error.message); return; }
+    fetchRoleta();
+  };
 
   const roletaReset = async () => {
     const { error } = await supabase.rpc('roleta_reset');
@@ -1114,7 +1125,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchLeads, addLead, bulkImportLeads, updateLead, deleteLead,
       fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal, enviarParaRokko,
       fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
-      roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem,
+      roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem, roletaSetCanais,
       fetchMetas, saveMeta,
       fetchPerformanceSdr, savePerformanceSdr,
       fetchPerformanceCloser, savePerformanceCloser,
