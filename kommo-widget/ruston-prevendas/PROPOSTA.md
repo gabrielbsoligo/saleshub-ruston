@@ -1,8 +1,10 @@
-# Widget único de pré-vendas: proposta (fatia 1)
+# Widget único de pré-vendas: proposta (fatia 1, rev. 2)
 
 **Escopo:** um widget Kommo (`ruston-prevendas`) que junta **notify + PRÓXIMO + click-to-call**, para a conta `financeirorustonengenhariacombr`.
 
-**Status:** proposta para o Gabriel decidir. **Nada foi criado ou alterado no Kommo.** Só fiz leituras via GET.
+**Status:** proposta para o Gabriel decidir. **Nada foi criado ou alterado no Kommo**; só fiz leituras via GET.
+
+A rev. 2 incorpora a revisão do Vedor (9 pontos). O que mudou está no fim do arquivo.
 
 ---
 
@@ -11,202 +13,243 @@
 | Item | Onde | O que aproveitar |
 |---|---|---|
 | **ruston-notify** (`rn_19a1462411`) | `kommo-widget/ruston-notify` (igual no hub-comercial) | **Base do widget novo.** Ver detalhes abaixo. O `dp.webhook_url` aponta para uma função `kommo-notify` que **não existe**. |
-| **Ruston Próximo Lead** 1.0.2 | **só em zip:** `Downloads/ruston-next-lead-1.0.1.zip` e `1.0.2.zip`; não está no git | **É o PRÓXIMO quase pronto.** Ver detalhes abaixo. **Vou versionar o código no repo** dentro do widget novo. |
-| **ruston-enriquecedor** | `kommo-widget/ruston-enriquecedor` | Padrão de botão flutuante no card (vigia de URL a cada 700 ms, já que o `render` falha com `init_once`) e de chamada ao backend com segredo. Fica como widget separado (é outra função). |
-| Cadência do SalesHub | `kommo.plan_reconcile` (migration 155), `plan_closer` (072), retorno (131), sweeps SEM TAREFA (129/133), `enriquecedor-cadencia`, `kommo-call-note` | Ver §3 (impacto). |
-| n8n `storeNewCalls` | Downloads | Só **lê** o 3C (webhook `call-history-was-created` + gravação com `?api_token=`). **Não discagem.** |
-| api4com no código | `webhook-4com` (entrada), `team_members.ramal_4com` | **Nenhuma chamada de saída existe hoje**; a T5/T6 manda o SDR "ligar 3x pela API4COM" à mão. |
-| 3C no código | `webhook-3c-calls`, `sweep-3c-calls`, `team_members.agente_3c_id`, isaas-hub `tresc.ts` | **Nenhum click2call ou discagem manual existe.** É trabalho novo. |
-| "Origem do lead" no Kommo | campo `975168` (select): Recomendação, Outbound, Leadbroker, Indicação de Cliente, Networking, Thunderbolt, USA, Foodbox, Evento, Blackbox, Recovery, Reativação | **O canal já está no lead.** O PRÓXIMO pode ordenar por ele sem tipo de tarefa novo (§2.2). |
+| **Ruston Próximo Lead** 1.0.2 | estava **só em zip** (`Downloads/ruston-next-lead-1.0.2.zip`); **agora versionado** em `kommo-widget/ruston-next-lead` | **Base do PRÓXIMO.** Ver detalhes abaixo. |
+| **ruston-enriquecedor** | `kommo-widget/ruston-enriquecedor` | Padrão de botão flutuante no card (vigia de URL a cada 700 ms) e de chamada ao backend. Fica como widget separado. |
+| Cadência do SalesHub | `kommo.plan_reconcile` (migration 155) + executor `kommo-cadencia`; `plan_closer` (072); Retorno (131); sweeps (129/133); `enriquecedor-cadencia`; `kommo-call-note` | Ver §3. |
+| n8n `storeNewCalls` | Downloads | Só **lê** o 3C (webhook + gravação). **Não discagem.** |
+| api4com no código | `webhook-4com` (só entrada), `team_members.ramal_4com` | **Nenhuma chamada de saída existe.** |
+| 3C no código | `webhook-3c-calls`, `sweep-3c-calls`, `team_members.agente_3c_id` | **Nenhum click2call ou discagem manual existe.** |
+| "Origem do lead" no Kommo | campo `975168` (select) | Ver §2.2. |
 
 Detalhes do **ruston-notify**:
-- faz polling do `/api/v4/tasks` do próprio usuário, pela sessão do Kommo (mesma origem, sem token no front);
-- toca som, mostra notificação do navegador e uma pilha de alertas, e guarda o que já mostrou em `localStorage`.
+- faz polling de `/api/v4/tasks` pela sessão do Kommo (mesma origem, sem token no front), limitado a **100 tarefas**;
+- toca som, mostra notificação e uma pilha de alertas, e guarda o que já mostrou em `localStorage`.
 
 Detalhes do **Ruston Próximo Lead** 1.0.2:
-- configura a prioridade por **nome de tipo de tarefa**, além de antecedência, atalho Alt+N, posição e offset;
-- monta a fila em 3 grupos:
+- configura a prioridade por nome de tipo, além de antecedência, Alt+N e posição;
+- monta a fila em 3 blocos:
   1. prioritários vencidos ou vencendo;
-  2. cadência (ligar, WhatsApp, e-mail) por vencimento;
+  2. cadência por vencimento, **inclusive futura**;
   3. prioritários futuros;
-- abre a entidade pelo `AMOCRM.Router.navigate`.
+- lê **só as primeiras 250 tarefas** e busca nomes **só das 12 primeiras** já ordenadas (`script.js:445-455`).
 
-**Tipos de tarefa hoje** (`GET /api/v4/account?with=task_types`):
+**Tipos de tarefa hoje** (`GET /api/v4/account?with=task_types`; o `GET /tasks/types` dá 403):
 
-| id | nome | onde é usado |
+| id | nome | quem produz |
 |---|---|---|
-| 1 | Follow-up (Acompanhar) | T1, T2; retorno; plano do closer; cadência do enriquecedor; padrão de tarefa avulsa |
-| 2 | Meeting | não usado pela cadência |
-| 3732751 | Ligação | T5, T6 (anti no-show), R1, R3 (recuperação de no-show); auto-concluído pelo `kommo-call-note` |
-| 3732759 | WhatsApp | T3, T4, R2 |
-| 3732747 | Email | não usado pela cadência |
-| 4174464 | Diagnóstico de M | manual |
-| 3920343 | SEM TAREFA | sweep diário |
-| 3928475 | ALERTA | pré-entrada duplicada |
+| 1 | Follow-up (Acompanhar) | T1, T2 (SDR); Retorno (**closer**, com fallback para o dono do lead); `plan_closer` (closer); "Ligar AGORA" e "classificar resposta" do `enriquecedor-cadencia`; avulsas |
+| 3732751 | Ligação | T5, T6, R1, R3 (SDR) |
+| 3732759 | WhatsApp | T3 (SDR), **T4 (closer)**, R2 (SDR) |
 | 4299552 | Cliente oculto | T0 (closer) |
+| 3920343 / 3928475 | SEM TAREFA / ALERTA | sweeps |
+| 2, 3732747, 4174464 | Meeting, Email, Diagnóstico de M | manuais |
 
-> `GET /api/v4/tasks/types` responde 403 nesta conta. A lista acima vem do `account?with=task_types`. A criação foi feita por `POST /api/v4/tasks/types` ("Cliente oculto"), então esse endpoint existe para escrita.
+**Conclusão:** o **tipo atual não identifica o momento.** O mesmo id cobre momentos diferentes (3732759 = T3, T4 ou R2; 1 = cinco produtores). Por isso o PRÓXIMO **não pode** classificar por "tipo → nível" (§2.3).
 
 ---
 
 ## 2. Tipos de tarefa e ordem do PRÓXIMO
 
-### 2.1 Opção A, como pedido: tipos por MOMENTO + um tipo por CANAL
+### 2.1 Princípio
+Separar **três coisas** que hoje estão misturadas no tipo:
+1. **Momento** (por que a tarefa existe): anti no-show, speed to lead, conexão, follow-up, recuperação, pré-reunião, prospecção.
+2. **Ação** (o que fazer): ligar, WhatsApp, e-mail. Automações dependem dela: o `kommo-call-note` conclui só tarefa de **ligação**.
+3. **Origem do lead** (canal de aquisição): Recomendação, Leadbroker...
 
-Tipos novos (o prefixo numérico deixa a lista do Kommo na ordem de prioridade):
+### 2.2 Opção A (como pedido) × Opção B (recomendada)
 
-| # | Tipo novo | Momento ou canal | Quem cria |
-|---|---|---|---|
-| 1 | `01 Anti no-show` | véspera e dia da reunião, ligar e confirmar | cadência (T5, T6) |
-| 2 | `02 Speed to lead` | lead novo de inbound, primeiros 5 min | gatilho da etapa SPEED TO LEAD |
-| 3 | `03 Conexão` | lead em CONEXÃO REALIZADA: marcar a reunião | gatilho da etapa |
-| 4 | `04 Recuperar no-show` | NOSHOW: R1, R2, R3 | cadência |
-| 5 | `05 Follow-up` | FOLLOW 1 a 6 e retornos combinados | gatilho, retorno e manual |
-| 6 | `06 Pré-reunião` | gerar valor (T1 a T4) | cadência |
-| 7 | `10 Recomendação` | primeiro contato, canal Recomendação/Indicação | manual ou entrada |
-| 8 | `11 Inbound` | primeiro contato, canal inbound/site | entrada |
-| 9 | `12 Lead broker` | primeiro contato, canal Leadbroker | entrada |
-| 10 | `13 Outbound` | prospecção fria (listas, 3C) | entrada ou manual |
-
-**Mantidos:** Ligação, WhatsApp, Email, Meeting, Diagnóstico, SEM TAREFA, ALERTA e Cliente oculto. Ligação e WhatsApp viram legado e deixam de ser criados pela cadência; ninguém apaga nada.
-
-### 2.2 Opção B (recomendada): tipos por MOMENTO + canal pelo campo "Origem do lead"
-
-- **Tipos:** só os 6 de momento (`01` a `06`) e **um** `13 Prospecção` para o primeiro contato.
-- **Canal:** o PRÓXIMO lê o campo **Origem do lead (975168)** e usa o canal como **segundo critério** de ordenação.
-
-Por que é melhor:
-- o lead já carrega o canal, e os tipos "por canal" duplicariam essa informação e divergiriam dela;
-- evita a explosão momento × canal ("follow-up de recomendação" seria de que tipo?);
-- a cadência só precisa trocar tipo por momento, nunca por canal.
-
-O custo é uma consulta a mais (os leads das tarefas, em lote de 50). O widget já faz isso para mostrar os nomes.
-
-### 2.3 Ordem proposta do PRÓXIMO (padrão, editável)
-
-Regra de tempo, igual ao Próximo Lead:
-- só entra na fila a tarefa **vencida** ou **vencendo nos próximos X min** (padrão 10);
-- dentro do mesmo nível, ganha a mais atrasada.
-
-| Prioridade | Tipo (e canal, na opção B) | Por quê |
+| | A: tipo por momento **e** um tipo por canal | **B: tipo por momento; canal pelo campo Origem (975168)** |
 |---|---|---|
-| 1 | **Anti no-show** | tem horário: reunião em minutos |
-| 2 | **Speed to lead** | lead quente esfria em minutos |
-| 3 | **Conexão** | decisor já respondeu: marcar a reunião |
-| 4 | **Follow-up**, na ordem Recomendação/Indicação → Inbound → Leadbroker → demais | sugestão do Gabriel: follow-up/recover primeiro |
-| 5 | **Recuperar no-show** | recover |
-| 6 | **Pré-reunião** | gerar valor tem prazo, mas aceita ficar à tarde |
-| 7 | **Primeiro contato inbound / leadbroker / recomendação** | fila nova quente |
-| 8 | **Outbound / Prospecção** | **fim do dia:** só aparece depois das **16h**, ou antes disso se a fila 1–7 estiver vazia (janela configurável) |
+| Tipos novos | 6 de momento + 4 de canal | 6 de momento + `07 Prospecção` |
+| Canal | no tipo da tarefa (duplica o campo do lead e pode divergir dele) | lido do lead, que já é a fonte da verdade |
+| "Follow-up de um lead de Recomendação" | ambíguo: qual tipo usar? | tipo Follow-up + origem Recomendação |
 
-**Configuração:**
-- **v1, no widget (aba Configurações da integração, só admin):**
-  - `ordem` = lista de nomes de tipos, separados por vírgula;
-  - `ordem_canal` = lista de valores do campo Origem;
-  - `outbound_apos` = `16:00`;
-  - `antecedencia_min` = `10`.
-  - Vale para a conta toda.
-- **v2:** ordem **por SDR ou por time** numa tabela do SalesHub (`prevendas_ordem`), servida pelo mesmo proxy do click-to-call. Assim o gestor muda sem mexer no Kommo.
+**Nas duas opções:**
+- a **ação** fica marcada de forma **estruturada**, não no tipo. Ver §2.4 sobre identificar a ação.
+- **Tipos de momento propostos:** `01 Anti no-show`, `02 Speed to lead`, `03 Conexão`, `04 Recuperar no-show`, `05 Follow-up`, `06 Pré-reunião` (e `07 Prospecção` na opção B).
+- **Mantidos:** Ligação, WhatsApp, Email, Meeting, Diagnóstico, SEM TAREFA, ALERTA e Cliente oculto. Nenhum tipo é apagado.
 
-**Botão PRÓXIMO:**
-- abre o card da próxima tarefa e mostra um banner com o tipo, o motivo e o vencimento;
-- botões "Concluir e próximo" e "Pular 15 min".
-- O "Concluir" usa `PATCH /api/v4/tasks/{id}` com `is_completed` pela sessão do próprio SDR, ou seja, a mesma ação que ele faria na tela.
+**Mapa da Origem para a opção B.** É um contrato explícito, e qualquer valor fora dele vai para o grupo **"Sem origem"**, **nunca** é tratado como outbound:
+
+| Grupo | Valores do campo 975168 |
+|---|---|
+| G1 Indicação | Recomendação, Indicação de Cliente, Networking, Evento |
+| G2 Inbound | **(não há valor "Inbound" no campo hoje)** Proposta: criar a opção `Inbound`, ou mapear Blackbox/Foodbox (confirmar com o Gabriel) |
+| G3 Base própria | Recovery, Reativação |
+| G4 Leadbroker | Leadbroker |
+| G5 Outbound | Outbound, Thunderbolt, USA |
+| G9 Sem origem | vazio ou valor desconhecido; vai depois de G5, sinalizado como "sem origem" |
+
+### 2.3 Ordem do PRÓXIMO: chave de ordenação inequívoca
+
+**Elegibilidade** (é decisão nova e difere do 1.0.2, que também mostra tarefas futuras):
+- entra na fila a tarefa **vencida** ou **vencendo em até X min** (padrão 10) **do próprio SDR**;
+- **exceção:** os momentos com prazo curto prometido (Speed to lead e Conexão vinda de resposta) entram **assim que criados**, seja qual for o `complete_till`. Isso resolve o "Ligar AGORA", que hoje vence em +2 h e ficaria escondido.
+- **Se a fila elegível estiver vazia:** o PRÓXIMO mostra a próxima tarefa futura, com o aviso "nada vencido; próxima às HH:MM". Nunca abre "nada" em silêncio.
+
+**Chave de ordenação**, aplicada nesta ordem:
+1. **Nível do momento:**
+   - 1 Anti no-show;
+   - 2 Speed to lead;
+   - 3 Conexão;
+   - 4 Follow-up;
+   - 5 Recuperar no-show;
+   - 6 Pré-reunião;
+   - 7 Prospecção quente (G1, G2, G3, G4);
+   - 8 Prospecção outbound (G5, G9);
+   - 9 sem classificação (avulsas, SEM TAREFA, ALERTA).
+2. **Grupo de origem**, só nos níveis 4, 5 e 7: G1 → G2 → G3 → G4 → G5 → G9.
+3. **Vencimento**, mais atrasada primeiro.
+4. **id da tarefa** (desempate estável).
+
+**Janela do outbound:** o nível 8 só fica elegível depois das **16h**, ou antes disso se os níveis 1 a 7 estiverem vazios. O horário é configurável.
+
+**Configuração:** v1 na aba de configuração do widget (admin), com nível por momento, ordem dos grupos, mapa da Origem, `antecedencia_min`, `outbound_apos` e lista de tipos legados. v2 por SDR ou time no SalesHub.
+
+### 2.4 Como o widget sabe o momento e a ação de cada tarefa (classificador)
+A classificação por tipo não funciona (§1). O classificador fica **no servidor** (endpoint `prevendas-classificar`, mesma edge e mesma autenticação do click-to-call). Ele recebe os ids das tarefas candidatas e devolve `{momento, acao, origem_grupo}` por tarefa, usando, nesta ordem:
+1. **Slot da cadência:** o planner já guarda o mapa **slot → id da tarefa** de cada reunião, na coluna `reunioes.cadencia_task_ids` (jsonb, lido como `v_map` no `plan_reconcile`). Daí T5/T6 = anti no-show + ligar; T4 = anti no-show + WhatsApp (closer); T3 = pré-reunião + WhatsApp; R1/R3 = recuperar + ligar; R2 = recuperar + WhatsApp.
+2. **Produtor conhecido sem slot:** Retorno (texto `Retorno`, tipo 1) = follow-up, **do closer**; textos `CADENCIA: lead respondeu…` = conexão + ligar; `CADENCIA: classificar…` = follow-up.
+3. **Tipo novo de momento**, quando a tarefa já nasceu com ele.
+4. **Fallback:** sem classificação (nível 9). Nunca é chute.
+
+A **origem** sai do campo 975168 do lead, lido no servidor (réplica `kommo.leads` do SalesHub, `custom_fields`) para **todas** as candidatas antes de ordenar. Não depende de consultas no navegador limitadas às 12 primeiras.
+
+**Leitura completa das tarefas** no widget:
+- paginação de `/api/v4/tasks` (250 por página) até o fim das abertas do SDR, com deduplicação por id;
+- só então chama o classificador e ordena;
+- cache de 45 s, com atualização ao concluir ou pular;
+- se a leitura estiver incompleta (erro ou limite), o banner diz **"fila parcial"**.
+
+### 2.5 Botão PRÓXIMO
+- Abre o card da próxima tarefa e mostra um banner com o momento, a origem, o vencimento e o motivo.
+- Botões **"Concluir e próximo"** (PATCH `is_completed` pela sessão do SDR, a mesma ação da tela) e **"Pular 15 min"**. O pulo é local e não altera a tarefa.
 
 ---
 
 ## 3. Impacto na cadência do SalesHub (mapeado, nada aplicado)
 
-| Hoje | Onde | Muda para | Ajuste necessário |
+**Fato confirmado no código:** o executor `kommo-cadencia` usa `task_type_id` **só no POST** de tarefa nova (`index.ts:43`). O `patch_move` manda **só `complete_till`** (`index.ts:35`). Portanto, mudar o tipo no planner afeta **só tarefas novas**; as abertas continuam com o tipo antigo.
+
+| Produtor | Hoje | Proposta | Cuidado |
 |---|---|---|---|
-| T0 Cliente oculto (4299552, closer) | `plan_reconcile` | **sem mudança** | — |
-| T1, T2 gerar valor (1) | `plan_reconcile` | `06 Pré-reunião` | trocar o `task_type_id` no SQL do planner + migration |
-| T3, T4 (3732759) | `plan_reconcile` | `06 Pré-reunião` (T3) e `01 Anti no-show` (T4, dia da reunião, closer) | idem |
-| T5, T6 ligar API4COM (3732751) | `plan_reconcile` | `01 Anti no-show` | idem; **e** `kommo-call-note` deixa de achar a tarefa pelo tipo 3732751 e passa a aceitar o novo id (o texto "ligar" continua valendo) |
-| R1, R2, R3 (3732751/3732759) | `plan_reconcile` | `04 Recuperar no-show` | idem |
-| Retorno (1) | migration 131 | `05 Follow-up` | trocar o id |
-| Closer A/M/B/C/P (1) | `plan_closer` | **sem mudança** (é closer, fora do PRÓXIMO do SDR) | — |
-| SEM TAREFA, ALERTA | sweeps | sem mudança | o PRÓXIMO mostra no fim |
-| `enriquecedor-cadencia` "Ligar AGORA" (1) | edge function | `03 Conexão` (o lead respondeu) | trocar o id |
+| T0 (closer) | 4299552 | sem mudança | — |
+| T1, T2 (SDR) | 1 | `06 Pré-reunião` | — |
+| T3 (SDR) | 3732759 | `06 Pré-reunião` | ação = WhatsApp |
+| T4 (**closer**) | 3732759 | `01 Anti no-show` | ação = WhatsApp: **não pode** ser concluída por ligação |
+| T5, T6 (SDR) | 3732751 | `01 Anti no-show` | ação = ligar |
+| R1, R3 (SDR) | 3732751 | `04 Recuperar no-show` | ação = ligar |
+| R2 (SDR) | 3732759 | `04 Recuperar no-show` | ação = WhatsApp: **não pode** ser concluída por ligação |
+| Retorno (migration 131) | 1, texto `Retorno` | **fora do escopo do SDR**: é do **closer** | se mudar o tipo, a busca anti-duplicação (`task_type_id = 1`, `:32`) tem que aceitar o legado **e** o novo, senão uma remarcação cria tarefa duplicada. **Recomendo não mexer agora.** |
+| `plan_closer` | 1 | sem mudança (closer) | — |
+| `enriquecedor-cadencia` "Ligar AGORA" | 1, +2 h | `03 Conexão`; o vencimento passa a **+15 min**, ou fica elegível já na criação (§2.3) | ação = ligar |
+| `kommo-call-note` (baixa automática) | conclui se tipo = 3732751 **ou** texto com "ligar" | **não** passar a aceitar os tipos de momento. A baixa usa a **ação = ligar**, vinda do classificador (slot/produtor) ou do tipo legado 3732751 | **teste negativo obrigatório:** uma ligação **não** conclui T4 nem R2 |
 
-Dois cuidados:
-- **Tarefas já abertas** com os tipos antigos continuam válidas. O PRÓXIMO aceita os dois, porque o mapa "tipo antigo → nível" fica na configuração. O planner, ao reconciliar, **não recria** tarefa só por troca de tipo (Path B: PATCH, nunca DELETE). É preciso confirmar no SQL que o PATCH de reconciliação também atualiza `task_type_id`.
-- **Ordem de aplicação:**
-  1. criar os tipos;
-  2. publicar o widget com o mapa antigo + novo;
-  3. migration do planner;
-  4. deploy do `kommo-call-note` e do `enriquecedor-cadencia`.
+**Duas estratégias para as tarefas abertas** (o Gabriel escolhe):
+- **(a) Manter o legado:** o classificador (§2.4) cuida delas pelo slot ou texto até vencerem. Sem migração. **Recomendada.**
+- **(b) Migrar:** um script rastreável faz PATCH `task_type_id` das abertas por slot, com log antes e depois e dry-run.
 
-  Aplicar exige o OK do Gabriel, e o Engenheiro do SalesHub está mexendo nesse repo (precisa coordenar).
+**Ordem de publicação** (os consumidores antes dos produtores):
+1. widget + classificador entendendo legado e novo;
+2. `kommo-call-note` com a regra por ação;
+3. criar os tipos (OK do Gabriel);
+4. planner e `enriquecedor-cadencia` emitindo os tipos novos.
+
+O repo é compartilhado com o Engenheiro do SalesHub, então cada passo precisa ser combinado com ele.
 
 ---
 
 ## 4. Desenho do click-to-call (3C e 4com)
 
 ### 4.1 Regra
-O token do discador **nunca vai para o navegador.** O widget só pede "ligar para este número deste lead". Quem liga é um **proxy no servidor**: a edge function nova `prevendas-dial`, no Supabase do SalesHub.
+O token do discador **nunca vai para o navegador.** O widget só pede "ligar para o telefone X do contato Y do lead Z". O proxy `prevendas-dial` (edge nova no Supabase do SalesHub) **decide se pode** e liga.
 
-### 4.2 Fluxo
-```
-[botão 📞 no card/contato ou no banner do PRÓXIMO]
-   │ widget lê os telefones do contato pela sessão do Kommo (mesma origem); o SDR escolhe o número
-   ▼
-POST /functions/v1/prevendas-dial  { lead_id, contact_id, phone }  + header X-Auth-Token (JWT descartável do Kommo)
-   │ proxy valida o JWT com o client secret da integração → sabe account_id e user_id DE VERDADE
-   │ kommo user_id → team_members (discador preferido, ramal_4com, agente_3c_id, tokens no Vault)
-   ├─ 4com: POST https://api.api4com.com/api/v1/calls   Authorization: <token do usuário>
-   │        { extension: ramal, caller: ramal, called: "+55…", metadata: { kommo_lead_id, kommo_user_id } }
-   │        → a resposta vem depois do atendimento (timeout longo); devolve o id; o hangup sai pelo mesmo id
-   └─ 3C:   (o SDR precisa estar logado no 3C web, numa campanha e livre; o áudio toca no webphone dele)
-            POST /agent/manual_call/enter  → POST /agent/manual_call/dial { phone }   com o token DO AGENTE
-            (alternativa: POST https://3c.fluxoti.com/api/v1/click2call com token de gestor + ramal; formato não documentado)
-   ▼
-widget mostra "chamando…", e erro legível se houver (ramal não encontrado, agente fora da campanha, limite 15/min)
-```
+### 4.2 Autorização no proxy (falha fechada em qualquer passo)
+1. **Identidade:** JWT descartável do Kommo (`$authorizedAjax`), validado com o *secret* da integração. É preciso conferir:
+   - algoritmo esperado (rejeitar `none` e outros);
+   - assinatura;
+   - `exp` e `iat` (com tolerância curta);
+   - `account_id` / `subdomain` = **conta permitida**;
+   - `user_id` presente.
+2. **Usuário:** `kommo_user_id` mapeado para um `team_members` **ativo**, com papel de pré-vendas ou closer e discador configurado.
+3. **Lead:**
+   - o proxy lê o lead **no servidor** (`GET /api/v4/leads/{id}?with=contacts`, token de servidor) e exige `responsible_user_id = usuário`, ou usuário com permissão explícita (lista de gestores);
+   - o `contact_id` recebido precisa estar **vinculado** a esse lead.
+4. **Telefone:** o proxy lê os telefones **do contato** no servidor, normaliza em E.164 e exige que o número pedido **seja um deles**. Também aplica:
+   - bloqueio de números fora do Brasil, de emergência e curtos;
+   - lista de bloqueio opcional.
+5. **Fallback por segredo pessoal** (só se o JWT não funcionar na conta): segredo gerado no SalesHub, por usuário, com **expiração** e **revogação**, guardado como hash, e os mesmos passos 2 a 4.
 
-### 4.3 O que roda onde
+### 4.3 Idempotência e estado da chamada (contra ligação duplicada)
+- O widget gera uma `chave_tentativa` (UUID) por clique e reenvia **a mesma** chave em retry.
+- O proxy grava a tentativa em `prevendas_discagem` **antes** de discar. A tabela tem chave única `(chave_tentativa)` e índice parcial que impede **duas tentativas ativas do mesmo usuário**.
+- **Estados:** `pedida → discando → em_curso | falhou | incerta → encerrada`.
+- **Reenvio** com a mesma chave devolve o estado existente e **não redisca**.
+- **Timeout ou resposta perdida** viram `incerta`. **Nunca há rediscagem automática.** O estado é reconciliado depois:
+  - 4com: pelo webhook (que leva o `metadata.chave_tentativa`) ou por `GET /calls`;
+  - 3C: pelo evento ou relatório de chamadas.
+- Correlação: guardar o id do provedor. O 4com devolve o `id` da chamada, que serve para `POST /calls/{id}/hangup`.
+- **Resposta assíncrona:** o 4com só responde quando a chamada conecta, o que pode passar do tempo da edge. O proxy responde `202 discando` logo, e a conclusão chega por webhook, sweep ou consulta do widget (`GET prevendas-dial/{chave}`).
+- **Rate limit:** 4com 15/min por ramal; o proxy limita **antes** de chamar.
 
-| No navegador (widget) | No proxy (servidor) |
+### 4.4 Provedores
+
+| | 4com (api4com) | 3C Plus |
+|---|---|---|
+| Chamada | `POST https://api.api4com.com/api/v1/calls` `{extension, caller, called, metadata}` | o agente precisa estar **logado no 3C web, numa campanha e livre**. `POST /agent/manual_call/enter` → `POST /agent/manual_call/dial` (corpo a validar: `phone`?) com o **token do agente**. Alternativa: `click2call` (fluxoti) com token de gestor + ramal (formato não documentado) |
+| Token | **por usuário** (a 4com recomenda um por usuário; `ttl -1`), no **Vault** | api_token **do agente**, no **Vault** |
+| Encerrar | `POST /calls/{id}/hangup` | `POST /agent/call/{id}/hangup` |
+| Estado | webhook (`metadata`) e `GET /calls` | eventos e relatório de chamadas |
+
+### 4.5 O que roda onde
+
+| Navegador (widget) | Servidor (proxy) |
 |---|---|
-| ler telefones do lead/contato (`/api/v4/contacts/{id}`, sessão) | validar a identidade (JWT descartável do Kommo, `$authorizedAjax`) |
-| escolher o número e chamar o proxy | escolher o discador do usuário; ler o token no Vault |
-| mostrar estado e erro | chamar 3C ou 4com; registrar a tentativa (`prevendas_discagem`: user, lead, phone, provedor, resultado) |
-| — | rate limit (4com: 15/min por ramal) e bloqueio de número fora do Brasil ou de teste |
+| mostrar os telefones do contato (leitura pela sessão do Kommo) | identidade, autorização (lead, contato, telefone), idempotência, estado |
+| gerar `chave_tentativa`; mostrar estado e erro | ler o token no Vault; chamar 3C ou 4com; log; rate limit |
+| consultar o estado da tentativa | reconciliar `incerta` sem rediscar |
 
-**Por que não direto do navegador:**
-1. os tokens (gestor 3C, usuário 4com) não podem ficar no front, nem na configuração do widget, que qualquer admin da conta lê;
-2. não há garantia de CORS nas duas APIs;
-3. sem a validação do JWT, qualquer pessoa com a URL do proxy ligaria em nome de outro.
-
-**Identidade:**
-- O Kommo assina um **token descartável (JWT)** para widgets de integração privada, enviado com `self.$authorizedAjax`. O proxy valida com o *secret key* da integração, que fica só no servidor.
-- Se isso falhar na conta, o plano B é um segredo por usuário gerado no SalesHub e colado uma vez nas configurações pessoais do widget. É pior; só em último caso.
-
-### 4.4 Configuração por usuário (SalesHub, tela Equipe)
-- `discador`: `3c` ou `4com`.
-- 4com: `ramal_4com` (já existe) + **token 4com do usuário** (login dele, `ttl -1`), no **Vault**.
-- 3C: `agente_3c_id` (já existe) + **api_token do agente**, no **Vault**.
-
-### 4.5 Riscos e o que validar na fatia 3
-
-| Ponto | Validação |
-|---|---|
-| Token descartável (JWT) do Kommo para o widget (`$authorizedAjax`) funciona nesta conta | testar na fatia 2 (sem ligar para ninguém) |
-| Nome do campo na discagem manual do 3C (`phone`?) e se o `manual_call/enter` é obrigatório | testar com o agente do Gabriel |
-| Formato do click2call do 3C (fluxoti) | idem |
-| 4com: token por usuário | precisa do login de cada SDR (ou de um token gerado pelo gestor, se a conta permitir) |
-| Ligação real | **só para o número do próprio Gabriel**, com o OK dele |
+### 4.6 Validações da fatia 3 (antes de qualquer ligação real)
+- JWT descartável funciona nesta conta. Testar na fatia 2, sem discar.
+- **Testes negativos** do proxy:
+  - JWT de outra conta;
+  - JWT expirado;
+  - usuário inativo;
+  - lead de outro responsável;
+  - contato que não é do lead;
+  - telefone que não é do contato;
+  - duas tentativas simultâneas;
+  - reenvio da mesma chave.
+- Corpo do `manual_call/dial` do 3C e formato do click2call.
+- **Ligação real só para o número do próprio Gabriel, com o OK dele.**
 
 ---
 
-## 5. Plano das próximas fatias
-- **Fatia 2 (notify + próximo):** widget `ruston-prevendas` = base do notify + PRÓXIMO do Próximo Lead 1.0.2 com a ordem do §2.3 (lendo tipos por nome e o mapa antigo → novo), banner com "Concluir e próximo" e "Pular". Integração privada em zip, testada só com o usuário do Gabriel (11420911). Funciona **antes** de criar os tipos novos, usando o mapa dos tipos atuais.
-- **Fatia 3 (click-to-call):** edge function `prevendas-dial` + tabela de log + campos no SalesHub + botão no widget; teste só com o número do Gabriel.
+## 5. Próximas fatias
+- **Fatia 2 (notify + próximo):** widget `ruston-prevendas` + edge `prevendas-classificar` com o JWT e o classificador por slot/produtor (§2.4) + leitura paginada.
+  - Sem criar tipos: o widget funciona com o legado.
+  - Teste só com o usuário do Gabriel (11420911).
+- **Fatia 3 (click-to-call):** edge `prevendas-dial` + tabela `prevendas_discagem` + campos e tokens no Vault + botão; todos os testes do §4.6.
 
 ## 6. Decisões que preciso do Gabriel
-1. **Tipos:** opção **B** (momento + campo Origem, recomendada) ou opção **A** (momento + um tipo por canal)?
-2. **Ordem:** a tabela do §2.3 está boa? Confirmar o horário de corte do outbound (16h?) e a antecedência (10 min?).
-3. **Criação dos tipos:** OK para eu criar os tipos no Kommo (POST /api/v4/tasks/types) **depois** que a fatia 2 estiver validada?
-4. **Ajuste da cadência:** quem aplica, eu ou o Engenheiro do SalesHub, e quando?
-5. **4com:** quem fornece os tokens por usuário (login de cada SDR) e o ramal de cada um?
-6. **3C:** OK para um teste de discagem com o agente do Gabriel ligando para o celular dele?
+1. Tipos: **opção B** (recomendada) ou A?
+2. Ordem e janela: a chave do §2.3 está boa? Outbound depois das **16h**? Antecedência de **10 min**?
+3. Origem: criar a opção **`Inbound`** no campo 975168, ou mapear Blackbox/Foodbox como inbound?
+4. Tarefas abertas: **manter o legado** (a, recomendado) ou migrar (b)?
+5. Retorno do closer: fica **fora** desta mudança?
+6. Quem aplica as mudanças da cadência no repo do SalesHub, eu ou o Engenheiro dele, e quando?
+7. 4com: tokens e ramais por usuário, quem fornece?
+8. 3C: OK para testar a discagem com o agente do Gabriel ligando para o celular dele?
+
+---
+
+### O que mudou na rev. 2 (revisão do Vedor)
+1. Autorização completa no proxy: lead, contato, telefone, conta e expiração do JWT, falha fechada (§4.2).
+2. A baixa por ligação usa a **ação**, nunca o tipo de momento, com teste negativo para T4 e R2 (§3).
+3. Classificador por slot e produtor, no lugar de tipo → nível (§2.4).
+4. Idempotência, estados, `incerta` sem rediscagem e resposta assíncrona (§4.3).
+5. Regra de tempo declarada como diferente do 1.0.2, exceção para Speed to lead e "Ligar AGORA", e fallback de fila vazia (§2.3).
+6. Retorno é do closer, e a busca anti-duplicação depende do tipo 1: recomendo fora do escopo (§3).
+7. PATCH da reconciliação confirmado: só `complete_till` (§3).
+8. Mapa da Origem, grupo "Sem origem", falta de "Inbound" e chave de desempate (§2.2, §2.3).
+9. Leitura paginada, origem de todas as candidatas antes de ordenar e "fila parcial" (§2.4).
