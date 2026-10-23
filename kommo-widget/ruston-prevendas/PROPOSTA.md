@@ -344,3 +344,11 @@ Conferir um lote limitado em cima de uma réplica não confiável gerava casos s
 - **Incompletude nunca silenciosa:** `parcial` + `motivos_parcial` (limite de páginas, vazão, leads não consultados).
 - **Saíram:** a ordem no servidor e a paridade, o lote e as rodadas, os pendentes e a descoberta de 3 h. O risco de "tarefa perdida pelo sync" deixa de existir para a fila, porque a lista é viva.
 - **Custo:** cerca de 1 a 3 chamadas por SDR a cada 40 s; com 10 SDRs, cerca de 0,5 req/s. O balde limita a 2/s no agregado.
+
+### Implementação, rodada 5 da revisão de código
+- **Cache vencido nunca é autoritativo.** Com a trava ocupada, o servidor só devolve cache dentro da validade (40 s); fora disso, devolve 503 `em_andamento`. O widget usa o `gerado_em` do servidor (início da leitura viva) como idade real, ignora resposta mais velha que a atual e não rejuvenesce o snapshot. Com dados vencidos (mais de 3 ciclos), ações e notificações ficam suspensas.
+- **Trava com token de posse.** `prevendas_travar` devolve um token, e `prevendas_gravar`/`prevendas_liberar` só valem para o dono com a trava dentro da validade. Uma execução lenta cuja trava venceu não sobrescreve nem libera a mais nova; isso foi validado num dry-run desfeito, no cenário A lento → B assume → A termina. Prazo total de 40 s, menor que a trava de 60 s, e timeout de 8 s por GET.
+- **Progresso com orçamento curto.** Cada GET espera a recarga do balde por até 3 s (`esperarFicha`) em vez de desistir. O teste com 8 páginas e balde de 6 fichas, recarga 2/s, lê tudo em 3 rodadas seguidas. Se mesmo assim faltar ficha, o parcial vem com motivo.
+- **Origem pendente** tem etiqueta própria ("prioridade provisória"), distinta de "origem não informada".
+- **Dedup por id** depois da paginação: fica a versão com `updated_at` maior.
+- A edge passou no type-check do Deno (`deno check`).

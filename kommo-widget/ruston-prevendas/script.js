@@ -195,7 +195,8 @@
       function atraso(fn, ms) { var h = setTimeout(fn, ms); state.timers.push({ t: 't', h: h }); return h; }
       function ouvir(alvo, ev, fn, opt) { alvo.addEventListener(ev, fn, opt); state.ouvintes.push([alvo, ev, fn, opt]); }
       // ações só com dados confirmados e recentes (servidor/degradado ok, sem falha, < 3 ciclos)
-      function podeAgir() { return !state.falha && state.dadosEm && (agoraS() - state.dadosEm) < cfg().poll * 3 && (state.modo === 'servidor' || state.modo === 'degradado'); }
+      function dadosRecentes() { return !!state.dadosEm && (agoraS() - state.dadosEm) < cfg().poll * 3; }
+      function podeAgir() { return !state.falha && dadosRecentes() && (state.modo === 'servidor' || state.modo === 'degradado'); }
 
       // ---------------- navegação ----------------
       function seg(etype) { return { leads: 'leads', contacts: 'contacts', companies: 'companies', customers: 'customers' }[etype] || 'leads'; }
@@ -279,7 +280,8 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] });
+            if (r.gerado_em && state.dadosEm && r.gerado_em < state.dadosEm && !state.falha) { state.carregando = false; return; }   // resposta mais velha que a atual: ignora
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] }, r.gerado_em || 0);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
@@ -295,10 +297,13 @@
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
-      function publicar(snap) {
-        snap.rev = novaRev(); snap.dadosEm = agoraS(); snap.falha = null;
+      // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
+      function publicar(snap, lidoEm) {
+        snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS(); snap.falha = null;
         state.carregando = false;
-        lsSet('snap', snap); aplicar(snap); notificar(true); render();
+        lsSet('snap', snap); aplicar(snap);
+        if (dadosRecentes()) notificar(true); else state.notif = [];   // dados vencidos: sem notificações
+        render();
       }
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
@@ -315,7 +320,7 @@
       }
       function carregarSnapshot() {
         var s = lsGet('snap', null);
-        if (s && s.rev !== state.rev) { aplicar(s); notificar(false); render(); }
+        if (s && s.rev !== state.rev) { aplicar(s); if (dadosRecentes()) notificar(false); else state.notif = []; render(); }
       }
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
@@ -327,7 +332,7 @@
       // ---------------- montagem ----------------
       function paraQ(t) {
         return { id: t.id, due: t.due || 0, momento: t.momento, grupo: t.grupo || 'G9', urgente: !!t.urgente, acao: t.acao,
-                 etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa };
+                 etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa, origemPendente: !!t.origem_pendente };
       }
       function montar() {
         var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
@@ -432,7 +437,8 @@
       }
       function tag(q) {
         return '<span class="rpv-tag m' + Math.floor(Fila.nivel(q)) + '">' + esc(Fila.ROTULO[q.momento] || 'Outras') + '</span>' +
-               (q.grupo && q.grupo !== 'G9' ? '<span class="rpv-tag">' + esc(Fila.ROTULO_GRUPO[q.grupo]) + '</span>' : (q.momento === 'prospeccao' ? '<span class="rpv-tag">origem não informada</span>' : ''));
+               (q.origemPendente ? '<span class="rpv-tag" title="origem ainda não consultada: prioridade provisória">origem pendente</span>'
+                : (q.grupo && q.grupo !== 'G9' ? '<span class="rpv-tag">' + esc(Fila.ROTULO_GRUPO[q.grupo]) + '</span>' : (q.momento === 'prospeccao' ? '<span class="rpv-tag">origem não informada</span>' : '')));
       }
       function nomeDe(q) { return q.nome || ('#' + q.eid); }
 

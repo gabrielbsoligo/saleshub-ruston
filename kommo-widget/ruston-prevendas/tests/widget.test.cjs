@@ -289,3 +289,38 @@ test('servidor ocupado/em andamento: pausa curta e NÃO cai no modo degradado', 
   assert.equal(gets, 0)
   assert.ok(JSON.parse(env.ctx.localStorage.getItem('rpv_pausa_financeirorustonengenhariacombr_11420911')) > Date.now())
 })
+
+test('P1: resposta com dados de 24h (cache em andamento) não rejuvenesce: ações e avisos suspensos', () => {
+  const env = ambiente()
+  const velho = AGORA - 86400
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], em_andamento: true, gerado_em: velho }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const snap = JSON.parse(env.ctx.localStorage.getItem(SNAP))
+  assert.equal(snap.dadosEm, velho)                                   // idade real preservada
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /rpv-pill off/); assert.doesNotMatch(html, /data-act="avancar"/)
+  assert.doesNotMatch(html, /rpv-ntf/)                                // sem notificação sobre dado vencido
+})
+
+test('P1: depois de uma falha, um cache velho não limpa a falha nem habilita ações', () => {
+  const env = ambiente()
+  const w = instanciar(env, [
+    { ok: true, itens: [tarefa(1)], gerado_em: AGORA },
+    { erro: 'falha_banco', status: 503 },
+    { ok: true, itens: [tarefa(1)], em_andamento: true, gerado_em: AGORA - 86400 },
+  ])
+  w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('i'); env.rodarTimers('i')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /rpv-pill off/)
+})
+
+test('P4: origem pendente tem etiqueta própria (não "origem não informada")', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { momento: 'prospeccao', grupo: 'G9', origem_pendente: true }), tarefa(2, { momento: 'prospeccao', grupo: 'G9' })], gerado_em: AGORA }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  clique({ target: { closest: () => ({ getAttribute: () => 'painel' }) } })
+  const html = env.elems['rpv-root'].innerHTML
+  assert.equal((html.match(/>origem pendente</g) || []).length, 1)
+  assert.equal((html.match(/>origem não informada</g) || []).length, 1)
+})

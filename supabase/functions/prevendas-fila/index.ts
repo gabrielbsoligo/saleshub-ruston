@@ -5,7 +5,8 @@
 // (existe, está aberta, é do usuário). Nada da réplica decide o que é emitido. A réplica só fornece dados do
 // LEAD (nome, etapa, origem) para classificar/ordenar; leads ausentes nela são buscados na API.
 //  1) identidade: JWT HS256 (conta, emissor, integração, expiração) → team_members ATIVO;
-//  2) cache 40 s por usuário; TRAVA atômica por usuário (execuções concorrentes recebem o cache);
+//  2) cache 40 s por usuário; TRAVA por usuário com TOKEN de posse (gravar/liberar só valem para o dono; as
+//     concorrentes recebem o cache só se ainda válido); prazo total 40 s < trava 60 s; timeout por GET;
 //  3) ORÇAMENTO de vazão da conta (balde no banco, compartilhado por todas as execuções) antes de cada GET;
 //  4) lista viva paginada (até 12 páginas = 3000 tarefas) → leads (réplica; faltantes pela API em lotes de 50)
 //     → slots → classificação com texto/tipo vivos;
@@ -16,12 +17,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
-import { leadsFaltando, montarItens, type LeadDados, type TarefaKommo } from '../_shared/prevendas_servidor.ts'
+import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
 const ORIGEM_FIELD = 975168
 const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 60, MAX_PAGINAS = 12, MAX_LOTES_LEADS = 6
+// prazo total da execução bem abaixo da trava (60 s); cada GET com timeout próprio; espera por ficha limitada
+const PRAZO_MS = 40_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
 
 const cors = (origin: string | null) => ({
   'Access-Control-Allow-Origin': origin === KOMMO ? KOMMO : 'null',
@@ -34,7 +37,6 @@ const json = (body: unknown, status: number, origin: string | null) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...cors(origin) } })
 
 class KommoLimite extends Error { constructor(public retryAfter: number) { super('kommo_429') } }
-class SemFicha extends Error { constructor() { super('sem_ficha') } }
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('Origin')
@@ -60,20 +62,22 @@ Deno.serve(async (req) => {
   if (eC) return json({ erro: 'falha_banco' }, 503, origin)
   const idade = cache?.em ? (Date.now() - Date.parse(cache.em)) / 1000 : Infinity
   if (cache?.resposta && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...cache.resposta, cache_s: Math.round(idade) }, 200, origin)
-  const { data: travou, error: eT } = await sb.rpc('prevendas_travar', { p_user: uid, p_seg: TRAVA_S })
+  const { data: token, error: eT } = await sb.rpc('prevendas_travar', { p_user: uid, p_seg: TRAVA_S })
   if (eT) return json({ erro: 'falha_banco' }, 503, origin)
-  if (!travou) {
-    // outra execução do mesmo usuário em curso: devolve o último resultado (marcado) ou pede nova tentativa
-    if (cache?.resposta) return json({ ...cache.resposta, cache_s: Math.round(idade), em_andamento: true }, 200, origin)
+  if (!token) {
+    // outra execução do mesmo usuário em curso: só devolve cache AINDA VÁLIDO (nunca vencido como autoritativo)
+    if (cache?.resposta && idade < CACHE_S) return json({ ...cache.resposta, cache_s: Math.round(idade), em_andamento: true }, 200, origin)
     return json({ erro: 'em_andamento', retry_after: 3 }, 503, origin)
   }
+  const inicio = Date.now()
 
   // 3) chamadas ao Kommo sempre com ficha do orçamento da conta
   const kommoGet = async (path: string): Promise<any> => {
-    const { data: ficha, error } = await sb.rpc('prevendas_consumir', { p_n: 1 })
-    if (error) throw new Error('falha_banco')
-    if (!ficha) throw new SemFicha()
-    const r = await fetch(`${KOMMO}${path}`, { headers: { Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}` } })
+    // ficha do orçamento da conta: espera a recarga por tempo limitado (garante progresso sob concorrência)
+    await esperarFicha(
+      async () => { const { data, error } = await sb.rpc('prevendas_consumir', { p_n: 1 }); if (error) throw new Error('falha_banco'); return !!data },
+      (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), inicio + PRAZO_MS, ESPERA_FICHA_MS)
+    const r = await fetch(`${KOMMO}${path}`, { headers: { Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}` }, signal: AbortSignal.timeout(TIMEOUT_GET_MS) })
     if (r.status === 204) return null
     if (r.status === 429) throw new KommoLimite(Number(r.headers.get('Retry-After')) || 60)
     if (!r.ok) throw new Error(`kommo ${path.split('?')[0]} ${r.status}`)
@@ -82,30 +86,31 @@ Deno.serve(async (req) => {
 
   const motivos: string[] = []
   try {
-    // 4a) lista VIVA, paginada
-    const tarefas: TarefaKommo[] = []
-    let pagina = 1
-    for (; pagina <= MAX_PAGINAS; pagina++) {
-      let j: any
-      try { j = await kommoGet(`/api/v4/tasks?filter[responsible_user_id]=${uid}&filter[is_completed]=0&order[complete_till]=asc&limit=250&page=${pagina}`) }
-      catch (e) { if (e instanceof SemFicha && tarefas.length) { motivos.push('vazao_tarefas'); break } throw e }
-      const lote = j?._embedded?.tasks ?? []
-      tarefas.push(...lote)
-      if (lote.length < 250 || !j?._links?.next) break
-      if (pagina === MAX_PAGINAS) motivos.push('limite_paginas')
-    }
+    // 4a) lista VIVA, paginada (interrupção depois da 1ª página = parcial com motivo)
+    const lidas = await lerPaginado(async (n) => {
+      const j = await kommoGet(`/api/v4/tasks?filter[responsible_user_id]=${uid}&filter[is_completed]=0&order[complete_till]=asc&limit=250&page=${n}`)
+      const itens = j?._embedded?.tasks ?? []
+      return { itens, temProxima: itens.length === 250 && !!j?._links?.next }
+    }, MAX_PAGINAS)
+    const tarefas = lidas.tarefas
+    motivos.push(...lidas.motivos)
 
+    const lidoEm = Math.floor(inicio / 1000)               // início da leitura viva (idade real e conservadora dos dados)
+    const tarefasUnicas = dedupTarefas(tarefas)             // paginação por offset pode repetir ids
     // 4b) leads: réplica para todos; faltantes pela API em lotes de 50 (com orçamento)
-    const ids = [...new Set(tarefas.filter((t) => t.entity_type === 'leads' && t.entity_id).map((t) => Number(t.entity_id)))]
+    const ids = [...new Set(tarefasUnicas.filter((t) => t.entity_type === 'leads' && t.entity_id).map((t) => Number(t.entity_id)))]
     const rl = ids.length ? await sb.rpc('prevendas_leads', { p_ids: ids }) : { data: {}, error: null }
     if (rl.error) throw new Error('falha_banco')
     const leads = { ...((rl.data ?? {}) as Record<string, LeadDados>) }
-    const faltam = leadsFaltando(tarefas, leads)
+    const faltam = leadsFaltando(tarefasUnicas, leads)
     for (let i = 0, lotes = 0; i < faltam.length; i += 50, lotes++) {
       if (lotes >= MAX_LOTES_LEADS) { motivos.push('leads_nao_consultados'); break }
       let j: any
       try { j = await kommoGet(`/api/v4/leads?${faltam.slice(i, i + 50).map((id) => `filter[id][]=${id}`).join('&')}&limit=50`) }
-      catch (e) { if (e instanceof SemFicha) { motivos.push('vazao_leads'); break } throw e }
+      catch (e) {
+        if (e instanceof Interrupcao) { motivos.push(e.tipo === 'ficha' ? 'vazao_leads' : 'tempo_leads'); break }
+        throw e
+      }
       for (const l of j?._embedded?.leads ?? []) {
         const cf = (l.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === ORIGEM_FIELD)
         leads[String(l.id)] = { nome: l.name ?? null, etapa: null, origem: cf?.values?.[0]?.value ?? null }
@@ -113,11 +118,11 @@ Deno.serve(async (req) => {
     }
 
     // 4c) slots + classificação com dados vivos
-    const rs = tarefas.length ? await sb.rpc('prevendas_slots', { p_ids: tarefas.map((t) => Number(t.id)) }) : { data: {}, error: null }
+    const rs = tarefasUnicas.length ? await sb.rpc('prevendas_slots', { p_ids: tarefasUnicas.map((t) => Number(t.id)) }) : { data: {}, error: null }
     if (rs.error) throw new Error('falha_banco')
     let tiposMomento: Record<number, Momento> = {}
     try { tiposMomento = JSON.parse(Deno.env.get('PREVENDAS_TIPOS_MOMENTO') ?? '{}') } catch { tiposMomento = {} }
-    const itens = montarItens(tarefas, uid, leads, (rs.data ?? {}) as Record<string, string>, tiposMomento)
+    const itens = montarItens(tarefasUnicas, uid, leads, (rs.data ?? {}) as Record<string, string>, tiposMomento)
 
     const fres = await sb.rpc('prevendas_fila_frescor')
     const resposta = {
@@ -125,15 +130,16 @@ Deno.serve(async (req) => {
       parcial: motivos.length > 0, motivos_parcial: motivos,
       origem_pendente: itens.filter((i) => i.origem_pendente).length,
       frescor_leads: fres.error ? null : fres.data,
-      gerado_em: Math.floor(Date.now() / 1000),
+      gerado_em: lidoEm,
     }
-    const { error: eG } = await sb.rpc('prevendas_gravar', { p_user: uid, p_chave: 'v4', p_resposta: resposta })
-    if (eG) { console.error('[prevendas-fila] cache', eG.message); await sb.rpc('prevendas_liberar', { p_user: uid }) }   // resposta segue válida; trava liberada
+    // grava só se ainda for o dono da trava (uma execução lenta cuja trava venceu não sobrescreve a mais nova)
+    const { error: eG } = await sb.rpc('prevendas_gravar', { p_user: uid, p_token: token, p_resposta: resposta })
+    if (eG) { console.error('[prevendas-fila] cache', eG.message); await sb.rpc('prevendas_liberar', { p_user: uid, p_token: token }) }
     return json(resposta, 200, origin)
   } catch (e) {
-    await sb.rpc('prevendas_liberar', { p_user: uid })
+    await sb.rpc('prevendas_liberar', { p_user: uid, p_token: token })
     if (e instanceof KommoLimite) return json({ erro: 'kommo_429', retry_after: e.retryAfter }, 503, origin)
-    if (e instanceof SemFicha) return json({ erro: 'ocupado', retry_after: 3 }, 503, origin)
+    if (e instanceof Interrupcao) return json({ erro: 'ocupado', retry_after: e.tipo === 'tempo' ? 5 : 3 }, 503, origin)
     console.error('[prevendas-fila]', (e as Error).message)
     return json({ erro: (e as Error).message === 'falha_banco' ? 'falha_banco' : 'kommo_indisponivel' }, 503, origin)
   }

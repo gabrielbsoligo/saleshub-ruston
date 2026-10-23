@@ -45,34 +45,42 @@ create table if not exists public.prevendas_cache (
   chave      text,
   resposta   jsonb,
   em         timestamptz,
-  trava_ate  timestamptz
+  trava_ate  timestamptz,
+  trava_dono text                 -- token da execução que detém a trava (posse)
 );
 alter table public.prevendas_cache enable row level security;   -- sem policy: só service_role
 revoke all on public.prevendas_cache from anon, authenticated;
 
--- adquire a trava do usuário por p_seg segundos; true = esta execução pode trabalhar
+-- adquire a trava do usuário por p_seg segundos. Devolve um TOKEN de posse (ou null se outra execução a detém).
+-- Gravar/liberar só valem para quem tem o token: uma execução lenta cuja trava expirou não sobrescreve nem
+-- libera a de outra.
 create or replace function public.prevendas_travar(p_user bigint, p_seg int)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare tok text := md5(random()::text || clock_timestamp()::text); dono text;
+begin
+  insert into prevendas_cache (kommo_user, trava_ate, trava_dono) values (p_user, now() + make_interval(secs => p_seg), tok)
+  on conflict (kommo_user) do update set trava_ate = excluded.trava_ate, trava_dono = excluded.trava_dono
+   where prevendas_cache.trava_ate is null or prevendas_cache.trava_ate < now()
+  returning trava_dono into dono;
+  return dono;
+end $$;
+
+-- grava a resposta e libera a trava, SÓ se ainda for o dono e a trava não tiver expirado
+create or replace function public.prevendas_gravar(p_user bigint, p_token text, p_resposta jsonb)
 returns boolean
 language plpgsql security definer set search_path = public as $$
 declare ok boolean;
 begin
-  insert into prevendas_cache (kommo_user, trava_ate) values (p_user, now() + make_interval(secs => p_seg))
-  on conflict (kommo_user) do update set trava_ate = excluded.trava_ate
-   where prevendas_cache.trava_ate is null or prevendas_cache.trava_ate < now()
+  update prevendas_cache set resposta = p_resposta, em = now(), trava_ate = null, trava_dono = null
+   where kommo_user = p_user and trava_dono = p_token and trava_ate >= now()
   returning true into ok;
   return coalesce(ok, false);
 end $$;
-
--- grava a resposta e libera a trava
-create or replace function public.prevendas_gravar(p_user bigint, p_chave text, p_resposta jsonb)
+create or replace function public.prevendas_liberar(p_user bigint, p_token text)
 returns void
 language sql security definer set search_path = public as $$
-  update prevendas_cache set chave = p_chave, resposta = p_resposta, em = now(), trava_ate = null where kommo_user = p_user;
-$$;
-create or replace function public.prevendas_liberar(p_user bigint)
-returns void
-language sql security definer set search_path = public as $$
-  update prevendas_cache set trava_ate = null where kommo_user = p_user;
+  update prevendas_cache set trava_ate = null, trava_dono = null where kommo_user = p_user and trava_dono = p_token;
 $$;
 
 -- ORÇAMENTO DE VAZÃO da conta (balde de fichas compartilhado por todas as execuções do widget).
@@ -103,7 +111,7 @@ do $$
 declare f text;
 begin
   foreach f in array array['prevendas_leads(bigint[])','prevendas_slots(bigint[])','prevendas_fila_frescor()','prevendas_travar(bigint,int)',
-                           'prevendas_gravar(bigint,text,jsonb)','prevendas_liberar(bigint)','prevendas_consumir(int,numeric,numeric)']
+                           'prevendas_gravar(bigint,text,jsonb)','prevendas_liberar(bigint,text)','prevendas_consumir(int,numeric,numeric)']
   loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);
