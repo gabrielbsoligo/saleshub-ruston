@@ -131,3 +131,46 @@ test('3C — preparação da discagem separada do envio: 429 vira limite com Ret
   const ok = await prepararAgente3c(async () => ({ status: 200, retryAfter: null, u })) as any
   assert.equal(ok.tipo, 'ok'); assert.equal(ok.c.ramal, '427178')
 })
+
+// ---------------- 0.4.8: número completo na nota e resultado final pelo CDR da 4com ----------------
+import { acharCdr, comResultado, resultadoCdr, telefoneLegivel, textoNota } from '../../../supabase/functions/_shared/prevendas_voz.ts'
+
+test('telefoneLegivel e o formato do CDR da 4com (0 + DDD + número)', () => {
+  assert.equal(telefoneLegivel('+5547997293673'), '+55 47 99729-3673')
+  assert.equal(telefoneLegivel('+554733334444'), '+55 47 3333-4444')
+  assert.equal(telefoneE164('047997293673'), '+5547997293673')
+  assert.equal(telefoneE164('04733334444'), '+554733334444')
+})
+
+test('resultadoCdr: atendida / não atendida / ocupado / cancelada / inexistente / causa desconhecida', () => {
+  const rec = 'https://listener.api4com.com/files/listen/x.mp3'
+  assert.deepEqual(resultadoCdr({ hangup_cause: 'NORMAL_CLEARING', duration: 50, record_url: rec, started_at: 't' }), { rotulo: 'atendida', duracao: 50, gravacao: rec, causa: 'NORMAL_CLEARING', inicio: 't' })
+  assert.equal(resultadoCdr({ hangup_cause: 'NO_ANSWER', duration: 0 }).rotulo, 'não atendida')
+  assert.equal(resultadoCdr({ hangup_cause: 'NORMAL_CLEARING', duration: 0, record_url: '' }).rotulo, 'não atendida')
+  assert.equal(resultadoCdr({ hangup_cause: 'USER_BUSY', duration: 0 }).rotulo, 'ocupado')
+  assert.equal(resultadoCdr({ hangup_cause: 'ORIGINATOR_CANCEL', duration: 0 }).rotulo, 'cancelada antes de atender')
+  assert.equal(resultadoCdr({ hangup_cause: 'NUMBER_CHANGED', duration: 0 }).rotulo, 'número inexistente')
+  assert.equal(resultadoCdr({ hangup_cause: 'XYZ', duration: 0 }).rotulo, 'não completou (XYZ)')
+  assert.equal(resultadoCdr({ hangup_cause: 'USER_BUSY', duration: 0, record_url: rec }).gravacao, null)   // gravação só de atendida
+  assert.equal(resultadoCdr({ hangup_cause: 'NORMAL_CLEARING', duration: 5, record_url: 'http://x' }).gravacao, null)   // só https
+})
+
+test('acharCdr: elo pelo metadata widget_ev + kommo_user (nunca o CDR de outro usuário)', () => {
+  const l = [{ id: 'a', metadata: { widget_ev: '77', kommo_user: '999' } }, { id: 'b', metadata: { widget_ev: '77', kommo_user: '11420911' } }, { id: 'c', metadata: {} }]
+  assert.equal(acharCdr(l, 77, 11420911)?.id, 'b')
+  assert.equal(acharCdr(l, 78, 11420911), null)
+  assert.equal(acharCdr({ data: l }, 77, 11420911), null)
+})
+
+test('textoNota/comResultado: número COMPLETO; uma nota atualizada (troca só o resultado); gravação só no manual', () => {
+  const ini = textoNota({ provedor: '4com', nome: 'Gabriel', ramal: '1006', numero: '+5547997293673', manual: false })
+  assert.match(ini, /para \+55 47 99729-3673/); assert.doesNotMatch(ini, /\*\*\*/); assert.match(ini, /Resultado: aguardando/)
+  assert.doesNotMatch(textoNota({ provedor: '3c', nome: 'G', ramal: '1', numero: '+5547997293673', manual: false }), /aguardando/)
+  const at = { rotulo: 'atendida', duracao: 75, gravacao: 'https://g/x.mp3', causa: 'NORMAL_CLEARING', inicio: null }
+  const fim = comResultado(ini, at, false)
+  assert.equal(fim.split('\n')[0], ini.split('\n')[0]); assert.match(fim, /Resultado: atendida · duração 1 min 15 s$/)
+  assert.equal(comResultado(fim, at, false), fim)                                   // idempotente
+  assert.match(comResultado(ini, at, true), /\nGravação: https:\/\/g\/x\.mp3$/)     // manual: a nota da 4com/N8N não cobre
+  assert.match(comResultado('texto antigo sem resultado', { ...at, rotulo: 'ocupado', duracao: 0, gravacao: null }, false), /^texto antigo sem resultado\nResultado: ocupado$/)
+  assert.match(comResultado(ini.replace(/\n/g, '\r\n'), at, false), /^📞[^\r]*\nResultado: atendida/)
+})

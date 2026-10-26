@@ -47,7 +47,7 @@ export function telefoneE164(bruto: string | null | undefined): string | null {
   let d = String(bruto ?? '').replace(/\D/g, '')
   if (d.startsWith('00')) d = d.slice(2)
   if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2)
-  else if (d.length === 11 && d.startsWith('0')) d = d.slice(1)            // 0 + DDD + fixo
+  else if ((d.length === 11 || d.length === 12) && d.startsWith('0')) d = d.slice(1)   // 0 + DDD + fixo/celular (formato do CDR da 4com)
   if (d.length !== 10 && d.length !== 11) return null
   const ddd = Number(d.slice(0, 2)), num = d.slice(2)
   if (ddd < 11 || ddd % 10 === 0) return null                               // DDD brasileiro nunca termina em 0
@@ -59,6 +59,13 @@ export function telefoneE164(bruto: string | null | undefined): string | null {
 }
 /** Final do número para log/nota (nunca o número inteiro em log). */
 export function finalTelefone(e164: string): string { return '***' + e164.slice(-4) }
+/** Número completo legível para a NOTA do Kommo (pedido do Gabriel): +55 47 99729-3673 / +55 47 3333-4444. */
+export function telefoneLegivel(e164: string): string {
+  const d = String(e164).replace(/\D/g, '').replace(/^55/, '')
+  if (d.length === 11) return `+55 ${d.slice(0, 2)} ${d.slice(2, 7)}-${d.slice(7)}`
+  if (d.length === 10) return `+55 ${d.slice(0, 2)} ${d.slice(2, 6)}-${d.slice(6)}`
+  return String(e164)
+}
 
 export interface ContatoKommo { id: number; name?: string | null; custom_fields_values?: Array<{ field_code?: string | null; values?: Array<{ value?: unknown }> }> | null }
 /** Telefones (E.164, sem repetição) dos contatos, a partir do campo de sistema PHONE. */
@@ -202,4 +209,59 @@ export async function prepararAgente3c(obter: () => Promise<{ status: number; re
   if (r.status < 200 || r.status >= 300) return { tipo: 'indisponivel' }
   const c = credencial3c(r.u)
   return c ? { tipo: 'ok', c } : { tipo: 'sem_ramal' }
+}
+
+// ---------------- resultado final da ligação (CDR da 4com) ----------------
+// O id devolvido pelo POST /calls NÃO é o id do CDR; o elo é o metadata que o widget manda no POST
+// (widget_ev = id do evento de auditoria + kommo_user). duration do CDR = tempo de conversa (0 sem atendimento).
+export interface FinalLigacao { rotulo: string; duracao: number; gravacao: string | null; causa: string; inicio: string | null }
+
+const CAUSAS: Record<string, string> = {
+  USER_BUSY: 'ocupado',
+  NO_ANSWER: 'não atendida', NO_USER_RESPONSE: 'não atendida', ALLOTTED_TIMEOUT: 'não atendida', RECOVERY_ON_TIMER_EXPIRE: 'não atendida',
+  ORIGINATOR_CANCEL: 'cancelada antes de atender', CALL_REJECTED: 'recusada',
+  UNALLOCATED_NUMBER: 'número inexistente', NUMBER_CHANGED: 'número inexistente', INVALID_NUMBER_FORMAT: 'número inválido',
+  NO_ROUTE_DESTINATION: 'número inexistente', SUBSCRIBER_ABSENT: 'fora de área/desligado',
+}
+
+/** CDR da 4com → resultado legível. Atendida = duração de conversa > 0 (ou gravação) com encerramento normal. */
+export function resultadoCdr(c: any): FinalLigacao {
+  const causa = String(c?.hangup_cause ?? '').toUpperCase()
+  const duracao = Math.max(0, Math.round(Number(c?.duration) || 0))
+  const gravacao = typeof c?.record_url === 'string' && /^https:\/\//.test(c.record_url) ? c.record_url : null
+  const atendida = (duracao > 0 || !!gravacao) && (causa === 'NORMAL_CLEARING' || causa === '')
+  const rotulo = atendida ? 'atendida' : CAUSAS[causa] ?? (causa === 'NORMAL_CLEARING' ? 'não atendida' : `não completou (${causa || 'sem causa'})`)
+  return { rotulo, duracao, gravacao: atendida ? gravacao : null, causa, inicio: c?.started_at ? String(c.started_at) : null }
+}
+
+/** O CDR da tentativa: metadata.widget_ev e metadata.kommo_user conferem (nunca o de outro usuário). */
+export function acharCdr(lista: unknown, ev: number, uid: number): any | null {
+  if (!Array.isArray(lista)) return null
+  return lista.find((c: any) => c?.metadata && String(c.metadata.widget_ev) === String(ev) && String(c.metadata.kommo_user) === String(uid)) ?? null
+}
+
+const fmtDur = (s: number) => (s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`)
+
+/**
+ * Texto da nota da ligação (uma nota por ligação: criada ao discar e ATUALIZADA com o resultado). Número completo
+ * (pedido do Gabriel). A gravação/resumo da integração 4com/N8N (nota "LIGAÇÃO … Resumo") não é repetida: a
+ * gravação só entra aqui quando o número NÃO é de um contato do lead (ligação manual), caso que aquela nota não cobre.
+ */
+export function textoNota(p: { provedor: '4com' | '3c'; nome: string; ramal: string; numero: string; manual: boolean; final?: FinalLigacao | null; gravacaoAqui?: boolean }): string {
+  const cab = `📞 Ligação ${p.provedor === '3c' ? '3C' : '4com'} pelo widget — ${p.nome} (ramal ${p.ramal}) para ${telefoneLegivel(p.numero)}${p.manual ? ' (discagem manual)' : ''}`
+  if (!p.final) return p.provedor === '4com' ? `${cab}\nResultado: aguardando o fim da ligação…` : cab   // 3C: ainda sem CDR
+  const f = p.final
+  const linhas = [cab, `Resultado: ${f.rotulo}${f.rotulo === 'atendida' ? ` · duração ${fmtDur(f.duracao)}` : ''}`]
+  if (f.gravacao && p.gravacaoAqui) linhas.push(`Gravação: ${f.gravacao}`)
+  return linhas.join('\n')
+}
+
+/** Atualiza o texto da nota existente: troca a linha "Resultado:" (e o que vier depois) pelo resultado final. */
+export function comResultado(textoAtual: string, f: FinalLigacao, gravacaoAqui: boolean): string {
+  const base = String(textoAtual ?? '').replace(/\r\n/g, '\n')
+  const i = base.indexOf('\nResultado:')
+  const cab = (i >= 0 ? base.slice(0, i) : base).trimEnd()
+  const linhas = [cab, `Resultado: ${f.rotulo}${f.rotulo === 'atendida' ? ` · duração ${fmtDur(f.duracao)}` : ''}`]
+  if (f.gravacao && gravacaoAqui) linhas.push(`Gravação: ${f.gravacao}`)
+  return linhas.join('\n')
 }

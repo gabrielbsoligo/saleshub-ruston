@@ -213,7 +213,7 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, manual: '', ultimoPedido: 0, aposRegistro: null, pedida: false, tentativa: 0, atendidaNaTentativa: -1, orientacao: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  pendenteAte: 0, discando: false, manual: '', ultimoPedido: 0, aposRegistro: null, resEv: 0, resSeq: 0, resTent: 0, pedida: false, tentativa: 0, atendidaNaTentativa: -1, orientacao: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
                   tel: { chave: '', contatos: null, erro: '', carregando: false } };
       var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
@@ -688,7 +688,8 @@
           s.on('accepted', function () { dbg('200 OK enviado (aguardando ACK)', ms()); if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
           var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
-                                   voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
+                                   voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.';
+                                   if (voz.resEv) agendarResultado(g, voz.resEv, 8000, true); render(); };
           s.on('ended', function (e) { dbg('encerrada por', e && e.originator, e && e.cause, ms()); fim(e); });
           s.on('failed', function (e) { dbg('chamada falhou', e && e.cause, 'por', e && e.originator, (e && e.message && e.message.status_code) || '', ms()); fim(e); });
           if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
@@ -773,16 +774,36 @@
         try { if (voz.ua && voz.ua.register) voz.ua.register(); else pedir(); } catch (e) { pedir(); }
         atraso(pedir, 2500);
         function enviar() {
-        chamarVoz(pedido, function (err) {
+        chamarVoz(pedido, function (err, r) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora
           voz.discando = false;
           if (err) { voz.pendenteAte = 0; voz.orientacao = -1; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = err.erro === 'provedor_recusou' && /has been failed/i.test(String(err.mensagem || ''))
             ? 'A ligação não completou: a 4com entregou a chamada a outro registro do seu ramal (extensão/webphone/app da 4com). Tente de novo — o widget retoma o ramal.'
             : err.mensagem && /^provedor_/.test(err.erro) ? String(err.mensagem) : Fila.mensagemVoz(err.erro); }   // a mensagem do servidor é a mais precisa (ex.: nenhuma ligação foi feita)
           else if (!voz.sessao) voz.aviso = '';
+          if (!err && r && r.ev && r.provedor === '4com') { voz.resEv = r.ev; voz.resTent = 0; agendarResultado(state.geracao, r.ev, 90000, false); }
           render();
         });
         }
+      }
+      // resultado final da ligação (CDR da 4com, pelo servidor; ele também atualiza a nota no Kommo). Uma cadeia de
+      // consultas por ligação (a mais nova vence); 'pendente' tenta de novo com espera crescente, até 6 vezes.
+      function agendarResultado(g, ev, ms, reinicia) {
+        if (reinicia) voz.resTent = 0;
+        var seq = ++voz.resSeq;
+        atraso(function () {
+          if (!vivo(g) || seq !== voz.resSeq || ev !== voz.resEv) return;
+          chamarVoz({ acao: 'resultado', ev: ev }, function (err, r) {
+            if (!vivo(g) || seq !== voz.resSeq || ev !== voz.resEv) return;
+            var p = !err && r && r.pedido;
+            if (p && !p.pendente && p.rotulo) {
+              voz.resEv = 0;
+              if (!voz.sessao) { voz.aviso = 'Última ligação: ' + p.rotulo + (p.rotulo === 'atendida' && p.duracao ? ' · ' + mmss(p.duracao * 1000) : '') + (p.nota ? ' (registrada no Kommo)' : ''); render(); }
+              return;
+            }
+            if (++voz.resTent < 6) agendarResultado(g, ev, [20000, 40000, 60000, 120000, 300000][Math.min(voz.resTent - 1, 4)], false);
+          });
+        }, ms);
       }
       function mmss(ms) { var t = Math.max(0, Math.floor(ms / 1000)); return pad(Math.floor(t / 60)) + ':' + pad(t % 60); }
       function htmlVoz() {
