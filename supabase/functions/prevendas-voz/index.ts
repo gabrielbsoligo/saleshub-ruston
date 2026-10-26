@@ -21,12 +21,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { esperarFicha, Interrupcao } from '../_shared/prevendas_servidor.ts'
 import {
-  decidirEntidade, finalTelefone, ha1, interpretar4com, motivoAutorizacao, telefoneE164, usuarioLiberado,
+  credencial3c, decidirEntidade, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao, telefone3c,
+  telefoneE164, usuarioLiberado,
 } from '../_shared/prevendas_voz.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
 const API4COM = 'https://api.api4com.com/api/v1'
+const API3C = 'https://app.3c.plus/api/v1'
 const TIMEOUT_MS = 8_000, TIMEOUT_DISCAR_MS = 45_000   // o POST /calls da 4com só responde quando a chamada conecta
 const PRAZO_MS = 30_000, PRAZO_NOTA_MS = 12_000, ESPERA_FICHA_MS = 3_000, MAX_CONTATOS = 10
 
@@ -50,8 +52,8 @@ Deno.serve(async (req) => {
 
   const env = (k: string) => Deno.env.get(k) ?? ''
   const secret = env('KOMMO_WIDGET_SECRET'), clientId = env('KOMMO_WIDGET_CLIENT_ID'), contaId = env('KOMMO_ACCOUNT_ID')
-  const token4com = env('API4COM_TOKEN'), dominio = env('API4COM_DOMAIN'), wss = env('API4COM_WSS')
-  if (!secret || !clientId || !contaId || !env('KOMMO_API_TOKEN') || !token4com || !dominio || !wss) return json({ erro: 'nao_configurado' }, 503, origin)
+  const token4com = env('API4COM_TOKEN'), dominio = env('API4COM_DOMAIN'), wss = env('API4COM_WSS'), token3c = env('THREEC_API_TOKEN')
+  if (!secret || !clientId || !contaId || !env('KOMMO_API_TOKEN')) return json({ erro: 'nao_configurado' }, 503, origin)
 
   // 1) identidade
   const v = await verificarJwtKommo(req.headers.get('X-Auth-Token') ?? '', { secret, contaId, host: `${SUB}.kommo.com`, clientId })
@@ -62,14 +64,22 @@ Deno.serve(async (req) => {
   const uid = v.userId
   if (!usuarioLiberado(env('PREVENDAS_VOZ_USUARIOS'), uid)) return json({ erro: 'voz_nao_liberada' }, 403, origin)
   const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'))
-  const { data: membro, error: eM } = await sb.from('team_members').select('name,role,active,ramal_4com').eq('kommo_user_id', uid).maybeSingle()
+  const { data: membro, error: eM } = await sb.from('team_members').select('name,role,active,ramal_4com,agente_3c_id').eq('kommo_user_id', uid).maybeSingle()
   if (eM) return json({ erro: 'falha_banco' }, 503, origin)
   if (!membro?.active) return json({ erro: 'usuario_inativo' }, 403, origin)
-  const ramal = String(membro.ramal_4com ?? '').trim()
-  if (!/^\d{2,8}$/.test(ramal)) return json({ erro: 'sem_ramal' }, 403, origin)
-
   let body: any = {}
   try { body = await req.json() } catch { body = {} }
+  // provedor: o pedido pelo widget (setting provedor_voz) ou o padrão do servidor, se o usuário tiver o dado dele
+  const provedor = decidirProvedor(body?.provedor, membro, env('PREVENDAS_VOZ_PROVEDOR_PADRAO'))
+  if (!provedor) return json({ erro: 'sem_ramal' }, 403, origin)
+  if (provedor === '4com' && (!token4com || !dominio || !wss)) return json({ erro: 'nao_configurado' }, 503, origin)
+  if (provedor === '3c' && !token3c) return json({ erro: 'nao_configurado' }, 503, origin)
+  const ramal = String(membro.ramal_4com ?? '').trim(), agente3c = String(membro.agente_3c_id ?? '').trim()
+  // usuário do agente no 3C (com ramal e senha SIP): só no servidor, nunca vai para log
+  const usuario3c = async () => {
+    const r = await fetch(`${API3C}/users/${encodeURIComponent(agente3c)}?include=extension,company`, { headers: { Authorization: `Bearer ${token3c}`, Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    return { r, u: r.ok ? (await r.json())?.data ?? null : null }
+  }
   const acao = String(body?.acao ?? '')
   const inicio = Date.now()
 
@@ -109,6 +119,15 @@ Deno.serve(async (req) => {
     if (acao === 'credencial') {
       const ev = await reservar('credencial', 12, 600, 0)
       if (!ev) return json({ erro: 'limite', retry_after: 60 }, 429, origin)
+      if (provedor === '3c') {
+        const { r, u } = await usuario3c()
+        if (r.status === 429) { const ra = await bloquear('credencial', r); await registrar(ev, 'limite', `3c 429 (${ra}s)`); return json({ erro: 'provedor_limite', retry_after: ra }, 503, origin) }
+        if (!r.ok) { await registrar(ev, 'incerto', `3c ${r.status}`); return json({ erro: 'provedor_indisponivel' }, 503, origin) }
+        const c = credencial3c(u)
+        if (!c) { await registrar(ev, 'negado', 'agente 3c sem ramal'); return json({ erro: 'sem_ramal' }, 403, origin) }
+        await registrar(ev, 'ok', '3c')
+        return json({ ok: true, provedor: '3c', wss: c.wss, dominio: c.dominio, ramal: c.usuario, realm: c.realm, ha1: c.ha1, uri: c.uri, nome: membro.name ?? c.ramal, exibir_ramal: c.ramal }, 200, origin)
+      }
       const filtro = encodeURIComponent(JSON.stringify({ where: { ramal }, fields: { ramal: true, senha: true, domain: true } }))
       const r = await fetch(`${API4COM}/extensions?filter=${filtro}`, { headers: { Authorization: token4com }, signal: AbortSignal.timeout(TIMEOUT_MS) })
       if (r.status === 429) { const ra = await bloquear('credencial', r); await registrar(ev, 'limite', `4com 429 (${ra}s)`); return json({ erro: 'provedor_limite', retry_after: ra }, 503, origin) }
@@ -163,15 +182,27 @@ Deno.serve(async (req) => {
     const deTeste = String(env('PREVENDAS_VOZ_TELEFONES_TESTE')).split(',').map((x) => telefoneE164(x.trim())).includes(destino)
     if (!daEntidade && !deTeste) { await registrar(ev, 'negado', 'telefone fora da entidade'); return json({ erro: 'telefone_fora_da_entidade' }, 403, origin) }
 
-    let r: Response | null = null, corpo: unknown = null
-    try {
+    let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal
+    if (provedor === '3c') {
+      try {
+        const { r: ru, u } = await usuario3c()
+        const c = ru.ok ? credencial3c(u) : null
+        if (!c) { await registrar(ev, 'negado', `agente 3c ${ru.status}`); return json({ erro: ru.ok ? 'sem_ramal' : 'provedor_indisponivel' }, ru.ok ? 403 : 503, origin) }
+        ramalUsado = c.ramal
+        r = await fetch(`${API3C}/click2call`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token3c}`, 'Content-Type': 'application/json', Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
+          body: JSON.stringify({ extension: c.ramal, phone: telefone3c(destino!) }),
+        })
+        try { corpo = await r.json() } catch { corpo = null }
+      } catch { r = null }
+    } else try {
       r = await fetch(`${API4COM}/calls`, {
         method: 'POST', headers: { Authorization: token4com, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
         body: JSON.stringify({ extension: ramal, caller: ramal, called: destino, metadata: { origem: 'kommo-widget', kommo_user: uid, entity_type: etype, entity_id: eid } }),
       })
       try { corpo = await r.json() } catch { corpo = null }
     } catch { r = null }
-    const res = interpretar4com(r?.status ?? 0, corpo)
+    const res = provedor === '3c' ? interpretar3c(r?.status ?? 0, corpo) : interpretar4com(r?.status ?? 0, corpo)
     if (!res.ok) {
       const ra = r && r.status === 429 ? await bloquear('discar', r) : 0
       await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem}`)
@@ -181,11 +212,11 @@ Deno.serve(async (req) => {
     let nota = true
     try {
       await kommo(`/api/v4/${etype}/notes`, { method: 'POST', body: JSON.stringify([{ entity_id: eid, note_type: 'common',
-        params: { text: `📞 Ligação 4com iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramal}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) }, Date.now() + PRAZO_NOTA_MS)
+        params: { text: `📞 Ligação ${provedor === '3c' ? '3C' : '4com'} iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramalUsado}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) }, Date.now() + PRAZO_NOTA_MS)
     } catch (e) { nota = false; console.error('[prevendas-voz] nota', (e as Error).message) }
     // auditoria registra a ligação e, se for o caso, a nota pendente (para retomada manual)
     await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${nota ? '' : '; NOTA PENDENTE'}`)
-    return json({ ok: true, chamada_id: res.chamada_id, ramal, nota }, 200, origin)
+    return json({ ok: true, provedor, chamada_id: res.chamada_id, ramal: ramalUsado, nota }, 200, origin)
   } catch (e) {
     const m = (e as Error).message
     console.error('[prevendas-voz]', acao, m)

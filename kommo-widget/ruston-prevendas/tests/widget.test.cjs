@@ -423,7 +423,7 @@ test('telefone: registra com HA1 (sem senha), endpoint derivado, credencial fora
   assert.equal(reg.cfg.ha1, CRED.ha1); assert.equal(reg.cfg.password, undefined); assert.equal(reg.cfg.authorization_user, '1006')
   assert.equal(reg.cfg.realm, 'ruston.api4com.com'); assert.equal(reg.cfg.sockets[0].url, CRED.wss); assert.equal(reg.started, 1)
   reg.emit('registered')
-  assert.match(env.elems['rpv-root'].innerHTML, /Telefone · pronto/)
+  assert.match(env.elems['rpv-root'].innerHTML, /Telefone( (4com|3C))? · pronto/)
   for (const st of [env.ctx.localStorage, env.ctx.sessionStorage]) for (const v of st._m.values()) assert.ok(!String(v).includes(CRED.ha1), 'HA1 vazou para o storage')
 })
 
@@ -827,3 +827,37 @@ for (const [nome, saltoPC, decorrido, esperado] of [
     assert.equal(inv.session.atendida, esperado)
   })
 }
+
+// ---------------- 3C no mesmo módulo ----------------
+test('3C: provedor_voz vai nos pedidos; a chamada do 3cplus na tentativa atende sozinha; outra origem só toca', async () => {
+  const env = ambiente(), reg = {}
+  const CRED3C = { ...CRED, provedor: '3c', wss: 'wss://vox-socket.3c.plus:4443', dominio: 'gbsvendas.3c.plus', realm: 'gbsvendas.3c.plus', ramal: '999123', uri: 'sip:999123@gbsvendas.3c.plus' }
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED3C,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  }, { provedor_voz: '3c' })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.equal(chamadas.find((c) => c.acao === 'credencial').provedor, '3c')
+  assert.equal(reg.cfg.sockets[0].url, 'wss://vox-socket.3c.plus:4443')
+  assert.match(env.elems['rpv-root'].innerHTML, /Telefone 3C · pronto/)
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.equal(chamadas.find((c) => c.acao === 'discar').provedor, '3c')
+  const de = (user) => { const x = sessao(false); x.request.from = { uri: { user } }; return x }
+  const outra = de('5547999990000'); reg.emit('newRTCSession', outra)
+  assert.equal(outra.session.atendida, undefined); outra.session.terminate()
+  const integrada = de('3cplus'); reg.emit('newRTCSession', integrada)
+  assert.equal(integrada.session.atendida, true)
+})
+
+test('trocar provedor_voz nas settings registra o ramal de novo (credencial do provedor novo)', async () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas, mudar } = comVoz(env, reg, { credencial: (b) => ({ ...CRED, provedor: b.provedor === '3c' ? '3c' : '4com' }) })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.equal(chamadas.filter((c) => c.acao === 'credencial').length, 1)
+  mudar({ provedor_voz: '3c' }); w.callbacks.onSave(); await flush()      // solta o ramal 4com
+  env.rodarTimers('i'); await flush()
+  const creds = chamadas.filter((c) => c.acao === 'credencial')
+  assert.equal(creds.length, 2); assert.equal(creds[1].provedor, '3c'); assert.ok(reg.stopped >= 1)
+})

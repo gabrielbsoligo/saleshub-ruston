@@ -17,6 +17,7 @@
     "atalho": "Atalho Alt+N para o próximo? Y ou N (padrão Y)",
     "voz": "Telefone no Kommo (webphone 4com): Y para ligar, N para desligar (padrão N). Só funciona para usuários liberados no servidor.",
     "endpoint_voz": "Endereço da edge prevendas-voz (vazio = mesmo endereço da fila, trocando prevendas-fila por prevendas-voz)",
-    "debug_voz": "Diagnóstico do telefone: Y registra no console do navegador o registro do ramal e as chamadas recebidas (sem credenciais)"
+    "debug_voz": "Diagnóstico do telefone: Y registra no console do navegador o registro do ramal e as chamadas recebidas (sem credenciais)",
+    "provedor_voz": "Provedor do telefone: 4com ou 3c (vazio = o servidor escolhe pelo cadastro do usuário: 4com se tiver ramal, senão 3C)"
   }
 }

@@ -172,7 +172,7 @@
       var DEFAULTS = {
         endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
         antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
-        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '', debug_voz: 'N'
+        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '', debug_voz: 'N', provedor_voz: ''
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
@@ -213,7 +213,9 @@
           atalho: String(s.atalho || DEFAULTS.atalho).toUpperCase() !== 'N',
           voz: String(s.voz || DEFAULTS.voz).toUpperCase() === 'Y',
           endpoint_voz: String(s.endpoint_voz || '').trim(),
-          debug_voz: String(s.debug_voz || 'N').toUpperCase() === 'Y'
+          debug_voz: String(s.debug_voz || 'N').toUpperCase() === 'Y',
+          // provedor do telefone: '4com' ou '3c'; vazio = o servidor decide pelo cadastro do usuário
+          provedor_voz: (function (p) { p = String(p || '').trim().toLowerCase(); return p === '4com' || p === '3c' ? p : ''; })(s.provedor_voz)
         };
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -518,7 +520,8 @@
       function chamarVoz(corpo, cb) {
         var url = endpointVoz();
         if (!url) { cb({ erro: 'nao_configurado' }); return; }
-        var req;
+        var req, pv = cfg().provedor_voz;
+        if (pv) corpo.provedor = pv;                                  // o servidor confere se o usuário tem esse provedor
         try { req = self.$authorizedAjax({ url: url, method: 'POST', contentType: 'application/json', dataType: 'json', data: JSON.stringify(corpo) }); }
         catch (e) { cb({ erro: 'sem_authorizedAjax' }); return; }
         if (!req || typeof req.then !== 'function') { cb({ erro: 'sem_promessa' }); return; }
@@ -548,7 +551,7 @@
         if (!cfg().voz || voz.posse || voz.pedindo) return;
         var L = travas();
         if (!L) { vozEstado('erro', 'Este navegador não controla abas para o telefone; use o Chrome atualizado.'); return; }
-        var tok = ++posseSeq; voz.pedindo = tok; vozEstado('carregando');
+        var tok = ++posseSeq; voz.pedindo = tok; voz.provedorPedido = cfg().provedor_voz; vozEstado('carregando');
         var p;
         try {
           p = L.request(nomeTrava(), roubar ? { steal: true } : { ifAvailable: true }, function (lock) {
@@ -586,7 +589,7 @@
           });
         } catch (e) { vozEstado('erro', 'Configuração do telefone inválida.'); return; }
         var meu = function () { return tenho(tok, g) && voz.ua === ua; };
-        voz.ua = ua;
+        voz.ua = ua; voz.provedor = c.provedor === '3c' ? '3c' : '4com';
         var dbg = function () { if (!cfg().debug_voz || !window.console) return; try { console.info.apply(console, ['[ruston-prevendas][voz]'].concat([].slice.call(arguments))); } catch (e) {} };
         ua.on('connected', function () { dbg('WSS conectado'); });
         ua.on('registered', function (e) {
@@ -602,7 +605,13 @@
           try { var q = ev.request; dbg('INVITE recebido', q && q.ruri && String(q.ruri), 'de', q && q.from && String(q.from.uri), 'integrada:', q && q.getHeader('X-Api4comintegratedcall'), 'pendente:', voz.pendenteAte > mono()); } catch (x) {}
           if (!meu() || voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
           var integ = false;
-          try { integ = String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true'; } catch (e) {}
+          // chamada integrada (a que o servidor pediu ao provedor): a 4com marca com o header X-Api4comintegratedcall;
+          // no 3C ela vem do usuário 3cplus (o mesmo critério do webphone do próprio 3C)
+          try {
+            integ = voz.provedor === '3c'
+              ? String((ev.request.from && ev.request.from.uri && ev.request.from.uri.user) || '') === '3cplus'
+              : String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true';
+          } catch (e) {}
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
           voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
@@ -610,7 +619,8 @@
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
           s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
-          var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.pedida = false;
+          var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
+          var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
           s.on('ended', fim); s.on('failed', function (e) { dbg('chamada falhou', e && e.cause); fim(e); });
           if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
@@ -643,6 +653,7 @@
           if (voz.posse || voz.pedindo || voz.ua || voz.estado !== 'off') { pararVoz(); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; render(); }
           return;
         }
+        if ((voz.posse || voz.pedindo) && (voz.provedorPedido || '') !== cfg().provedor_voz) { pararVoz(); voz.estado = 'off'; voz.msg = ''; render(); return; }   // trocou o provedor: solta agora, registra no próximo tique (a trava solta é assíncrona)
         if (!voz.posse && !voz.pedindo && (voz.estado === 'off' || (voz.estado === 'outra_aba' && (++voz.espera % 5 === 0)))) iniciarVoz(g, false);
         if (voz.estado === 'registrado') telefonesAqui(g);
         if (voz.emChamada) render();
@@ -680,7 +691,7 @@
       function htmlVoz() {
         if (!cfg().voz) return '';
         var rot = { off: 'desligado', carregando: 'conectando…', registrado: 'pronto', reconectando: 'reconectando…', erro: 'com problema', outra_aba: 'ativo em outra aba' }[voz.estado] || voz.estado;
-        var h = '<div class="rpv-card"><div class="rpv-h"><span class="tt">📞 Telefone · ' + esc(rot) + '</span>' +
+        var h = '<div class="rpv-card"><div class="rpv-h"><span class="tt">📞 Telefone' + (voz.provedor && voz.ua ? ' ' + (voz.provedor === '3c' ? '3C' : '4com') : '') + ' · ' + esc(rot) + '</span>' +
                 (voz.estado === 'outra_aba' ? '<button data-act="voz-aqui" title="Usar o telefone nesta aba">usar aqui</button>' : '') +
                 (voz.estado === 'erro' ? '<button data-act="voz-reconectar" title="Tentar de novo">↻</button>' : '') + '</div>';
         if (voz.msg) h += '<div class="rpv-warn">' + esc(voz.msg) + '</div>';
