@@ -9,6 +9,12 @@ Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, 
 - T1 ok (telefone registrou; fila no servidor). T2 (UMA ligação para 47997293673, o Gabriel clica em Atender) só com o aviso do Oraculo.
 - hub-comercial (port/enriquecedor): a21fe5c (fatia 2), 1c8c2e7 (0.4.0), dd77705 (JWT), 52d5c0d (0.4.1). Próxima migration livre lá: 164.
 
+## Decisões do Gabriel (26/10, tarde)
+- Fila do CLOSER: SEGURAR (ele vai apresentar ao time antes).
+- Não liberar o telefone para o time ainda (talvez no fim do dia, depois das pendências).
+- 'CONEXÃO — qualificar e agendar' NÃO vira Conexão agora: fica nas PENDÊNCIAS de tipos de tarefa, junto com a migração das tarefas abertas e a cadência.
+- Telefone: atendimento automático da chamada integrada da tentativa (4com: header; 3C: remetente 3cplus). 3C no mesmo módulo (provedor por usuário), depois dos ajustes da 4com.
+
 ## Fila do CLOSER: PRONTA na branch feat/widget-prevendas, aguardando o ok do Oraculo
 - Vedor APROVADO em 78ebc73. Depois disso, d47554d trouxe o hotfix 0.4.1 adaptado aos perfis (121 testes). Pedir ao Vedor uma conferência rápida dessa junção antes de aplicar.
 - Aplicar: migration 162 + deploy da `prevendas-fila` a partir de feat + zip 0.5.x. Depois: port para o hub-comercial (migration 164).
