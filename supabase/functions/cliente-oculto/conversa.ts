@@ -103,7 +103,12 @@ export function notaFollowup(m: Metricas): number {
  *  atendimento a avaliar). Com resposta e IA ausente/inválida, os critérios ficam NULL e a nota final
  *  NULL (incompleta=true) — nunca atribuímos zero por falha nossa. */
 export function consolidar(m: Metricas, ia: { qualificacao?: unknown; proposta_preco?: unknown; tom?: unknown } | null): Notas {
-  const num = (x: unknown) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : null }
+  // só número finito ou string numérica não vazia; null/false/''/objeto = NÃO medido (incompleta)
+  const num = (x: unknown) => {
+    if (typeof x === 'number') return Number.isFinite(x) ? Math.max(0, Math.min(10, x)) : null
+    if (typeof x === 'string' && x.trim() !== '' && Number.isFinite(Number(x))) return Math.max(0, Math.min(10, Number(x)))
+    return null
+  }
   const tempo = notaTempo(m.tempo_primeira_resposta_s), followup = notaFollowup(m)
   if (!m.respondeu) return { tempo_resposta: tempo, qualificacao: 0, proposta_preco: 0, followup, tom: 0, final: Math.round(tempo * 0.3 * 10) / 10, incompleta: false }
   const q = num(ia?.qualificacao), p = num(ia?.proposta_preco), t = num(ia?.tom)
@@ -166,6 +171,13 @@ export function textoDoEvento(data: any): { de: string | null; fromMe: boolean; 
   // remetente CANÔNICO pela mesma regra do cadastro (numeroWa) — '551188887777' casa com '5511988887777'
   const de = numeroWa(remote.replace(/@.*$/, ''))
   return { de, fromMe: !!key.fromMe, id: key.id ? String(key.id) : null, texto, ts }
+}
+/** identidade DETERMINÍSTICA para evento sem key.id: mesma entrega reprocessada = mesmo id (idempotente);
+ *  FNV-1a de remetente|instante|texto — nunca aleatória */
+export function idDeterministico(de: string, ts: number, texto: string): string {
+  let h = 0x811c9dc5
+  for (const ch of `${de}|${ts}|${texto}`) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 0x01000193) >>> 0 }
+  return `in-${ts}-${h.toString(16).padStart(8, '0')}`
 }
 /** classifica o resultado de um envio: 'ok' (aceito), 'definitivo' (4xx: não reenviar, erro), 'incerto' (timeout/rede/5xx: pode ter saído) */
 export function classificarEnvio(r: { ok: boolean; status: number; transporte?: boolean }): 'ok' | 'definitivo' | 'incerto' {

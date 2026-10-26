@@ -13,7 +13,7 @@
 // e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PADRAO, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, classificarEnvio, consolidar, decidir, idDeterministico, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -69,14 +69,15 @@ async function renovar(sb: any, id: string, token: string) {
   if (error) throw new Error(`oculto_renovar: ${error.message}`)
   if (data !== true) throw new PossePerdida('posse perdida (cancelada ou outro worker)')
 }
-async function registrarIn(sb: any, sessaoId: string, texto: string, ts: number, waId: string | null, bruto?: unknown): Promise<boolean> {
-  const r = await sb.from('oculto_mensagens').upsert({ sessao_id: sessaoId, direcao: 'in', texto, em: iso(ts), wa_id: waId ?? `in-${ts}-${Math.random().toString(36).slice(2, 8)}`, bruto: bruto ?? null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }).select('id')
+async function registrarIn(sb: any, sessaoId: string, de: string, texto: string, ts: number, waId: string | null, bruto?: unknown): Promise<boolean> {
+  // sem key.id: identidade determinística (remetente|instante|texto) — reentrega da mesma mensagem não duplica
+  const r = await sb.from('oculto_mensagens').upsert({ sessao_id: sessaoId, direcao: 'in', texto, em: iso(ts), wa_id: waId ?? idDeterministico(de, ts, texto), bruto: bruto ?? null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }).select('id')
   if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`)
   return (r.data?.length ?? 0) > 0
 }
 
 /** fala da persona sob posse: LLM → revalida config e posse → intenção persistida → POST → registro atômico / erro / incerto */
-async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, persona: any, hist: Msg[], abertura: boolean) {
+async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, rev: number, persona: any, hist: Msg[], abertura: boolean) {
   const modelo = llm(cfg0)
   if (!modelo) throw new Error('ANTHROPIC_API_KEY ausente')
   const texto = (await modelo(abertura ? promptAbertura(persona, s.empresa) : promptProximaFala(persona, s.empresa, hist), 300)).replace(/^["“]|["”]$/g, '').trim()
@@ -86,14 +87,16 @@ async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, persona: any,
   const cfg = await config(sb)
   const wa = evo(cfg)
   if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 600) }); return { adiado: 'envios desligados/número desconectado' } }
-  // intenção persistida ANTES do POST
-  await gravar(sb, s.id, token, { fase: 'enviando', envio_pendente: { texto, abertura, iniciado_em: new Date().toISOString() } })
+  // intenção persistida ANTES do POST — com as saídas JÁ conhecidas (wa_id) para a reconciliação não confundir
+  const { data: antes, error: ea } = await sb.from('oculto_mensagens').select('wa_id').eq('sessao_id', s.id).eq('direcao', 'out')
+  if (ea) throw new Error(`oculto_mensagens: ${ea.message}`)
+  await gravar(sb, s.id, token, { fase: 'enviando', envio_pendente: { texto, abertura, iniciado_em: new Date().toISOString(), conhecidas: (antes ?? []).map((m: any) => m.wa_id).filter(Boolean) } })
   const env = await wa.enviarTexto(s.numero_alvo, texto)
   const cls = classificarEnvio(env)
   const ts = agoraS()
   if (cls === 'ok') {
     const status = abertura ? 'enviada' : 'conversando'
-    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: s.id, p_token: token, p_texto: texto, p_wa_id: env.id ?? `out-${ts}`, p_em: iso(ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, ts)) })
+    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: s.id, p_token: token, p_texto: texto, p_wa_id: env.id ?? `out-${ts}`, p_em: iso(ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, ts)), p_entrada_rev: rev })
     if (error) throw new Error(`oculto_envio_registrar: ${error.message}`)   // enviado mas não gravado: fase segue 'enviando' → reconciliação encontra pelo eco/findMessages
     if (ok !== true) throw new PossePerdida('posse perdida ao registrar envio')
     return { enviado: true, status }
@@ -105,23 +108,33 @@ async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, persona: any,
 }
 
 /** reconcilia envio incerto/enviando interrompido: procura o texto entre as mensagens recentes (fromMe) do número */
-async function reconciliar(sb: any, cfg: Cfg, row: any, token: string) {
+async function reconciliar(sb: any, cfg: Cfg, row: any, token: string, rev: number) {
   const pend = row.envio_pendente ?? {}
   const texto = String(pend.texto ?? ''), abertura = !!pend.abertura
   const ini = pend.iniciado_em ? Math.floor(new Date(pend.iniciado_em).getTime() / 1000) : agoraS()
+  const conhecidas = new Set<string>(Array.isArray(pend.conhecidas) ? pend.conhecidas.map(String) : [])
   const wa = evo(cfg)
   if (!wa || !texto) { await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: 'envio incerto sem como reconciliar' }); return { id: row.id, erro: 'sem reconciliação' } }
-  const { data: eco } = await sb.from('oculto_mensagens').select('id').eq('sessao_id', row.id).eq('direcao', 'out').eq('texto', texto).gte('em', iso(ini - 60)).limit(1)
-  let achou: { id: string | null; ts: number } | null = eco?.length ? { id: null, ts: ini } : null
+  // candidato = saída NOVA (wa_id não conhecido antes da intenção), com o mesmo texto, NÃO anterior à intenção
+  // (tolerância de 5 s de relógio) — um "Obrigado" enviado antes nunca confirma esta tentativa
+  const { data: ecos, error: ee } = await sb.from('oculto_mensagens').select('wa_id, em').eq('sessao_id', row.id).eq('direcao', 'out').eq('texto', texto).gte('em', iso(ini - 5)).order('em')
+  if (ee) throw new Error(`oculto_mensagens: ${ee.message}`)
+  const novos = (ecos ?? []).filter((m: any) => m.wa_id && !conhecidas.has(String(m.wa_id)))
+  let achou: { id: string; ts: number } | null = null
+  if (novos.length === 1) achou = { id: String(novos[0].wa_id), ts: seg(novos[0].em)! }
   if (!achou) {
     const r = await wa.buscarMensagens(row.numero_alvo, 30)
-    const m = r.ok ? r.mensagens.find((x) => x.fromMe && x.texto === texto && (!x.ts || x.ts >= ini - 120)) : undefined
-    if (m) achou = { id: m.id, ts: m.ts || ini }
-    else if (!r.ok && agoraS() - ini < 1800) { await gravar(sb, row.id, token, { proximo_em: iso(agoraS() + 300) }); return { id: row.id, adiado: 'provedor indisponível para reconciliar' } }
+    if (!r.ok) {
+      if (agoraS() - ini < 1800) { await gravar(sb, row.id, token, { proximo_em: iso(agoraS() + 300) }); return { id: row.id, adiado: 'provedor indisponível para reconciliar' } }
+    } else {
+      const cands = r.mensagens.filter((x) => x.fromMe && x.texto === texto && x.id && !conhecidas.has(String(x.id)) && x.ts >= ini - 5)
+      if (cands.length === 1) achou = { id: String(cands[0].id), ts: cands[0].ts }
+      else if (cands.length > 1) { await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: 'envio incerto: mais de uma saída igual no provedor — não reenviado' }); return { id: row.id, erro: 'ambíguo' } }
+    }
   }
   if (achou) {
     const status = abertura ? 'enviada' : 'conversando'
-    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: row.id, p_token: token, p_texto: texto, p_wa_id: achou.id ?? `out-${achou.ts}`, p_em: iso(achou.ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, achou.ts)) })
+    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: row.id, p_token: token, p_texto: texto, p_wa_id: achou.id, p_em: iso(achou.ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, achou.ts)), p_entrada_rev: rev })
     if (error) throw new Error(`oculto_envio_registrar: ${error.message}`)
     if (ok !== true) throw new PossePerdida('posse perdida ao reconciliar')
     return { id: row.id, reconciliado: 'enviado' }
@@ -157,15 +170,17 @@ async function avancar(sb: any, cfg: Cfg, row: any) {
   const { data: token, error } = await sb.rpc('oculto_claim', { p_id: row.id, p_lease_s: LEASE_S })
   if (error) throw new Error(`oculto_claim: ${error.message}`)
   if (!token) return { id: row.id, pulado: 'sem posse' }
+  let rev: number | null = null
   try {
     const { data: atual, error: e2 } = await sb.from('oculto_sessoes').select('*').eq('id', row.id).maybeSingle()   // relê sob posse
     if (e2 || !atual) throw new Error(`oculto_sessoes: ${e2?.message ?? 'sumiu'}`)
-    if (atual.fase === 'enviando' || atual.fase === 'envio_incerto') return await reconciliar(sb, cfg, atual, token)
+    rev = Number(atual.entrada_rev ?? 0)   // watermark de entrada no snapshot: registrar/liberar comparam com ela
+    if (atual.fase === 'enviando' || atual.fase === 'envio_incerto') return await reconciliar(sb, cfg, atual, token, rev)
     const s = toSessao(atual); const hist = await historico(sb, s.id)
     const d = decidir(s, hist, agoraS())
     const persona = atual.persona && Object.keys(atual.persona).length ? atual.persona : personaPara(s.nicho, s.empresa)
-    if (d.acao === 'abrir') { if (!podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 1800) }); return { id: s.id, pendente: 'sem número/ativo' } } return { id: s.id, ...(await falar(sb, cfg, s, token, persona, [], true)) } }
-    if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, persona, hist, false)) }
+    if (d.acao === 'abrir') { if (!podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 1800) }); return { id: s.id, pendente: 'sem número/ativo' } } return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, [], true)) } }
+    if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, hist, false)) }
     if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, token, { status: 'aguardando_followup', proximo_em: iso(d.proximo_em) }); return { id: s.id, acao: 'aguardando_followup' } }
     if (d.acao === 'avaliar') return await avaliar(sb, cfg, atual, token, hist, d.motivo)
     await gravar(sb, s.id, token, { proximo_em: d.proximo_em != null ? iso(d.proximo_em) : iso(agoraS() + 3600) })
@@ -176,7 +191,9 @@ async function avancar(sb: any, cfg: Cfg, row: any) {
     await sb.from('oculto_sessoes').update({ erro: msg, proximo_em: iso(agoraS() + 600), atualizado_em: new Date().toISOString() }).eq('id', row.id).eq('claim_token', token)
     return { id: row.id, erro: msg }
   } finally {
-    await sb.from('oculto_sessoes').update({ claim_token: null, lease_ate: null }).eq('id', row.id).eq('claim_token', token).in('status', ABERTAS)   // libera (concluída já limpou)
+    // libera a posse; se a empresa escreveu durante o avanço (watermark mudou), o próximo instante vira AGORA
+    const { error: el } = await sb.rpc('oculto_liberar', { p_id: row.id, p_token: token, p_entrada_rev: rev })
+    if (el) console.error('cliente-oculto liberar', el.message)
   }
 }
 
@@ -201,10 +218,11 @@ async function webhook(sb: any, cfg: Cfg, body: any) {
       if (m.texto) await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(m.ts), wa_id: m.id ?? `out-${m.ts}` }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true })
       out.push({ sessao: row.id, nossa: true }); continue
     }
-    const nova = await registrarIn(sb, row.id, m.texto || '[mídia]', m.ts, m.id, data)
+    const nova = await registrarIn(sb, row.id, m.de, m.texto || '[mídia]', m.ts, m.id, data)
     if (!nova) { out.push({ sessao: row.id, duplicada: true }); continue }
-    await sb.from('oculto_sessoes').update({ ultima_in_em: iso(m.ts), status: row.status === 'enviada' ? 'conversando' : row.status, proximo_em: new Date().toISOString(), atualizado_em: new Date().toISOString() }).eq('id', row.id).in('status', ['enviada', 'conversando', 'aguardando_followup'])
-    out.push(await avancar(sb, cfg, row))
+    const { error: een } = await sb.rpc('oculto_entrada', { p_id: row.id, p_em: iso(m.ts) })   // watermark +1 e proximo_em = agora, atômico
+    if (een) throw new Error(`oculto_entrada: ${een.message}`)
+    out.push(await avancar(sb, cfg, row))   // se a posse estiver ocupada, quem a tem verá a watermark mudar e reagenda para agora
   }
   return { ok: true, itens: out }
 }

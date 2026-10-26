@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { classificarEnvio, consolidar, decidir, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { classificarEnvio, consolidar, decidir, idDeterministico, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 
 const T0 = 1_800_000_000
 const H = 3600
@@ -37,6 +37,11 @@ Deno.test('notas: tempo por faixa; consolidação com pesos; IA ausente com conv
   assertEquals(semIa.incompleta, true); assertEquals(semIa.final, null); assertEquals(semIa.qualificacao, null); assertEquals(semIa.tempo_resposta, 10)
   const invalida = consolidar(m, { qualificacao: 'x', proposta_preco: 5, tom: 5 })
   assertEquals(invalida.incompleta, true); assertEquals(invalida.final, null)
+  // null/false/''/objeto NÃO viram zero (R3#3)
+  for (const ruim of [{ qualificacao: null, proposta_preco: null, tom: null }, { qualificacao: false, proposta_preco: 5, tom: 5 }, { qualificacao: '', proposta_preco: 5, tom: 5 }, { qualificacao: {}, proposta_preco: 5, tom: 5 }]) {
+    const r = consolidar(m, ruim as any); assertEquals(r.incompleta, true); assertEquals(r.final, null)
+  }
+  assertEquals(consolidar(m, { qualificacao: '7', proposta_preco: 6, tom: 9 }).incompleta, false)   // string numérica vale
   const zero = consolidar(metricas([{ direcao: 'out', texto: 'oi', ts: T0 }], T0 + 100), null)
   assertEquals(zero.incompleta, false); assertEquals(zero.final, 0); assertEquals(zero.qualificacao, 0)
 })
@@ -68,6 +73,12 @@ Deno.test('numeroWa canônico nos DOIS lados: cadastro "11 8888-7777" e remoteJi
   assertEquals(e!.de, numeroWa('11 8888-7777'))
   assertEquals(textoDoEvento({ key: { remoteJid: '123@g.us' }, message: { conversation: 'x' } }), null)
   assertEquals(textoDoEvento({ key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: true }, message: { conversation: 'nossa' }, messageTimestamp: T0 })!.fromMe, true)
+})
+
+Deno.test('idDeterministico: mesma entrega = mesmo id (idempotente); conteúdo diferente = id diferente; nunca aleatório', () => {
+  const a = idDeterministico('5511988887777', T0, 'oi'), b = idDeterministico('5511988887777', T0, 'oi')
+  assertEquals(a, b); assert(a.startsWith(`in-${T0}-`))
+  assert(idDeterministico('5511988887777', T0, 'oi!') !== a && idDeterministico('5511988887777', T0 + 1, 'oi') !== a)
 })
 
 Deno.test('classificarEnvio: aceito = ok; 4xx = definitivo (não reenviar); timeout/rede/5xx/429 = incerto (reconciliar antes de reenviar)', () => {

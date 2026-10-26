@@ -25,7 +25,8 @@
 -- segredo próprio (integracao_config.oculto_webhook_secret, no caminho /s/).
 -- ADITIVA e idempotente. Reverter (ordem): SELECT cron.unschedule('oculto-varrer');
 --   DROP FUNCTION IF EXISTS public.oculto_claim(UUID,INT), public.oculto_renovar(UUID,UUID,INT),
---     public.oculto_envio_registrar(UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,BOOLEAN,TIMESTAMPTZ);
+--     public.oculto_envio_registrar(UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,BOOLEAN,TIMESTAMPTZ,INT),
+--     public.oculto_entrada(UUID,TIMESTAMPTZ), public.oculto_liberar(UUID,UUID,INT);
 --   ALTER PUBLICATION supabase_realtime DROP TABLE public.oculto_sessoes, public.oculto_mensagens;
 --   DROP TABLE IF EXISTS public.oculto_mensagens, public.oculto_sessoes, public.oculto_config;
 --   DELETE FROM public.integracao_config WHERE key = 'oculto_webhook_secret';
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS public.oculto_sessoes (
   max_turnos      INT NOT NULL DEFAULT 4,
   janela_followup_h INT NOT NULL DEFAULT 72,
   tentativas_avaliacao INT NOT NULL DEFAULT 0,
+  entrada_rev     INT NOT NULL DEFAULT 0,                   -- watermark: +1 a cada mensagem da empresa (despertar nunca se perde)
   metricas        JSONB,
   notas           JSONB,                                    -- {tempo_resposta, qualificacao|null, proposta_preco|null, followup, tom|null, final|null, incompleta}
   parecer         TEXT,
@@ -80,6 +82,7 @@ ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS proximo_em TIMESTAMPT
 ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS claim_token UUID;
 ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS lease_ate TIMESTAMPTZ;
 ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS tentativas_avaliacao INT NOT NULL DEFAULT 0;
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS entrada_rev INT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ix_oculto_sessoes_lead ON public.oculto_sessoes (lead_id, criado_em DESC);
 -- 1 sessão ABERTA por número (inclui pendente): a corrida de dois 'iniciar' cai aqui (23505 → 409 na edge)
 CREATE UNIQUE INDEX IF NOT EXISTS ux_oculto_sessoes_numero_aberta ON public.oculto_sessoes (numero_alvo)
@@ -140,9 +143,24 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
               WHERE id = p_id AND claim_token = p_token AND status IN ('pendente','enviada','conversando','aguardando_followup','avaliando') RETURNING 1)
   SELECT EXISTS (SELECT 1 FROM u);
 $$;
+-- Entrada da empresa (webhook): mensagem nova → watermark +1, próximo instante = agora, estado (atômico, sem posse:
+-- a entrada nunca espera o worker). Devolve a revisão nova.
+CREATE OR REPLACE FUNCTION public.oculto_entrada(p_id UUID, p_em TIMESTAMPTZ)
+RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE r INT;
+BEGIN
+  UPDATE public.oculto_sessoes s
+     SET entrada_rev = s.entrada_rev + 1, ultima_in_em = p_em, proximo_em = now(),
+         status = CASE WHEN s.status = 'enviada' THEN 'conversando' ELSE s.status END, atualizado_em = now()
+   WHERE s.id = p_id AND s.status IN ('enviada','conversando','aguardando_followup')
+  RETURNING s.entrada_rev INTO r;
+  RETURN r;
+END $$;
 -- Registro ATÔMICO de um envio aceito: mensagem 'out' + turnos+1 + estado + fase ociosa + próximo instante,
--- tudo sob posse. Devolve false se perdeu a posse (nada gravado).
-CREATE OR REPLACE FUNCTION public.oculto_envio_registrar(p_id UUID, p_token UUID, p_texto TEXT, p_wa_id TEXT, p_em TIMESTAMPTZ, p_abertura BOOLEAN, p_proximo_em TIMESTAMPTZ)
+-- tudo sob posse. p_entrada_rev = watermark lida no início do avanço: se a empresa escreveu no meio
+-- (rev mudou), o próximo instante fica AGORA (não apaga trabalho recebido depois do snapshot).
+-- Devolve false se perdeu a posse (nada gravado).
+CREATE OR REPLACE FUNCTION public.oculto_envio_registrar(p_id UUID, p_token UUID, p_texto TEXT, p_wa_id TEXT, p_em TIMESTAMPTZ, p_abertura BOOLEAN, p_proximo_em TIMESTAMPTZ, p_entrada_rev INT DEFAULT NULL)
 RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE n INT;
 BEGIN
@@ -150,7 +168,9 @@ BEGIN
      SET status = CASE WHEN p_abertura THEN 'enviada' ELSE 'conversando' END,
          iniciada_em = CASE WHEN p_abertura THEN p_em ELSE s.iniciada_em END,
          ultima_out_em = p_em, turnos_persona = s.turnos_persona + 1,
-         fase = 'ocioso', envio_pendente = NULL, proximo_em = p_proximo_em, erro = NULL, atualizado_em = now()
+         fase = 'ocioso', envio_pendente = NULL,
+         proximo_em = CASE WHEN p_entrada_rev IS NOT NULL AND s.entrada_rev <> p_entrada_rev THEN now() ELSE p_proximo_em END,
+         erro = NULL, atualizado_em = now()
    WHERE s.id = p_id AND s.claim_token = p_token AND s.status IN ('pendente','enviada','conversando','aguardando_followup');
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n <> 1 THEN RETURN false; END IF;
@@ -158,12 +178,25 @@ BEGIN
     ON CONFLICT (sessao_id, wa_id) DO NOTHING;
   RETURN true;
 END $$;
+-- Libera a posse; se a watermark de entrada mudou durante o avanço, o próximo instante vira AGORA.
+CREATE OR REPLACE FUNCTION public.oculto_liberar(p_id UUID, p_token UUID, p_entrada_rev INT DEFAULT NULL)
+RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  WITH u AS (UPDATE public.oculto_sessoes s SET claim_token = NULL, lease_ate = NULL,
+               proximo_em = CASE WHEN p_entrada_rev IS NOT NULL AND s.entrada_rev <> p_entrada_rev THEN now() ELSE s.proximo_em END, atualizado_em = now()
+              WHERE s.id = p_id AND s.claim_token = p_token RETURNING 1)
+  SELECT EXISTS (SELECT 1 FROM u);
+$$;
+REVOKE EXECUTE ON FUNCTION public.oculto_entrada(UUID, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.oculto_liberar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.oculto_entrada(UUID, TIMESTAMPTZ) TO service_role;
+GRANT EXECUTE ON FUNCTION public.oculto_liberar(UUID, UUID, INT) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.oculto_claim(UUID, INT) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.oculto_renovar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+DROP FUNCTION IF EXISTS public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ);
+REVOKE EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ, INT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.oculto_claim(UUID, INT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.oculto_renovar(UUID, UUID, INT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ) TO service_role;
+GRANT EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ, INT) TO service_role;
 
 INSERT INTO public.integracao_config (key, value)
   SELECT 'oculto_webhook_secret', encode(gen_random_bytes(32), 'hex')
