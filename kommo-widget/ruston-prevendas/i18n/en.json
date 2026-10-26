@@ -19,6 +19,7 @@
     "endpoint_voz": "prevendas-voz edge URL (empty = same as the queue endpoint, with prevendas-fila replaced by prevendas-voz)",
     "modo": "Test (manager only): force the \"sdr\" or \"closer\" queue; empty = by your role",
     "etapas_closer": "Closer pipeline stage order (comma-separated ids; empty = default)",
-    "antecedencia_closer_min": "Minutes before a meeting when it jumps to the top of the closer queue (default 120)"
+    "antecedencia_closer_min": "Minutes before a meeting when it jumps to the top of the closer queue (default 120)",
+    "debug_voz": "Phone diagnostics: Y logs extension registration and incoming calls to the browser console (no credentials)"
   }
 }

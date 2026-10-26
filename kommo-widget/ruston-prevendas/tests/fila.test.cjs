@@ -182,3 +182,10 @@ test('closer: etapas configuráveis (setting etapas_closer)', () => {
   const r = Fila.ordenarCloser([t(1, 10, -5, { status_id: CONTRATO }), t(2, 20, -5, { status_id: BAIXA })], { ...CC, etapas: [BAIXA, CONTRATO] }, AGORA)
   assert.deepEqual(eids(r), [20, 10])
 })
+
+test('telefone (decisão do Gabriel, T2): atende sozinho a integrada da tentativa, uma vez, dentro da janela', () => {
+  assert.equal(Fila.deveAtender(true, 2000, 1000, false), true)
+  assert.equal(Fila.deveAtender(true, 2000, 1000, true), false)     // já atendida nesta tentativa
+  assert.equal(Fila.deveAtender(true, 500, 1000, false), false)     // janela vencida
+  assert.equal(Fila.deveAtender(false, 2000, 1000, false), false)   // sem o header da 4com
+})

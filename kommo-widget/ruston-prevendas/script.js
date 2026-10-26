@@ -15,8 +15,9 @@
  *   Nível 0 = CHAT SEM RESPOSTA (cliente falou por último e nenhum humano respondeu; decisão 26/10).
  * - TELEFONE (opcional, setting voz=Y): o ramal 4com do próprio usuário registra aqui (JsSIP sobre WSS, áudio no
  *   navegador). A credencial (HA1, nunca a senha) vem da edge prevendas-voz e fica SÓ em memória. Discar = o
- *   servidor pede à 4com, que liga para este ramal (o usuário ATENDE no card; nada é atendido sozinho, pois não há
- *   como correlacionar com segurança o INVITE à tentativa autorizada) e depois para o cliente. Uma aba por vez é
+ *   servidor pede à 4com, que liga para este ramal (decisão do Gabriel: atende SOZINHO a chamada integrada que chega
+ *   na janela da tentativa pedida por este widget, uma vez por tentativa; o resto toca e espera o clique) e depois
+ *   para o cliente. Uma aba por vez é
  *   dona do ramal (Web Locks; a 4com derrubaria o registro anterior). voz=N desliga o ramal na hora.
  *
  * O bloco "Fila" é puro (sem DOM) e é exportado em module.exports para os testes em Node.
@@ -178,6 +179,9 @@
      * NUNCA autoriza atender sozinho — o header não é prova de origem.
      */
     function chamadaPedida(integrada, pendenteAte, agoraMs) { return !!integrada && pendenteAte > agoraMs; }
+    /** Decisão do Gabriel (T2): atende sozinho a chamada INTEGRADA da 4com que chega dentro da janela da tentativa
+     *  que este widget acabou de pedir; a autorização é consumida no primeiro atendimento (uma por tentativa). */
+    function deveAtender(integrada, pendenteAte, agoraMs, jaAtendida) { return !jaAtendida && chamadaPedida(integrada, pendenteAte, agoraMs); }
 
     var MSG_VOZ = {
       voz_nao_liberada: 'Telefone ainda não liberado para o seu usuário.',
@@ -202,7 +206,7 @@
 
     return {
       nivelCloser: nivelCloser, ordenarCloser: ordenarCloser, chaveEnt: chaveEnt, ETAPAS_CLOSER_PADRAO: ETAPAS_CLOSER_PADRAO,
-      chamadaPedida: chamadaPedida, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
+      chamadaPedida: chamadaPedida, deveAtender: deveAtender, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -221,7 +225,7 @@
       var DEFAULTS = {
         endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
         antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
-        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '',
+        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '', debug_voz: 'N',
         modo: '', etapas_closer: '', antecedencia_closer_min: 120
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
@@ -240,7 +244,7 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, atendidaNaTentativa: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
                   tel: { chave: '', contatos: null, erro: '', carregando: false } };
       var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
@@ -263,6 +267,7 @@
           atalho: String(s.atalho || DEFAULTS.atalho).toUpperCase() !== 'N',
           voz: String(s.voz || DEFAULTS.voz).toUpperCase() === 'Y',
           endpoint_voz: String(s.endpoint_voz || '').trim(),
+          debug_voz: String(s.debug_voz || 'N').toUpperCase() === 'Y',
           // teste: só o GESTOR consegue forçar o modo (o servidor ignora para os demais)
           modo: (function (m) { m = String(m || '').trim().toLowerCase(); return m === 'sdr' || m === 'closer' ? m : ''; })(s.modo),
           etapas_closer: String(s.etapas_closer || '').split(',').map(function (x) { return parseInt(x, 10); }).filter(function (n) { return n > 0; }),
@@ -287,6 +292,8 @@
         am.push(m); am = am.slice(-10);
         lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
       }
+      // relógio MONOTÔNICO (não muda com o acerto do relógio do PC): prazo da autorização de atendimento automático
+      function mono() { try { if (typeof performance !== 'undefined' && performance.now) return performance.now(); } catch (e) {} return Date.now(); }
       function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
       // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
       // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
@@ -682,27 +689,37 @@
         } catch (e) { vozEstado('erro', 'Configuração do telefone inválida.'); return; }
         var meu = function () { return tenho(tok, g) && voz.ua === ua; };
         voz.ua = ua;
-        ua.on('registered', function () { if (meu()) vozEstado('registrado'); });
+        var dbg = function () { if (!cfg().debug_voz || !window.console) return; try { console.info.apply(console, ['[ruston-prevendas][voz]'].concat([].slice.call(arguments))); } catch (e) {} };
+        ua.on('connected', function () { dbg('WSS conectado'); });
+        ua.on('registered', function (e) {
+          try { var r = e && e.response; dbg('REGISTRADO', r && r.status_code, 'Contact:', r && r.getHeader('Contact'), 'Expires:', r && r.getHeader('Expires')); } catch (x) {}
+          if (meu()) vozEstado('registrado');
+        });
         ua.on('unregistered', function () { if (meu()) vozEstado('reconectando'); });
-        ua.on('registrationFailed', function (e) { if (meu()) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
-        ua.on('disconnected', function () { if (meu() && voz.estado === 'registrado') vozEstado('reconectando'); });
+        ua.on('registrationFailed', function (e) { dbg('REGISTRO FALHOU', e && e.cause, e && e.response && e.response.status_code); if (meu()) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
+        ua.on('disconnected', function (e) { dbg('WSS desconectado', e && e.code, e && e.reason); if (meu() && voz.estado === 'registrado') vozEstado('reconectando'); });
         ua.on('newRTCSession', function (ev) {
           if (ev.originator !== 'remote') return;
           var s = ev.session;
+          try { var q = ev.request; dbg('INVITE recebido', q && q.ruri && String(q.ruri), 'de', q && q.from && String(q.from.uri), 'integrada:', q && q.getHeader('X-Api4comintegratedcall'), 'pendente:', voz.pendenteAte > mono()); } catch (x) {}
           if (!meu() || voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
           var integ = false;
           try { integ = String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true'; } catch (e) {}
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
-          voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, Date.now());
+          voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
           s.on('peerconnection', function (pe) {
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
           s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
-          s.on('ended', fim); s.on('failed', fim);
-          som(); render();                                                     // atendimento SEMPRE manual
+          s.on('ended', fim); s.on('failed', function (e) { dbg('chamada falhou', e && e.cause); fim(e); });
+          if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
+            voz.atendidaNaTentativa = voz.tentativa;                          // consome a autorização desta tentativa
+            dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')');
+            atenderVoz();
+          } else { som(); render(); }                                          // fora da tentativa: toca e espera o clique
         });
         if (!meu()) { try { ua.stop(); } catch (e) {} voz.ua = null; return; }
         ua.start();
@@ -751,7 +768,7 @@
         if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
         var t = ++voz.tentativa, posse = voz.posse;
         voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui (atenda) e depois liga para o cliente.';
-        voz.pendenteAte = Date.now() + 60000;
+        voz.pendenteAte = mono() + 60000;                           // janela de 60 s no relógio monotônico
         render();
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora

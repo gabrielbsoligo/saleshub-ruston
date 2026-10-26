@@ -98,6 +98,11 @@
       "name": "settings.antecedencia_closer_min",
       "type": "text",
       "required": false
+    },
+    "debug_voz": {
+      "name": "settings.debug_voz",
+      "type": "text",
+      "required": false
     }
   }
 }
