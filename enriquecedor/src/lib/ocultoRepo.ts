@@ -47,7 +47,7 @@ export const ocultoRepo = {
   },
   iniciar: (leadId: string, numero?: string, nicho?: string) => edge({ acao: 'iniciar', lead_id: leadId, numero, nicho }),
   cancelar: (sessaoId: string) => edge({ acao: 'cancelar', sessao_id: sessaoId }),
-  instancia: (op: 'criar' | 'qr' | 'estado') => edge({ acao: 'instancia', op }),
+  instancia: (op: 'criar' | 'qr' | 'estado' | 'pairing', extra: Record<string, unknown> = {}) => edge({ acao: 'instancia', op, ...extra }),
   assinar(onChange: () => void) {
     const ch = supabase.channel('oculto_live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'oculto_sessoes' }, onChange)

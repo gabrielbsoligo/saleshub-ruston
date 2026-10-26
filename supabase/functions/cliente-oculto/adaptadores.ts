@@ -10,8 +10,10 @@ export type Envio = { ok: boolean; id: string | null; status: number; transporte
 export type Evolution = {
   enviarTexto: (numero: string, texto: string) => Promise<Envio>
   buscarMensagens: (numero: string, limite?: number) => Promise<{ ok: boolean; mensagens: { id: string | null; fromMe: boolean; texto: string; ts: number }[] }>
-  criarInstancia: (webhookUrl: string) => Promise<{ ok: boolean; status: number; qr: string | null; nota?: string }>
-  qr: () => Promise<{ ok: boolean; status: number; qr: string | null; estado?: string | null }>
+  criarInstancia: (webhookUrl: string) => Promise<{ ok: boolean; status: number; qr: string | null; jaExistia?: boolean; nota?: string }>
+  registrarWebhook: (webhookUrl: string) => Promise<{ ok: boolean; status: number; nota?: string }>
+  /** GET /instance/connect/{inst}[?number=55DDD…]: QR novo (base64/code) ou pairing code quando `number` vem */
+  qr: (numero?: string | null) => Promise<{ ok: boolean; status: number; qr: string | null; pairingCode?: string | null; estado?: string | null; nota?: string }>
   estado: () => Promise<{ ok: boolean; estado: string | null; numero?: string | null }>
 }
 export function evolution(baseUrl: string, apikey: string, instancia: string, fetchFn: FetchFn = fetch): Evolution {
@@ -41,15 +43,29 @@ export function evolution(baseUrl: string, apikey: string, instancia: string, fe
       const lista: any[] = Array.isArray(r.body) ? r.body : Array.isArray(r.body?.messages?.records) ? r.body.messages.records : Array.isArray(r.body?.messages) ? r.body.messages : []
       return { ok: true, mensagens: lista.map((m) => ({ id: m?.key?.id ? String(m.key.id) : null, fromMe: !!m?.key?.fromMe, texto: textoDe(m), ts: Number(m?.messageTimestamp ?? 0) })) }
     },
+    // IDEMPOTENTE: 403 "already in use" = já existe → só (re)registra o webhook e segue para o QR
     async criarInstancia(webhookUrl) {
       const r = await req('POST', '/instance/create', { instanceName: instancia, qrcode: true, integration: 'WHATSAPP-BAILEYS', webhook: { url: webhookUrl, byEvents: false, base64: false, events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'] } })
-      if (r.transporte || r.status < 200 || r.status >= 300) return { ok: false, status: r.status, qr: null, nota: r.nota ?? JSON.stringify(r.body ?? '').slice(0, 300) }
+      const corpo = JSON.stringify(r.body ?? '')
+      if (!r.transporte && (r.status === 403 || r.status === 409 || /already in use|j[áa] existe|already exists/i.test(corpo))) {
+        const w = await this.registrarWebhook(webhookUrl)
+        return { ok: w.ok, status: w.status, qr: null, jaExistia: true, nota: w.ok ? 'instância já existia; webhook atualizado' : w.nota }
+      }
+      if (r.transporte || r.status < 200 || r.status >= 300) return { ok: false, status: r.status, qr: null, nota: r.nota ?? corpo.slice(0, 300) }
       return { ok: true, status: r.status, qr: r.body?.qrcode?.base64 ?? r.body?.qrcode?.code ?? null }
     },
-    async qr() {
-      const r = await req('GET', `/instance/connect/${inst}`)
-      if (r.transporte || r.status < 200 || r.status >= 300) return { ok: false, status: r.status, qr: null }
-      return { ok: true, status: r.status, qr: r.body?.base64 ?? r.body?.code ?? null, estado: r.body?.instance?.state ?? null }
+    async registrarWebhook(webhookUrl) {
+      // Evolution v2: POST /webhook/set/{inst} com {webhook:{…}} (v2.2+); campos planos mantidos para versões que os leem
+      const cfg = { enabled: true, url: webhookUrl, webhookByEvents: false, webhookBase64: false, byEvents: false, base64: false, events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE'] }
+      const r = await req('POST', `/webhook/set/${inst}`, { webhook: cfg, ...cfg })
+      if (r.transporte || r.status < 200 || r.status >= 300) return { ok: false, status: r.status, nota: r.nota ?? JSON.stringify(r.body ?? '').slice(0, 200) }
+      return { ok: true, status: r.status }
+    },
+    async qr(numero) {
+      const r = await req('GET', `/instance/connect/${inst}${numero ? `?number=${encodeURIComponent(numero)}` : ''}`)
+      if (r.transporte || r.status < 200 || r.status >= 300) return { ok: false, status: r.status, qr: null, nota: r.nota ?? JSON.stringify(r.body ?? '').slice(0, 200) }
+      const b = r.body ?? {}
+      return { ok: true, status: r.status, qr: b.base64 ?? b.code ?? b.qrcode?.base64 ?? null, pairingCode: b.pairingCode ?? b.pairing_code ?? null, estado: b.instance?.state ?? b.state ?? null }
     },
     async estado() {
       const r = await req('GET', `/instance/connectionState/${inst}`)

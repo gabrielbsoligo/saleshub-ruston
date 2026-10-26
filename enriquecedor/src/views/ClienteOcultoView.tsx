@@ -87,16 +87,46 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
   <div className="rounded-xl border border-v4-border px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-v4-text-muted">{label}</div><div className="text-lg font-semibold text-v4-text">{value}</div></div>
 );
 
+const QR_SEGUNDOS = 25;
 function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChange: () => void }) {
   const [qr, setQr] = useState<string | null>(null);
+  const [pairing, setPairing] = useState<string | null>(null);
+  const [numeroChip, setNumeroChip] = useState('');
   const [busy, setBusy] = useState(false);
-  const run = async (op: 'criar' | 'qr' | 'estado') => {
+  const [auto, setAuto] = useState(false);          // QR auto-atualizando até 'open'
+  const [restante, setRestante] = useState(QR_SEGUNDOS);
+  const [estado, setEstado] = useState<string | null>(null);
+  const [tentativas, setTentativas] = useState(0);
+  const pedirQr = useCallback(async () => {
+    const r = await ocultoRepo.instancia('qr');
+    setEstado(r.estado ?? null);
+    if (r.estado === 'open') { setAuto(false); setQr(null); toast.success('Conectado!'); onChange(); return; }
+    if (r.qr) { setQr(r.qr); setRestante(QR_SEGUNDOS); setTentativas(t => t + 1); }
+    else toast(r.nota || r.error || 'sem QR agora (instância conectando?) — tentando de novo');
+  }, [onChange]);
+  // (1) auto-atualização do QR a cada 25 s + (4) polling do estado a cada 5 s, até 'open'
+  useEffect(() => {
+    if (!auto) return;
+    const tick = setInterval(() => setRestante(r => r - 1), 1000);
+    const refresh = setInterval(() => { pedirQr().catch(() => {}); }, QR_SEGUNDOS * 1000);
+    const poll = setInterval(async () => {
+      try { const r = await ocultoRepo.instancia('estado'); setEstado(r.estado ?? null); if (r.estado === 'open') { setAuto(false); setQr(null); setPairing(null); toast.success('Número conectado!'); onChange(); } } catch { /* tenta de novo */ }
+    }, 5000);
+    return () => { clearInterval(tick); clearInterval(refresh); clearInterval(poll); };
+  }, [auto, pedirQr, onChange]);
+  const run = async (op: 'criar' | 'qr' | 'estado' | 'pairing') => {
     setBusy(true);
     try {
-      const r = await ocultoRepo.instancia(op);
-      if (op === 'estado') { toast.success(`estado: ${r.estado ?? '?'}`); onChange(); }
-      else if (r.qr) { setQr(r.qr); toast.success('QR pronto — leia no WhatsApp do número anônimo'); }
-      else toast(r.nota || r.error || 'sem QR (instância já conectada?)');
+      if (op === 'estado') { const r = await ocultoRepo.instancia('estado'); setEstado(r.estado ?? null); toast.success(`estado: ${r.estado ?? '?'}`); onChange(); return; }
+      if (op === 'pairing') {
+        const r = await ocultoRepo.instancia('pairing', { numero: numeroChip });
+        if (r.pairingCode) { setPairing(r.pairingCode); setQr(null); setAuto(true); toast.success('Código de pareamento gerado — digite no WhatsApp do chip'); }
+        else toast(r.nota || r.error || 'sem código');
+        return;
+      }
+      if (op === 'criar') { const r = await ocultoRepo.instancia('criar'); toast.success(r.jaExistia ? 'Instância já existia — webhook atualizado' : 'Instância criada'); if (r.qr) { setQr(r.qr); setRestante(QR_SEGUNDOS); } }
+      await pedirQr();
+      setAuto(true);
     } catch (e: any) { toast.error(e?.message || 'falhou'); }
     finally { setBusy(false); }
   };
@@ -114,11 +144,18 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
         <button disabled={busy} onClick={() => run('estado')} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Ver estado</button>
         <button disabled={busy} onClick={() => run('criar')} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Criar instância</button>
         <button disabled={busy} onClick={() => run('qr')} className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50"><QrCode size={12} /> QR code</button>
+        <input value={numeroChip} onChange={e => setNumeroChip(e.target.value)} placeholder="nº do chip (DDD+número)" className="w-44 rounded-lg border border-v4-border bg-transparent px-2 py-1.5 text-xs text-v4-text" />
+        <button disabled={busy || !numeroChip} onClick={() => run('pairing')} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50" title="Mais fácil que o QR: gera um código de 8 caracteres para digitar no WhatsApp do chip (Conectar dispositivo → Conectar com número de telefone)">Código de pareamento</button>
+        {auto && <button onClick={() => setAuto(false)} className="rounded-lg px-2 py-1.5 text-xs text-v4-text-muted">parar</button>}
       </div>
-      {qr && (
+      {(qr || pairing) && (
         <div className="basis-full rounded-lg border border-v4-border bg-white p-3 text-center">
-          {qr.startsWith('data:image') ? <img src={qr} alt="QR code" className="mx-auto h-56 w-56" /> : <code className="break-all text-xs text-black">{qr}</code>}
-          <div className="mt-2 text-[11px] text-slate-600">WhatsApp → Dispositivos conectados → Conectar dispositivo. Depois clique em "Ver estado".</div>
+          {pairing ? <div className="font-mono text-3xl tracking-widest text-black">{pairing}</div>
+            : qr!.startsWith('data:image') ? <img src={qr!} alt="QR code" className="mx-auto h-56 w-56" /> : <code className="break-all text-xs text-black">{qr}</code>}
+          <div className="mt-2 text-[11px] text-slate-600">
+            {pairing ? 'WhatsApp → Dispositivos conectados → Conectar dispositivo → "Conectar com número de telefone" → digite o código.' : 'WhatsApp → Dispositivos conectados → Conectar dispositivo → aponte para o QR.'}
+            {auto && <span className="ml-2 text-slate-500">· estado: {estado ?? '…'} · {pairing ? 'verificando a cada 5 s' : `novo QR em ${Math.max(0, restante)} s (${tentativas})`}</span>}
+          </div>
         </div>
       )}
     </div>
