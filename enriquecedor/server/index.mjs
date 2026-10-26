@@ -4590,7 +4590,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'buscar-cnpj-2026-10-15',
+        versao: 'busca-web-2026-10-26',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4777,6 +4777,16 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
 
+    // Busca web reaproveitável (Central de Cases): mesma rawSearch do enriquecimento — cache em
+    // Postgres (14 dias) + ritmo (1/s no Brave grátis). Body: {q} ou {consultas:[...]} (máx. 10).
+    if (url.pathname === '/api/busca-web' && req.method === 'POST') {
+      const body = await readJson(req);
+      const consultas = (Array.isArray(body?.consultas) ? body.consultas : [body?.q]).filter((q) => typeof q === 'string' && q.trim()).slice(0, 10);
+      if (!consultas.length) return send(res, 400, { error: 'informe q ou consultas[]' });
+      const out = [];
+      for (const q of consultas) { const r = await rawSearch(q.trim()); out.push({ q, ok: r?.ok !== false, cache: !!r?.cache, results: (r?.results ?? []).slice(0, 10), note: r?.note ?? null }); }
+      return send(res, 200, { ok: true, provider: searchProvider(), itens: out });
+    }
     if (url.pathname === '/api/anuncios' && req.method === 'POST') {
       const body = await readJson(req);
       const r = await anunciosHeadless(body);
