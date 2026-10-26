@@ -41,6 +41,8 @@ export interface Repo {
   atualizarTexto(id: number, texto: string): Promise<boolean>
   concluirTrabalho(id: number, estado: 'concluido' | 'pendente' | 'descartado', erro?: string | null): Promise<void>
   trabalhosPendentes(limite: number): Promise<Trabalho[]>
+  /** contato durável da mensagem (contact_id do trabalho criado pelo webhook), ou null se não houver trabalho */
+  contatoDaMensagem(mensagemId: string): Promise<number | null>
   // mensagens
   linhasDoLead(leadId: number): Promise<Linha[]>
   criarLinhas(linhas: Partial<Linha>[]): Promise<void>       // ignora duplicadas (lead+mensagem)
@@ -418,9 +420,10 @@ export async function varrer(deps: Deps, limite = 40): Promise<Resultado> {
         // mesma correlação canônica do trabalho, ancorada na linha em análise e nas linhas do lead:
         // o alias (evento sem id) da própria mensagem NÃO conta como 2ª mensagem (não bloqueia R3)
         const linhasLead = await repo.linhasDoLead(l.kommo_lead_id)
-        // mesma resolução de contatos do caminho do webhook (todos os vinculados; o contato da
-        // mensagem já está vinculado ao lead quando a varredura roda)
-        const contatos = contatosDoLead(lead, null)
+        // mesma resolução de contatos do caminho do webhook: todos os vinculados + o contato durável
+        // da mensagem (contact_id do trabalho, recuperado pela mensagem_id) — ele pode não estar (ou
+        // ter deixado de estar) vinculado ao lead entre a entrada e a varredura
+        const contatos = contatosDoLead(lead, await repo.contatoDaMensagem(l.mensagem_id))
         const ins = correlacionar(eventosIn({ ok: true, status: 200, body: { _embedded: { events: await eventosChat(kommoLote, l.kommo_lead_id, contatos, 'incoming_chat_message', de) } } }, 'eventos_in'), [refDaLinha(l), ...linhasLead.map(refDaLinha)], null)
         const outs = (await eventosChat(kommoLote, l.kommo_lead_id, contatos, 'outgoing_chat_message', de)).map((e: any) => Number(e.created_at))
         out.push({ id: l.id, lead: l.kommo_lead_id, ...(await decidirEAplicar(d, cfg, lead, l, ins, outs)) })

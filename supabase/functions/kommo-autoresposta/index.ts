@@ -59,6 +59,12 @@ function repoSupabase(db: Db): Repo {
       if (estado === 'pendente') { const t = must(await db.from('autoresposta_trabalho').select('tentativas').eq('id', id).single(), 'trabalho') as { tentativas: number }; patch.tentativas = t.tentativas + 1 }
       must(await db.from('autoresposta_trabalho').update(patch).eq('id', id), 'trabalho')
     },
+    async contatoDaMensagem(mensagemId) {
+      const r = await db.from('autoresposta_trabalho').select('contact_id').eq('mensagem_id', mensagemId).order('id', { ascending: false }).limit(1).maybeSingle()
+      if (r.error) throw new LeituraFalhou('trabalho', r.error.message)
+      const n = Number((r.data as { contact_id: number | null } | null)?.contact_id)
+      return Number.isFinite(n) && n > 0 ? n : null
+    },
     async trabalhosPendentes(limite) { return must(await db.from('autoresposta_trabalho').select('id, kommo_lead_id, tentativas, mensagem_id, texto, recebido_em, contact_id').eq('estado', 'pendente').order('criado_em').limit(limite), 'trabalhos') as Trabalho[] },
     async linhasDoLead(leadId) { return must(await db.from(T).select('*').eq('kommo_lead_id', leadId), 'linhas') as Linha[] },
     async criarLinhas(linhas) { must(await db.from(T).upsert(linhas, { onConflict: 'kommo_lead_id,mensagem_id', ignoreDuplicates: true }), 'criar_linhas') },

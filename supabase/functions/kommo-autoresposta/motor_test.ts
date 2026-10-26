@@ -32,6 +32,7 @@ function repoFake(cfg: Cfg | null = cfgBase) {
       async atualizarTexto(id: number, texto: string) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || l.decidido_em) return false; l.texto = texto; return true },
       async concluirTrabalho(id: number, estado: string, erro: string | null = null) { const t = trabalhos.find((x) => x.id === id)!; t.estado = estado; t.erro = erro; if (estado === 'pendente') t.tentativas++ },
       async trabalhosPendentes(n: number) { return trabalhos.filter((t) => t.estado === 'pendente').slice(0, n) },
+      async contatoDaMensagem(mensagemId: string) { const t = [...trabalhos].reverse().find((x) => x.mensagem_id === mensagemId); return t?.contact_id ?? null },
       async linhasDoLead(leadId: number) { return copia(linhas.filter((l) => l.kommo_lead_id === leadId)) },
       async criarLinhas(novas: Partial<Linha>[]) { for (const n of novas) if (!linhas.some((l) => l.kommo_lead_id === n.kommo_lead_id && l.mensagem_id === n.mensagem_id)) linhas.push(Object.assign({ id: seq++, texto: null, hash: null, decidido_em: null, claim_token: null, efeito_fase: null, tentativas: 0, lease_ate: null, extra: {} }, n) as LinhaFake) },
       async linha(leadId: number, m: string) { return copia(linhas.find((l) => l.kommo_lead_id === leadId && l.mensagem_id === m)!) },
@@ -625,4 +626,34 @@ Deno.test('R9#2 paginação por _links.next: disparo do lead na página 2 (pági
   // função pura: dedup por id entre contatos repetidos
   const dup = await eventosChat(async () => ({ ok: true, status: 200, body: { _embedded: { events: [{ id: 'e', entity_type: 'lead', entity_id: 1 }] } } }), 1, [77, 77], 'incoming_chat_message', 0)
   assertEquals(dup.length, 1)
+})
+
+
+Deno.test('R10 varredura recupera o contato do webhook pelo trabalho: contato 88 NÃO vinculado ao lead (contatos=[]), R2 → espera → R3 com intervalo certo = autoresposta, zero PATCH', async () => {
+  const st = repoFake(); const urls: string[] = []; const escritas: any[] = []
+  const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
+  const k: KommoFn = async (m, p, b, o) => {
+    if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+    const mLead = p.match(/\/leads\/(\d+)(\?|$)/); const lead = Number(mLead?.[1] ?? 1)
+    if (mLead) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [] } } }   // nenhum contato vinculado
+    const contato = Number((p.match(/filter\[entity_id\]\[0\]=(\d+)/) ?? [])[1])
+    // histórico do lead 1 vive no contato 88: mensagem ANTIGA (antes do disparo), disparo há 5 s, mensagem atual
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'i-old', created_at: T0 - 5000, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'm-old' } }] }, { id: 'i1', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'w1' } }] }] : [] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'o1', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] : [] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto }, 88)
+  assertEquals(r.classificacao, 'indeterminado')                                   // rápida + única desde o disparo (a antiga é anterior)
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'w1')!.intervalo_s, 5)
+  // outros 2 leads com o mesmo texto (R3) — contatos próprios, nada a ver com o 88
+  const k2: KommoFn = async (m, p, b, o) => { const ml = p.match(/\/leads\/(\d+)(\?|$)/); if (ml) return { ok: true, status: 200, body: { id: Number(ml[1]), pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [] } } }; if (p.includes('chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }; return { ok: true, status: 200, body: {} } }
+  await receberWebhook({ ...d, kommo: k2 }, 2, { id: 'w2', ts: T0 - 5, texto }, 2002); await receberWebhook({ ...d, kommo: k2 }, 3, { id: 'w3', ts: T0 - 5, texto }, 3003)
+  // varredura após a espera: precisa consultar o 88 (recuperado do trabalho) → intervalo 5, R3 → autoresposta, zero PATCH
+  urls.length = 0
+  await varrer({ ...d, agora: () => T0 + 400 })
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')), 'cron consultou o contato do webhook')
+  const l1 = st.linhas.find((l) => l.mensagem_id === 'w1')!
+  assertEquals(l1.classificacao, 'autoresposta'); assertEquals(l1.intervalo_s, 5)
+  assertEquals(escritas.filter((e) => e.b?.status_id === RESP).length, 0)
 })
