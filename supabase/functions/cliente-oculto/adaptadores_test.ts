@@ -40,3 +40,16 @@ Deno.test('anthropicHaiku: devolve o texto do bloco text; HTTP de erro lança; e
   assertEquals(extrairJson('aqui vai: {"qualificacao": 7, "parecer": "ok"} fim'), { qualificacao: 7, parecer: 'ok' })
   assertEquals(extrairJson('nada'), null)
 })
+
+
+Deno.test('criarInstancia idempotente: 403 "already in use" → registra o webhook (POST /webhook/set) e devolve jaExistia; qr(numero) pede pairing code', async () => {
+  const chamadas: any[] = []
+  const wa = evolution('https://evo.x', 'k', 'oculto-v4', fakeFetch({ '/instance/create': { status: 403, body: { status: 403, error: 'Forbidden', response: { message: ['This name "oculto-v4" is already in use.'] } } }, '/webhook/set/oculto-v4': { status: 201, body: { webhook: { enabled: true } } }, '/instance/connect/oculto-v4?number=5511988887777': { status: 200, body: { pairingCode: 'ABCD-EFGH', code: 'xyz' } } }, chamadas))
+  const c = await wa.criarInstancia('https://edge/cliente-oculto/s/seg')
+  assertEquals(c.ok, true); assertEquals(c.jaExistia, true)
+  const w = chamadas.find((x) => x.url.includes('/webhook/set/oculto-v4')); const body = JSON.parse(w.init.body)
+  assertEquals(body.webhook.url, 'https://edge/cliente-oculto/s/seg'); assertEquals(body.webhook.events.includes('MESSAGES_UPSERT'), true); assertEquals(body.enabled, true)
+  const p = await wa.qr('5511988887777')
+  assertEquals(p.ok, true); assertEquals(p.pairingCode, 'ABCD-EFGH')
+  assertEquals(chamadas.at(-1).url, 'https://evo.x/instance/connect/oculto-v4?number=5511988887777')
+})

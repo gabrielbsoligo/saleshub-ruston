@@ -280,8 +280,21 @@ Deno.serve(async (req) => {
       const wa = evo(cfg); if (!wa) return json({ error: 'Evolution não configurada (EVOLUTION_URL/EVOLUTION_APIKEY nos secrets da edge)' }, 503)
       const { data: sec } = await sb.from('integracao_config').select('value').eq('key', 'oculto_webhook_secret').maybeSingle()
       const webhookUrl = `${SUPABASE_URL}/functions/v1/cliente-oculto/s/${sec?.value ?? ''}`
-      if (body.op === 'criar') return json(await wa.criarInstancia(webhookUrl))
+      if (body.op === 'criar') {
+        const c = await wa.criarInstancia(webhookUrl)
+        if (!c.ok) return json(c, 502)
+        // idempotente: existindo ou não, segue para o QR (a tela auto-atualiza até 'open')
+        const q = await wa.qr()
+        return json({ ...c, ...(q.ok ? { qr: q.qr ?? c.qr, estado: q.estado } : {}) })
+      }
       if (body.op === 'qr') return json(await wa.qr())
+      if (body.op === 'pairing') {
+        const n = numeroWa(String(body.numero ?? ''))
+        if (!n) return json({ error: 'número inválido (use DDD + número; o código sai para ESSE chip)' }, 400)
+        const q = await wa.qr(n)
+        if (!q.ok) return json(q, 502)
+        return json({ ok: true, pairingCode: q.pairingCode, estado: q.estado, nota: q.pairingCode ? undefined : 'provedor não devolveu pairing code (use o QR)' })
+      }
       const st = await wa.estado()
       if (st.ok) await sb.from('oculto_config').update({ conectado: st.estado === 'open', numero: st.numero ? numeroWa(st.numero) : null, atualizado_em: new Date().toISOString() }).eq('id', 1)
       return json(st)

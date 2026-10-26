@@ -1,7 +1,7 @@
 // Cliente oculto — persona de cliente (Haiku) conversa pelo WhatsApp anônimo (Evolution API) com a
 // empresa do lead; a tela mostra as sessões, a conversa, as notas por critério e o parecer.
 // Começa SEM número: o painel "Número" cria a instância e mostra o QR para o Gabriel conectar.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Loader2, MessageSquare, Play, QrCode, RefreshCw, Search, StopCircle, UserSearch } from 'lucide-react';
 import type { Lead } from '../types';
@@ -87,38 +87,155 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
   <div className="rounded-xl border border-v4-border px-4 py-3"><div className="text-[11px] uppercase tracking-wide text-v4-text-muted">{label}</div><div className="text-lg font-semibold text-v4-text">{value}</div></div>
 );
 
+const QR_VALIDADE_S = 40;   // validade típica de um QR da Evolution/WhatsApp (~40 s)
+type Modo = 'ocioso' | 'qr' | 'pairing';
+type Op = 'qr' | 'estado' | 'pairing' | 'criar';
+/**
+ * Painel do número anônimo. Regras (Gabriel 26/10 + revisão do Vedor):
+ *  - modo QR: "Gerar novo QR" SEMPRE visível enquanto não conectado (manual obrigatório); validade = DEADLINE real
+ *    (Date.now), recalculada a cada tique e ao voltar à aba; ao vencer, o QR é APAGADO e aparece "QR vencido —
+ *    clique em Gerar novo QR" (com a renovação automática ligada, um novo é pedido sozinho);
+ *  - modo pareamento: só gera o código e faz polling do estado — nunca chama connect sozinho;
+ *  - I/O: FILA serializada (uma requisição por vez, independente da geração): pedidos de QR enfileirados são
+ *    retomados quando a fila libera (nunca "esquecidos"); a GERAÇÃO só serve para descartar efeitos de UI de
+ *    respostas de um modo/ciclo anterior (parar/conectar/trocar de modo/desmontar).
+ */
 function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChange: () => void }) {
+  const [modo, setModo] = useState<Modo>('ocioso');
   const [qr, setQr] = useState<string | null>(null);
+  const [qrVencido, setQrVencido] = useState(false);
+  const [deadline, setDeadline] = useState<number | null>(null);   // epoch ms do vencimento do QR
+  const [agora, setAgora] = useState(() => Date.now());
+  const [pairing, setPairing] = useState<string | null>(null);
+  const [numeroChip, setNumeroChip] = useState('');
+  const [auto, setAuto] = useState(true);
+  const [estado, setEstado] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const run = async (op: 'criar' | 'qr' | 'estado') => {
-    setBusy(true);
+  const [geracoes, setGeracoes] = useState(0);
+  const gen = useRef(0);                 // geração de UI: respostas de gerações antigas não mexem na tela
+  const fila = useRef<Promise<unknown>>(Promise.resolve());   // fila de I/O: 1 requisição por vez, sempre executa
+  const qrPendente = useRef(false);      // renovação de QR pedida enquanto a fila estava ocupada: retomada ao liberar
+  const conectado = !!config?.conectado;
+  const restante = deadline == null ? 0 : Math.max(0, Math.ceil((deadline - agora) / 1000));
+
+  const invalidar = useCallback(() => { gen.current += 1; }, []);
+  const parar = useCallback(() => { invalidar(); qrPendente.current = false; setModo('ocioso'); setQr(null); setPairing(null); setQrVencido(false); setDeadline(null); }, [invalidar]);
+  useEffect(() => () => { invalidar(); qrPendente.current = false; }, [invalidar]);   // desmontar
+  useEffect(() => { if (conectado && modo !== 'ocioso') { parar(); toast.success('Número conectado!'); } }, [conectado, modo, parar]);
+
+  const pollNaFila = useRef(false);   // coalesce: no máximo 1 'estado' esperando na fila
+  /** executa na FILA (serializado). A geração é conferida ANTES de chamar a edge: operação enfileirada que ficou
+   *  obsoleta (parar/open/troca de modo/desmontar) sai com null SEM I/O; e de novo depois, para a tela. */
+  const chamar = useCallback((op: Op, extra: Record<string, unknown> = {}) => {
+    const g = gen.current;
+    const p = fila.current
+      .then(() => (g === gen.current ? ocultoRepo.instancia(op, extra) : null))
+      .then((r) => (g === gen.current ? r : null), (e) => { if (g === gen.current) throw e; return null; });
+    fila.current = p.catch(() => undefined);
+    return p;
+  }, []);
+
+  const gerarQr = useCallback(async (manual: boolean) => {
+    const r = await chamar('qr');
+    if (!r) return;
+    setEstado(r.estado ?? null);
+    if (r.estado === 'open') { parar(); onChange(); return; }
+    if (r.qr) { setQr(r.qr); setQrVencido(false); setDeadline(Date.now() + QR_VALIDADE_S * 1000); setAgora(Date.now()); setGeracoes(n => n + 1); if (manual) toast.success('QR novo — leia agora'); }
+    else { setQr(null); setQrVencido(true); setDeadline(null); toast(r.nota || r.error || 'provedor não devolveu QR; tente de novo'); }
+  }, [chamar, parar, onChange]);
+
+  // relógio: recalcula pelo tempo REAL (tique de 1 s + ao voltar à aba/foco) — um único callback atrasado já vence
+  useEffect(() => {
+    if (modo !== 'qr' || !deadline) return;
+    const tick = () => setAgora(Date.now());
+    const t = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick); window.addEventListener('focus', tick);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [modo, deadline]);
+  // vencimento: apaga o QR; com auto ligado pede outro (pela fila — nunca se perde)
+  useEffect(() => {
+    if (modo !== 'qr' || !qr || !deadline || agora < deadline) return;
+    setQr(null); setQrVencido(true); setDeadline(null);
+    if (auto) { qrPendente.current = true; gerarQr(false).finally(() => { qrPendente.current = false; }).catch(() => {}); }
+  }, [agora, deadline, modo, qr, auto, gerarQr]);
+
+  // polling do estado (QR e pareamento): a cada 5 s pela fila; para em 'open'
+  useEffect(() => {
+    if (modo === 'ocioso') return;
+    const p = setInterval(async () => {
+      if (pollNaFila.current) return;   // coalesce: rede mais lenta que 5 s não acumula pedidos
+      pollNaFila.current = true;
+      try {
+        const r = await chamar('estado');
+        if (!r) return;
+        setEstado(r.estado ?? null);
+        if (r.estado === 'open') { parar(); toast.success('Número conectado!'); onChange(); }
+      } catch { /* próxima volta */ }
+      finally { pollNaFila.current = false; }
+    }, 5000);
+    return () => clearInterval(p);
+  }, [modo, chamar, parar, onChange]);
+
+  const entrarQr = async () => { invalidar(); setPairing(null); setQr(null); setQrVencido(false); setDeadline(null); setModo('qr'); setBusy(true); try { await gerarQr(true); } catch (e: any) { toast.error(e?.message || 'falhou'); } finally { setBusy(false); } };
+  const entrarPairing = async () => {
+    invalidar(); setQr(null); setQrVencido(false); setDeadline(null); setModo('pairing'); setBusy(true);
     try {
-      const r = await ocultoRepo.instancia(op);
-      if (op === 'estado') { toast.success(`estado: ${r.estado ?? '?'}`); onChange(); }
-      else if (r.qr) { setQr(r.qr); toast.success('QR pronto — leia no WhatsApp do número anônimo'); }
-      else toast(r.nota || r.error || 'sem QR (instância já conectada?)');
-    } catch (e: any) { toast.error(e?.message || 'falhou'); }
+      const r = await chamar('pairing', { numero: numeroChip });
+      if (!r) return;
+      setEstado(r.estado ?? null);
+      if (r.pairingCode) { setPairing(r.pairingCode); toast.success('Código gerado — digite no WhatsApp do chip'); }
+      else { setPairing(null); toast(r.nota || r.error || 'sem código'); }
+    } finally { setBusy(false); }
+  };
+  const criar = async () => {
+    setBusy(true);
+    try { const r = await chamar('criar'); if (r) toast.success(r.jaExistia ? 'Instância já existia — webhook atualizado' : 'Instância criada'); await entrarQr(); }
+    catch (e: any) { toast.error(e?.message || 'falhou'); }
     finally { setBusy(false); }
   };
-  const pronto = !!config?.conectado && !!config?.ativo;
+  const verEstado = async () => { const r = await chamar('estado'); if (r) { setEstado(r.estado ?? null); toast.success(`estado: ${r.estado ?? '?'}`); onChange(); } };
+  const pronto = conectado && !!config?.ativo;
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-v4-border px-4 py-3 text-sm">
       <div className="flex items-center gap-3">
-        <span className={`h-2.5 w-2.5 rounded-full ${config?.conectado ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+        <span className={`h-2.5 w-2.5 rounded-full ${conectado ? 'bg-emerald-400' : 'bg-slate-500'}`} />
         <div>
-          <div className="font-medium text-v4-text">Número anônimo: {config?.conectado ? `conectado${config.numero ? ` (${config.numero})` : ''}` : 'não conectado'} · envios {config?.ativo ? 'ligados' : 'desligados'}</div>
+          <div className="font-medium text-v4-text">Número anônimo: {conectado ? `conectado${config?.numero ? ` (${config.numero})` : ''}` : `não conectado${estado ? ` (${estado})` : ''}`} · envios {config?.ativo ? 'ligados' : 'desligados'}</div>
           <div className="text-[11px] text-v4-text-muted">{pronto ? 'Sondagens novas saem na hora.' : 'Sem número conectado e ativo, as sondagens ficam na fila e saem quando o número estiver pronto (ativar: oculto_config.ativo).'}</div>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <button disabled={busy} onClick={() => run('estado')} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Ver estado</button>
-        <button disabled={busy} onClick={() => run('criar')} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Criar instância</button>
-        <button disabled={busy} onClick={() => run('qr')} className="flex items-center gap-1.5 rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50"><QrCode size={12} /> QR code</button>
-      </div>
-      {qr && (
+      {!conectado && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button disabled={busy} onClick={verEstado} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Ver estado</button>
+          <button disabled={busy} onClick={criar} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Criar instância</button>
+          <button disabled={busy} onClick={entrarQr} className="flex items-center gap-1.5 rounded-lg bg-v4-red px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"><QrCode size={12} /> Gerar novo QR</button>
+          <label className="flex items-center gap-1 text-[11px] text-v4-text-muted"><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /> renovar sozinho ao vencer</label>
+          <input value={numeroChip} onChange={e => setNumeroChip(e.target.value)} placeholder="nº do chip (DDD+número)" className="w-44 rounded-lg border border-v4-border bg-transparent px-2 py-1.5 text-xs text-v4-text" />
+          <button disabled={busy || !numeroChip} onClick={entrarPairing} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50" title="Alternativa ao QR: código de 8 caracteres para digitar no WhatsApp do chip (Conectar dispositivo → Conectar com número de telefone)">Código de pareamento</button>
+          {modo !== 'ocioso' && <button onClick={parar} className="rounded-lg px-2 py-1.5 text-xs text-v4-text-muted">parar</button>}
+        </div>
+      )}
+      {!conectado && modo === 'qr' && (
         <div className="basis-full rounded-lg border border-v4-border bg-white p-3 text-center">
-          {qr.startsWith('data:image') ? <img src={qr} alt="QR code" className="mx-auto h-56 w-56" /> : <code className="break-all text-xs text-black">{qr}</code>}
-          <div className="mt-2 text-[11px] text-slate-600">WhatsApp → Dispositivos conectados → Conectar dispositivo. Depois clique em "Ver estado".</div>
+          {qr ? (
+            <>
+              {qr.startsWith('data:image') ? <img src={qr} alt="QR code" className="mx-auto h-56 w-56" /> : <code className="break-all text-xs text-black">{qr}</code>}
+              <div className="mt-2 text-sm font-medium text-slate-800">válido por {Math.max(0, restante)} s {geracoes > 1 ? `· QR nº ${geracoes}` : ''}</div>
+              <div className="text-[11px] text-slate-600">WhatsApp → Dispositivos conectados → Conectar dispositivo → aponte para o QR. Estado: {estado ?? '…'} (verificando a cada 5 s)</div>
+            </>
+          ) : (
+            <div className="py-6">
+              <div className="text-sm font-semibold text-red-700">{qrVencido ? 'QR vencido — clique em "Gerar novo QR"' : busy ? 'gerando QR…' : 'clique em "Gerar novo QR"'}</div>
+              {qrVencido && auto && <div className="mt-1 text-[11px] text-slate-600">{qrPendente.current ? 'renovando sozinho…' : 'renovação pedida — se não aparecer, clique em "Gerar novo QR"'}</div>}
+            </div>
+          )}
+        </div>
+      )}
+      {!conectado && modo === 'pairing' && (
+        <div className="basis-full rounded-lg border border-v4-border bg-white p-3 text-center">
+          {pairing ? <div className="font-mono text-3xl tracking-widest text-black">{pairing}</div> : <div className="text-sm text-slate-700">{busy ? 'gerando código…' : 'sem código — tente de novo'}</div>}
+          <div className="mt-2 text-[11px] text-slate-600">WhatsApp → Dispositivos conectados → Conectar dispositivo → "Conectar com número de telefone" → digite o código. Estado: {estado ?? '…'} (verificando a cada 5 s)</div>
         </div>
       )}
     </div>
