@@ -71,3 +71,45 @@ Nenhuma ligação; nada é criado. O único efeito colateral possível é o "Con
 - Edge: `supabase functions delete prevendas-fila --project-ref iaompeiokjxbffwehhrx`, depois `supabase secrets unset KOMMO_WIDGET_CLIENT_ID KOMMO_WIDGET_SECRET KOMMO_ACCOUNT_ID`.
 - SQL: `drop function public.prevendas_leads(bigint[]), public.prevendas_slots(bigint[]), public.prevendas_fila_frescor(), public.prevendas_travar(bigint,int), public.prevendas_gravar(bigint,text,jsonb), public.prevendas_liberar(bigint), public.prevendas_consumir(int,numeric,numeric); drop table public.prevendas_cache, public.prevendas_vazao;`
 - Nenhuma tabela, cadência ou tipo de tarefa foi alterado nesta fatia; só duas funções de leitura foram adicionadas.
+
+## Telefone no Kommo (webphone 4com) e chat sem resposta — v0.4.0 (NÃO aplicado)
+
+Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado consegue originar chamada direto (sonda de 26/10), então a credencial no navegador equivale a uma linha.
+
+**Aplicar (só com o ok):**
+1. `supabase/migration_161_prevendas_voz.sql`: log e limite por usuário; só service_role.
+2. Secrets:
+   ```
+   API4COM_TOKEN=<API4COM_TOKEN_PERMANENTE do cofre>
+   API4COM_DOMAIN=ruston.api4com.com
+   API4COM_WSS=wss://ruston.api4com.com:6443
+   PREVENDAS_VOZ_USUARIOS=11420911
+   PREVENDAS_VOZ_TELEFONES_TESTE=47997293673
+   ```
+   - `PREVENDAS_VOZ_TELEFONES_TESTE` só existe para o teste T2 e deve ser removido depois.
+   - Opcional: `PREVENDAS_CHATS_DIAS=7`.
+3. Deploy:
+   ```
+   supabase functions deploy prevendas-voz --no-verify-jwt --use-api
+   supabase functions deploy prevendas-fila --no-verify-jwt --use-api
+   ```
+   O redeploy da `prevendas-fila` é o que traz o chat sem resposta.
+4. Zip 0.4.0 (`node build-zip.mjs`). Settings do widget: `voz=Y`; o `endpoint_voz` fica vazio e é derivado do endpoint da fila.
+
+**Testar:**
+- **T1 (sem ligação):** o card "📞 Telefone · pronto" aparece. O navegador pede o microfone para o Kommo.
+- **T2 (uma ligação):** num lead com o telefone de teste, "Ligar".
+  1. O ramal toca no widget e atende sozinho.
+  2. A 4com liga para o número.
+  3. Uma nota "📞 Ligação 4com…" é gravada no lead.
+
+**Reverter:**
+- `voz=N` nas settings (o telefone some na hora).
+- `supabase functions delete prevendas-voz`.
+- `supabase secrets unset API4COM_TOKEN API4COM_DOMAIN API4COM_WSS PREVENDAS_VOZ_USUARIOS PREVENDAS_VOZ_TELEFONES_TESTE`.
+- No banco:
+  ```sql
+  drop function public.prevendas_voz_reservar(bigint,text,int,int,int,text,text), public.prevendas_voz_registrar(bigint,text,text);
+  drop table public.prevendas_voz_eventos;
+  ```
+- Chat sem resposta: redeploy da `prevendas-fila` do commit 25d9381.
