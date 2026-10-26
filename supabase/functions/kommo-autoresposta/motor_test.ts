@@ -1,7 +1,7 @@
 // deno test --allow-read supabase/functions/kommo-autoresposta/motor_test.ts
 // Fluxo completo (webhook → decisão → efeito → varredura) com repositório e Kommo FALSOS, sem rede.
 import { assert, assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { LeituraFalhou, Throttled, aplicarEfeito, contatoPrincipal, correlacionar, filtrarDoLead, urlEventosChat, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, aplicarEfeito, contatosDoLead, correlacionar, eventosChat, filtrarDoLead, urlEventosChat, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
 import type { Cfg, Padrao } from './triagem.ts'
 
 const PIPE = 14062116, RESP = 108545256, D1 = 108545280, D2 = 108545284
@@ -542,9 +542,10 @@ Deno.test('R7 evidência R3 (texto longo em 2 outros leads) NÃO vence conversa 
 
 
 Deno.test('R8 eventos de chat vêm pelo CONTATO (filter[entity][0]=contact) e são filtrados pelo lead; outros leads do mesmo contato não contam', async () => {
-  assertEquals(contatoPrincipal({ _embedded: { contacts: [{ id: 5 }, { id: 9, is_main: true }] } }), 9)
-  assertEquals(contatoPrincipal({ _embedded: { contacts: [] } }, 42), 42)
-  assertEquals(contatoPrincipal({}, null), null)
+  assertEquals(contatosDoLead({ _embedded: { contacts: [{ id: 5 }, { id: 9, is_main: true }] } }), [9, 5])  // principal primeiro, mas TODOS
+  assertEquals(contatosDoLead({ _embedded: { contacts: [{ id: 5 }] } }, 42), [5, 42])                    // contato do webhook entra se não vinculado
+  assertEquals(contatosDoLead({ _embedded: { contacts: [] } }, 42), [42])
+  assertEquals(contatosDoLead({}, null), [])
   assert(urlEventosChat(77, 'incoming_chat_message', 100).startsWith('/api/v4/events?filter[entity][0]=contact&filter[entity_id][0]=77&filter[type]=incoming_chat_message&filter[created_at][from]=100'))
   const body = { ok: true, status: 200, body: { _embedded: { events: [{ id: 'a', entity_type: 'lead', entity_id: 1 }, { id: 'b', entity_type: 'lead', entity_id: 2 }, { id: 'c', entity_type: 'talk', entity_id: 1 }] } } }
   assertEquals(filtrarDoLead(body, 'eventos_in', 1).map((e: any) => e.id), ['a'])
@@ -563,4 +564,65 @@ Deno.test('R8 eventos de chat vêm pelo CONTATO (filter[entity][0]=contact) e s�
   assertEquals(st.linhas.length, 1)                                               // 'm-outro' (lead 2) não virou linha
   assertEquals(st.linhas[0].intervalo_s, 995)                                     // último disparo = o do lead 1 (T0-1000), não o do lead 2
   assertEquals(r.classificacao, 'humano')                                         // 'ok' 995 s depois do disparo: não é rápida
+})
+
+
+Deno.test('R9#1 contato SECUNDÁRIO: webhook e disparo no contato 88 (principal 77) → consulta os dois; intervalo=5, R2 indeterminado, zero PATCH; varredura idem', async () => {
+  const st = repoFake(); const urls: string[] = []; const escritas: any[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+    if (/\/api\/v4\/leads\/\d+/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }, { id: 88 }] } } }
+    const contato = Number((p.match(/filter\[entity_id\]\[0\]=(\d+)/) ?? [])[1])
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'i88', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'w1' } }] }] : [] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'o88', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] : [] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' }, 88)
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(st.linhas[0].intervalo_s, 5)
+  assertEquals(escritas.filter((e) => e.b?.status_id).length, 0)
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=77&filter[type]=outgoing')) && urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')))
+  // varredura (linha sem contact_id): resolve pelos vinculados do lead → consulta o 88 também; passada a
+  // espera sem 2ª mensagem, R2 resolve humano (1 PATCH) — com o intervalo certo (5 s), não "sem disparo"
+  urls.length = 0
+  await varrer({ ...d, agora: () => T0 + 400 })
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')) && urls.some((u) => u.includes('filter[entity_id][0]=77&filter[type]=outgoing')))
+  assertEquals(st.linhas[0].classificacao, 'humano'); assertEquals(st.linhas[0].intervalo_s, 5); assertEquals(escritas.filter((e) => e.b?.status_id).length, 1)
+})
+
+Deno.test('R9#2 paginação por _links.next: disparo do lead na página 2 (página 1 só com outro lead) é visto; orçamento estourado = LeituraFalhou (trabalho pendente, sem PATCH)', async () => {
+  const pagina = (p: string) => Number((p.match(/[?&]page=(\d+)/) ?? [])[1] ?? 1)
+  const outros = Array.from({ length: 100 }, (_, i) => ({ id: `x${i}`, created_at: T0 - 1 - i, entity_type: 'lead', entity_id: 2 }))
+  const fabrica = (paginasOut: number) => {
+    const st = repoFake(); const escritas: any[] = []; const urls: string[] = []
+    const k: KommoFn = async (m, p, b, o) => {
+      if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+      if (/\/api\/v4\/leads\/\d+/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }] } } }
+      if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }
+      if (p.includes('outgoing_chat_message')) {
+        const pg = pagina(p)
+        if (pg < paginasOut) return { ok: true, status: 200, body: { _embedded: { events: outros }, _links: { next: {} } } }
+        return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o1', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] } } }
+      }
+      return { ok: true, status: 200, body: {} }
+    }
+    return { st, escritas, urls, d: { ...deps(st.repo, k), campoTexto: '' } }
+  }
+  // disparo na página 2 → intervalo 5 → R2 indeterminado, zero PATCH
+  const a = fabrica(2)
+  const r = await receberWebhook(a.d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(a.st.linhas[0].intervalo_s, 5); assertEquals(a.escritas.filter((e) => e.b?.status_id).length, 0)
+  assertEquals(a.urls.filter((u) => u.includes('outgoing')).map(pagina), [1, 2])
+  // mais páginas que o orçamento → não decide: LeituraFalhou, trabalho pendente, nenhuma linha/PATCH
+  const b = fabrica(10)
+  await assertRejects(() => receberWebhook(b.d, 1, { id: 'w2', ts: T0 - 5, texto: 'ok' }), LeituraFalhou, 'truncado')
+  assertEquals(b.st.trabalhos[0].estado, 'pendente'); assertEquals(b.st.linhas.length, 0); assertEquals(b.escritas.length, 0)
+  // falha intermediária (503 na página 2) também lança → pendente
+  const c = fabrica(2); const kBase = c.d.kommo
+  c.d.kommo = async (m, p, bb, o) => { if (p.includes('outgoing') && pagina(p) === 2) throw new LeituraFalhou('eventos_out', 'HTTP 503'); return kBase(m, p, bb, o) }
+  await assertRejects(() => receberWebhook(c.d, 1, { id: 'w3', ts: T0 - 5, texto: 'ok' }), LeituraFalhou)
+  assertEquals(c.st.trabalhos[0].estado, 'pendente'); assertEquals(c.escritas.length, 0)
+  // função pura: dedup por id entre contatos repetidos
+  const dup = await eventosChat(async () => ({ ok: true, status: 200, body: { _embedded: { events: [{ id: 'e', entity_type: 'lead', entity_id: 1 }] } } }), 1, [77, 77], 'incoming_chat_message', 0)
+  assertEquals(dup.length, 1)
 })
