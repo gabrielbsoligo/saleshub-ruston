@@ -138,6 +138,29 @@ export function correlacionar(eventos: { id: string; ts: number }[], ancoras: Ms
 const refDaLinha = (l: Linha): MsgRef => ({ id: l.mensagem_id, ts: Math.floor(new Date(l.recebido_em).getTime() / 1000) })
 const eventosIn = (body: any, etapa: string) => eventos(body, etapa).map((e: any) => ({ id: String(e.value_after?.[0]?.message?.id ?? ''), ts: Number(e.created_at) }))
 
+// ── Eventos de chat de um lead. Conferido na conta em 26/10/2026: o filtro por entidade de /events
+// indexa eventos de MENSAGEM pelo CONTATO — filter[entity][0]=lead&filter[entity_id][0]=<lead> com
+// filter[type]=incoming/outgoing_chat_message devolve 204 mesmo havendo mensagens; por contato
+// devolve certo (entity_type 'lead', entity_id = o lead da conversa). Consulta-se pelo contato e
+// filtra-se pelo lead (o contato pode ter outros leads). Sem contato conhecido → sem eventos (a
+// decisão segue pelo texto do webhook + mensagens persistidas).
+export const contatoPrincipal = (lead: any, fallback: number | null = null): number | null => {
+  const cs: any[] = Array.isArray(lead?._embedded?.contacts) ? lead._embedded.contacts : []
+  const c = cs.find((x) => x?.is_main) ?? cs[0]
+  const id = Number(c?.id)
+  return Number.isFinite(id) && id > 0 ? id : fallback
+}
+export function filtrarDoLead(body: any, etapa: string, leadId: number): any[] {
+  return eventos(body, etapa).filter((e: any) => String(e?.entity_type ?? 'lead') === 'lead' && Number(e?.entity_id) === Number(leadId))
+}
+export const urlEventosChat = (contactId: number, tipo: 'incoming_chat_message' | 'outgoing_chat_message', de: number) =>
+  `/api/v4/events?filter[entity][0]=contact&filter[entity_id][0]=${contactId}&filter[type]=${tipo}&filter[created_at][from]=${de}&limit=100`
+async function eventosChat(kommo: KommoFn, leadId: number, contactId: number | null, tipo: 'incoming_chat_message' | 'outgoing_chat_message', de: number): Promise<any[]> {
+  if (!contactId) return []
+  const etapa = tipo === 'incoming_chat_message' ? 'eventos_in' : 'eventos_out'
+  return filtrarDoLead(await kommo('GET', urlEventosChat(contactId, tipo, de), undefined, { etapa }), etapa, leadId)
+}
+
 export async function receberWebhook(deps: Deps, leadId: number | null, msg: MensagemRecebida | null = null, contactId: number | null = null): Promise<Resultado> {
   const t = await deps.repo.criarTrabalho(leadId, msg, contactId)
   try {
@@ -163,7 +186,7 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
     leadId = r.leadId
     await repo.vincularLead(t.id, leadId)
   }
-  const lead = leadValido(await kommo('GET', `/api/v4/leads/${leadId}`, undefined, { etapa: 'lead' }), 'lead')
+  const lead = leadValido(await kommo('GET', `/api/v4/leads/${leadId}?with=contacts`, undefined, { etapa: 'lead' }), 'lead')
   if (!lead) { await repo.concluirTrabalho(t.id, 'descartado', 'lead não existe'); return { skipped: true, motivo: 'lead não existe' } }
   const pipeline = Number(lead.pipeline_id), statusAtual = Number(lead.status_id)
   const cfg = await repo.config(pipeline)
@@ -173,8 +196,9 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
 
   const agora = deps.agora()
   const de = agora - 14 * 86400
-  const ins = eventosIn(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in')
-  const outs = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out')
+  const contactId = contatoPrincipal(lead, t.contact_id ?? null)
+  const ins = eventosIn({ ok: true, status: 200, body: { _embedded: { events: await eventosChat(kommo, leadId, contactId, 'incoming_chat_message', de) } } }, 'eventos_in')
+  const outs = (await eventosChat(kommo, leadId, contactId, 'outgoing_chat_message', de))
     .map((e) => Number(e.created_at)).filter(Number.isFinite).sort((a, b) => a - b)
 
   // A mensagem do webhook é a fonte primária (id + instante + texto) e SEMPRE ganha linha própria.
@@ -374,14 +398,15 @@ export async function varrer(deps: Deps, limite = 40): Promise<Resultado> {
       const msgTs = Math.floor(new Date(l.recebido_em).getTime() / 1000)
       if (l.classificacao === 'indeterminado' && deps.agora() < msgTs + cfg.espera_s && !(l.regras ?? []).includes('texto_vazio')) continue
       try {
-        const lead = leadValido(await kommoLote('GET', `/api/v4/leads/${l.kommo_lead_id}`, undefined, { etapa: 'lead' }), 'lead')
+        const lead = leadValido(await kommoLote('GET', `/api/v4/leads/${l.kommo_lead_id}?with=contacts`, undefined, { etapa: 'lead' }), 'lead')
         if (!lead) { const ps = await repo.claim(l.id, deps.leaseS); if (ps) await repo.fim(l.id, ps.token, 'superado', { motivo_efeito: 'lead não existe' }); continue }
         const de = msgTs - 14 * 86400
         // mesma correlação canônica do trabalho, ancorada na linha em análise e nas linhas do lead:
         // o alias (evento sem id) da própria mensagem NÃO conta como 2ª mensagem (não bloqueia R3)
         const linhasLead = await repo.linhasDoLead(l.kommo_lead_id)
-        const ins = correlacionar(eventosIn(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in'), [refDaLinha(l), ...linhasLead.map(refDaLinha)], null)
-        const outs = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out').map((e) => Number(e.created_at))
+        const contactId = contatoPrincipal(lead, null)
+        const ins = correlacionar(eventosIn({ ok: true, status: 200, body: { _embedded: { events: await eventosChat(kommoLote, l.kommo_lead_id, contactId, 'incoming_chat_message', de) } } }, 'eventos_in'), [refDaLinha(l), ...linhasLead.map(refDaLinha)], null)
+        const outs = (await eventosChat(kommoLote, l.kommo_lead_id, contactId, 'outgoing_chat_message', de)).map((e: any) => Number(e.created_at))
         out.push({ id: l.id, lead: l.kommo_lead_id, ...(await decidirEAplicar(d, cfg, lead, l, ins, outs)) })
       } catch (e) {
         if (e instanceof Throttled) throw e
