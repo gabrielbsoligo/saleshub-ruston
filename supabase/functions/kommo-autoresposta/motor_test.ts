@@ -451,8 +451,10 @@ Deno.test('R6 correlacionar: ids conhecidos distintos nunca se fundem por horár
   assertEquals(correlacionar([{ id: 'm1', ts: 100 }], [], { id: 'm2', ts: 101 }).map((r) => r.id).sort(), ['m1', 'm2'])
   // evento sem id: uma âncora <=2 s → alias da âncora; duas âncoras <=2 s → ambíguo, ignorado; nenhuma → ignorado
   assertEquals(correlacionar([{ id: '', ts: 100 }], [{ id: 'a', ts: 101 }], null), [{ id: 'a', ts: 101 }])
-  assertEquals(correlacionar([{ id: '', ts: 100 }], [{ id: 'a', ts: 101 }, { id: 'b', ts: 99 }], null), [])
+  assertEquals(correlacionar([{ id: '', ts: 100 }], [{ id: 'a', ts: 101 }, { id: 'b', ts: 99 }], null), [{ id: 'b', ts: 99 }, { id: 'a', ts: 101 }]) // ambíguo: só as âncoras, evento ignorado
   assertEquals(correlacionar([{ id: '', ts: 100 }], [], null), [])
+  // união: âncora persistida entra mesmo sem aparecer em /events
+  assertEquals(correlacionar([{ id: 'e1', ts: 50 }], [{ id: 'a', ts: 101 }], { id: 'w', ts: 102 }).map((r) => r.id), ['e1', 'a', 'w'])
   // webhook sem nenhum evento ainda → mesmo assim está no resultado
   assertEquals(correlacionar([], [], { id: 'w', ts: 5 }), [{ id: 'w', ts: 5 }])
 })
@@ -502,4 +504,38 @@ Deno.test('R6#3 varredura: alias do próprio evento não bloqueia R3 (mesmo text
   const l1 = st.linhas.find((l) => l.kommo_lead_id === 1)!
   assertEquals(l1.classificacao, 'autoresposta')
   assertEquals(escritas.filter((e) => e.b?.status_id === RESP).length, 0)
+})
+
+
+Deno.test('R7 dois webhooks do mesmo lead ("ok", depois "sim") com /events ainda VAZIO: a 2ª já é conhecida → humano, 1 PATCH', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [], outs: [T0 - 10] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  const r1 = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })
+  assertEquals(r1.classificacao, 'indeterminado')                                  // R2: rápida, curta, sozinha
+  const r2 = await receberWebhook(d, 1, { id: 'w2', ts: T0 - 3, texto: 'sim' })
+  assertEquals(r2.classificacao, 'humano'); assertEquals(r2.estado, 'aplicado')     // 2ª mensagem desde o disparo: conversa
+  assertEquals(k.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
+  assertEquals(st.linhas.length, 2)
+})
+
+Deno.test('R7 evidência R3 (texto longo em 2 outros leads) NÃO vence conversa já comprovada do próprio lead (outra mensagem persistida, /events atrasado) → humano', async () => {
+  const st = repoFake()
+  const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
+  const escritas: any[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    const mLead = p.match(/\/leads\/(\d+)$/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
+    const lead = Number(mLead?.[1] ?? mEnt?.[1] ?? 1)
+    if (m !== 'GET') escritas.push({ m, p, b, lead })
+    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }   // /events atrasado para todos
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  await receberWebhook(d, 2, { id: 'w2', ts: T0 - 5, texto }); await receberWebhook(d, 3, { id: 'w3', ts: T0 - 5, texto })
+  const a = await receberWebhook(d, 1, { id: 'w1a', ts: T0 - 6, texto: 'Oi' })      // lead 1 já conversou (curta/rápida → pendente)
+  assertEquals(a.classificacao, 'indeterminado')
+  const b = await receberWebhook(d, 1, { id: 'w1b', ts: T0 - 4, texto })           // mesmo texto longo dos outros 2 leads
+  assertEquals(b.classificacao, 'humano'); assertEquals(b.estado, 'aplicado')
+  assertEquals(escritas.filter((e) => e.b?.status_id === RESP && e.lead === 1).length, 1)
 })

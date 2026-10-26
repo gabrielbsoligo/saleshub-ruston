@@ -118,13 +118,15 @@ function leadValido(r: KommoResp, etapa: string) {
 //  * evento SEM id (value_after sem message.id): só é alinhado a uma âncora de identidade comprovada
 //    (mensagem do webhook ou linha já registrada) se houver EXATAMENTE uma âncora a ≤ 2 s; zero ou
 //    mais de uma (ambíguo) → ignorado: nunca vira "outra mensagem" nem cria linha;
-//  * a mensagem do webhook (âncora primária) está SEMPRE no resultado, com o próprio id.
+//  * o resultado é a UNIÃO por id: mensagem do webhook (primária) + mensagens comprovadas já
+//    persistidas do lead (âncoras) + eventos canônicos de /events. Uma mensagem já recebida pelo
+//    webhook conta como "outra mensagem" mesmo que /events ainda não a mostre (atraso do Kommo).
 export type MsgRef = { id: string; ts: number }
 export function correlacionar(eventos: { id: string; ts: number }[], ancoras: MsgRef[], primaria: MsgRef | null): MsgRef[] {
   const todasAncoras: MsgRef[] = primaria ? [primaria, ...ancoras.filter((a) => a.id !== primaria.id)] : ancoras
   const vistos = new Map<string, MsgRef>()
   const por = (r: MsgRef) => { if (!vistos.has(r.id)) vistos.set(r.id, r) }
-  if (primaria) por(primaria)
+  for (const a of todasAncoras) por(a)
   for (const e of eventos) {
     if (!Number.isFinite(e.ts)) continue
     if (e.id) { por({ id: e.id, ts: e.ts }); continue }
