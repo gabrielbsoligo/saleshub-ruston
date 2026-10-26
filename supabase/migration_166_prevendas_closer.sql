@@ -1,8 +1,8 @@
--- migration_162_prevendas_closer.sql — fila do CLOSER no widget ruston-prevendas (PROPOSTA.md §7).
+-- migration_166_prevendas_closer.sql — fila do CLOSER no widget ruston-prevendas (PROPOSTA.md §7).
 -- Só funções de LEITURA (create or replace), só service_role. Nada de tabela, cadência ou Kommo.
 
 -- dados de lead (réplica) para os ids pedidos: {id: {nome, pipeline_id, status_id, etapa, origem, atualizado}}
--- (mesma função da 160, agora com status_id e a data de atualização da réplica)
+-- (mesma função da 163, agora com status_id e a data de atualização da réplica)
 create or replace function public.prevendas_leads(p_ids bigint[])
 returns jsonb
 language sql stable security definer set search_path = public, kommo as $$

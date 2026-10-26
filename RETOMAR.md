@@ -3,11 +3,11 @@
 Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, só local, nunca enviada ao remoto.
 
 ## O que está no ar (SalesHub `iaompeiokjxbffwehhrx`), em teste só para o 11420911
-- Migrations 160 e 161 e os secrets (`KOMMO_WIDGET_*`, `KOMMO_ACCOUNT_ID`, `API4COM_*`, `PREVENDAS_VOZ_USUARIOS=11420911`, `PREVENDAS_VOZ_TELEFONES_TESTE=47997293673`, `PREVENDAS_CHATS_DIAS=7`).
+- Migrations 163 e 164 (antes 160 e 161; renumeradas em 26/10 por colisão com a main, os objetos aplicados são os mesmos) e os secrets (`KOMMO_WIDGET_*`, `KOMMO_ACCOUNT_ID`, `API4COM_*`, `PREVENDAS_VOZ_USUARIOS=11420911`, `PREVENDAS_VOZ_TELEFONES_TESTE=47997293673`, `PREVENDAS_CHATS_DIAS=7`).
 - Edges `prevendas-fila` e `prevendas-voz` = branch `hotfix/prevendas-0.4` @ af370ad (worktree `C:/Users/gabri/dev/saleshub-deploy-jwt`): 3ba7688 + correção do JWT + hotfix 0.4.1 (Vedor APROVADO). SEM a fila do closer.
 - Zip 0.4.1: `C:/Users/gabri/dev/saleshub-deploy-jwt/kommo-widget/ruston-prevendas/dist/ruston-prevendas.zip`, entregue ao Oraculo.
 - T1 ok (telefone registrou; fila no servidor). T2 (UMA ligação para 47997293673, o Gabriel clica em Atender) só com o aviso do Oraculo.
-- hub-comercial (port/enriquecedor): a21fe5c (fatia 2), 1c8c2e7 (0.4.0), dd77705 (JWT), 52d5c0d (0.4.1). Próxima migration livre lá: 164.
+- hub-comercial (port/enriquecedor): a21fe5c (fatia 2), 1c8c2e7 (0.4.0), dd77705 (JWT), 52d5c0d (0.4.1). No hub: 161 (fila) e 163 (voz) são nossas; próxima livre lá: 168 (167 reservada ao cliente oculto).
 
 ## Decisões do Gabriel (26/10, tarde)
 - Fila do CLOSER: SEGURAR (ele vai apresentar ao time antes).
@@ -17,13 +17,13 @@ Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, 
 
 ## Fila do CLOSER: PRONTA na branch feat/widget-prevendas, aguardando o ok do Oraculo
 - Vedor APROVADO em 78ebc73. Depois disso, d47554d trouxe o hotfix 0.4.1 adaptado aos perfis (121 testes). Pedir ao Vedor uma conferência rápida dessa junção antes de aplicar.
-- Aplicar: migration 162 + deploy da `prevendas-fila` a partir de feat + zip 0.5.x. Depois: port para o hub-comercial (migration 164).
+- Aplicar: migration 166 + deploy da `prevendas-fila` a partir de feat + zip 0.5.x. Depois: port para o hub-comercial (migration 168 ou a próxima livre).
 
 ## Histórico da fila do CLOSER
 - **Desenho:** PROPOSTA.md §7, rev. 2.1, aprovado pelo Vedor.
 - **Decisões do Gabriel:** §7.5 (ordem ok; BAIXA entra; SDR segue a fila de SDR; disparo no nível 8; sem lote; follow infinito vai para as pendências).
 - **Plano:**
-  1. Migration 162 no saleshub (164 no hub): `prevendas_leads` com `status_id` + `prevendas_compromissos` (closer efetivo).
+  1. Migration 166 no saleshub (168 ou próxima livre no hub): `prevendas_leads` com `status_id` + `prevendas_compromissos` (closer efetivo).
   2. Edge `prevendas-fila`: modo decidido pelo role (override só para gestor); cache com modo e regra; enriquecimento do closer; exclusão só com a etapa confirmada ao vivo.
   3. Widget: `Fila.ordenarCloser` (unidade = lead, tarefa representativa, compromisso 0.5) e marca por lead ao concluir.
   4. Testes, Vedor, aplicar (com o ok do Oraculo), port para o hub-comercial.

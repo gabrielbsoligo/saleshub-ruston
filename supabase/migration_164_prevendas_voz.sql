@@ -1,4 +1,4 @@
--- migration_161_prevendas_voz.sql — apoio da edge prevendas-voz (webphone do widget kommo-widget/ruston-prevendas)
+-- migration_164_prevendas_voz.sql — apoio da edge prevendas-voz (webphone do widget kommo-widget/ruston-prevendas)
 -- e PAUSA compartilhada do orçamento do Kommo (429).
 -- Log de auditoria + limite de taxa por usuário (credencial SIP, telefones e discagem). Nada aqui guarda senha, HA1
 -- ou token: só quem pediu, o quê, quando, o final do telefone e o resultado. Tudo só service_role (RLS sem policy).
