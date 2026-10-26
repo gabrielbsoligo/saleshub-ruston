@@ -7,14 +7,17 @@ Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, 
 - **Telefone 4com + chat sem resposta:**
   - migration 161;
   - secrets `API4COM_TOKEN` (permanente), `API4COM_DOMAIN`, `API4COM_WSS`, `PREVENDAS_VOZ_USUARIOS=11420911`, `PREVENDAS_VOZ_TELEFONES_TESTE=47997293673`, `PREVENDAS_CHATS_DIAS=7`;
-  - edges `prevendas-fila` e `prevendas-voz` no commit 3ba7688 (Vedor APROVADO na rodada 4).
+  - edges `prevendas-fila` e `prevendas-voz` = 3ba7688 + correção do JWT (1b923af + 046d1c0, Vedor APROVADO), publicadas a partir do worktree `C:Usersgabridevsaleshub-deploy-jwt`. Motivo: o T1 do Gabriel deu `jwt_emissor` — o `iss` real não vinha como na doc.
 - **Zip 0.4.0:** entregue ao Oraculo, que troca na integração. T1 (registro) liberado; T2 (UMA ligação para 47997293673) só com o aviso do Oraculo, e o Gabriel clica em Atender.
 - **hub-comercial (port/enriquecedor):**
   - a21fe5c: fatia 2, migration_161;
   - 1c8c2e7: 0.4.0, migration_163;
   - os dois registrados no PORT-PENDENTES.md. Lá o próximo número livre é o 164.
 
-## Em andamento: fila do CLOSER (fatia própria)
+## Fila do CLOSER: PRONTA, aguardando o ok do Oraculo para aplicar
+- Vedor APROVADO no commit 78ebc73 (rodada 3). Aplicar: migration 162 + deploy da `prevendas-fila` a partir da branch (HEAD já inclui a correção do JWT) + zip 0.5.0. Depois: port para o hub-comercial (lá será a migration 164).
+
+## Histórico da fila do CLOSER
 - **Desenho:** PROPOSTA.md §7, rev. 2.1, aprovado pelo Vedor.
 - **Decisões do Gabriel:** §7.5 (ordem ok; BAIXA entra; SDR segue a fila de SDR; disparo no nível 8; sem lote; follow infinito vai para as pendências).
 - **Plano:**
