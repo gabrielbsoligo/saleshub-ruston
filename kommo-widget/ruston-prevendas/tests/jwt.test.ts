@@ -69,3 +69,12 @@ test('emissor: aceita sem esquema, amoCRM do mesmo subdomínio; recusa outra con
   const sub = await verificarJwtKommo(assinar({ ...base, iss: 'https://financeirorustonengenhariacombr.amocrm.com', subdomain: 'outra' }), E, agora) as any
   assert.equal(sub.erro, 'jwt_emissor')                                     // claim subdomain incoerente
 })
+
+test('claim subdomain incoerente é recusado em QUALQUER host (exato com e sem esquema, e amoCRM)', async () => {
+  for (const iss of ['https://financeirorustonengenhariacombr.kommo.com', 'financeirorustonengenhariacombr.kommo.com', 'https://financeirorustonengenhariacombr.amocrm.com']) {
+    const r = await verificarJwtKommo(assinar({ ...base, iss, subdomain: 'outra' }), E, agora) as any
+    assert.equal(r.erro, 'jwt_emissor', iss)
+  }
+  const sem = await verificarJwtKommo(assinar({ ...base, iss: 'https://financeirorustonengenhariacombr.kommo.com' }), E, agora)
+  assert.equal(sem.ok, true)                                                // sem o claim: vale o host
+})

@@ -31,12 +31,13 @@ export function hostDoEmissor(iss: unknown): string {
  * o claim subdomain, se vier). Defesa em profundidade: assinatura (secret da integração) e account_id já conferidos.
  */
 export function emissorAceito(iss: unknown, hostEsperado: string, subdomainClaim: unknown): boolean {
-  const h = hostDoEmissor(iss), esperado = hostEsperado.toLowerCase()
+  const h = hostDoEmissor(iss), esperado = hostEsperado.toLowerCase(), sub = esperado.split('.')[0]
   if (!h) return false
+  // o claim subdomain, quando vier, tem que ser o da conta — vale para QUALQUER host, inclusive o exato
+  if (subdomainClaim != null && String(subdomainClaim).toLowerCase() !== sub) return false
   if (h === esperado) return true
-  const sub = esperado.split('.')[0], partes = h.split('.')
-  if (partes[0] !== sub || !DOMINIOS_KOMMO.includes(partes.slice(1).join('.'))) return false
-  return subdomainClaim == null || String(subdomainClaim).toLowerCase() === sub
+  const partes = h.split('.')
+  return partes[0] === sub && DOMINIOS_KOMMO.includes(partes.slice(1).join('.'))
 }
 
 export async function verificarJwtKommo(token: string, e: Esperado, agora = Math.floor(Date.now() / 1000)): Promise<ResultadoJwt> {
