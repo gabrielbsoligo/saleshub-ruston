@@ -152,15 +152,21 @@ export function mesclarEventos(anteriores: EvC[], novos: EvC[], desde: number): 
 }
 
 export const SOBREPOSICAO_S = 600
+/** Reconciliação: a cada 30 min a leitura é INTEGRAL (a 4com/Kommo não garante atraso máximo de visibilidade de um
+ *  evento; o que aparecer depois da sobreposição entra na próxima leitura integral — atraso máximo de ~30 min). */
+export const RECONCILIAR_S = 1800
 
 /**
- * De onde ler: incremental (a partir do evento mais novo do cache − sobreposição) só se o cache for COMPLETO
- * (cobre a janela inteira, sem truncar) e da mesma janela; senão, leitura cheia desde o início da janela.
+ * De onde ler: incremental (desde a última leitura − sobreposição) só se o cache for COMPLETO (cobre a janela
+ * inteira, sem truncar), da mesma janela e com leitura INTEGRAL há menos de RECONCILIAR_S; senão, leitura cheia
+ * desde o início da janela (substitui o cache — reconcilia eventos que apareceram atrasados).
  */
-export function planoLeitura(cache: any, agoraS: number, dias: number): { desde: number; incremental: boolean; base: EvC[] } {
+export function planoLeitura(cache: any, agoraS: number, dias: number, reconciliarS = RECONCILIAR_S): { desde: number; incremental: boolean; base: EvC[] } {
   const janela = agoraS - dias * 86400
   const evs: EvC[] = Array.isArray(cache?.eventos) ? cache.eventos : []
-  if (cache?.completo === true && Number(cache?.dias) === dias && cache?.ultimo != null && Number.isFinite(Number(cache.ultimo))) {
+  const num = (v: unknown) => v != null && Number.isFinite(Number(v))
+  if (cache?.completo === true && Number(cache?.dias) === dias && num(cache?.ultimo) && num(cache?.integral_em) &&
+      agoraS - Number(cache.integral_em) < reconciliarS) {
     return { desde: Math.max(janela, Number(cache.ultimo) - SOBREPOSICAO_S), incremental: true, base: evs }
   }
   return { desde: janela, incremental: false, base: [] }

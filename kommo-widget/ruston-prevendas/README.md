@@ -159,6 +159,7 @@ Decisão do Gabriel (26/10): opção B, seguir sem pedir à 4com o bloqueio de s
 - A janela de 7 dias tem cerca de 3.600 eventos de chat (37 páginas). Antes, a leitura parava em 10 páginas e por isso o aviso "leitura parcial" aparecia sempre.
 - O servidor lê a janela inteira uma vez, em segundo plano. O prazo é de 110 s, a trava da conta de 150 s e há uma pausa de 300 ms entre GETs, para sobrar orçamento à fila.
 - Depois disso, cada renovação lê só os eventos novos, desde a última leitura completa menos 10 min de sobreposição, sem repetir id. Os eventos ficam compactados em `prevendas_cache` (linha 0, campo `eventos`); o pedido do usuário lê só `chats`, `leads`, `talks`, `parcial` e `gerado_em`.
+- A cada 30 min a leitura é integral (reconciliação): um evento que o Kommo só mostre depois dos 10 min de sobreposição entra nessa leitura. O atraso máximo é de cerca de 30 min, e o checkpoint da última leitura integral fica em `integral_em`.
 - O aviso "Chats: leitura parcial" só aparece quando a leitura realmente trunca (limite de 80 páginas, prazo ou orçamento). Nesse caso o cache perde o `completo` e a próxima renovação relê a janela inteira.
 - O widget não muda: continua o zip 0.4.6.
 - **Reverter:** redeploy da `prevendas-fila` de `9f65f59`. O campo `eventos` a mais no cache é ignorado.

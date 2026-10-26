@@ -91,7 +91,7 @@ test('statusDosTalks: lista com erro comum → tenta 1 a 1; lista parcial → co
 })
 
 // ---------------- leitura incremental (0.4.7) ----------------
-import { compactar, expandir, mesclarEventos, planoLeitura, SOBREPOSICAO_S } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+import { compactar, expandir, mesclarEventos, planoLeitura, RECONCILIAR_S, SOBREPOSICAO_S } from '../../../supabase/functions/_shared/prevendas_chats.ts'
 
 const comId = (id: number, e: any) => ({ ...e, id })
 
@@ -114,9 +114,32 @@ test('planoLeitura: incremental só com cache COMPLETO da mesma janela; senão l
   const agora = 1_000_000, dias = 7, janela = agora - 7 * 86400
   assert.deepEqual(planoLeitura(null, agora, dias), { desde: janela, incremental: false, base: [] })
   const evs = [{ id: '1', tp: 'i', l: 1, k: null, c: agora - 50, b: 0 }]
-  assert.deepEqual(planoLeitura({ completo: true, dias: 7, ultimo: agora - 60, eventos: evs }, agora, dias), { desde: agora - 60 - SOBREPOSICAO_S, incremental: true, base: evs })
-  assert.equal(planoLeitura({ completo: false, dias: 7, ultimo: agora - 60, eventos: evs }, agora, dias).incremental, false)   // truncado: relê tudo
-  assert.equal(planoLeitura({ completo: true, dias: 3, ultimo: agora - 60, eventos: evs }, agora, dias).incremental, false)    // janela mudou
-  assert.equal(planoLeitura({ completo: true, dias: 7, ultimo: null, eventos: evs }, agora, dias).incremental, false)
-  assert.equal(planoLeitura({ completo: true, dias: 7, ultimo: janela - 9999, eventos: evs }, agora, dias).desde, janela)      // nunca antes da janela
+  const ok = { completo: true, dias: 7, ultimo: agora - 60, integral_em: agora - 600, eventos: evs }
+  assert.deepEqual(planoLeitura(ok, agora, dias), { desde: agora - 60 - SOBREPOSICAO_S, incremental: true, base: evs })
+  assert.equal(planoLeitura({ ...ok, integral_em: agora - RECONCILIAR_S }, agora, dias).incremental, false)          // hora de reconciliar
+  assert.equal(planoLeitura({ ...ok, integral_em: null }, agora, dias).incremental, false)
+  assert.equal(planoLeitura({ ...ok, completo: false }, agora, dias).incremental, false)   // truncado: relê tudo
+  assert.equal(planoLeitura({ ...ok, dias: 3 }, agora, dias).incremental, false)          // janela mudou
+  assert.equal(planoLeitura({ ...ok, ultimo: null }, agora, dias).incremental, false)
+  assert.equal(planoLeitura({ ...ok, ultimo: janela - 9999 }, agora, dias).desde, janela)  // nunca antes da janela
+})
+
+test('evento que aparece ATRASADO além da sobreposição: o incremental não o vê, a reconciliação integral corrige', () => {
+  // simulação do ciclo do servidor: "kommo" = eventos VISÍVEIS na API no momento da leitura
+  const T0 = 2_000_000, dias = 7
+  const visiveis: any[] = [comId(1, ent(1, T0 - 700))]                       // cliente falou
+  const ler = (cache: any, agora: number) => {
+    const p = planoLeitura(cache, agora, dias)
+    const novos = compactar(visiveis.filter((e) => e.created_at >= p.desde))
+    const eventos = mesclarEventos(p.base, novos, agora - dias * 86400)
+    return { eventos, completo: true, dias, ultimo: agora, integral_em: p.incremental ? cache.integral_em : agora }
+  }
+  let cache = ler(null, T0)                                                       // leitura integral em T0
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 1)
+  visiveis.push(comId(2, sai(1, T0 - 601, 42)))                                  // resposta humana com data ANTIGA, revelada depois
+  for (const t of [T0 + 30, T0 + 60, T0 + 90]) cache = ler(cache, t)              // incrementais: não alcançam T0 − 601
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 1)               // ainda pendente (limite conhecido)
+  cache = ler(cache, T0 + RECONCILIAR_S)                                          // reconciliação integral
+  assert.equal(cache.integral_em, T0 + RECONCILIAR_S)
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 0)               // corrigido
 })

@@ -138,7 +138,9 @@ Deno.serve(async (req) => {
     Object.assign(talks, await statusDosTalks(precisa, (p) => get(`/api/v4/talks?limit=250&page=${p}`), (id) => get(`/api/v4/talks/${id}`),
       CHATS_PAGINAS_TALKS, CHATS_MAX_TALKS, (e) => e instanceof KommoLimite || e instanceof Interrupcao))
     return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC,
-             eventos, completo, ultimo: completo ? lidoEmC : null, lidos: lidas.tarefas.length, incremental: plano.incremental }
+             eventos, completo, ultimo: completo ? lidoEmC : null, lidos: lidas.tarefas.length, incremental: plano.incremental,
+             // checkpoint da última leitura INTEGRAL completa (o incremental o mantém; a reconciliação o renova)
+             integral_em: completo ? (plano.incremental ? Number(anterior?.integral_em) : lidoEmC) : null }
   }
 
   // renova o cache de chats da conta (linha kommo_user = 0) sob a trava da conta; roda em segundo plano
