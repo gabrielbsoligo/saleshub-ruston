@@ -524,9 +524,15 @@
         $.ajax({ url: '/api/v4/tasks/' + encodeURIComponent(q.id), method: 'GET', dataType: 'json' })
           .done(function (t) {
             if (!vivo(g)) return;
-            if (!t || t.is_completed || Number(t.responsible_user_id) !== Number(state.uid)) {
+            // só conclui se o envelope vivo confirmar TUDO: mesma tarefa, aberta, do usuário e do MESMO lead/contato do
+            // card; envelope incompleto ou diferente = não conclui (o card sai; a próxima leitura traz o estado real)
+            var motivo = t && Number(t.id) === Number(q.id) && t.is_completed === true ? 'concluída'
+              : !t || Number(t.id) !== Number(q.id) || t.is_completed !== false || t.responsible_user_id == null || t.entity_type == null || t.entity_id == null ? 'não pôde ser conferida'
+              : Number(t.responsible_user_id) !== Number(state.uid) ? 'com outra pessoa'
+              : String(t.entity_type) !== String(q.etype) || Number(t.entity_id) !== Number(q.eid) ? 'vinculada a outro registro' : '';
+            if (motivo) {
               mutar(function (s) { s.itens = (s.itens || []).filter(function (x) { return x.id !== q.id; }); });
-              state.aviso = 'Essa tarefa já estava ' + (t && t.is_completed ? 'concluída' : 'com outra pessoa') + ' no Kommo; segui para a próxima.';
+              state.aviso = 'Essa tarefa ' + (motivo === 'não pôde ser conferida' ? motivo : 'já estava ' + motivo) + ' no Kommo; não concluí e segui para a próxima.';
               state.atual = null; montar(); avancar(); return;
             }
             concluirAgora(q, g);
@@ -957,7 +963,7 @@
         state.uid = sys.user_id || (window.AMOCRM && AMOCRM.constant && AMOCRM.constant('user') && AMOCRM.constant('user').id) || null;
         state.sub = sys.subdomain || location.hostname.split('.')[0] || 'acc';
         if (!state.uid || !ativoParaEsteUsuario()) return;   // fora da lista de teste: widget inerte
-        state.booted = true; state.destruido = false; state.geracao++; state.carregando = false; state.rev = '';
+        state.booted = true; state.destruido = false; state.geracao++; state.carregando = false; state.reTentar = 0; state.rev = '';
         var g = state.geracao, p = self.params || {};
         state.base = String(p.cdn_path || p.path || '').replace(/\/+$/, '');
         try { state.atual = JSON.parse(sessionStorage.getItem(key('atual')) || 'null'); } catch (e) { state.atual = null; }
@@ -987,7 +993,7 @@
       }
 
       function destruir() {
-        state.destruido = true; state.geracao++; state.carregando = false;
+        state.destruido = true; state.geracao++; state.carregando = false; state.reTentar = 0;
         pararVoz(); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; voz.tel = { chave: '', contatos: null, erro: '', carregando: false };
         state.timers.forEach(function (x) { if (x.t === 'i') clearInterval(x.h); else clearTimeout(x.h); });
         state.timers = [];

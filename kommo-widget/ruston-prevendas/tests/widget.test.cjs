@@ -160,7 +160,7 @@ function kommo(env, handler) {
   }
 }
 const SNAP = 'rpv_snap_financeirorustonengenhariacombr_11420911'
-const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, complete_till: AGORA - 60, text: 't' + id })
+const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, entity_type: 'leads', entity_id: id * 10, complete_till: AGORA - 60, text: 't' + id })
 
 test('concluir: a réplica atrasada (ainda com a tarefa aberta) não a ressuscita no ciclo seguinte', () => {
   const env = ambiente()
@@ -1115,4 +1115,54 @@ test('erro dentro do tratamento da resposta não deixa o ciclo preso em "carrega
   w.callbacks.init(); env.rodarTimers('t'); assert.equal(n, 1)
   env.rodarTimers('i')
   assert.equal(n, 2); assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+for (const [nome, envelope] of [
+  ['vinculada a OUTRO lead', { entity_id: 999 }],
+  ['vinculada a um CONTATO (tipo diferente)', { entity_type: 'contacts' }],
+  ['envelope sem entidade', { entity_type: undefined, entity_id: undefined }],
+  ['envelope de OUTRA tarefa', { id: 2 }],
+  ['is_completed ausente', { is_completed: undefined }],
+]) {
+  test('Concluir: tarefa aberta e do SDR, mas ' + nome + ' → NÃO conclui; o card sai', () => {
+    const env = ambiente()
+    let patches = 0
+    kommo(env, (o) => {
+      if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+      if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), entity_type: 'leads', entity_id: 10, ...envelope } }
+      return { status: 0 }
+    })
+    const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)] }])
+    w.callbacks.init(); env.rodarTimers('t')
+    clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+    clicar(env, 'concluir')
+    assert.equal(patches, 0)
+    assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(SNAP)).itens.map((t) => t.id), [2])
+  })
+}
+
+test('Concluir: envelope completo e igual ao card (tarefa, aberta, dono, lead) → conclui', () => {
+  const env = ambiente()
+  let patches = 0
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), entity_type: 'leads', entity_id: 10 } }
+    return { status: 0 }
+  })
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'avancar'); clicar(env, 'concluir')
+  assert.equal(patches, 1)
+})
+
+test('retry pendente → destroy → init → novo em_andamento: agenda o retry de 7 s de novo', () => {
+  const env = ambiente()
+  const w = instanciar(env, [])
+  w.$authorizedAjax = () => ({ then: (ok, err) => err({ status: 503, responseJSON: { erro: 'em_andamento', retry_after: 3 } }) })
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
+  w.callbacks.destroy(); assert.equal(env.timers.size, 0)
+  env.ctx.localStorage.setItem('rpv_pausa_financeirorustonengenhariacombr_11420911', '0')
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
 })
