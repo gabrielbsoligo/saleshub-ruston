@@ -51,7 +51,10 @@ Deno.serve(async (req) => {
   const secret = Deno.env.get('KOMMO_WIDGET_SECRET'), clientId = Deno.env.get('KOMMO_WIDGET_CLIENT_ID'), contaId = Deno.env.get('KOMMO_ACCOUNT_ID')
   if (!secret || !clientId || !contaId || !Deno.env.get('KOMMO_API_TOKEN')) return json({ erro: 'nao_configurado' }, 503, origin)
   const v = await verificarJwtKommo(req.headers.get('X-Auth-Token') ?? '', { secret, contaId, host: `${SUB}.kommo.com`, clientId })
-  if (!v.ok) return json({ erro: v.erro }, 401, origin)
+  if (!v.ok) {
+    if (v.detalhe) console.warn('[' + (new URL(req.url).pathname.split('/').pop()) + '] jwt', v.erro, v.detalhe)
+    return json(v.detalhe ? { erro: v.erro, detalhe: v.detalhe } : { erro: v.erro }, 401, origin)
+  }
   const uid = v.userId
   const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
   const { data: membro, error: eM } = await sb.from('team_members').select('id,active').eq('kommo_user_id', uid).maybeSingle()

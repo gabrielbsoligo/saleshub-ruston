@@ -16,7 +16,29 @@ export interface Esperado {
 
 export type ResultadoJwt =
   | { ok: true; userId: number; payload: Record<string, unknown> }
-  | { ok: false; erro: string }
+  | { ok: false; erro: string; detalhe?: string }
+
+// Domínios em que uma conta Kommo pode aparecer no iss (Kommo e amoCRM são a mesma plataforma).
+const DOMINIOS_KOMMO = ['kommo.com', 'amocrm.com', 'amocrm.ru']
+/** Host do iss, aceitando o endereço com ou sem esquema ("https://x.kommo.com" ou "x.kommo.com"). */
+export function hostDoEmissor(iss: unknown): string {
+  const t = String(iss ?? '').trim()
+  if (!t) return ''
+  try { return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : `https://${t}`).hostname.toLowerCase() } catch { return '' }
+}
+/**
+ * Emissor aceito: o host esperado exato ou o MESMO subdomínio da conta num domínio Kommo/amoCRM (e coerente com
+ * o claim subdomain, se vier). Defesa em profundidade: assinatura (secret da integração) e account_id já conferidos.
+ */
+export function emissorAceito(iss: unknown, hostEsperado: string, subdomainClaim: unknown): boolean {
+  const h = hostDoEmissor(iss), esperado = hostEsperado.toLowerCase(), sub = esperado.split('.')[0]
+  if (!h) return false
+  // o claim subdomain, quando vier, tem que ser o da conta — vale para QUALQUER host, inclusive o exato
+  if (subdomainClaim != null && String(subdomainClaim).toLowerCase() !== sub) return false
+  if (h === esperado) return true
+  const partes = h.split('.')
+  return partes[0] === sub && DOMINIOS_KOMMO.includes(partes.slice(1).join('.'))
+}
 
 export async function verificarJwtKommo(token: string, e: Esperado, agora = Math.floor(Date.now() / 1000)): Promise<ResultadoJwt> {
   const partes = String(token || '').split('.')
@@ -38,9 +60,8 @@ export async function verificarJwtKommo(token: string, e: Esperado, agora = Math
   if (typeof payload.nbf === 'number' && payload.nbf > agora + folga) return { ok: false, erro: 'jwt_nbf' }
   if (typeof payload.iat !== 'number' || payload.iat > agora + folga) return { ok: false, erro: 'jwt_iat' }
   if (String(payload.account_id ?? '') !== e.contaId) return { ok: false, erro: 'jwt_conta' }
-  let host = ''
-  try { host = new URL(String(payload.iss ?? '')).hostname } catch { host = '' }
-  if (host !== e.host) return { ok: false, erro: 'jwt_emissor' }
+  // assinatura e conta já conferidas: o host recebido não é segredo e vai no detalhe para diagnóstico
+  if (!emissorAceito(payload.iss, e.host, payload.subdomain)) return { ok: false, erro: 'jwt_emissor', detalhe: hostDoEmissor(payload.iss) || String(payload.iss ?? '').slice(0, 80) }
   if (String(payload.client_uuid ?? '') !== e.clientId) return { ok: false, erro: 'jwt_integracao' }
   const userId = Number(payload.user_id)
   if (!Number.isInteger(userId) || userId <= 0) return { ok: false, erro: 'jwt_usuario' }
