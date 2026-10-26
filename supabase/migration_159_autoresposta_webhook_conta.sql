@@ -10,7 +10,10 @@ ALTER TABLE public.autoresposta_trabalho
   ADD COLUMN IF NOT EXISTS recebido_em TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS contact_id  BIGINT;
 ALTER TABLE public.autoresposta_trabalho ALTER COLUMN kommo_lead_id DROP NOT NULL;   -- mensagem no contato: lead resolvido depois
-CREATE UNIQUE INDEX IF NOT EXISTS autoresposta_trabalho_msg_uniq ON public.autoresposta_trabalho (mensagem_id) WHERE mensagem_id IS NOT NULL;
+-- UNIQUE NÃO parcial: o upsert da edge usa ON CONFLICT (mensagem_id) sem predicado, que não infere
+-- índice parcial (42P10). NULL repetido é permitido num índice único (trabalhos sem mensagem_id).
+DROP INDEX IF EXISTS public.autoresposta_trabalho_msg_uniq;
+CREATE UNIQUE INDEX autoresposta_trabalho_msg_uniq ON public.autoresposta_trabalho (mensagem_id);
 COMMENT ON COLUMN public.autoresposta_trabalho.mensagem_id IS 'id da mensagem no webhook add_message (identidade; mesmo id esperado em /events value_after.message.id)';
 
 ALTER TABLE public.autoresposta_triagem

@@ -112,6 +112,30 @@ function leadValido(r: KommoResp, etapa: string) {
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // 1) WEBHOOK: cria o trabalho ANTES de ler o Kommo e processa; se falhar, fica pendente pro cron.
 // ──────────────────────────────────────────────────────────────────────────────────────────
+// ── Correlação canônica webhook × /events (pura, usada no trabalho E na varredura).
+// Identidade = id da mensagem. Regras:
+//  * evento COM id: é essa mensagem (ids conhecidos e distintos NUNCA se fundem por horário);
+//  * evento SEM id (value_after sem message.id): só é alinhado a uma âncora de identidade comprovada
+//    (mensagem do webhook ou linha já registrada) se houver EXATAMENTE uma âncora a ≤ 2 s; zero ou
+//    mais de uma (ambíguo) → ignorado: nunca vira "outra mensagem" nem cria linha;
+//  * a mensagem do webhook (âncora primária) está SEMPRE no resultado, com o próprio id.
+export type MsgRef = { id: string; ts: number }
+export function correlacionar(eventos: { id: string; ts: number }[], ancoras: MsgRef[], primaria: MsgRef | null): MsgRef[] {
+  const todasAncoras: MsgRef[] = primaria ? [primaria, ...ancoras.filter((a) => a.id !== primaria.id)] : ancoras
+  const vistos = new Map<string, MsgRef>()
+  const por = (r: MsgRef) => { if (!vistos.has(r.id)) vistos.set(r.id, r) }
+  if (primaria) por(primaria)
+  for (const e of eventos) {
+    if (!Number.isFinite(e.ts)) continue
+    if (e.id) { por({ id: e.id, ts: e.ts }); continue }
+    const perto = todasAncoras.filter((a) => Math.abs(a.ts - e.ts) <= 2)
+    if (perto.length === 1) por({ id: perto[0].id, ts: perto[0].ts })
+  }
+  return [...vistos.values()].sort((a, b) => a.ts - b.ts)
+}
+const refDaLinha = (l: Linha): MsgRef => ({ id: l.mensagem_id, ts: Math.floor(new Date(l.recebido_em).getTime() / 1000) })
+const eventosIn = (body: any, etapa: string) => eventos(body, etapa).map((e: any) => ({ id: String(e.value_after?.[0]?.message?.id ?? ''), ts: Number(e.created_at) }))
+
 export async function receberWebhook(deps: Deps, leadId: number | null, msg: MensagemRecebida | null = null, contactId: number | null = null): Promise<Resultado> {
   const t = await deps.repo.criarTrabalho(leadId, msg, contactId)
   try {
@@ -147,27 +171,15 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
 
   const agora = deps.agora()
   const de = agora - 14 * 86400
-  const ins = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in')
-    .map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? ''), ts: Number(e.created_at), semId: !e.value_after?.[0]?.message?.id })).filter((e) => Number.isFinite(e.ts)).sort((a, b) => a.ts - b.ts)
+  const ins = eventosIn(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in')
   const outs = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out')
     .map((e) => Number(e.created_at)).filter(Number.isFinite).sort((a, b) => a - b)
 
-  // A mensagem do webhook é a fonte primária (id + instante + texto). Correlação com /events: pelo id
-  // ou, se o evento não trouxer o id da mensagem, pelo instante (±2 s) — nunca duas linhas pra mesma.
+  // A mensagem do webhook é a fonte primária (id + instante + texto) e SEMPRE ganha linha própria.
+  // Correlação com /events em correlacionar(): por id; evento sem id só se alinha a uma âncora única ≤ 2 s.
   const msgWebhook: MensagemRecebida | null = t.mensagem_id ? { id: String(t.mensagem_id), ts: Math.floor(new Date(t.recebido_em ?? Date.now()).getTime() / 1000), texto: String(t.texto ?? '') } : null
   const existentes = await repo.linhasDoLead(leadId)
-  const mesma = (x: { id: string; ts: number; semId?: boolean }, y: { id: string; ts: number }) => (x.id && x.id === y.id) || Math.abs(x.ts - y.ts) <= 2
-  const insNorm: { id: string; ts: number }[] = []
-  for (const e of ins) {
-    if (!e.id) { // evento sem id de mensagem: alinha ao webhook ou a uma linha existente no mesmo instante, senão ignora
-      const alvo = (msgWebhook && Math.abs(e.ts - msgWebhook.ts) <= 2) ? msgWebhook.id : existentes.find((l) => Math.abs(Math.floor(new Date(l.recebido_em).getTime() / 1000) - e.ts) <= 2)?.mensagem_id
-      if (alvo) insNorm.push({ id: alvo, ts: e.ts }); continue
-    }
-    insNorm.push({ id: e.id, ts: e.ts })
-  }
-  if (msgWebhook && !insNorm.some((i) => mesma(i, msgWebhook))) insNorm.push({ id: msgWebhook.id, ts: msgWebhook.ts })
-  const dedup = new Map<string, { id: string; ts: number }>(); for (const i of insNorm) if (!dedup.has(i.id)) dedup.set(i.id, i)
-  const todas = [...dedup.values()].sort((a, b) => a.ts - b.ts)
+  const todas = correlacionar(ins, existentes.map(refDaLinha), msgWebhook ? { id: msgWebhook.id, ts: msgWebhook.ts } : null)
   if (!todas.length) {
     const estado = t.tentativas + 1 >= deps.maxTentativas ? 'descartado' : 'pendente'
     await repo.concluirTrabalho(t.id, estado, 'sem mensagem recebida nos eventos')
@@ -363,7 +375,10 @@ export async function varrer(deps: Deps, limite = 40): Promise<Resultado> {
         const lead = leadValido(await kommoLote('GET', `/api/v4/leads/${l.kommo_lead_id}`, undefined, { etapa: 'lead' }), 'lead')
         if (!lead) { const ps = await repo.claim(l.id, deps.leaseS); if (ps) await repo.fim(l.id, ps.token, 'superado', { motivo_efeito: 'lead não existe' }); continue }
         const de = msgTs - 14 * 86400
-        const ins = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in').map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? e.id), ts: Number(e.created_at) }))
+        // mesma correlação canônica do trabalho, ancorada na linha em análise e nas linhas do lead:
+        // o alias (evento sem id) da própria mensagem NÃO conta como 2ª mensagem (não bloqueia R3)
+        const linhasLead = await repo.linhasDoLead(l.kommo_lead_id)
+        const ins = correlacionar(eventosIn(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in'), [refDaLinha(l), ...linhasLead.map(refDaLinha)], null)
         const outs = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out').map((e) => Number(e.created_at))
         out.push({ id: l.id, lead: l.kommo_lead_id, ...(await decidirEAplicar(d, cfg, lead, l, ins, outs)) })
       } catch (e) {
