@@ -48,6 +48,13 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
   `notas.incompleta=true` e `final=null` (tempo e follow-up medidos; qualificação/proposta/tom sem nota) — nunca zero.
 - **Varredura** só pega trabalhos devidos (`proximo_em <= now`, mais antigos primeiro, 15 por execução).
 - Remetente do webhook e número cadastrado passam pela MESMA canonicalização (`numeroWa`: DDI 55 + 9º dígito).
+- **Entrada da empresa** = RPC `oculto_entrada` (uma transação, idempotente): mensagem + watermark `entrada_rev` +
+  `proximo_em=now`; vale também durante a abertura (`pendente`). `oculto_envio_registrar`/`oculto_liberar` comparam
+  a watermark com o snapshot do avanço e, se a empresa escreveu no meio, reagendam para agora.
+- **Identidade de mensagem**: `key.id`; sem ele, determinística (remetente|messageTimestamp|texto); sem id E sem
+  timestamp = quarentena (ignorada com aviso) — nunca um id pela hora de recebimento.
+- **Reconciliação**: só confirma com exatamente 1 evidência nova (eco local ∪ provedor, unidas por wa_id);
+  2+ = erro ambíguo, sem reenvio.
 
 ## Limites e cuidados
 - Número NÃO oficial: risco de bloqueio pela Meta; volume baixo, 1 sondagem por número-alvo por vez,
