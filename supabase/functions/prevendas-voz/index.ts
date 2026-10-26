@@ -55,7 +55,10 @@ Deno.serve(async (req) => {
 
   // 1) identidade
   const v = await verificarJwtKommo(req.headers.get('X-Auth-Token') ?? '', { secret, contaId, host: `${SUB}.kommo.com`, clientId })
-  if (!v.ok) return json({ erro: v.erro }, 401, origin)
+  if (!v.ok) {
+    if (v.detalhe) console.warn('[' + (new URL(req.url).pathname.split('/').pop()) + '] jwt', v.erro, v.detalhe)
+    return json(v.detalhe ? { erro: v.erro, detalhe: v.detalhe } : { erro: v.erro }, 401, origin)
+  }
   const uid = v.userId
   if (!usuarioLiberado(env('PREVENDAS_VOZ_USUARIOS'), uid)) return json({ erro: 'voz_nao_liberada' }, 403, origin)
   const sb = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'))

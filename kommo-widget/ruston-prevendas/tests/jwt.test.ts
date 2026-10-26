@@ -50,3 +50,22 @@ test('payload adulterado com assinatura antiga é rejeitado', async () => {
   const r = await verificarJwtKommo(falso, E, agora)
   assert.equal(r.ok, false)
 })
+
+test('emissor: aceita sem esquema, amoCRM do mesmo subdomínio; recusa outra conta/domínio e diz o host recebido', async () => {
+  for (const iss of ['financeirorustonengenhariacombr.kommo.com', 'https://financeirorustonengenhariacombr.kommo.com/', 'https://FinanceiroRustonEngenhariaComBr.kommo.com', 'https://financeirorustonengenhariacombr.amocrm.com']) {
+    const r = await verificarJwtKommo(assinar({ ...base, iss, subdomain: 'financeirorustonengenhariacombr' }), E, agora)
+    assert.equal(r.ok, true, iss)
+  }
+  const casos: [unknown, string][] = [
+    ['https://outraconta.kommo.com', 'outraconta.kommo.com'],
+    ['https://financeirorustonengenhariacombr.kommo.com.evil.io', 'financeirorustonengenhariacombr.kommo.com.evil.io'],
+    ['https://financeirorustonengenhariacombr.evil.io', 'financeirorustonengenhariacombr.evil.io'],
+    [undefined, ''],
+  ]
+  for (const [iss, det] of casos) {
+    const r = await verificarJwtKommo(assinar({ ...base, iss }), E, agora) as any
+    assert.equal(r.erro, 'jwt_emissor', String(iss)); assert.equal(r.detalhe, det)
+  }
+  const sub = await verificarJwtKommo(assinar({ ...base, iss: 'https://financeirorustonengenhariacombr.amocrm.com', subdomain: 'outra' }), E, agora) as any
+  assert.equal(sub.erro, 'jwt_emissor')                                     // claim subdomain incoerente
+})
