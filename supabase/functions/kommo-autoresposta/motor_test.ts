@@ -1,7 +1,7 @@
 // deno test --allow-read supabase/functions/kommo-autoresposta/motor_test.ts
 // Fluxo completo (webhook → decisão → efeito → varredura) com repositório e Kommo FALSOS, sem rede.
 import { assert, assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { LeituraFalhou, Throttled, aplicarEfeito, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, aplicarEfeito, correlacionar, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
 import type { Cfg, Padrao } from './triagem.ts'
 
 const PIPE = 14062116, RESP = 108545256, D1 = 108545280, D2 = 108545284
@@ -16,7 +16,7 @@ const copia = <T,>(x: T): T => JSON.parse(JSON.stringify(x))
 
 // ── repositório em memória
 type LinhaFake = Linha & { lease_ate: number | null; extra: Record<string, unknown> }
-type TrabalhoFake = Trabalho & { estado: string; erro: string | null }
+type TrabalhoFake = Trabalho & { estado: string; erro: string | null; contact_id?: number | null }
 function repoFake(cfg: Cfg | null = cfgBase) {
   const trabalhos: TrabalhoFake[] = []
   const linhas: LinhaFake[] = []
@@ -27,7 +27,9 @@ function repoFake(cfg: Cfg | null = cfgBase) {
     repo: {
       async padroesAtivos() { return PADROES },
       async config(p: number) { return estado.cfg && Number(estado.cfg.pipeline_id) === Number(p) ? { ...estado.cfg } : null },
-      async criarTrabalho(leadId: number) { const t = { id: seq++, kommo_lead_id: leadId, tentativas: 0, estado: 'pendente', erro: null }; trabalhos.push(t); return t },
+      async criarTrabalho(leadId: number | null, msg: any = null, contactId: number | null = null) { const ja = msg?.id ? trabalhos.find((x) => x.mensagem_id === msg.id) : null; if (ja) return ja; const t = { id: seq++, kommo_lead_id: leadId, tentativas: 0, estado: 'pendente', erro: null, mensagem_id: msg?.id ?? null, texto: msg?.texto ?? null, recebido_em: msg ? new Date(msg.ts * 1000).toISOString() : null, contact_id: contactId }; trabalhos.push(t); return t },
+      async vincularLead(id: number, leadId: number) { trabalhos.find((x) => x.id === id)!.kommo_lead_id = leadId },
+      async atualizarTexto(id: number, texto: string) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || l.decidido_em) return false; l.texto = texto; return true },
       async concluirTrabalho(id: number, estado: string, erro: string | null = null) { const t = trabalhos.find((x) => x.id === id)!; t.estado = estado; t.erro = erro; if (estado === 'pendente') t.tentativas++ },
       async trabalhosPendentes(n: number) { return trabalhos.filter((t) => t.estado === 'pendente').slice(0, n) },
       async linhasDoLead(leadId: number) { return copia(linhas.filter((l) => l.kommo_lead_id === leadId)) },
@@ -35,7 +37,7 @@ function repoFake(cfg: Cfg | null = cfgBase) {
       async linha(leadId: number, m: string) { return copia(linhas.find((l) => l.kommo_lead_id === leadId && l.mensagem_id === m)!) },
       async decidir(id: number, dec: any) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || l.decidido_em || (l.lease_ate && l.lease_ate > Date.now())) return null; Object.assign(l, dec); return copia(l) },
       async outrosLeadsComHash(hash: string, leadId: number) { return new Set(linhas.filter((l) => l.hash === hash && l.kommo_lead_id !== leadId).map((l) => l.kommo_lead_id)).size },
-      async superar(leadId: number, exceto: number | null, antesDe: string | null, motivo: string) { for (const l of linhas) if (l.kommo_lead_id === leadId && l.id !== exceto && ['pendente', 'falhou'].includes(l.estado_efeito) && (!antesDe || l.recebido_em < antesDe)) { l.estado_efeito = 'superado'; l.extra.motivo_efeito = motivo } },
+      async superar(leadId: number, exceto: number | null, antesDe: string | null, motivo: string, opts: { somenteSemTexto?: boolean } = {}) { for (const l of linhas) if (l.kommo_lead_id === leadId && l.id !== exceto && ['pendente', 'falhou'].includes(l.estado_efeito) && (!antesDe || l.recebido_em < antesDe) && (!opts.somenteSemTexto || !(l.texto ?? '').trim())) { l.estado_efeito = 'superado'; l.extra.motivo_efeito = motivo } },
       async claim(id: number, leaseS: number) { const l = linhas.find((x) => x.id === id)!; const livre = ['pendente', 'falhou'].includes(l.estado_efeito) || (l.estado_efeito === 'em_andamento' && (l.lease_ate ?? 0) < Date.now()); if (!livre) return null; l.estado_efeito = 'em_andamento'; l.lease_ate = Date.now() + leaseS * 1000; l.claim_token = crypto.randomUUID(); return { token: l.claim_token, linha: copia(l) } },
       async renovar(id: number, token: string, leaseS: number) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token || l.estado_efeito !== 'em_andamento' || (l.lease_ate ?? 0) < Date.now()) return false; l.lease_ate = Date.now() + leaseS * 1000; return true },
       async fase(id: number, token: string, fase: string, extra: Record<string, unknown> = {}) { const l = linhas.find((x) => x.id === id)!; if (l.claim_token !== token) return false; l.efeito_fase = fase; Object.assign(l, extra); return true },
@@ -67,6 +69,7 @@ function kommoFake(o: KommoFakeOpts) {
     if (m === 'GET' && p.includes('/notes')) return { ok: true, status: 200, body: { _embedded: { notes: notas.map((t) => ({ params: { text: t } })) } } }
     escritas.push({ m, p, body })
     if (m === 'POST' && p.includes('/notes')) notas.push((body as any)[0].params.text)
+    if (m === 'PATCH' && (body as any)?.status_id) o.leadStatus = Number((body as any).status_id) // como o Kommo: o lead muda de etapa
     return { ok: true, status: 200, body: {} }
   }
   return { fn, escritas, notas }
@@ -116,11 +119,11 @@ Deno.test('#2 evento ainda não visível → trabalho continua pendente (não sk
   assertEquals(r.pendente, true); assertEquals(st.trabalhos[0].estado, 'pendente'); assertEquals(st.linhas.length, 0)
 })
 
-Deno.test('#2 duas mensagens novas: ambas ganham linha; a anterior fica superada (texto indisponível); só a última decide', async () => {
+Deno.test('#2 duas mensagens novas (caminho legado, sem webhook): ambas ganham linha; a anterior sem texto fica pendente para o cron; só a última decide', async () => {
   const st = repoFake(); const k = kommoFake({ texto: 'pode mandar a proposta', ins: [{ id: 'a', ts: T0 - 8 }, { id: 'b', ts: T0 - 3 }], outs: [T0 - 1000] })
   const r = await receberWebhook(deps(st.repo, k.fn), 1)
   assertEquals(st.linhas.length, 2)
-  assertEquals(st.linhas.find((l) => l.mensagem_id === 'a')!.estado_efeito, 'superado')
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'a')!.estado_efeito, 'pendente')
   assertEquals(r.classificacao, 'humano'); assertEquals(k.escritas.filter((e) => e.body?.status_id).length, 1)
 })
 
@@ -200,12 +203,12 @@ Deno.test('R2: rápida e única fica indeterminada; passada a espera sem 2ª men
   assert(JSON.stringify(r2).includes('sem_2a_msg=humano'))
 })
 
-Deno.test('texto vazio: pendente até 5 tentativas, depois mídia = humano', async () => {
+Deno.test('texto vazio (linha só de /events): pendente até 5 tentativas, depois superada — nunca decisão', async () => {
   const st = repoFake(); const k = kommoFake({ texto: '', ins: [{ id: 'm1', ts: T0 - 900 }], outs: [T0 - 1000] })
   await receberWebhook(deps(st.repo, k.fn), 1)
   assertEquals(st.linhas[0].regras, ['texto_vazio'])
-  for (let i = 0; i < 5; i++) await varrer(deps(st.repo, k.fn))
-  assertEquals(st.linhas[0].classificacao, 'humano'); assertEquals(st.linhas[0].texto, '[midia]')
+  for (let i = 0; i < 6; i++) await varrer(deps(st.repo, k.fn))
+  assertEquals(st.linhas[0].estado_efeito, 'superado'); assertEquals(st.linhas[0].classificacao, 'indeterminado'); assertEquals(k.escritas.length, 0)
 })
 
 Deno.test('aplicarEfeito: lead deletado → superado; funil sem status_respondeu → observado', async () => {
@@ -289,6 +292,10 @@ Deno.test('R4#5 continuação de conversa: "ok" rápido (R2 pendente) + "Quero e
   const k2 = kommoFake({ texto: 'Quero entender', ins: [{ id: 'm1', ts: T0 - 5 }, { id: 'm2', ts: T0 - 1 }], outs: [T0 - 10] })
   const r2 = await receberWebhook(deps(st.repo, k2.fn, T0), 1)
   assertEquals(r2.classificacao, 'humano'); assertEquals(r2.estado, 'aplicado')
+  // m1 ('ok', texto conhecido) não é superada por tabela: o cron a resolve (2ª msg → humano) e a
+  // revalidação vê o lead já em RESPONDEU → superado, sem 2º PATCH
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'm1')!.estado_efeito, 'pendente')
+  await varrer(deps(st.repo, k2.fn, T0 + 200))
   assertEquals(st.linhas.find((l) => l.mensagem_id === 'm1')!.estado_efeito, 'superado')
   assertEquals(k2.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
 })
@@ -330,4 +337,205 @@ Deno.test('R5 varredura com eventos fora de ordem: conversa anterior ao último 
     assertEquals(l.intervalo_s, 5, `ordem ${ordem}: intervalo deve ser do disparo T0-10`)
     assert(!k2.escritas.some((e) => e.body?.status_id), `ordem ${ordem}: não pode mover`)
   }
+})
+
+
+// ── webhook de conta (add_message): texto direto, sem campo; evento pode ainda não estar em /events
+Deno.test('WH texto direto do webhook decide sem ler o campo; mensagem ainda ausente em /events é incluída', async () => {
+  const st = repoFake()
+  const k = kommoFake({ texto: '', ins: [], outs: [T0 - 1000] }) // /events sem a mensagem; campo vazio
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh1', ts: T0 - 5, texto: 'Oi, pode falar' })
+  assertEquals(r.classificacao, 'humano'); assertEquals(r.estado, 'aplicado')
+  assertEquals(st.linhas[0].mensagem_id, 'wh1'); assertEquals(st.linhas[0].texto, 'Oi, pode falar')
+  assert(!k.escritas.some((e) => e.p.includes('custom_fields')))
+})
+
+Deno.test('WH áudio ([audio] vindo do parser) é humano forte; autoresposta do webhook marca tag e não move', async () => {
+  const st = repoFake(); const k = kommoFake({ ins: [{ id: 'wh2', ts: T0 - 5 }], outs: [T0 - 10] })
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh2', ts: T0 - 5, texto: '[audio]' })
+  assertEquals(r.classificacao, 'humano')
+  const st2 = repoFake(); const k2 = kommoFake({ ins: [{ id: 'wh3', ts: T0 - 5 }], outs: [T0 - 10] })
+  const r2 = await receberWebhook({ ...deps(st2.repo, k2.fn), campoTexto: '' }, 1, { id: 'wh3', ts: T0 - 5, texto: 'Agradecemos sua mensagem. Não estamos disponíveis.' })
+  assertEquals(r2.classificacao, 'autoresposta'); assert(!k2.escritas.some((e) => e.body?.status_id))
+})
+
+Deno.test('WH sem campo configurado e sem texto: segue o caminho texto_vazio (pendente), sem lançar', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [{ id: 'wh4', ts: T0 - 900 }], outs: [T0 - 1000] })
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh4', ts: T0 - 900, texto: '' })
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(st.linhas[0].regras, ['texto_vazio'])
+})
+
+
+// ── 5ª rodada: recepção × resolução × linhas existentes
+Deno.test('R5#1 dois webhooks de autoresposta: cada trabalho decide a SUA mensagem; texto conhecido nunca é superado nem fica vazio', async () => {
+  const st = repoFake()
+  const txt1 = 'Agradecemos sua mensagem. Não estamos disponíveis.', txt2 = 'Mensagem automática: retornaremos em breve.'
+  // /events já adiantado com m1 e m2 quando chega o trabalho de m1
+  const k = kommoFake({ ins: [{ id: 'm1', ts: T0 - 8 }, { id: 'm2', ts: T0 - 3 }], outs: [T0 - 10], tags: [] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  const r1 = await receberWebhook(d, 1, { id: 'm1', ts: T0 - 8, texto: txt1 })
+  assertEquals(r1.classificacao, 'autoresposta')
+  const l2a = st.linhas.find((l) => l.mensagem_id === 'm2')!
+  assertEquals(l2a.estado_efeito, 'pendente', 'm2 sem texto ainda NÃO decidida nem removida')
+  const r2 = await receberWebhook(d, 1, { id: 'm2', ts: T0 - 3, texto: txt2 })
+  const l1 = st.linhas.find((l) => l.mensagem_id === 'm1')!, l2 = st.linhas.find((l) => l.mensagem_id === 'm2')!
+  assertEquals(l1.texto, txt1); assertEquals(l2.texto, txt2, 'texto do 2º webhook preenche a linha criada antes')
+  assertEquals(r2.classificacao, 'autoresposta'); assertEquals(l1.estado_efeito, 'aplicado')
+})
+
+Deno.test('R5#1 trabalhos fora de ordem (m2 chega antes de m1): m1 ainda é decidida pelo próprio texto', async () => {
+  const st = repoFake(); const k = kommoFake({ ins: [{ id: 'm1', ts: T0 - 8 }, { id: 'm2', ts: T0 - 3 }], outs: [T0 - 1000] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  await receberWebhook(d, 1, { id: 'm2', ts: T0 - 3, texto: 'Oi, pode falar' }) // humano: move o lead
+  const r1 = await receberWebhook(d, 1, { id: 'm1', ts: T0 - 8, texto: 'Mensagem automática: fora do horário' })
+  assertEquals(r1.classificacao, 'autoresposta'); assertEquals(r1.estado, 'superado') // decidida pelo próprio texto; efeito superado (lead já saiu)
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'm1')!.texto, 'Mensagem automática: fora do horário')
+  assertEquals(k.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
+})
+
+Deno.test('R5#1 linha só de /events sem texto nunca vira humano: após as tentativas fica superada', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [{ id: 'ev1', ts: T0 - 900 }], outs: [T0 - 1000] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  await receberWebhook(d, 1, null) // caminho legado (sem mensagem): cria linha de /events sem texto
+  for (let i = 0; i < 6; i++) await varrer(d)
+  assertEquals(st.linhas[0].estado_efeito, 'superado'); assertEquals(k.escritas.length, 0)
+})
+
+Deno.test('R5#2 mensagem no CONTATO: trabalho durável antes de qualquer GET; falha de leitura → pendente, não perde', async () => {
+  const st = repoFake(); const k = kommoFake({ falhar: { contato: 503 } })
+  await assertRejects(() => receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, null, { id: 'c1', ts: T0 - 5, texto: 'Oi' }, 777), LeituraFalhou)
+  assertEquals(st.trabalhos[0].estado, 'pendente'); assertEquals(st.trabalhos[0].contact_id, 777); assertEquals(st.trabalhos[0].kommo_lead_id, null)
+})
+
+Deno.test('R5#2 reentrega do mesmo webhook (mesmo message id) não duplica trabalho', async () => {
+  const st = repoFake(); const k = kommoFake({ ins: [{ id: 'm1', ts: T0 - 5 }], outs: [T0 - 1000] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  await receberWebhook(d, 1, { id: 'm1', ts: T0 - 5, texto: 'Oi, pode falar' })
+  await receberWebhook(d, 1, { id: 'm1', ts: T0 - 5, texto: 'Oi, pode falar' })
+  assertEquals(st.trabalhos.length, 1); assertEquals(st.linhas.length, 1)
+})
+
+Deno.test('R5#3 leadPeloContato: lê TODOS os leads; candidato só em etapa de origem; leitura falha = LeituraFalhou; 2 candidatos = ambíguo', async () => {
+  const st = repoFake()
+  const leads: Record<number, { pipeline_id: number; status_id: number }> = {}
+  for (let i = 1; i <= 11; i++) leads[i] = { pipeline_id: 999, status_id: 1 }
+  leads[1] = { pipeline_id: PIPE, status_id: D1 }; leads[11] = { pipeline_id: PIPE, status_id: D2 }
+  const k: KommoFn = async (m, p) => {
+    if (p.startsWith('/api/v4/contacts/')) return { ok: true, status: 200, body: { id: 5, _embedded: { leads: Object.keys(leads).map((id) => ({ id: Number(id) })) } } }
+    const id = Number(p.split('/').pop()); return { ok: true, status: 200, body: { id, ...leads[id] } }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const { leadPeloContato } = await import('./motor.ts')
+  assertEquals((await leadPeloContato(d, 5)).leadId, null) // 1 e 11 elegíveis → ambíguo (o 11º também é lido)
+  leads[11] = { pipeline_id: PIPE, status_id: RESP } // fora das etapas de origem
+  assertEquals((await leadPeloContato(d, 5)).leadId, 1)
+  const kFalha: KommoFn = async (m, p) => { if (p.startsWith('/api/v4/contacts/')) return k(m, p); if (p.endsWith('/11')) return { ok: false, status: 503, body: null }; return k(m, p) }
+  await assertRejects(() => leadPeloContato({ ...d, kommo: kFalha }, 5), LeituraFalhou)
+})
+
+Deno.test('R5#4 evento de /events sem id de mensagem no mesmo instante do webhook é a MESMA mensagem (não cria 2ª linha)', async () => {
+  const st = repoFake()
+  const k: KommoFn = async (m, p, b, o) => {
+    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'evento-alias', created_at: T0 - 5, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const r = await receberWebhook({ ...deps(st.repo, k), campoTexto: '' }, 1, { id: 'wh-uuid', ts: T0 - 5, texto: 'Agradecemos sua mensagem' })
+  assertEquals(r.classificacao, 'autoresposta'); assertEquals(st.linhas.length, 1); assertEquals(st.linhas[0].mensagem_id, 'wh-uuid')
+})
+
+
+Deno.test('R6 correlacionar: ids conhecidos distintos nunca se fundem por horário; evento sem id só com âncora única <=2 s; webhook sempre presente', () => {
+  // webhook m2 a 1 s do evento m1 (id conhecido): são DUAS mensagens
+  assertEquals(correlacionar([{ id: 'm1', ts: 100 }], [], { id: 'm2', ts: 101 }).map((r) => r.id).sort(), ['m1', 'm2'])
+  // evento sem id: uma âncora <=2 s → alias da âncora; duas âncoras <=2 s → ambíguo, ignorado; nenhuma → ignorado
+  assertEquals(correlacionar([{ id: '', ts: 100 }], [{ id: 'a', ts: 101 }], null), [{ id: 'a', ts: 101 }])
+  assertEquals(correlacionar([{ id: '', ts: 100 }], [{ id: 'a', ts: 101 }, { id: 'b', ts: 99 }], null), [{ id: 'b', ts: 99 }, { id: 'a', ts: 101 }]) // ambíguo: só as âncoras, evento ignorado
+  assertEquals(correlacionar([{ id: '', ts: 100 }], [], null), [])
+  // união: âncora persistida entra mesmo sem aparecer em /events
+  assertEquals(correlacionar([{ id: 'e1', ts: 50 }], [{ id: 'a', ts: 101 }], { id: 'w', ts: 102 }).map((r) => r.id), ['e1', 'a', 'w'])
+  // webhook sem nenhum evento ainda → mesmo assim está no resultado
+  assertEquals(correlacionar([], [], { id: 'w', ts: 5 }), [{ id: 'w', ts: 5 }])
+})
+
+Deno.test('R6#2 webhook m2 com /events trazendo só m1 um segundo antes: m2 ganha a própria linha e é decidida (não falha em repo.linha)', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [{ id: 'm1', ts: T0 - 6 }], outs: [T0 - 1000] })
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'm2', ts: T0 - 5, texto: 'Oi, pode falar sim' })
+  assertEquals(r.classificacao, 'humano'); assertEquals(r.estado, 'aplicado')
+  assertEquals(st.linhas.map((l) => l.mensagem_id).sort(), ['m1', 'm2'])
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'm2')!.texto, 'Oi, pode falar sim')
+})
+
+Deno.test('R6#2 evento atrasado sem id (alias) de uma mensagem já registrada não cria linha nem conta como 2ª mensagem', async () => {
+  const st = repoFake()
+  let fase = 1
+  const k: KommoFn = async (m, p, b, o) => {
+    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: fase === 1 ? [] : [{ id: 'ev-sem-id', created_at: T0 - 5, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })   // R2: rápida e curta → indeterminado
+  assertEquals(r.classificacao, 'indeterminado'); fase = 2
+  await varrer({ ...d, agora: () => T0 + 400 })                                  // evento atrasado só agora, sem id
+  assertEquals(st.linhas.length, 1); assertEquals(st.linhas[0].classificacao, 'humano') // 1 linha; humano por espera vencida, não por "2ª msg"
+})
+
+Deno.test('R6#3 varredura: alias do próprio evento não bloqueia R3 (mesmo texto longo em 2 outros leads → autoresposta, sem PATCH)', async () => {
+  const st = repoFake()
+  const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
+  const escritas: any[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    const mLead = p.match(/\/leads\/(\d+)$/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
+    const lead = Number(mLead?.[1] ?? mEnt?.[1] ?? 1)
+    if (m !== 'GET') escritas.push({ m, p, b })
+    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: `ev-${lead}`, created_at: T0 - 5, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r1 = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto })        // sozinha: R2 pendente (rápida)
+  assertEquals(r1.classificacao, 'indeterminado')
+  await receberWebhook(d, 2, { id: 'w2', ts: T0 - 5, texto }); await receberWebhook(d, 3, { id: 'w3', ts: T0 - 5, texto })
+  await varrer({ ...d, agora: () => T0 + 400 })
+  const l1 = st.linhas.find((l) => l.kommo_lead_id === 1)!
+  assertEquals(l1.classificacao, 'autoresposta')
+  assertEquals(escritas.filter((e) => e.b?.status_id === RESP).length, 0)
+})
+
+
+Deno.test('R7 dois webhooks do mesmo lead ("ok", depois "sim") com /events ainda VAZIO: a 2ª já é conhecida → humano, 1 PATCH', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [], outs: [T0 - 10] })
+  const d = { ...deps(st.repo, k.fn), campoTexto: '' }
+  const r1 = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })
+  assertEquals(r1.classificacao, 'indeterminado')                                  // R2: rápida, curta, sozinha
+  const r2 = await receberWebhook(d, 1, { id: 'w2', ts: T0 - 3, texto: 'sim' })
+  assertEquals(r2.classificacao, 'humano'); assertEquals(r2.estado, 'aplicado')     // 2ª mensagem desde o disparo: conversa
+  assertEquals(k.escritas.filter((e) => e.body?.status_id === RESP).length, 1)
+  assertEquals(st.linhas.length, 2)
+})
+
+Deno.test('R7 evidência R3 (texto longo em 2 outros leads) NÃO vence conversa já comprovada do próprio lead (outra mensagem persistida, /events atrasado) → humano', async () => {
+  const st = repoFake()
+  const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
+  const escritas: any[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    const mLead = p.match(/\/leads\/(\d+)$/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
+    const lead = Number(mLead?.[1] ?? mEnt?.[1] ?? 1)
+    if (m !== 'GET') escritas.push({ m, p, b, lead })
+    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }   // /events atrasado para todos
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  await receberWebhook(d, 2, { id: 'w2', ts: T0 - 5, texto }); await receberWebhook(d, 3, { id: 'w3', ts: T0 - 5, texto })
+  const a = await receberWebhook(d, 1, { id: 'w1a', ts: T0 - 6, texto: 'Oi' })      // lead 1 já conversou (curta/rápida → pendente)
+  assertEquals(a.classificacao, 'indeterminado')
+  const b = await receberWebhook(d, 1, { id: 'w1b', ts: T0 - 4, texto })           // mesmo texto longo dos outros 2 leads
+  assertEquals(b.classificacao, 'humano'); assertEquals(b.estado, 'aplicado')
+  assertEquals(escritas.filter((e) => e.b?.status_id === RESP && e.lead === 1).length, 1)
 })

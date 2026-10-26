@@ -20,7 +20,9 @@ export type KommoResp = { ok: boolean; status: number; body: any }
 /** Cliente Kommo. `opts.retries` limita retentativas (POST de nota usa 0: não é idempotente). */
 export type KommoFn = (m: 'GET' | 'PATCH' | 'POST', path: string, body?: unknown, opts?: { etapa?: string; retries?: number; pararEm429?: boolean }) => Promise<KommoResp>
 
-export type Trabalho = { id: number; kommo_lead_id: number; tentativas: number }
+export type Trabalho = { id: number; kommo_lead_id: number | null; tentativas: number; mensagem_id?: string | null; texto?: string | null; recebido_em?: string | null; contact_id?: number | null }
+/** Mensagem trazida pelo webhook de conta (add_message): identidade, instante e texto direto. */
+export type MensagemRecebida = { id: string; ts: number; texto: string }
 export type Linha = {
   id: number; kommo_lead_id: number; mensagem_id: string; pipeline_id: number; status_id_origem: number | null
   texto: string | null; hash: string | null; recebido_em: string; ultimo_disparo_em: string | null; intervalo_s: number | null
@@ -32,7 +34,11 @@ export interface Repo {
   padroesAtivos(): Promise<Padrao[]>
   config(pipeline: number): Promise<Cfg | null>              // sempre relê (sem cache)
   // trabalho
-  criarTrabalho(leadId: number): Promise<Trabalho>
+  /** idempotente por mensagem_id (reentrega do lote devolve o trabalho já existente) */
+  criarTrabalho(leadId: number | null, msg?: MensagemRecebida | null, contactId?: number | null): Promise<Trabalho>
+  vincularLead(trabalhoId: number, leadId: number): Promise<void>
+  /** enriquece o texto de uma linha ainda NÃO decidida (pendente, sem decisão final); devolve se gravou */
+  atualizarTexto(id: number, texto: string): Promise<boolean>
   concluirTrabalho(id: number, estado: 'concluido' | 'pendente' | 'descartado', erro?: string | null): Promise<void>
   trabalhosPendentes(limite: number): Promise<Trabalho[]>
   // mensagens
@@ -42,7 +48,7 @@ export interface Repo {
   /** grava a decisão só se a linha está livre (pendente, sem lease viva E sem decisão final) — devolve a linha após a gravação */
   decidir(id: number, dec: { texto: string; texto_norm: string; hash: string; repeticoes: number; padrao_id: number | null; classificacao: Linha['classificacao']; regras: string[]; decidido_em: string | null; intervalo_s: number | null; ultimo_disparo_em: string | null; modo: string; tentativas?: number }): Promise<Linha | null>
   outrosLeadsComHash(hash: string, leadId: number, desde: string): Promise<number>
-  superar(leadId: number, excetoId: number | null, antesDe: string | null, motivo: string): Promise<void>
+  superar(leadId: number, excetoId: number | null, antesDe: string | null, motivo: string, opts?: { somenteSemTexto?: boolean }): Promise<void>
   // efeito
   /** claim atômico: devolve o token E a fotografia da linha como ficou no banco sob a posse (decisão, fase, origem) */
   claim(id: number, leaseS: number): Promise<{ token: string; linha: Linha } | null>
@@ -53,6 +59,30 @@ export interface Repo {
   pendentesEfeito(limite: number): Promise<Linha[]>          // pendente/falhou/lease vencida + indeterminados
 }
 export type Deps = { repo: Repo; kommo: KommoFn; agora: () => number; campoTexto: string; leaseS: number; maxTentativas: number }
+
+// Mensagem recebida no CONTATO (sem lead no payload): lead do contato que esteja ABERTO numa etapa de
+// origem de um funil com triagem ativa. Lê TODOS os leads do contato; leitura que falha = LeituraFalhou
+// (trabalho fica pendente); 0 candidatos = null (ignora); >1 = ambíguo (null + motivo).
+export async function leadPeloContato(deps: Deps, contactId: number): Promise<{ leadId: number | null; motivo: string }> {
+  const r = await deps.kommo('GET', `/api/v4/contacts/${contactId}?with=leads`, undefined, { etapa: 'contato', retries: 1 })
+  if (r.status === 404 || r.status === 204) return { leadId: null, motivo: 'contato não existe' }
+  if (!r.ok) throw new LeituraFalhou('contato', `HTTP ${r.status}`)
+  const lista = r.body?._embedded?.leads
+  if (!Array.isArray(lista)) throw new LeituraFalhou('contato', 'envelope inesperado')
+  const ids = lista.map((l: any) => Number(l?.id)).filter((n: number) => Number.isFinite(n) && n > 0)
+  const candidatos: number[] = []
+  for (const id of ids) {
+    const l = await deps.kommo('GET', `/api/v4/leads/${id}`, undefined, { etapa: 'lead_do_contato', retries: 1 })
+    if (l.status === 404 || l.status === 204) continue
+    if (!l.ok || !l.body || !Number.isFinite(Number(l.body.pipeline_id))) throw new LeituraFalhou('lead_do_contato', `HTTP ${l.status}`) // leitura incompleta nunca autoriza escolher
+    const cfg = await deps.repo.config(Number(l.body.pipeline_id))
+    if (!cfg?.ativo) continue
+    if (cfg.etapas_origem?.length && !cfg.etapas_origem.map(Number).includes(Number(l.body.status_id))) continue
+    candidatos.push(id)
+  }
+  if (candidatos.length === 1) return { leadId: candidatos[0], motivo: 'único lead aberto em etapa de origem' }
+  return { leadId: null, motivo: candidatos.length === 0 ? 'nenhum lead do contato em etapa de origem' : `ambíguo: ${candidatos.length} leads elegíveis` }
+}
 
 const TAG_AUTO = 'autoresposta'
 // último disparo (outgoing) ANTES da mensagem — independente da ordem em que os eventos vieram
@@ -82,8 +112,34 @@ function leadValido(r: KommoResp, etapa: string) {
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // 1) WEBHOOK: cria o trabalho ANTES de ler o Kommo e processa; se falhar, fica pendente pro cron.
 // ──────────────────────────────────────────────────────────────────────────────────────────
-export async function receberWebhook(deps: Deps, leadId: number): Promise<Resultado> {
-  const t = await deps.repo.criarTrabalho(leadId)
+// ── Correlação canônica webhook × /events (pura, usada no trabalho E na varredura).
+// Identidade = id da mensagem. Regras:
+//  * evento COM id: é essa mensagem (ids conhecidos e distintos NUNCA se fundem por horário);
+//  * evento SEM id (value_after sem message.id): só é alinhado a uma âncora de identidade comprovada
+//    (mensagem do webhook ou linha já registrada) se houver EXATAMENTE uma âncora a ≤ 2 s; zero ou
+//    mais de uma (ambíguo) → ignorado: nunca vira "outra mensagem" nem cria linha;
+//  * o resultado é a UNIÃO por id: mensagem do webhook (primária) + mensagens comprovadas já
+//    persistidas do lead (âncoras) + eventos canônicos de /events. Uma mensagem já recebida pelo
+//    webhook conta como "outra mensagem" mesmo que /events ainda não a mostre (atraso do Kommo).
+export type MsgRef = { id: string; ts: number }
+export function correlacionar(eventos: { id: string; ts: number }[], ancoras: MsgRef[], primaria: MsgRef | null): MsgRef[] {
+  const todasAncoras: MsgRef[] = primaria ? [primaria, ...ancoras.filter((a) => a.id !== primaria.id)] : ancoras
+  const vistos = new Map<string, MsgRef>()
+  const por = (r: MsgRef) => { if (!vistos.has(r.id)) vistos.set(r.id, r) }
+  for (const a of todasAncoras) por(a)
+  for (const e of eventos) {
+    if (!Number.isFinite(e.ts)) continue
+    if (e.id) { por({ id: e.id, ts: e.ts }); continue }
+    const perto = todasAncoras.filter((a) => Math.abs(a.ts - e.ts) <= 2)
+    if (perto.length === 1) por({ id: perto[0].id, ts: perto[0].ts })
+  }
+  return [...vistos.values()].sort((a, b) => a.ts - b.ts)
+}
+const refDaLinha = (l: Linha): MsgRef => ({ id: l.mensagem_id, ts: Math.floor(new Date(l.recebido_em).getTime() / 1000) })
+const eventosIn = (body: any, etapa: string) => eventos(body, etapa).map((e: any) => ({ id: String(e.value_after?.[0]?.message?.id ?? ''), ts: Number(e.created_at) }))
+
+export async function receberWebhook(deps: Deps, leadId: number | null, msg: MensagemRecebida | null = null, contactId: number | null = null): Promise<Resultado> {
+  const t = await deps.repo.criarTrabalho(leadId, msg, contactId)
   try {
     const r = await processarTrabalho(deps, t)
     return { trabalho: t.id, ...r }
@@ -98,45 +154,61 @@ export async function receberWebhook(deps: Deps, leadId: number): Promise<Result
 // ──────────────────────────────────────────────────────────────────────────────────────────
 export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Resultado> {
   const { repo, kommo } = deps
-  const leadId = t.kommo_lead_id
+  // mensagem no contato: resolve o lead AQUI (o trabalho já está durável); falha de leitura lança
+  let leadId = t.kommo_lead_id
+  if (!leadId) {
+    if (!t.contact_id) { await repo.concluirTrabalho(t.id, 'descartado', 'sem lead nem contato'); return { skipped: true, motivo: 'sem lead nem contato' } }
+    const r = await leadPeloContato(deps, t.contact_id)
+    if (!r.leadId) { await repo.concluirTrabalho(t.id, 'descartado', r.motivo); return { skipped: true, motivo: r.motivo } }
+    leadId = r.leadId
+    await repo.vincularLead(t.id, leadId)
+  }
   const lead = leadValido(await kommo('GET', `/api/v4/leads/${leadId}`, undefined, { etapa: 'lead' }), 'lead')
   if (!lead) { await repo.concluirTrabalho(t.id, 'descartado', 'lead não existe'); return { skipped: true, motivo: 'lead não existe' } }
   const pipeline = Number(lead.pipeline_id), statusAtual = Number(lead.status_id)
   const cfg = await repo.config(pipeline)
   if (!cfg) { await repo.concluirTrabalho(t.id, 'descartado', 'funil sem config'); return { skipped: true, motivo: 'funil sem config', pipeline } }
   if (!cfg.ativo) { await repo.concluirTrabalho(t.id, 'descartado', 'funil desligado'); return { skipped: true, motivo: 'funil com triagem desligada', pipeline } }
-  // Elegibilidade de ETAPA só vale pra APLICAR (podeAplicar). Em observar registra-se sempre:
-  // se o gatilho antigo já moveu o lead para RESPONDEU, a resposta entra na amostra mesmo assim.
+  // Elegibilidade de ETAPA só vale pra APLICAR (podeAplicar). Em observar registra-se sempre.
 
   const agora = deps.agora()
   const de = agora - 14 * 86400
-  const ins = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in')
-    .map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? e.id), ts: Number(e.created_at) })).filter((e) => e.id && Number.isFinite(e.ts)).sort((a, b) => a.ts - b.ts)
+  const ins = eventosIn(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in')
   const outs = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out')
     .map((e) => Number(e.created_at)).filter(Number.isFinite).sort((a, b) => a - b)
-  if (!ins.length) {
-    // o evento pode ainda não estar visível na API: trabalho continua pendente (cron retoma)
+
+  // A mensagem do webhook é a fonte primária (id + instante + texto) e SEMPRE ganha linha própria.
+  // Correlação com /events em correlacionar(): por id; evento sem id só se alinha a uma âncora única ≤ 2 s.
+  const msgWebhook: MensagemRecebida | null = t.mensagem_id ? { id: String(t.mensagem_id), ts: Math.floor(new Date(t.recebido_em ?? Date.now()).getTime() / 1000), texto: String(t.texto ?? '') } : null
+  const existentes = await repo.linhasDoLead(leadId)
+  const todas = correlacionar(ins, existentes.map(refDaLinha), msgWebhook ? { id: msgWebhook.id, ts: msgWebhook.ts } : null)
+  if (!todas.length) {
     const estado = t.tentativas + 1 >= deps.maxTentativas ? 'descartado' : 'pendente'
     await repo.concluirTrabalho(t.id, estado, 'sem mensagem recebida nos eventos')
     return { pendente: estado === 'pendente', motivo: 'sem mensagem recebida nos eventos (ainda)' }
   }
 
-  // registra TODA mensagem sem linha (identidade = id do evento); a última é a decidida
-  const existentes = await repo.linhasDoLead(leadId)
+  // registra TODA mensagem sem linha; a linha da mensagem do webhook já nasce com o texto
   const temLinha = new Set(existentes.map((l) => l.mensagem_id))
-  const novas = ins.filter((i) => !temLinha.has(i.id))
-  const ultima = ins[ins.length - 1]
+  const novas = todas.filter((i) => !temLinha.has(i.id))
   if (novas.length) {
     await repo.criarLinhas(novas.map((i) => {
       const disparo = ultimoDisparoAte(outs, i.ts)
-      return { kommo_lead_id: leadId, mensagem_id: i.id, pipeline_id: pipeline, status_id_origem: statusAtual, recebido_em: iso(i.ts), ultimo_disparo_em: disparo ? iso(disparo) : null, intervalo_s: disparo ? i.ts - disparo : null, modo: cfg.modo, classificacao: 'indeterminado', regras: ['nova'], estado_efeito: 'pendente' }
+      const texto = msgWebhook && i.id === msgWebhook.id && msgWebhook.texto ? msgWebhook.texto.slice(0, 2000) : null
+      return { kommo_lead_id: leadId, mensagem_id: i.id, pipeline_id: pipeline, status_id_origem: statusAtual, recebido_em: iso(i.ts), ultimo_disparo_em: disparo ? iso(disparo) : null, intervalo_s: disparo ? i.ts - disparo : null, modo: cfg.modo, classificacao: 'indeterminado', regras: ['nova'], estado_efeito: 'pendente', texto, origem: texto != null ? 'webhook' : 'eventos' }
     }))
-    // mensagens anteriores à última que acabaram de ganhar linha não têm texto (o campo guarda só o
-    // último): ficam superadas pela mais nova — registradas, nunca decididas no escuro
-    await repo.superar(leadId, null, iso(ultima.ts), `texto indisponível; superada pela mensagem ${ultima.id}`)
   }
-  const linha = await repo.linha(leadId, ultima.id)
-  const r = await decidirEAplicar(deps, cfg, lead, linha, ins, outs)
+  // o trabalho decide a SUA mensagem (webhook) — ou, sem webhook (cron/legado), a mais recente
+  const alvoId = msgWebhook ? msgWebhook.id : todas[todas.length - 1].id
+  let linha = await repo.linha(leadId, alvoId)
+  if (msgWebhook?.texto && !(linha.texto ?? '').trim() && linha.estado_efeito === 'pendente' && !linha.decidido_em) {
+    if (await repo.atualizarTexto(linha.id, msgWebhook.texto.slice(0, 2000))) linha = await repo.linha(leadId, alvoId) // linha criada por outro caminho sem texto: enriquece
+  }
+  // Outras mensagens do lead NÃO são superadas por tabela: cada uma é decidida pelo próprio webhook
+  // (o texto pode chegar depois, fora de ordem); linha só de /events sem texto é resolvida pelo cron
+  // (após as tentativas vira 'superado', nunca decisão). Conflito de efeito é resolvido na revalidação
+  // do lead (quem chega depois de o lead ter saído da etapa fica 'superado').
+  const r = await decidirEAplicar(deps, cfg, lead, linha, todas, outs)
   await repo.concluirTrabalho(t.id, 'concluido')
   return r
 }
@@ -160,15 +232,18 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
   // decisão só enquanto a linha está livre (pendente, sem lease): depois do claim ela é imutável
   if (linha.estado_efeito === 'pendente' && (linha.classificacao === 'indeterminado' || !linha.decidido_em)) {
     let texto = (linha.texto ?? '').trim()
-    if (!texto) {
+    if (!texto && deps.campoTexto) {
+      // fallback legado (Salesbot gravando {{message_text}} num campo). Com o webhook de conta o texto
+      // já vem na linha; se o campo não existir, segue sem texto (caminho texto_vazio → mídia).
       const campos = await kommo('GET', `/api/v4/leads/custom_fields?limit=250`, undefined, { etapa: 'campos' })
       if (!campos.ok) throw new LeituraFalhou('campos', `HTTP ${campos.status}`)
       const lista = campos.body?._embedded?.custom_fields
       if (!Array.isArray(lista)) throw new LeituraFalhou('campos', 'envelope inesperado')
       const campo = lista.find((f: any) => String(f.name).toLowerCase() === deps.campoTexto.toLowerCase())
-      if (!campo) throw new LeituraFalhou('campos', `campo "${deps.campoTexto}" não existe no Kommo`)
-      const cf = (lead.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === Number(campo.id))
-      texto = String(cf?.values?.[0]?.value ?? '').trim()
+      if (campo) {
+        const cf = (lead.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === Number(campo.id))
+        texto = String(cf?.values?.[0]?.value ?? '').trim()
+      }
     }
     if (!texto) {
       const tent = Number(linha.tentativas ?? 0) + 1
@@ -176,7 +251,11 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
         await repo.decidir(linha.id, { texto: '', texto_norm: '', hash: '', repeticoes: 0, padrao_id: null, classificacao: 'indeterminado', regras: ['texto_vazio'], decidido_em: null, intervalo_s: intervaloS, ultimo_disparo_em: ultimoDisparo ? iso(ultimoDisparo) : null, modo: cfg.modo, tentativas: tent })
         return { ok: true, classificacao: 'indeterminado', motivo: 'texto vazio; aguardando releitura' }
       }
-      texto = '[midia]'
+      // sem texto depois das tentativas: linha que veio só de /events (o webhook nunca trouxe esta
+      // mensagem) não vira decisão — fica superada. Só o webhook sabe dizer "mídia" (parser).
+      const posse = await repo.claim(linha.id, deps.leaseS)
+      if (posse) await repo.fim(linha.id, posse.token, 'superado', { motivo_efeito: 'texto indisponível (só /events)' })
+      return { ok: true, estado: 'superado', motivo: 'texto indisponível' }
     }
     const padroes = await repo.padroesAtivos()
     const invalidos = validarPadroes(padroes)
@@ -195,8 +274,6 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
     linha = gravada
     if (padrao && padrao.id > 0) await repo.acerto(padrao.id)
     if (linha.classificacao === 'indeterminado') return { ok: true, classificacao: 'indeterminado', regras: linha.regras, aguardando_s: cfg.espera_s }
-    // decisões mais novas superam pendências anteriores do mesmo lead
-    await repo.superar(linha.kommo_lead_id, linha.id, linha.recebido_em, `superada pela mensagem ${linha.mensagem_id}`)
   }
   if (linha.classificacao === 'indeterminado') return { ok: true, classificacao: 'indeterminado', regras: linha.regras }
   const efeito = await aplicarEfeito(deps, linha)
@@ -300,7 +377,10 @@ export async function varrer(deps: Deps, limite = 40): Promise<Resultado> {
         const lead = leadValido(await kommoLote('GET', `/api/v4/leads/${l.kommo_lead_id}`, undefined, { etapa: 'lead' }), 'lead')
         if (!lead) { const ps = await repo.claim(l.id, deps.leaseS); if (ps) await repo.fim(l.id, ps.token, 'superado', { motivo_efeito: 'lead não existe' }); continue }
         const de = msgTs - 14 * 86400
-        const ins = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in').map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? e.id), ts: Number(e.created_at) }))
+        // mesma correlação canônica do trabalho, ancorada na linha em análise e nas linhas do lead:
+        // o alias (evento sem id) da própria mensagem NÃO conta como 2ª mensagem (não bloqueia R3)
+        const linhasLead = await repo.linhasDoLead(l.kommo_lead_id)
+        const ins = correlacionar(eventosIn(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=incoming_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_in' }), 'eventos_in'), [refDaLinha(l), ...linhasLead.map(refDaLinha)], null)
         const outs = eventos(await kommoLote('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${l.kommo_lead_id}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out').map((e) => Number(e.created_at))
         out.push({ id: l.id, lead: l.kommo_lead_id, ...(await decidirEAplicar(d, cfg, lead, l, ins, outs)) })
       } catch (e) {
