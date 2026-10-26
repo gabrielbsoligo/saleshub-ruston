@@ -508,7 +508,7 @@ async function acaoDisparar(b: Record<string, any>) {
     const lead = porId.get(decisor?.lead_id ?? arr[0]?.lead_id)
     if (!lead || lead.optout) continue
     if (arr.some((e) => e.respondido_em || e.status === 'respondido')) continue
-    // Envio 'travado em processando' (migration_161: falhou + destravado_em) conta como passo
+    // Envio 'travado em processando' (migration_161/162: falhou + destravado_em) conta como passo
     // CONSUMIDO (nunca reenvia) e serve de âncora pro passo seguinte (decisão Gabriel 26/10).
     const travado = (e: any) => e.status === 'falhou' && !!e.destravado_em
     const p1 = arr.find((e) => e.passo === 1 && (e.status === 'enviado' || travado(e)))
@@ -581,7 +581,7 @@ async function acaoKommoWebhook(body: Record<string, any>) {
     const { lead, decisor } = alvo
     if (lead.optout) { resultados.push({ kommo_lead_id: ev.id, ignorado: 'optout' }); continue }
     // Dedupe POR CARD: se o passo já tem envio (inclusive 'processando' de outro worker, ou um
-    // 'travado em processando' destravado sem reenvio — migration_161), não repete.
+    // 'travado em processando' destravado sem reenvio — migration_162), não repete.
     const { data: ja } = await db.from('enriquecedor_cadencia_envios')
       .select('id, status').eq('kommo_lead_id', String(ev.id)).eq('canal', 'whatsapp').eq('passo', passo)
       .or('status.in.(processando,enviado,respondido),destravado_em.not.is.null').limit(1)

@@ -1,4 +1,7 @@
--- migration_161_cadencia_processando_travado.sql
+-- migration_162_cadencia_processando_travado.sql
+-- FASE 3 de 3 — só aplicar DEPOIS da migration_161 (coluna) E do deploy da edge enriquecedor-cadencia
+-- com o dedupe novo. Restaurar a edge ANTIGA reabre estes passos (ela ignora destravado_em e deixa
+-- 'falhou' repetir): se precisar voltar a edge, pare o cron antes e saiba que os passos podem reenviar.
 -- Cadência do Enriquecedor: envios que ficam em 'processando' para sempre (placeholder criado e o
 -- worker morreu no meio) travavam o passo daquele card — o dedupe por card trata 'processando' como
 -- "já disparado" e os passos seguintes nunca saem. Decisão do Gabriel (26/10/2026, opção b):
@@ -9,11 +12,16 @@
 --   * os passos seguintes ficam liberados (o carteiro aceita P2 travado como âncora do P3, pela
 --     created_at do placeholder);
 --   * proteção futura: cron a cada 30 min expira 'processando' há mais de 1 h com o mesmo tratamento.
--- ADITIVA e idempotente. Reverter: cron.unschedule('enriq-cadencia-destravar'); DROP FUNCTION
--- enriq_cadencia_destravar(); a coluna destravado_em pode ficar; os envios marcados ficam como histórico.
+-- ADITIVA e idempotente. Reverter: SELECT cron.unschedule('enriq-cadencia-destravar');
+-- DROP FUNCTION IF EXISTS public.enriq_cadencia_destravar(INTERVAL); a coluna destravado_em (161) pode
+-- ficar; os envios marcados ficam como histórico (não há reenvio a desfazer).
 
-ALTER TABLE public.enriquecedor_cadencia_envios ADD COLUMN IF NOT EXISTS destravado_em TIMESTAMPTZ;
-COMMENT ON COLUMN public.enriquecedor_cadencia_envios.destravado_em IS 'Envio que ficou travado em processando e foi marcado como falhou SEM reenvio (migration_161). O passo conta como consumido.';
+-- guarda: a coluna da fase 1 precisa existir (não cria aqui de propósito — ordem das fases)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='enriquecedor_cadencia_envios' AND column_name='destravado_em') THEN
+    RAISE EXCEPTION 'aplique antes a migration_161_cadencia_destravado_coluna.sql e publique a edge enriquecedor-cadencia';
+  END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION public.enriq_cadencia_destravar(p_min_idade INTERVAL DEFAULT interval '1 hour')
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
