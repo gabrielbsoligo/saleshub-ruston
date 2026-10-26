@@ -2,21 +2,20 @@
 //
 // Ciclo de uma sessão (1 empresa-alvo, 1 número anônimo):
 //   sondagem → (empresa responde?) → cronômetro da 1ª resposta → conversa curta como "cliente"
-//   (persona por nicho, até N turnos) → janela de follow-up (24/48/72 h sem a empresa escrever = sem
-//   follow-up) → avaliação por critério (tempo de resposta, qualificação, proposta/preço, follow-up)
-//   → nota final 0–10 e parecer. O LLM (Haiku) só escreve as falas da persona e o parecer final;
-//   tudo que é regra (quando parar, prazos, notas por critério) é determinístico aqui.
+//   (persona por nicho, até N turnos) → janela de follow-up (72 h) → avaliação por critério →
+//   nota final 0–10 e parecer. O LLM (Haiku) só escreve as falas da persona e o parecer final; tudo
+//   que é regra (quando parar, prazos, notas por critério, próximo instante devido) é determinístico aqui.
 export type Direcao = 'out' | 'in'
 export type Msg = { direcao: Direcao; texto: string; ts: number }   // ts em segundos (epoch)
 export type Persona = { nome: string; contexto: string; objetivo: string; tom: string }
+export type Status = 'pendente' | 'enviada' | 'conversando' | 'aguardando_followup' | 'avaliando' | 'concluida' | 'erro' | 'cancelada'
 export type Sessao = {
-  id: string; empresa: string; nicho: string | null; numero_alvo: string
-  status: 'pendente' | 'enviada' | 'conversando' | 'aguardando_followup' | 'concluida' | 'erro' | 'cancelada'
+  id: string; empresa: string; nicho: string | null; numero_alvo: string; status: Status
+  fase: 'ocioso' | 'enviando' | 'envio_incerto'
   iniciada_em: number | null; ultima_in_em: number | null; ultima_out_em: number | null
-  turnos_persona: number; max_turnos: number
-  janela_followup_h: number   // 72 por padrão
+  turnos_persona: number; max_turnos: number; janela_followup_h: number
 }
-export const PADRAO = { max_turnos: 4, janela_followup_h: 72, espera_resposta_persona_s: 90, sem_resposta_encerrar_h: 72 }
+export const PADRAO = { max_turnos: 4, janela_followup_h: 72, sem_resposta_encerrar_h: 72, silencio_apos_nossa_fala_h: 24, max_tentativas_avaliacao: 3 }
 
 // ── persona por nicho (determinística; o LLM a encarna) ─────────────────────
 export function personaPara(nicho: string | null, empresa: string): Persona {
@@ -34,7 +33,7 @@ export function personaPara(nicho: string | null, empresa: string): Persona {
   return { ...base, contexto: `tem interesse nos produtos/serviços de ${empresa} e pediu informações`, objetivo: 'entender o que oferecem, valores e próximo passo' }
 }
 
-// ── prompts (o LLM recebe isto; a resposta é só o texto da próxima fala) ────
+// ── prompts ──────────────────────────────────────────────────────────────────
 export function promptAbertura(p: Persona, empresa: string): string {
   return `Você é ${p.nome}, uma pessoa real escrevendo no WhatsApp para a empresa "${empresa}". Contexto: ${p.contexto}. Objetivo: ${p.objetivo}. Tom: ${p.tom}.
 Escreva SOMENTE a primeira mensagem (abertura), como um cliente comum faria: cumprimento curto + uma pergunta concreta. Sem assinatura, sem aspas, sem explicações.`
@@ -56,25 +55,34 @@ qualificacao = perguntou necessidade/contexto do cliente antes de empurrar; prop
 }
 
 // ── métricas determinísticas ──────────────────────────────────────────────────
-export type Metricas = { tempo_primeira_resposta_s: number | null; respondeu: boolean; turnos_empresa: number; followup_24h: boolean; followup_48h: boolean; followup_72h: boolean; encerrou_sem_resposta: boolean }
+// FOLLOW-UP = iniciativa NOVA da empresa: uma mensagem 'in' cuja mensagem anterior no histórico também
+// é 'in' (a empresa voltou a escrever sem que a persona tivesse falado no meio). Resposta a uma fala
+// nossa — mesmo tardia — é "resposta", nunca follow-up. A janela conta a partir da mensagem 'in' anterior.
+export type Metricas = { tempo_primeira_resposta_s: number | null; respondeu: boolean; turnos_empresa: number; followups: number; followup_24h: boolean; followup_48h: boolean; followup_72h: boolean; encerrou_sem_resposta: boolean }
 export function metricas(hist: Msg[], agora: number, janelaH = PADRAO.janela_followup_h): Metricas {
-  const outs = hist.filter((m) => m.direcao === 'out'), ins = hist.filter((m) => m.direcao === 'in')
+  const ord = [...hist].sort((a, b) => a.ts - b.ts)
+  const outs = ord.filter((m) => m.direcao === 'out'), ins = ord.filter((m) => m.direcao === 'in')
   const primeiraOut = outs[0]?.ts ?? null
   const primeiraIn = primeiraOut != null ? ins.find((m) => m.ts >= primeiraOut)?.ts ?? null : null
-  // follow-up = a EMPRESA escreveu de novo depois que a última fala foi dela própria OU após ≥ 20 h de silêncio nosso
-  const ultimaOut = outs[outs.length - 1]?.ts ?? null
-  const fu = (h: number) => ultimaOut != null && ins.some((m) => m.ts > ultimaOut && m.ts - ultimaOut >= 0 && m.ts - ultimaOut <= h * 3600 && m.ts - ultimaOut >= Math.min(h, 20) * 3600 - 3600)
+  let fu24 = false, fu48 = false, fu72 = false, followups = 0
+  for (let i = 1; i < ord.length; i++) {
+    if (ord[i].direcao !== 'in' || ord[i - 1].direcao !== 'in') continue
+    const dt = ord[i].ts - ord[i - 1].ts
+    if (dt < 2 * 3600) continue   // mensagens em sequência na mesma conversa não são follow-up
+    followups++
+    if (dt <= 24 * 3600) fu24 = true; else if (dt <= 48 * 3600) fu48 = true; else if (dt <= 72 * 3600) fu72 = true
+  }
   return {
     tempo_primeira_resposta_s: primeiraOut != null && primeiraIn != null ? primeiraIn - primeiraOut : null,
     respondeu: primeiraIn != null,
     turnos_empresa: ins.length,
-    followup_24h: fu(24), followup_48h: fu(48), followup_72h: fu(72),
+    followups, followup_24h: fu24, followup_48h: fu48, followup_72h: fu72,
     encerrou_sem_resposta: primeiraIn == null && primeiraOut != null && agora - primeiraOut >= janelaH * 3600,
   }
 }
 
-// ── notas por critério (0–10, determinísticas onde dá) ───────────────────────
-export type Notas = { tempo_resposta: number; qualificacao: number; proposta_preco: number; followup: number; tom: number; final: number }
+// ── notas por critério (0–10) ─────────────────────────────────────────────────
+export type Notas = { tempo_resposta: number; qualificacao: number | null; proposta_preco: number | null; followup: number; tom: number | null; final: number | null; incompleta: boolean }
 export function notaTempo(s: number | null): number {
   if (s == null) return 0
   if (s <= 5 * 60) return 10
@@ -91,40 +99,51 @@ export function notaFollowup(m: Metricas): number {
   if (m.followup_72h) return 4
   return 0
 }
-export function consolidar(m: Metricas, ia: { qualificacao?: number; proposta_preco?: number; tom?: number } | null): Notas {
-  const clamp = (x: unknown) => Math.max(0, Math.min(10, Number(x ?? 0) || 0))
-  const n: Notas = { tempo_resposta: notaTempo(m.tempo_primeira_resposta_s), qualificacao: m.respondeu ? clamp(ia?.qualificacao) : 0, proposta_preco: m.respondeu ? clamp(ia?.proposta_preco) : 0, followup: notaFollowup(m), tom: m.respondeu ? clamp(ia?.tom) : 0, final: 0 }
-  // pesos: tempo 30%, qualificação 20%, proposta/preço 20%, follow-up 20%, tom 10%
-  n.final = Math.round((n.tempo_resposta * 0.3 + n.qualificacao * 0.2 + n.proposta_preco * 0.2 + n.followup * 0.2 + n.tom * 0.1) * 10) / 10
-  return n
+/** ia = avaliação do LLM (null = indisponível). Sem resposta da empresa, os critérios de IA são 0 (não há
+ *  atendimento a avaliar). Com resposta e IA ausente/inválida, os critérios ficam NULL e a nota final
+ *  NULL (incompleta=true) — nunca atribuímos zero por falha nossa. */
+export function consolidar(m: Metricas, ia: { qualificacao?: unknown; proposta_preco?: unknown; tom?: unknown } | null): Notas {
+  const num = (x: unknown) => { const n = Number(x); return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : null }
+  const tempo = notaTempo(m.tempo_primeira_resposta_s), followup = notaFollowup(m)
+  if (!m.respondeu) return { tempo_resposta: tempo, qualificacao: 0, proposta_preco: 0, followup, tom: 0, final: Math.round(tempo * 0.3 * 10) / 10, incompleta: false }
+  const q = num(ia?.qualificacao), p = num(ia?.proposta_preco), t = num(ia?.tom)
+  const incompleta = q == null || p == null || t == null
+  const final = incompleta ? null : Math.round((tempo * 0.3 + q! * 0.2 + p! * 0.2 + followup * 0.2 + t! * 0.1) * 10) / 10
+  return { tempo_resposta: tempo, qualificacao: q, proposta_preco: p, followup, tom: t, final, incompleta }
 }
 
-// ── máquina de estados: o que fazer agora ────────────────────────────────────
+// ── máquina de estados: o que fazer agora e quando voltar ─────────────────────
 export type Decisao =
-  | { acao: 'responder' }                       // empresa falou e ainda temos turnos: persona responde
-  | { acao: 'esperar' }                         // nada a fazer agora
-  | { acao: 'aguardar_followup' }               // conversa chegou ao fim dos turnos: entra na janela de follow-up
-  | { acao: 'concluir'; motivo: string }        // janela vencida ou sem resposta: avalia e encerra
+  | { acao: 'esperar'; proximo_em: number | null }
+  | { acao: 'abrir' }
+  | { acao: 'responder' }
+  | { acao: 'aguardar_followup'; proximo_em: number }
+  | { acao: 'avaliar'; motivo: string }
 export function decidir(s: Sessao, hist: Msg[], agora: number): Decisao {
-  if (['concluida', 'erro', 'cancelada', 'pendente'].includes(s.status)) return { acao: 'esperar' }
+  if (['concluida', 'erro', 'cancelada'].includes(s.status)) return { acao: 'esperar', proximo_em: null }
+  if (s.status === 'avaliando') return { acao: 'avaliar', motivo: 'reavaliação' }
+  if (s.status === 'pendente') return { acao: 'abrir' }
   const ultima = hist[hist.length - 1]
-  if (s.status === 'enviada') {
-    if (ultima?.direcao === 'in') return s.turnos_persona < s.max_turnos ? { acao: 'responder' } : { acao: 'aguardar_followup' }
-    if (s.iniciada_em != null && agora - s.iniciada_em >= PADRAO.sem_resposta_encerrar_h * 3600) return { acao: 'concluir', motivo: 'sem resposta da empresa em 72 h' }
-    return { acao: 'esperar' }
-  }
-  if (s.status === 'conversando') {
-    if (ultima?.direcao === 'in') return s.turnos_persona < s.max_turnos ? { acao: 'responder' } : { acao: 'aguardar_followup' }
-    // nossa última fala sem resposta: depois de 24 h sem retorno, entra na janela de follow-up
-    if (ultima?.direcao === 'out' && agora - ultima.ts >= 24 * 3600) return { acao: 'aguardar_followup' }
-    return { acao: 'esperar' }
+  if (s.status === 'enviada' || s.status === 'conversando') {
+    if (ultima?.direcao === 'in') {
+      if (s.turnos_persona < s.max_turnos) return { acao: 'responder' }
+      return { acao: 'aguardar_followup', proximo_em: (s.ultima_out_em ?? agora) + s.janela_followup_h * 3600 }
+    }
+    const ref = ultima?.ts ?? s.iniciada_em ?? agora
+    if (s.status === 'enviada' && agora - ref >= PADRAO.sem_resposta_encerrar_h * 3600) return { acao: 'avaliar', motivo: 'sem resposta da empresa em 72 h' }
+    if (s.status === 'conversando' && agora - ref >= PADRAO.silencio_apos_nossa_fala_h * 3600) return { acao: 'aguardar_followup', proximo_em: ref + s.janela_followup_h * 3600 }
+    return { acao: 'esperar', proximo_em: ref + (s.status === 'enviada' ? PADRAO.sem_resposta_encerrar_h : PADRAO.silencio_apos_nossa_fala_h) * 3600 }
   }
   if (s.status === 'aguardando_followup') {
     const ref = s.ultima_out_em ?? s.iniciada_em ?? agora
-    if (agora - ref >= s.janela_followup_h * 3600) return { acao: 'concluir', motivo: 'janela de follow-up encerrada' }
-    return { acao: 'esperar' }
+    if (agora - ref >= s.janela_followup_h * 3600) return { acao: 'avaliar', motivo: 'janela de follow-up encerrada' }
+    return { acao: 'esperar', proximo_em: ref + s.janela_followup_h * 3600 }
   }
-  return { acao: 'esperar' }
+  return { acao: 'esperar', proximo_em: null }
+}
+/** próximo instante devido depois de a persona FALAR (abertura ou resposta) */
+export function proximoAposFala(status: 'enviada' | 'conversando', ts: number): number {
+  return ts + (status === 'enviada' ? PADRAO.sem_resposta_encerrar_h : PADRAO.silencio_apos_nossa_fala_h) * 3600
 }
 
 // ── normalização de número (BR) e extração do texto do webhook da Evolution ──
@@ -132,7 +151,7 @@ export function numeroWa(n: string): string | null {
   const d = (n ?? '').replace(/\D/g, '')
   if (!d) return null
   let x = d.startsWith('55') && d.length >= 12 ? d : `55${d.replace(/^0+/, '')}`
-  // celular BR sem o 9: 55 + DDD(2) + 8 dígitos → insere o 9
+  // celular BR sem o 9: 55 + DDD(2) + 8 dígitos começando em 6–9 → insere o 9 (mesma regra nos dois lados)
   if (x.length === 12 && /^55\d{2}[6-9]/.test(x)) x = `${x.slice(0, 4)}9${x.slice(4)}`
   return /^55\d{10,11}$/.test(x) ? x : null
 }
@@ -144,5 +163,13 @@ export function textoDoEvento(data: any): { de: string | null; fromMe: boolean; 
   const bruto = m.conversation ?? m.extendedTextMessage?.text ?? m.imageMessage?.caption ?? m.videoMessage?.caption ?? (m.audioMessage ? '[áudio]' : (m.documentMessage ? '[documento]' : ''))
   const texto = String(bruto ?? '').trim()
   const ts = Number(data?.messageTimestamp ?? 0) || Math.floor(Date.now() / 1000)
-  return { de: remote.replace(/@.*$/, '').replace(/\D/g, '') || null, fromMe: !!key.fromMe, id: key.id ? String(key.id) : null, texto, ts }
+  // remetente CANÔNICO pela mesma regra do cadastro (numeroWa) — '551188887777' casa com '5511988887777'
+  const de = numeroWa(remote.replace(/@.*$/, ''))
+  return { de, fromMe: !!key.fromMe, id: key.id ? String(key.id) : null, texto, ts }
+}
+/** classifica o resultado de um envio: 'ok' (aceito), 'definitivo' (4xx: não reenviar, erro), 'incerto' (timeout/rede/5xx: pode ter saído) */
+export function classificarEnvio(r: { ok: boolean; status: number; transporte?: boolean }): 'ok' | 'definitivo' | 'incerto' {
+  if (r.ok) return 'ok'
+  if (r.transporte || r.status === 0 || r.status >= 500 || r.status === 408 || r.status === 429) return 'incerto'
+  return 'definitivo'
 }

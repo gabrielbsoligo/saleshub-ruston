@@ -8,8 +8,9 @@ import type { Lead } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ocultoRepo, type OcultoConfig, type OcultoMensagem, type OcultoSessao } from '../lib/ocultoRepo';
 
-const STATUS_LABEL: Record<OcultoSessao['status'], string> = { pendente: 'na fila (sem número)', enviada: 'abertura enviada', conversando: 'conversando', aguardando_followup: 'esperando follow-up', concluida: 'concluída', erro: 'erro', cancelada: 'cancelada' };
-const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
+const STATUS_LABEL: Record<OcultoSessao['status'], string> = { pendente: 'na fila (sem número)', enviada: 'abertura enviada', conversando: 'conversando', aguardando_followup: 'esperando follow-up', avaliando: 'avaliando (IA)', concluida: 'concluída', erro: 'erro', cancelada: 'cancelada' };
+const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', avaliando: 'bg-indigo-900 text-indigo-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
+const nota = (n: number | null | undefined) => (n == null ? '—' : String(n));
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
 const tempo = (s?: number | null) => (s == null ? '—' : s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`);
 
@@ -32,7 +33,7 @@ export function ClienteOcultoView() {
   useEffect(() => { carregar(); return ocultoRepo.assinar(() => { carregar(); }); }, [carregar]);
   useEffect(() => { if (sel) ocultoRepo.mensagens(sel.id).then(setMsgs).catch(() => setMsgs([])); else setMsgs([]); }, [sel?.id]);
 
-  const resumo = useMemo(() => ({ abertas: sessoes.filter(s => ['pendente', 'enviada', 'conversando', 'aguardando_followup'].includes(s.status)).length, concluidas: sessoes.filter(s => s.status === 'concluida').length, media: (() => { const n = sessoes.filter(s => s.notas); return n.length ? (n.reduce((a, s) => a + (s.notas!.final || 0), 0) / n.length).toFixed(1) : '—'; })() }), [sessoes]);
+  const resumo = useMemo(() => ({ abertas: sessoes.filter(s => ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando'].includes(s.status)).length, concluidas: sessoes.filter(s => s.status === 'concluida').length, media: (() => { const n = sessoes.filter(s => s.notas && s.notas.final != null); return n.length ? (n.reduce((a, s) => a + (s.notas!.final as number), 0) / n.length).toFixed(1) : '—'; })() }), [sessoes]);
 
   return (
     <div className="flex h-full flex-col gap-4 p-6">
@@ -67,7 +68,7 @@ export function ClienteOcultoView() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{STATUS_LABEL[s.status]}</span>
-                  {s.notas && <span className="text-xs font-semibold text-v4-text">{s.notas.final.toFixed(1)}/10</span>}
+                  {s.notas && <span className="text-xs font-semibold text-v4-text">{s.notas.final == null ? 'incompleta' : `${s.notas.final.toFixed(1)}/10`}</span>}
                 </div>
               </button>
             ))}
@@ -125,7 +126,7 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
 }
 
 function SessaoDetalhe({ s, msgs, onCancelar }: { s: OcultoSessao; msgs: OcultoMensagem[]; onCancelar: () => void }) {
-  const aberta = ['pendente', 'enviada', 'conversando', 'aguardando_followup'].includes(s.status);
+  const aberta = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando'].includes(s.status);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
@@ -133,16 +134,17 @@ function SessaoDetalhe({ s, msgs, onCancelar }: { s: OcultoSessao; msgs: OcultoM
           <div className="text-base font-semibold text-v4-text">{s.empresa}</div>
           <div className="text-xs text-v4-text-muted">{s.nicho ?? '—'} · {s.numero_alvo} · persona: {s.persona?.contexto ?? '—'}</div>
           <div className="mt-1 text-[11px] text-v4-text-muted">início {fmt(s.iniciada_em)} · última da empresa {fmt(s.ultima_in_em)} · turnos {s.turnos_persona}/{s.max_turnos}</div>
-          {s.erro && <div className="mt-1 text-xs text-red-300">erro: {s.erro}</div>}
+          {s.fase && s.fase !== 'ocioso' && <div className="mt-1 text-xs text-amber-300">envio {s.fase === 'enviando' ? 'em curso' : 'incerto — reconciliando com o provedor'}</div>}
+          {s.erro && <div className="mt-1 text-xs text-red-300">{s.erro}</div>}
         </div>
         {aberta && <button onClick={onCancelar} className="flex items-center gap-1 rounded-lg border border-v4-border px-2.5 py-1.5 text-xs text-v4-text-muted hover:text-red-300"><StopCircle size={12} /> cancelar</button>}
       </div>
       {s.notas && (
         <div className="rounded-lg border border-v4-border p-3">
-          <div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium text-v4-text">Nota final</span><span className="text-xl font-bold text-v4-text">{s.notas.final.toFixed(1)}<span className="text-xs text-v4-text-muted">/10</span></span></div>
+          <div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium text-v4-text">Nota final{s.notas.incompleta ? ' (incompleta: IA indisponível)' : ''}</span><span className="text-xl font-bold text-v4-text">{s.notas.final == null ? '—' : s.notas.final.toFixed(1)}<span className="text-xs text-v4-text-muted">/10</span></span></div>
           <div className="grid grid-cols-5 gap-2 text-center text-[11px]">
             {([['tempo_resposta', 'Tempo'], ['qualificacao', 'Qualificação'], ['proposta_preco', 'Proposta/preço'], ['followup', 'Follow-up'], ['tom', 'Tom']] as const).map(([k, l]) => (
-              <div key={k} className="rounded bg-white/5 p-2"><div className="text-v4-text-muted">{l}</div><div className="text-sm font-semibold text-v4-text">{s.notas![k]}</div></div>
+              <div key={k} className="rounded bg-white/5 p-2"><div className="text-v4-text-muted">{l}</div><div className="text-sm font-semibold text-v4-text">{nota(s.notas![k])}</div></div>
             ))}
           </div>
           <div className="mt-2 text-[11px] text-v4-text-muted">1ª resposta em {tempo(s.metricas?.tempo_primeira_resposta_s)} · follow-up {s.metricas?.followup_24h ? '24 h' : s.metricas?.followup_48h ? '48 h' : s.metricas?.followup_72h ? '72 h' : 'nenhum'}</div>
@@ -183,7 +185,7 @@ function NovaSondagem({ onClose, onCriada, config }: { onClose: () => void; onCr
     setBusy(true);
     try {
       const r = await ocultoRepo.iniciar(lead.id, numero || undefined, nicho || undefined);
-      toast.success(r.status === 'pendente' ? 'Sondagem na fila (sem número conectado)' : 'Abertura enviada');
+      toast.success(r.status === 'pendente' ? 'Sondagem na fila (sem número conectado)' : r.status === 'erro' ? 'Sondagem criada, mas o envio falhou (veja o erro na lista)' : 'Abertura enviada');
       onCriada();
     } catch (e: any) { toast.error(e?.message || 'falhou'); }
     finally { setBusy(false); }

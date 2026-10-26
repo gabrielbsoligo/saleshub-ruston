@@ -33,10 +33,26 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
 4. Conferir no primeiro webhook real o nome do evento (`messages.upsert` vs `MESSAGES_UPSERT`: os dois são aceitos)
    e o formato do número no `remoteJid`.
 
+## Concorrência e efeitos (revisão do Vedor, 26/10)
+- **Posse por sessão**: `oculto_claim` (lease 3 min + token) em todo avanço; escritas `WHERE claim_token = token`;
+  `oculto_renovar` falha se a sessão foi cancelada ou mudou de dono → **cancelar invalida qualquer envio em curso**.
+- **Config revalidada antes de CADA envio** (já com o texto do LLM): `ativo && conectado` desligado = adia, não envia.
+- **Envio**: intenção gravada antes do POST (`fase='enviando'`, `envio_pendente`); aceito → `oculto_envio_registrar`
+  (mensagem + turnos + estado, atômico); 4xx → `erro` (não reenvia); timeout/rede/5xx → `fase='envio_incerto'` e a
+  varredura **reconcilia** (eco do webhook ou `findMessages`) — encontrado = registra; não encontrado = `erro`
+  visível, **sem reenvio automático**.
+- **1 sessão aberta por número** (UNIQUE parcial inclui `pendente`) → 409 na corrida de dois "iniciar".
+- **Follow-up** = nova iniciativa da empresa (mensagem dela logo após outra dela, ≥2 h depois); resposta tardia
+  à nossa fala é resposta, não follow-up.
+- **Avaliação IA indisponível** → status `avaliando`, 3 tentativas (30 min); se persistir, conclui com
+  `notas.incompleta=true` e `final=null` (tempo e follow-up medidos; qualificação/proposta/tom sem nota) — nunca zero.
+- **Varredura** só pega trabalhos devidos (`proximo_em <= now`, mais antigos primeiro, 15 por execução).
+- Remetente do webhook e número cadastrado passam pela MESMA canonicalização (`numeroWa`: DDI 55 + 9º dígito).
+
 ## Limites e cuidados
 - Número NÃO oficial: risco de bloqueio pela Meta; volume baixo, 1 sondagem por número-alvo por vez,
   texto curto e humano. Nunca usar o número da prospecção oficial.
 - A persona nunca se identifica como teste; se a empresa pedir dados pessoais/pagamento, ela desconversa.
-- Testes: `deno test --allow-read` em `supabase/functions/cliente-oculto` (8).
+- Testes: `deno test --allow-read` em `supabase/functions/cliente-oculto` (9+).
 - Reverter: cabeçalho da migration (cron → tabelas → segredo); `supabase functions delete cliente-oculto`;
   no Enriquecedor, voltar o `case 'cliente_oculto'` para o `Placeholder`.

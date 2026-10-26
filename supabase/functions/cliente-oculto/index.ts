@@ -2,24 +2,29 @@
 //
 // Rotas (POST JSON; segredo no caminho /s/<segredo> para webhook/cron; Bearer de membro ativo para a tela):
 //   /s/<segredo>  body = evento da Evolution (messages.upsert / connection.update)   ← webhook
-//   /s/<segredo>  {acao:'varrer'}                                                   ← cron */10
-//   Bearer        {acao:'iniciar', lead_id, numero?, nicho?}   → cria sessão e manda a abertura (se config.ativo e conectado)
-//   Bearer        {acao:'cancelar', sessao_id}
+//   /s/<segredo>  {acao:'varrer'}                                                   ← cron */10 (trabalhos DEVIDOS)
+//   Bearer        {acao:'iniciar', lead_id, numero?, nicho?}   → cria sessão (pendente) e tenta a abertura
+//   Bearer        {acao:'cancelar', sessao_id}                 → cancela (invalida qualquer envio em curso)
 //   Bearer        {acao:'instancia', op:'criar'|'qr'|'estado'} → prepara o número (QR na tela)
-// Segredos (edge): EVOLUTION_URL, EVOLUTION_APIKEY, ANTHROPIC_API_KEY. Sem EVOLUTION_* configurado
-// nada é enviado: as sessões ficam 'pendente' e a tela avisa "sem número conectado".
+// Concorrência e efeitos (ver migration_165): posse por sessão (oculto_claim/oculto_renovar) em TODO
+// avanço; config (ativo && conectado) revalidada ANTES de cada envio, já com o texto do LLM na mão;
+// intenção de envio persistida antes do POST (fase 'enviando' + envio_pendente); resultado aceito →
+// oculto_envio_registrar (atômico, sob posse); falha definitiva → erro; incerto → fase 'envio_incerto'
+// e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } })
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const admin = () => createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { auth: { persistSession: false, autoRefreshToken: false } })
+const LEASE_S = 180, ORCAMENTO_VARRER = 15, ABERTAS = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando']
 const agoraS = () => Math.floor(Date.now() / 1000)
 const iso = (s: number) => new Date(s * 1000).toISOString()
 const seg = (t: string | null) => (t ? Math.floor(new Date(t).getTime() / 1000) : null)
+class PossePerdida extends Error {}
 
 type Cfg = { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; modelo: string }
 async function config(sb: any): Promise<Cfg> {
@@ -28,6 +33,7 @@ async function config(sb: any): Promise<Cfg> {
   if (!data) throw new Error('oculto_config ausente (migration_165)')
   return data as Cfg
 }
+const podeEnviar = (cfg: Cfg) => cfg.ativo && cfg.conectado && !!Deno.env.get('EVOLUTION_URL') && !!Deno.env.get('EVOLUTION_APIKEY')
 function evo(cfg: Cfg): Evolution | null {
   const url = Deno.env.get('EVOLUTION_URL'), key = Deno.env.get('EVOLUTION_APIKEY')
   return url && key ? evolution(url, key, cfg.instancia) : null
@@ -45,59 +51,133 @@ async function autenticarMembro(req: Request, sb: any): Promise<string | null> {
 }
 
 function toSessao(r: any): Sessao {
-  return { id: r.id, empresa: r.empresa, nicho: r.nicho, numero_alvo: r.numero_alvo, status: r.status, iniciada_em: seg(r.iniciada_em), ultima_in_em: seg(r.ultima_in_em), ultima_out_em: seg(r.ultima_out_em), turnos_persona: r.turnos_persona ?? 0, max_turnos: r.max_turnos ?? 4, janela_followup_h: r.janela_followup_h ?? 72 }
+  return { id: r.id, empresa: r.empresa, nicho: r.nicho, numero_alvo: r.numero_alvo, status: r.status, fase: r.fase ?? 'ocioso', iniciada_em: seg(r.iniciada_em), ultima_in_em: seg(r.ultima_in_em), ultima_out_em: seg(r.ultima_out_em), turnos_persona: r.turnos_persona ?? 0, max_turnos: r.max_turnos ?? 4, janela_followup_h: r.janela_followup_h ?? 72 }
 }
 async function historico(sb: any, sessaoId: string): Promise<Msg[]> {
   const { data, error } = await sb.from('oculto_mensagens').select('direcao, texto, em').eq('sessao_id', sessaoId).order('em')
   if (error) throw new Error(`oculto_mensagens: ${error.message}`)
   return (data ?? []).map((m: any) => ({ direcao: m.direcao, texto: m.texto, ts: seg(m.em)! }))
 }
-async function gravar(sb: any, id: string, patch: Record<string, unknown>) {
-  const r = await sb.from('oculto_sessoes').update({ ...patch, atualizado_em: new Date().toISOString() }).eq('id', id).select('id')
+/** escrita SOB POSSE: só grava se o token ainda é o dono; senão PossePerdida */
+async function gravar(sb: any, id: string, token: string, patch: Record<string, unknown>) {
+  const r = await sb.from('oculto_sessoes').update({ ...patch, atualizado_em: new Date().toISOString() }).eq('id', id).eq('claim_token', token).select('id')
   if (r.error) throw new Error(`oculto_sessoes: ${r.error.message}`)
-  if (!r.data?.length) throw new Error('sessão não encontrada')
+  if (!r.data?.length) throw new PossePerdida('posse perdida (cancelada ou outro worker)')
 }
-async function registrarMsg(sb: any, sessaoId: string, direcao: 'in' | 'out', texto: string, ts: number, waId: string | null, bruto?: unknown): Promise<boolean> {
-  const r = await sb.from('oculto_mensagens').upsert({ sessao_id: sessaoId, direcao, texto, em: iso(ts), wa_id: waId, bruto: bruto ?? null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }).select('id')
+async function renovar(sb: any, id: string, token: string) {
+  const { data, error } = await sb.rpc('oculto_renovar', { p_id: id, p_token: token, p_lease_s: LEASE_S })
+  if (error) throw new Error(`oculto_renovar: ${error.message}`)
+  if (data !== true) throw new PossePerdida('posse perdida (cancelada ou outro worker)')
+}
+async function registrarIn(sb: any, sessaoId: string, texto: string, ts: number, waId: string | null, bruto?: unknown): Promise<boolean> {
+  const r = await sb.from('oculto_mensagens').upsert({ sessao_id: sessaoId, direcao: 'in', texto, em: iso(ts), wa_id: waId ?? `in-${ts}-${Math.random().toString(36).slice(2, 8)}`, bruto: bruto ?? null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }).select('id')
   if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`)
   return (r.data?.length ?? 0) > 0
 }
 
-/** fala da persona: gera com o LLM, envia pela Evolution, registra; falha de envio deixa a sessão em 'erro' (sem reenviar) */
-async function falar(sb: any, cfg: Cfg, s: Sessao, persona: any, hist: Msg[], abertura: boolean) {
-  const modelo = llm(cfg), wa = evo(cfg)
+/** fala da persona sob posse: LLM → revalida config e posse → intenção persistida → POST → registro atômico / erro / incerto */
+async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, persona: any, hist: Msg[], abertura: boolean) {
+  const modelo = llm(cfg0)
   if (!modelo) throw new Error('ANTHROPIC_API_KEY ausente')
-  if (!wa) throw new Error('Evolution não configurada (EVOLUTION_URL/APIKEY)')
   const texto = (await modelo(abertura ? promptAbertura(persona, s.empresa) : promptProximaFala(persona, s.empresa, hist), 300)).replace(/^["“]|["”]$/g, '').trim()
   if (!texto) throw new Error('modelo devolveu texto vazio')
+  // revalidação ANTES do efeito: posse ainda nossa (não cancelada) e config ainda permite enviar
+  await renovar(sb, s.id, token)
+  const cfg = await config(sb)
+  const wa = evo(cfg)
+  if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 600) }); return { adiado: 'envios desligados/número desconectado' } }
+  // intenção persistida ANTES do POST
+  await gravar(sb, s.id, token, { fase: 'enviando', envio_pendente: { texto, abertura, iniciado_em: new Date().toISOString() } })
   const env = await wa.enviarTexto(s.numero_alvo, texto)
-  if (!env.ok) { await gravar(sb, s.id, { status: 'erro', erro: `envio falhou HTTP ${env.status}: ${env.nota ?? ''}` }); return }
+  const cls = classificarEnvio(env)
   const ts = agoraS()
-  await registrarMsg(sb, s.id, 'out', texto, ts, env.id ?? `out-${ts}`)
-  await gravar(sb, s.id, { status: abertura ? 'enviada' : 'conversando', iniciada_em: abertura ? iso(ts) : undefined, ultima_out_em: iso(ts), turnos_persona: s.turnos_persona + 1 })
+  if (cls === 'ok') {
+    const status = abertura ? 'enviada' : 'conversando'
+    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: s.id, p_token: token, p_texto: texto, p_wa_id: env.id ?? `out-${ts}`, p_em: iso(ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, ts)) })
+    if (error) throw new Error(`oculto_envio_registrar: ${error.message}`)   // enviado mas não gravado: fase segue 'enviando' → reconciliação encontra pelo eco/findMessages
+    if (ok !== true) throw new PossePerdida('posse perdida ao registrar envio')
+    return { enviado: true, status }
+  }
+  if (cls === 'definitivo') { await gravar(sb, s.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: `envio recusado HTTP ${env.status}: ${env.nota ?? ''}`.slice(0, 300) }); return { erro: 'definitivo' } }
+  // incerto: pode ter saído. NÃO reenvia; a varredura reconcilia.
+  await gravar(sb, s.id, token, { fase: 'envio_incerto', erro: `envio incerto: ${env.nota ?? `HTTP ${env.status}`}`.slice(0, 300), proximo_em: iso(ts + 300) })
+  return { incerto: true }
 }
 
-/** encerra: métricas + avaliação do LLM (se houve conversa) + notas consolidadas */
-async function concluir(sb: any, cfg: Cfg, s: Sessao, hist: Msg[], motivo: string) {
+/** reconcilia envio incerto/enviando interrompido: procura o texto entre as mensagens recentes (fromMe) do número */
+async function reconciliar(sb: any, cfg: Cfg, row: any, token: string) {
+  const pend = row.envio_pendente ?? {}
+  const texto = String(pend.texto ?? ''), abertura = !!pend.abertura
+  const ini = pend.iniciado_em ? Math.floor(new Date(pend.iniciado_em).getTime() / 1000) : agoraS()
+  const wa = evo(cfg)
+  if (!wa || !texto) { await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: 'envio incerto sem como reconciliar' }); return { id: row.id, erro: 'sem reconciliação' } }
+  const { data: eco } = await sb.from('oculto_mensagens').select('id').eq('sessao_id', row.id).eq('direcao', 'out').eq('texto', texto).gte('em', iso(ini - 60)).limit(1)
+  let achou: { id: string | null; ts: number } | null = eco?.length ? { id: null, ts: ini } : null
+  if (!achou) {
+    const r = await wa.buscarMensagens(row.numero_alvo, 30)
+    const m = r.ok ? r.mensagens.find((x) => x.fromMe && x.texto === texto && (!x.ts || x.ts >= ini - 120)) : undefined
+    if (m) achou = { id: m.id, ts: m.ts || ini }
+    else if (!r.ok && agoraS() - ini < 1800) { await gravar(sb, row.id, token, { proximo_em: iso(agoraS() + 300) }); return { id: row.id, adiado: 'provedor indisponível para reconciliar' } }
+  }
+  if (achou) {
+    const status = abertura ? 'enviada' : 'conversando'
+    const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: row.id, p_token: token, p_texto: texto, p_wa_id: achou.id ?? `out-${achou.ts}`, p_em: iso(achou.ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, achou.ts)) })
+    if (error) throw new Error(`oculto_envio_registrar: ${error.message}`)
+    if (ok !== true) throw new PossePerdida('posse perdida ao reconciliar')
+    return { id: row.id, reconciliado: 'enviado' }
+  }
+  // não encontrado: NÃO reenvia automaticamente (risco de duplicar); encerra com erro visível para o operador
+  await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: 'envio incerto não confirmado pelo provedor — não reenviado (cancele e inicie de novo se quiser)' })
+  return { id: row.id, erro: 'incerto não confirmado' }
+}
+
+/** encerra: métricas + avaliação do LLM (se houve conversa) + notas; avaliação indisponível = 'avaliando' (retoma), nunca zero */
+async function avaliar(sb: any, cfg: Cfg, row: any, token: string, hist: Msg[], motivo: string) {
+  const s = toSessao(row)
   const m = metricas(hist, agoraS(), s.janela_followup_h)
-  let ia: any = null, parecer = m.respondeu ? null : `A empresa não respondeu em ${s.janela_followup_h} h (${motivo}).`
-  if (m.respondeu) {
+  let ia: any = null, parecer: string | null = null
+  if (!m.respondeu) {
+    parecer = `A empresa não respondeu em ${s.janela_followup_h} h (${motivo}).`
+  } else {
     const modelo = llm(cfg)
-    if (modelo) { try { ia = extrairJson(await modelo(promptAvaliacao(s.empresa, hist, m), 700)); parecer = ia?.parecer ?? null } catch (e) { parecer = `avaliação IA indisponível: ${String((e as Error)?.message ?? e).slice(0, 120)}` } }
+    if (modelo) { try { ia = extrairJson(await modelo(promptAvaliacao(s.empresa, hist, m), 700)); parecer = ia?.parecer ?? null } catch { ia = null } }
   }
   const notas = consolidar(m, ia)
-  await gravar(sb, s.id, { status: 'concluida', metricas: m, notas, parecer, avaliacao_ia: ia, concluida_em: new Date().toISOString() })
-  return { id: s.id, notas, motivo }
+  const tent = Number(row.tentativas_avaliacao ?? 0) + 1
+  if (notas.incompleta && tent < PADRAO.max_tentativas_avaliacao) {
+    await gravar(sb, s.id, token, { status: 'avaliando', metricas: m, notas, tentativas_avaliacao: tent, proximo_em: iso(agoraS() + 1800), erro: 'avaliação IA indisponível — nova tentativa em 30 min' })
+    return { id: s.id, avaliando: true, tentativa: tent }
+  }
+  await gravar(sb, s.id, token, { status: 'concluida', metricas: m, notas, parecer: parecer ?? (notas.incompleta ? 'Avaliação IA indisponível após 3 tentativas: critérios de qualificação/proposta/tom ficaram sem nota (medidos: tempo de resposta e follow-up).' : null), avaliacao_ia: ia, tentativas_avaliacao: tent, erro: null, concluida_em: new Date().toISOString(), claim_token: null, lease_ate: null })
+  return { id: s.id, concluida: true, incompleta: notas.incompleta, final: notas.final }
 }
 
-/** avança uma sessão conforme a máquina de estados */
+/** avança UMA sessão sob posse (claim → ação → libera) */
 async function avancar(sb: any, cfg: Cfg, row: any) {
-  const s = toSessao(row); const hist = await historico(sb, s.id)
-  const d = decidir(s, hist, agoraS())
-  if (d.acao === 'esperar') return { id: s.id, acao: 'esperar' }
-  if (d.acao === 'responder') { await falar(sb, cfg, s, row.persona ?? personaPara(s.nicho, s.empresa), hist, false); return { id: s.id, acao: 'respondeu' } }
-  if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, { status: 'aguardando_followup' }); return { id: s.id, acao: 'aguardando_followup' } }
-  return await concluir(sb, cfg, s, hist, d.motivo)
+  const { data: token, error } = await sb.rpc('oculto_claim', { p_id: row.id, p_lease_s: LEASE_S })
+  if (error) throw new Error(`oculto_claim: ${error.message}`)
+  if (!token) return { id: row.id, pulado: 'sem posse' }
+  try {
+    const { data: atual, error: e2 } = await sb.from('oculto_sessoes').select('*').eq('id', row.id).maybeSingle()   // relê sob posse
+    if (e2 || !atual) throw new Error(`oculto_sessoes: ${e2?.message ?? 'sumiu'}`)
+    if (atual.fase === 'enviando' || atual.fase === 'envio_incerto') return await reconciliar(sb, cfg, atual, token)
+    const s = toSessao(atual); const hist = await historico(sb, s.id)
+    const d = decidir(s, hist, agoraS())
+    const persona = atual.persona && Object.keys(atual.persona).length ? atual.persona : personaPara(s.nicho, s.empresa)
+    if (d.acao === 'abrir') { if (!podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 1800) }); return { id: s.id, pendente: 'sem número/ativo' } } return { id: s.id, ...(await falar(sb, cfg, s, token, persona, [], true)) } }
+    if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, persona, hist, false)) }
+    if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, token, { status: 'aguardando_followup', proximo_em: iso(d.proximo_em) }); return { id: s.id, acao: 'aguardando_followup' } }
+    if (d.acao === 'avaliar') return await avaliar(sb, cfg, atual, token, hist, d.motivo)
+    await gravar(sb, s.id, token, { proximo_em: d.proximo_em != null ? iso(d.proximo_em) : iso(agoraS() + 3600) })
+    return { id: s.id, acao: 'esperar' }
+  } catch (e) {
+    if (e instanceof PossePerdida) return { id: row.id, pulado: e.message }
+    const msg = String((e as Error)?.message ?? e).slice(0, 300)
+    await sb.from('oculto_sessoes').update({ erro: msg, proximo_em: iso(agoraS() + 600), atualizado_em: new Date().toISOString() }).eq('id', row.id).eq('claim_token', token)
+    return { id: row.id, erro: msg }
+  } finally {
+    await sb.from('oculto_sessoes').update({ claim_token: null, lease_ate: null }).eq('id', row.id).eq('claim_token', token).in('status', ABERTAS)   // libera (concluída já limpou)
+  }
 }
 
 async function webhook(sb: any, cfg: Cfg, body: any) {
@@ -113,15 +193,18 @@ async function webhook(sb: any, cfg: Cfg, body: any) {
   for (const data of itens) {
     const m = textoDoEvento(data)
     if (!m || !m.de) { out.push({ ignorado: 'sem remetente' }); continue }
-    const { data: ss, error } = await sb.from('oculto_sessoes').select('*').eq('numero_alvo', m.de).in('status', ['enviada', 'conversando', 'aguardando_followup']).order('criado_em', { ascending: false }).limit(1)
+    const { data: ss, error } = await sb.from('oculto_sessoes').select('*').eq('numero_alvo', m.de).in('status', ABERTAS).order('criado_em', { ascending: false }).limit(1)
     if (error) throw new Error(`oculto_sessoes: ${error.message}`)
     const row = ss?.[0]
     if (!row) { out.push({ de: m.de, ignorado: 'sem sessão aberta' }); continue }
-    if (m.fromMe) { if (m.texto) await registrarMsg(sb, row.id, 'out', m.texto, m.ts, m.id); out.push({ sessao: row.id, nossa: true }); continue }   // eco do nosso envio
-    const nova = await registrarMsg(sb, row.id, 'in', m.texto || '[mídia]', m.ts, m.id, data)
+    if (m.fromMe) {   // eco do nosso envio: registra (dedupe por wa_id) — serve de reconciliação
+      if (m.texto) await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(m.ts), wa_id: m.id ?? `out-${m.ts}` }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true })
+      out.push({ sessao: row.id, nossa: true }); continue
+    }
+    const nova = await registrarIn(sb, row.id, m.texto || '[mídia]', m.ts, m.id, data)
     if (!nova) { out.push({ sessao: row.id, duplicada: true }); continue }
-    await gravar(sb, row.id, { ultima_in_em: iso(m.ts), status: row.status === 'enviada' ? 'conversando' : row.status })
-    out.push(await avancar(sb, cfg, { ...row, status: row.status === 'enviada' ? 'conversando' : row.status, ultima_in_em: iso(m.ts) }))
+    await sb.from('oculto_sessoes').update({ ultima_in_em: iso(m.ts), status: row.status === 'enviada' ? 'conversando' : row.status, proximo_em: new Date().toISOString(), atualizado_em: new Date().toISOString() }).eq('id', row.id).in('status', ['enviada', 'conversando', 'aguardando_followup'])
+    out.push(await avancar(sb, cfg, row))
   }
   return { ok: true, itens: out }
 }
@@ -140,42 +223,39 @@ Deno.serve(async (req) => {
       const { data } = await sb.from('integracao_config').select('value').eq('key', 'oculto_webhook_secret').maybeSingle()
       if (!data?.value || data.value !== segredoPath) return json({ error: 'segredo inválido' }, 401)
       if (body?.acao === 'varrer') {
-        const { data: abertas, error } = await sb.from('oculto_sessoes').select('*').in('status', ['pendente', 'enviada', 'conversando', 'aguardando_followup']).order('criado_em').limit(30)
+        // só trabalhos DEVIDOS, mais antigos primeiro, com orçamento — sessões que só esperam não entram
+        const { data: devidas, error } = await sb.from('oculto_sessoes').select('*').in('status', ABERTAS).lte('proximo_em', new Date().toISOString()).order('proximo_em').limit(ORCAMENTO_VARRER)
         if (error) throw new Error(error.message)
         const out: unknown[] = []
-        for (const row of abertas ?? []) {
-          try {
-            if (row.status === 'pendente') { if (cfg.ativo && cfg.conectado && evo(cfg)) { await falar(sb, cfg, toSessao(row), row.persona ?? personaPara(row.nicho, row.empresa), [], true); out.push({ id: row.id, acao: 'abertura' }) } else out.push({ id: row.id, acao: 'pendente (sem número/ativo)' }); continue }
-            out.push(await avancar(sb, cfg, row))
-          } catch (e) { const msg = String((e as Error)?.message ?? e).slice(0, 300); await sb.from('oculto_sessoes').update({ erro: msg, atualizado_em: new Date().toISOString() }).eq('id', row.id); out.push({ id: row.id, erro: msg }) }
-        }
+        for (const row of devidas ?? []) out.push(await avancar(sb, cfg, row))
         return json({ ok: true, processadas: out.length, resultados: out })
       }
-      return json(await webhook(sb, cfg, body))   // Evolution: responde 200 sempre que autenticado
+      return json(await webhook(sb, cfg, body))
     }
     const membro = await autenticarMembro(req, sb)
     if (!membro) return json({ error: 'não autorizado' }, 401)
     const acao = String(body?.acao ?? '')
     if (acao === 'iniciar') {
-      const { data: lead, error } = await sb.from('enriquecedor_leads').select('id, nome_fantasia, razao_social, segmento, phone_raw, google_business, cidade, uf').eq('id', body.lead_id).maybeSingle()
+      const { data: lead, error } = await sb.from('enriquecedor_leads').select('id, nome_fantasia, razao_social, segmento, phone_raw, google_business').eq('id', body.lead_id).maybeSingle()
       if (error) return json({ error: error.message }, 500)
       if (!lead) return json({ error: 'lead não existe' }, 404)
       const numero = numeroWa(String(body.numero ?? lead.phone_raw ?? lead.google_business?.phone ?? ''))
       if (!numero) return json({ error: 'lead sem telefone válido (informe numero)' }, 400)
-      const { data: aberta } = await sb.from('oculto_sessoes').select('id').eq('numero_alvo', numero).in('status', ['pendente', 'enviada', 'conversando', 'aguardando_followup']).limit(1)
-      if (aberta?.length) return json({ error: 'já existe sessão aberta para este número', sessao_id: aberta[0].id }, 409)
       const empresa = lead.nome_fantasia || lead.razao_social || 'empresa'
       const nicho = body.nicho ?? lead.segmento ?? null
       const persona = personaPara(nicho, empresa)
       const { data: nova, error: ei } = await sb.from('oculto_sessoes').insert({ lead_id: lead.id, empresa, nicho, numero_alvo: numero, persona, max_turnos: cfg.max_turnos, janela_followup_h: cfg.janela_followup_h, pedido_por: membro }).select('*').single()
-      if (ei || !nova) return json({ error: ei?.message ?? 'não gravou' }, 500)
-      if (cfg.ativo && cfg.conectado && evo(cfg)) {
-        try { await falar(sb, cfg, toSessao(nova), persona, [], true) } catch (e) { await gravar(sb, nova.id, { status: 'erro', erro: String((e as Error).message).slice(0, 300) }); return json({ ok: false, sessao_id: nova.id, erro: String((e as Error).message) }, 502) }
-        return json({ ok: true, sessao_id: nova.id, status: 'enviada' })
-      }
-      return json({ ok: true, sessao_id: nova.id, status: 'pendente', aviso: 'sem número conectado/ativo: a abertura sai quando o número estiver pronto' })
+      if (ei) { if (String(ei.code) === '23505') return json({ error: 'já existe sessão aberta para este número' }, 409); return json({ error: ei.message }, 500) }
+      if (!nova) return json({ error: 'não gravou' }, 500)
+      const r = podeEnviar(cfg) ? await avancar(sb, cfg, nova) : { pendente: 'sem número/ativo' }
+      return json({ ok: true, sessao_id: nova.id, status: (r as any).enviado ? 'enviada' : (r as any).erro ? 'erro' : 'pendente', detalhe: r, aviso: podeEnviar(cfg) ? undefined : 'sem número conectado/ativo: a abertura sai quando o número estiver pronto' })
     }
-    if (acao === 'cancelar') { await gravar(sb, String(body.sessao_id), { status: 'cancelada' }); return json({ ok: true }) }
+    if (acao === 'cancelar') {
+      // cancelar invalida a posse (token limpo + status fora de ABERTAS): qualquer envio em curso falha na revalidação
+      const r = await sb.from('oculto_sessoes').update({ status: 'cancelada', claim_token: null, lease_ate: null, fase: 'ocioso', envio_pendente: null, atualizado_em: new Date().toISOString() }).eq('id', String(body.sessao_id)).in('status', ABERTAS).select('id')
+      if (r.error) return json({ error: r.error.message }, 500)
+      return json({ ok: true, cancelada: (r.data?.length ?? 0) > 0 })
+    }
     if (acao === 'instancia') {
       const wa = evo(cfg); if (!wa) return json({ error: 'Evolution não configurada (EVOLUTION_URL/EVOLUTION_APIKEY nos secrets da edge)' }, 503)
       const { data: sec } = await sb.from('integracao_config').select('value').eq('key', 'oculto_webhook_secret').maybeSingle()
@@ -183,7 +263,7 @@ Deno.serve(async (req) => {
       if (body.op === 'criar') return json(await wa.criarInstancia(webhookUrl))
       if (body.op === 'qr') return json(await wa.qr())
       const st = await wa.estado()
-      if (st.ok) await sb.from('oculto_config').update({ conectado: st.estado === 'open', numero: st.numero ?? null, atualizado_em: new Date().toISOString() }).eq('id', 1)
+      if (st.ok) await sb.from('oculto_config').update({ conectado: st.estado === 'open', numero: st.numero ? numeroWa(st.numero) : null, atualizado_em: new Date().toISOString() }).eq('id', 1)
       return json(st)
     }
     return json({ error: 'acao deve ser iniciar|cancelar|instancia' }, 400)

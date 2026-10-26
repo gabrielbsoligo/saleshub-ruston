@@ -7,23 +7,35 @@
 -- Primeiro pelos LEADS (telefone da empresa: phone_raw / Google Business), depois concorrentes.
 --
 -- Tabelas:
---   oculto_config    — 1 linha: instância Evolution (nome), ativo, limites (turnos, janela), persona padrão.
+--   oculto_config    — 1 linha: instância Evolution (nome), ativo, conectado, limites, modelo.
 --                      Segredos (URL/apikey da Evolution, chave Anthropic) NÃO ficam aqui: edge secrets.
---   oculto_sessoes   — 1 por empresa-alvo (lead do Enriquecedor OU concorrente): número, persona,
---                      estado, métricas, notas por critério e parecer.
---   oculto_mensagens — histórico da conversa (direção in/out, texto, id do WhatsApp, instante).
--- Segurança: leitura para membros autenticados ativos; escrita só service_role (edge). O webhook da
--- Evolution autentica por segredo próprio (integracao_config.oculto_webhook_secret, no caminho /s/).
+--   oculto_sessoes   — 1 por empresa-alvo: número, persona, estado, POSSE (claim_token/lease_ate),
+--                      fase de envio (intenção persistida antes do POST), próximo instante devido,
+--                      métricas, notas por critério, parecer.
+--   oculto_mensagens — histórico (in/out, id do WhatsApp, instante). UNIQUE (sessao_id, wa_id) NÃO parcial.
+-- Concorrência/efeitos:
+--   * posse por sessão: oculto_claim (lease + token); toda escrita e todo envio são condicionados ao
+--     token (oculto_renovar devolve false se cancelada/trocou de dono) — cancelar invalida o envio;
+--   * envio: fase 'enviando' + envio_pendente gravados ANTES do POST; resposta aceita → registra
+--     (oculto_envio_registrar, atômico: mensagem + turnos + estado); falha definitiva → erro;
+--     resultado INCERTO (timeout/rede/5xx) → fase 'envio_incerto', reconciliado pela varredura via
+--     findMessages/eco do webhook antes de qualquer reenvio;
+--   * 1 sessão ABERTA por número (UNIQUE parcial inclui 'pendente'); 409 na corrida.
+-- Segurança: leitura para membros ativos; escrita só service_role. O webhook da Evolution autentica por
+-- segredo próprio (integracao_config.oculto_webhook_secret, no caminho /s/).
 -- ADITIVA e idempotente. Reverter (ordem): SELECT cron.unschedule('oculto-varrer');
+--   DROP FUNCTION IF EXISTS public.oculto_claim(UUID,INT), public.oculto_renovar(UUID,UUID,INT),
+--     public.oculto_envio_registrar(UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,BOOLEAN,TIMESTAMPTZ);
+--   ALTER PUBLICATION supabase_realtime DROP TABLE public.oculto_sessoes, public.oculto_mensagens;
 --   DROP TABLE IF EXISTS public.oculto_mensagens, public.oculto_sessoes, public.oculto_config;
---   DELETE FROM public.integracao_config WHERE key IN ('oculto_webhook_secret');
+--   DELETE FROM public.integracao_config WHERE key = 'oculto_webhook_secret';
 
 CREATE TABLE IF NOT EXISTS public.oculto_config (
   id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-  instancia       TEXT NOT NULL DEFAULT 'oculto-v4',        -- instanceName na Evolution
-  ativo           BOOLEAN NOT NULL DEFAULT false,           -- false = não envia nada (só prepara)
-  conectado       BOOLEAN NOT NULL DEFAULT false,           -- espelho do connectionState (atualizado pela edge)
-  numero          TEXT,                                     -- número conectado (após o QR)
+  instancia       TEXT NOT NULL DEFAULT 'oculto-v4',
+  ativo           BOOLEAN NOT NULL DEFAULT false,           -- false = NÃO envia nada (nem respostas em andamento)
+  conectado       BOOLEAN NOT NULL DEFAULT false,           -- espelho do connectionState (edge atualiza)
+  numero          TEXT,
   max_turnos      INT NOT NULL DEFAULT 4,
   janela_followup_h INT NOT NULL DEFAULT 72,
   modelo          TEXT NOT NULL DEFAULT 'claude-haiku-4-5-20251001',
@@ -34,43 +46,60 @@ INSERT INTO public.oculto_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 CREATE TABLE IF NOT EXISTS public.oculto_sessoes (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id         UUID REFERENCES public.enriquecedor_leads(id) ON DELETE SET NULL,
-  concorrente     TEXT,                                     -- nome, quando não é lead (fase 2)
+  concorrente     TEXT,
   empresa         TEXT NOT NULL,
   nicho           TEXT,
-  numero_alvo     TEXT NOT NULL,                            -- E.164 sem '+', ex.: 5511999999999
-  persona         JSONB NOT NULL DEFAULT '{}'::jsonb,       -- {nome, contexto, objetivo, tom}
-  status          TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','enviada','conversando','aguardando_followup','concluida','erro','cancelada')),
+  numero_alvo     TEXT NOT NULL,                            -- canônico: 55 + DDD + 9 dígitos (numeroWa)
+  persona         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status          TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','enviada','conversando','aguardando_followup','avaliando','concluida','erro','cancelada')),
+  fase            TEXT NOT NULL DEFAULT 'ocioso' CHECK (fase IN ('ocioso','enviando','envio_incerto')),
+  envio_pendente  JSONB,                                    -- {texto, abertura, iniciado_em} gravado ANTES do POST
+  proximo_em      TIMESTAMPTZ NOT NULL DEFAULT now(),       -- quando esta sessão tem trabalho devido (varredura)
+  claim_token     UUID,
+  lease_ate       TIMESTAMPTZ,
   iniciada_em     TIMESTAMPTZ,
   ultima_in_em    TIMESTAMPTZ,
   ultima_out_em   TIMESTAMPTZ,
   turnos_persona  INT NOT NULL DEFAULT 0,
   max_turnos      INT NOT NULL DEFAULT 4,
   janela_followup_h INT NOT NULL DEFAULT 72,
-  metricas        JSONB,                                    -- {tempo_primeira_resposta_s, respondeu, followup_24h/48h/72h, ...}
-  notas           JSONB,                                    -- {tempo_resposta, qualificacao, proposta_preco, followup, tom, final}
+  tentativas_avaliacao INT NOT NULL DEFAULT 0,
+  metricas        JSONB,
+  notas           JSONB,                                    -- {tempo_resposta, qualificacao|null, proposta_preco|null, followup, tom|null, final|null, incompleta}
   parecer         TEXT,
-  avaliacao_ia    JSONB,                                    -- resposta bruta do modelo (pontos fortes/fracos)
+  avaliacao_ia    JSONB,
   erro            TEXT,
   pedido_por      UUID REFERENCES public.team_members(id) ON DELETE SET NULL,
   criado_em       TIMESTAMPTZ NOT NULL DEFAULT now(),
   atualizado_em   TIMESTAMPTZ NOT NULL DEFAULT now(),
   concluida_em    TIMESTAMPTZ
 );
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS fase TEXT NOT NULL DEFAULT 'ocioso';
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS envio_pendente JSONB;
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS proximo_em TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS claim_token UUID;
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS lease_ate TIMESTAMPTZ;
+ALTER TABLE public.oculto_sessoes ADD COLUMN IF NOT EXISTS tentativas_avaliacao INT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS ix_oculto_sessoes_lead ON public.oculto_sessoes (lead_id, criado_em DESC);
-CREATE INDEX IF NOT EXISTS ix_oculto_sessoes_numero_ativa ON public.oculto_sessoes (numero_alvo) WHERE status IN ('enviada','conversando','aguardando_followup');
-CREATE INDEX IF NOT EXISTS ix_oculto_sessoes_abertas ON public.oculto_sessoes (status) WHERE status IN ('pendente','enviada','conversando','aguardando_followup');
+-- 1 sessão ABERTA por número (inclui pendente): a corrida de dois 'iniciar' cai aqui (23505 → 409 na edge)
+CREATE UNIQUE INDEX IF NOT EXISTS ux_oculto_sessoes_numero_aberta ON public.oculto_sessoes (numero_alvo)
+  WHERE status IN ('pendente','enviada','conversando','aguardando_followup','avaliando');
+CREATE INDEX IF NOT EXISTS ix_oculto_sessoes_devidas ON public.oculto_sessoes (proximo_em)
+  WHERE status IN ('pendente','enviada','conversando','aguardando_followup','avaliando');
 
 CREATE TABLE IF NOT EXISTS public.oculto_mensagens (
   id          BIGSERIAL PRIMARY KEY,
   sessao_id   UUID NOT NULL REFERENCES public.oculto_sessoes(id) ON DELETE CASCADE,
-  direcao     TEXT NOT NULL CHECK (direcao IN ('in','out')),   -- in = empresa → nós; out = persona → empresa
+  direcao     TEXT NOT NULL CHECK (direcao IN ('in','out')),
   texto       TEXT NOT NULL,
-  wa_id       TEXT,                                            -- key.id do WhatsApp (dedupe de reentrega)
+  wa_id       TEXT,                                            -- key.id do WhatsApp (dedupe de reentrega/eco)
   em          TIMESTAMPTZ NOT NULL,
   bruto       JSONB,
   criado_em   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_oculto_mensagens_wa ON public.oculto_mensagens (sessao_id, wa_id) WHERE wa_id IS NOT NULL;
+-- UNIQUE NÃO parcial: ON CONFLICT (sessao_id, wa_id) do upsert PostgREST infere este índice; NULLs coexistem
+DROP INDEX IF EXISTS public.ux_oculto_mensagens_wa;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_oculto_mensagens_wa ON public.oculto_mensagens (sessao_id, wa_id);
 CREATE INDEX IF NOT EXISTS ix_oculto_mensagens_sessao ON public.oculto_mensagens (sessao_id, em);
 
 ALTER TABLE public.oculto_config    ENABLE ROW LEVEL SECURITY;
@@ -85,7 +114,6 @@ DO $$ DECLARE t TEXT; BEGIN
   END LOOP;
 END $$;
 
--- Realtime para a tela acompanhar a conversa
 DO $$ DECLARE t TEXT; BEGIN
   FOREACH t IN ARRAY ARRAY['oculto_sessoes','oculto_mensagens'] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = t) THEN
@@ -94,12 +122,54 @@ DO $$ DECLARE t TEXT; BEGIN
   END LOOP;
 END $$;
 
--- Segredo do webhook da Evolution (destino = <edge>/cliente-oculto/s/<segredo>)
+-- Posse: só sessão aberta e livre (sem lease viva). Devolve o token.
+CREATE OR REPLACE FUNCTION public.oculto_claim(p_id UUID, p_lease_s INT DEFAULT 180)
+RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE t UUID := gen_random_uuid(); n INT;
+BEGIN
+  UPDATE public.oculto_sessoes s SET claim_token = t, lease_ate = now() + make_interval(secs => greatest(p_lease_s, 30)), atualizado_em = now()
+   WHERE s.id = p_id AND s.status IN ('pendente','enviada','conversando','aguardando_followup','avaliando')
+     AND (s.lease_ate IS NULL OR s.lease_ate < now());
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN CASE WHEN n = 1 THEN t ELSE NULL END;
+END $$;
+-- Renova a posse: false se o token não é mais o dono OU a sessão não está mais aberta (cancelada/erro/concluída)
+CREATE OR REPLACE FUNCTION public.oculto_renovar(p_id UUID, p_token UUID, p_lease_s INT DEFAULT 180)
+RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  WITH u AS (UPDATE public.oculto_sessoes SET lease_ate = now() + make_interval(secs => greatest(p_lease_s, 30)), atualizado_em = now()
+              WHERE id = p_id AND claim_token = p_token AND status IN ('pendente','enviada','conversando','aguardando_followup','avaliando') RETURNING 1)
+  SELECT EXISTS (SELECT 1 FROM u);
+$$;
+-- Registro ATÔMICO de um envio aceito: mensagem 'out' + turnos+1 + estado + fase ociosa + próximo instante,
+-- tudo sob posse. Devolve false se perdeu a posse (nada gravado).
+CREATE OR REPLACE FUNCTION public.oculto_envio_registrar(p_id UUID, p_token UUID, p_texto TEXT, p_wa_id TEXT, p_em TIMESTAMPTZ, p_abertura BOOLEAN, p_proximo_em TIMESTAMPTZ)
+RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n INT;
+BEGIN
+  UPDATE public.oculto_sessoes s
+     SET status = CASE WHEN p_abertura THEN 'enviada' ELSE 'conversando' END,
+         iniciada_em = CASE WHEN p_abertura THEN p_em ELSE s.iniciada_em END,
+         ultima_out_em = p_em, turnos_persona = s.turnos_persona + 1,
+         fase = 'ocioso', envio_pendente = NULL, proximo_em = p_proximo_em, erro = NULL, atualizado_em = now()
+   WHERE s.id = p_id AND s.claim_token = p_token AND s.status IN ('pendente','enviada','conversando','aguardando_followup');
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RETURN false; END IF;
+  INSERT INTO public.oculto_mensagens (sessao_id, direcao, texto, wa_id, em) VALUES (p_id, 'out', p_texto, p_wa_id, p_em)
+    ON CONFLICT (sessao_id, wa_id) DO NOTHING;
+  RETURN true;
+END $$;
+REVOKE EXECUTE ON FUNCTION public.oculto_claim(UUID, INT) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.oculto_renovar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.oculto_claim(UUID, INT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.oculto_renovar(UUID, UUID, INT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.oculto_envio_registrar(UUID, UUID, TEXT, TEXT, TIMESTAMPTZ, BOOLEAN, TIMESTAMPTZ) TO service_role;
+
 INSERT INTO public.integracao_config (key, value)
   SELECT 'oculto_webhook_secret', encode(gen_random_bytes(32), 'hex')
   WHERE NOT EXISTS (SELECT 1 FROM public.integracao_config WHERE key = 'oculto_webhook_secret');
 
--- Varredura (a cada 10 min): prazos de follow-up, encerramento e avaliação — só quando há sessão aberta
+-- Varredura (*/10): só trabalhos DEVIDOS (proximo_em <= now), com orçamento por execução
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
@@ -109,7 +179,7 @@ BEGIN
         url     := (SELECT value FROM integracao_config WHERE key='edge_base_url') || '/cliente-oculto/s/' || (SELECT value FROM integracao_config WHERE key='oculto_webhook_secret'),
         headers := '{"Content-Type":"application/json"}'::jsonb,
         body    := '{"acao":"varrer"}'::jsonb)
-      WHERE EXISTS (SELECT 1 FROM oculto_sessoes WHERE status IN ('pendente','enviada','conversando','aguardando_followup'))
+      WHERE EXISTS (SELECT 1 FROM oculto_sessoes WHERE status IN ('pendente','enviada','conversando','aguardando_followup','avaliando') AND proximo_em <= now())
     $job$);
   END IF;
 END $$;

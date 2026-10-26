@@ -1,13 +1,14 @@
 // Cliente oculto — leitura (Supabase, RLS de membro) e ações (edge cliente-oculto com o JWT da sessão).
 import { supabase } from './supabase';
 
-export type OcultoStatus = 'pendente' | 'enviada' | 'conversando' | 'aguardando_followup' | 'concluida' | 'erro' | 'cancelada';
+export type OcultoStatus = 'pendente' | 'enviada' | 'conversando' | 'aguardando_followup' | 'avaliando' | 'concluida' | 'erro' | 'cancelada';
 export interface OcultoSessao {
   id: string; lead_id: string | null; concorrente: string | null; empresa: string; nicho: string | null; numero_alvo: string;
   persona: { nome?: string; contexto?: string; objetivo?: string } | null; status: OcultoStatus;
   iniciada_em: string | null; ultima_in_em: string | null; ultima_out_em: string | null; turnos_persona: number; max_turnos: number;
   metricas: { tempo_primeira_resposta_s?: number | null; respondeu?: boolean; followup_24h?: boolean; followup_48h?: boolean; followup_72h?: boolean } | null;
-  notas: { tempo_resposta: number; qualificacao: number; proposta_preco: number; followup: number; tom: number; final: number } | null;
+  fase?: 'ocioso' | 'enviando' | 'envio_incerto';
+  notas: { tempo_resposta: number; qualificacao: number | null; proposta_preco: number | null; followup: number; tom: number | null; final: number | null; incompleta?: boolean } | null;
   parecer: string | null; avaliacao_ia: { pontos_fortes?: string[]; pontos_fracos?: string[] } | null; erro: string | null;
   criado_em: string; concluida_em: string | null;
 }
