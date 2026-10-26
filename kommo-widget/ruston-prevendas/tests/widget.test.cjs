@@ -648,3 +648,27 @@ test('chat que envelhece DURANTE pausa do Kommo: sai pelo relógio, tarefas e da
   assert.equal(leu, false)                                                   // pausado: não lê
   assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
 })
+
+test('modo closer (servidor): "Concluir" vai para OUTRO lead (não reapresenta o mesmo em loop)', () => {
+  const env = ambiente()
+  const agora = Math.floor(Date.now() / 1000)
+  const ct = (id, eid, extra = {}) => ({ id, entity_type: 'leads', entity_id: eid, due: agora - 600 + id, momento: 'follow_up', grupo: 'G9', texto: 't' + id, pipeline_id: 11010459, status_id: 102174784, ...extra })
+  const w = instanciar(env, [{ ok: true, modo: 'closer', itens: [ct(1, 10), ct(2, 10), ct(3, 20, { status_id: 102174776 })], chats_em: agora }])
+  let patch = null
+  env.ctx.__kommo = (o) => { patch = o; return { done(fn) { fn({}); return this }, fail() { return this } } }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)          // 2 leads, não 3 tarefas
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+  assert.match(env.elems['rpv-root'].innerHTML, /\+1<\/span>/)                         // +1 pendente no lead 10
+  clicar(env, 'concluir')
+  assert.match(patch.url, /\/api\/v4\/tasks\/1$/)                                      // só a tarefa exibida
+  assert.equal(env.ctx.location.pathname, '/leads/detail/20')                         // próximo LEAD
+})
+
+test('setting modo vai no pedido ao servidor (o servidor só aceita de gestor)', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [] }], { modo: 'closer' })
+  let corpo = null; w.$authorizedAjax = (o) => { corpo = JSON.parse(o.data); return { then() {} } }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.deepEqual(corpo, { forcar: false, modo: 'closer' })
+})

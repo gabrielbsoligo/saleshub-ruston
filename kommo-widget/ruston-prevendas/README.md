@@ -139,3 +139,28 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
 3. Faça isso sempre que um usuário sair da lista `PREVENDAS_VOZ_USUARIOS`, mudar de ramal ou houver suspeita de vazamento.
 
 Decisão do Gabriel (26/10): opção B, seguir sem pedir à 4com o bloqueio de saída direta dos ramais, com as mitigações acima.
+
+## Fila do CLOSER (PROPOSTA §7 rev. 2.1 + decisões §7.5) — NÃO aplicado
+
+Quem tem `team_members.role = 'closer'` recebe a fila do closer. Quem decide é o servidor, e só o gestor pode forçar o modo pelo setting `modo` (sdr | closer) para testar. A fila tem um card por LEAD, nesta ordem:
+1. chat sem resposta;
+2. reunião em que ele é o closer efetivo, de 2 h antes até 30 min depois (`antecedencia_closer_min`);
+3. etapas do funil Closer, na ordem de `etapas_closer`. Padrão: CONTRATO NA RUA, CALL PROPOSTA AGENDADA, feedback reunião, MARCAR CALL, ALTA, MÉDIA, BAIXA;
+4. o resto: funis de disparo, etapa a confirmar e contatos.
+
+Ficam fora da fila Incoming leads, CONTRATO ASSINADO, ganho e perdido, mas só se a etapa for confirmada ao vivo. "Concluir" age só na tarefa exibida, e o próximo é outro lead. Nada muda na cadência.
+
+**Aplicar (só com o ok):**
+1. `supabase/migration_162_prevendas_closer.sql`: só funções de leitura.
+2. `supabase functions deploy prevendas-fila --no-verify-jwt --use-api`.
+3. Zip novo (`node build-zip.mjs`).
+
+**Testar:**
+- O Gabriel (gestor) põe `modo=closer` nas settings: a fila vira a do closer, com os leads dele.
+- Depois volta para `modo` vazio.
+- Closer de verdade só entra na lista `usuarios` com o ok do Gabriel.
+
+**Reverter:**
+- Voltar a edge do commit 3ba7688.
+- `drop function public.prevendas_compromissos(bigint,bigint[],timestamptz,timestamptz);`
+- Recriar o `prevendas_leads` da migration 160. O campo `status_id` a mais é inofensivo, então esse passo é opcional.

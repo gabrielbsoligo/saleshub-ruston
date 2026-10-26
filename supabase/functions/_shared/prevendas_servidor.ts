@@ -14,7 +14,7 @@ export interface TarefaKommo {
   entity_id?: number | null
   updated_at?: number | null
 }
-export interface LeadDados { nome?: string | null; etapa?: string | null; origem?: string | null }
+export interface LeadDados { nome?: string | null; etapa?: string | null; origem?: string | null; status_id?: number | null; pipeline_id?: number | null }
 
 export interface Item {
   id: number; entity_type: string; entity_id: number; due: number; texto: string

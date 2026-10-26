@@ -10,6 +10,8 @@
  * - Várias abas: uma "líder" por usuário consulta; as outras usam o resultado compartilhado (localStorage).
  * - NOTIFY: pop-up + som + notificação do navegador para tarefas que vencem agora (sem inundar com backlog).
  * - PRÓXIMO: momento → origem → vencimento (PROPOSTA.md §2.3). Sem nada vencido, oferece a próxima futura.
+ *   MODO CLOSER (o servidor decide pelo papel): um card por LEAD — chat sem resposta, depois reunião na janela
+ *   (2 h antes até 30 min depois), depois a etapa do funil Closer na ordem configurada, e o resto no fim (§7).
  *   Nível 0 = CHAT SEM RESPOSTA (cliente falou por último e nenhum humano respondeu; decisão 26/10).
  * - TELEFONE (opcional, setting voz=Y): o ramal 4com do próprio usuário registra aqui (JsSIP sobre WSS, áudio no
  *   navegador). A credencial (HA1, nunca a senha) vem da edge prevendas-voz e fica SÓ em memória. Discar = o
@@ -120,6 +122,56 @@
       return { momento: 'sem_classificacao', grupo: 'G9', urgente: false, acao: 'outro', fonte: 'local' };
     }
 
+    // ---------------- modo CLOSER (puro; PROPOSTA §7) ----------------
+    var FUNIL_CLOSER = 11010459;
+    // CONTRATO NA RUA, CALL PROPOSTA AGENDADA, feedback reunião, MARCAR CALL PROPOSTA, ALTA, MÉDIA, BAIXA (decisão 26/10)
+    var ETAPAS_CLOSER_PADRAO = [84456095, 110113248, 84456019, 103523344, 102174784, 102174780, 102174776];
+    function chaveEnt(it) { return (it.etype || it.entity_type || 'leads') + ':' + (it.eid != null ? it.eid : it.entity_id); }
+    /** Nível no modo closer: chat 0; reunião do lead na janela 0.5; etapa do funil Closer 1..N; resto/pendente 8. */
+    function nivelCloser(it, cfg, agora) {
+      if (it.momento === 'chat_sem_resposta') return 0;
+      var ant = (cfg.antecedencia_closer_min == null ? 120 : cfg.antecedencia_closer_min) * 60;
+      if (it.reuniao_em && agora >= it.reuniao_em - ant && agora <= it.reuniao_em + 30 * 60) return 0.5;
+      if (it.etapa_pendente) return 8;
+      var etapas = cfg.etapas && cfg.etapas.length ? cfg.etapas : ETAPAS_CLOSER_PADRAO;
+      var i = Number(it.pipeline_id) === FUNIL_CLOSER ? etapas.indexOf(Number(it.status_id)) : -1;
+      return i === -1 ? 8 : 1 + i;
+    }
+    /**
+     * Fila do closer. Unidade = entidade (tipo:id). Só tarefas elegíveis (prazo ≤ agora + lookahead; chat sempre)
+     * contam; a chave do lead é o MELHOR nível entre elas e a representativa é a tarefa desse nível (na reunião,
+     * a de prazo mais próximo dela; senão, a mais antiga). O resto vira contagem (pendentes).
+     * Futura = a tarefa mais próxima de um lead que não está na fila.
+     */
+    function ordenarCloser(itens, cfg, agora) {
+      var limite = agora + (cfg.lookahead == null ? 15 : cfg.lookahead) * 60;
+      var grupos = {}, ordemG = [], futuras = [];
+      itens.forEach(function (it) {
+        if (!(it.urgente || !it.due || it.due <= limite)) { futuras.push(it); return; }
+        var k = chaveEnt(it);
+        if (!grupos[k]) { grupos[k] = []; ordemG.push(k); }
+        grupos[k].push({ it: it, n: nivelCloser(it, cfg, agora) });
+      });
+      var reps = ordemG.map(function (k) {
+        var g = grupos[k], melhor = 99;
+        g.forEach(function (x) { if (x.n < melhor) melhor = x.n; });
+        var cands = g.filter(function (x) { return x.n === melhor; });
+        cands.sort(function (a, b) {
+          if (melhor === 0.5) { var r = a.it.reuniao_em, d = Math.abs((a.it.due || 0) - r) - Math.abs((b.it.due || 0) - r); if (d) return d; }
+          return ((a.it.due || 0) - (b.it.due || 0)) || (a.it.id - b.it.id);
+        });
+        var copia = {}, rep0 = cands[0].it;
+        for (var p in rep0) if (Object.prototype.hasOwnProperty.call(rep0, p)) copia[p] = rep0[p];
+        copia.pendentes = g.length - 1; copia.nivelCloser = melhor;
+        return copia;
+      });
+      reps.sort(function (a, b) { return (a.nivelCloser - b.nivelCloser) || ((a.due || 0) - (b.due || 0)) || (a.id - b.id); });
+      var naFila = {}; reps.forEach(function (r) { naFila[chaveEnt(r)] = 1; });
+      var fut = futuras.filter(function (x) { return !naFila[chaveEnt(x)]; });
+      fut.sort(function (a, b) { return ((a.due || 0) - (b.due || 0)) || (a.id - b.id); });
+      return { fila: reps, futura: fut.length ? fut[0] : null };
+    }
+
     // ---------------- telefone (puro) ----------------
     /**
      * Só RÓTULO ("provavelmente a sua ligação"): chamada integrada da 4com chegando enquanto há um pedido seu.
@@ -149,6 +201,7 @@
     function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
 
     return {
+      nivelCloser: nivelCloser, ordenarCloser: ordenarCloser, chaveEnt: chaveEnt, ETAPAS_CLOSER_PADRAO: ETAPAS_CLOSER_PADRAO,
       chamadaPedida: chamadaPedida, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
@@ -168,7 +221,8 @@
       var DEFAULTS = {
         endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
         antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
-        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: ''
+        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '',
+        modo: '', etapas_closer: '', antecedencia_closer_min: 120
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
@@ -208,7 +262,11 @@
           lookahead: int(s.lookahead_min, DEFAULTS.lookahead_min, 0, 240),
           atalho: String(s.atalho || DEFAULTS.atalho).toUpperCase() !== 'N',
           voz: String(s.voz || DEFAULTS.voz).toUpperCase() === 'Y',
-          endpoint_voz: String(s.endpoint_voz || '').trim()
+          endpoint_voz: String(s.endpoint_voz || '').trim(),
+          // teste: só o GESTOR consegue forçar o modo (o servidor ignora para os demais)
+          modo: (function (m) { m = String(m || '').trim().toLowerCase(); return m === 'sdr' || m === 'closer' ? m : ''; })(s.modo),
+          etapas_closer: String(s.etapas_closer || '').split(',').map(function (x) { return parseInt(x, 10); }).filter(function (n) { return n > 0; }),
+          antecedencia_closer_min: int(s.antecedencia_closer_min, DEFAULTS.antecedencia_closer_min, 0, 720)
         };
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -254,7 +312,7 @@
         var req;
         try {
           req = self.$authorizedAjax({ url: c.endpoint, method: 'POST', contentType: 'application/json', dataType: 'json',
-            data: JSON.stringify({ forcar: !!forcar }) });
+            data: JSON.stringify(c.modo ? { forcar: !!forcar, modo: c.modo } : { forcar: !!forcar }) });
         } catch (e) { cb({ erro: 'sem_authorizedAjax' }); return; }
         if (!req || typeof req.then !== 'function') { cb({ erro: 'sem_promessa' }); return; }
         req.then(function (r) {
@@ -318,7 +376,7 @@
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0 }, r.gerado_em || 0);
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0, modoFila: r.modo === 'closer' ? 'closer' : 'sdr' }, r.gerado_em || 0);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
@@ -364,7 +422,7 @@
       }
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
-        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0;
+        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0; state.modoFila = s.modoFila === 'closer' ? 'closer' : 'sdr';
         state.itens = s.itens || []; state.motivos = s.motivos || [];
         montar();
       }
@@ -372,15 +430,24 @@
       // ---------------- montagem ----------------
       function paraQ(t) {
         return { id: t.id, due: t.due || 0, momento: t.momento, grupo: t.grupo || 'G9', urgente: !!t.urgente, acao: t.acao,
-                 etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa, origemPendente: !!t.origem_pendente };
+                 etype: t.entity_type || 'leads', eid: t.entity_id, texto: t.texto || '', nome: t.lead_nome, etapa: t.etapa, origemPendente: !!t.origem_pendente,
+                 status_id: t.status_id, pipeline_id: t.pipeline_id, etapa_pendente: !!t.etapa_pendente, reuniao_em: t.reuniao_em || 0 };
       }
       function montar() {
         var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
-        var ok = function (t) { return t && t.entity_id && !(snooze[t.id] && snooze[t.id] > now); };
+        var closer = state.modoFila === 'closer', agoraMs = Date.now();
+        var ent = function (t) { return 'E:' + (t.entity_type || 'leads') + ':' + t.entity_id; };
+        var ok = function (t) {
+          if (!t || !t.entity_id || (snooze[t.id] && snooze[t.id] > now)) return false;
+          if (closer && ((snooze[ent(t)] && snooze[ent(t)] > now) || (marcas[ent(t)] && agoraMs - marcas[ent(t)] < MARCA_TTL_MS))) return false;   // lead concluído/pulado agora
+          return true;
+        };
         var validos = Fila.semChatsVencidos(state.itens, state.chatsEm, now, CHATS_MAX_S);
         state.chatsVencidos = validos.length !== state.itens.length;
         var itens = Fila.semMarcadas(validos, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
-        var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, grupos: c.grupos }, now, minutoDoDia());
+        var c = cfg(), r = closer
+          ? Fila.ordenarCloser(itens, { etapas: c.etapas_closer, antecedencia_closer_min: c.antecedencia_closer_min, lookahead: c.lookahead }, now)
+          : Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, grupos: c.grupos }, now, minutoDoDia());
         state.fila = r.fila; state.futura = r.futura;
         if (state.atual) {
           var alvo = state.atual.id, novo = null;
@@ -438,7 +505,9 @@
             if (!vivo(g)) return;
             var m = lsGet('marcas', {}), agora = Date.now();
             Object.keys(m).forEach(function (k) { if (agora - m[k] >= MARCA_TTL_MS) delete m[k]; });
-            m[q.id] = agora; lsSet('marcas', m);
+            m[q.id] = agora;
+            if (state.modoFila === 'closer') m['E:' + q.etype + ':' + q.eid] = agora;   // closer: o próximo é outro LEAD
+            lsSet('marcas', m);
             mutar(function (s) { s.itens = (s.itens || []).filter(function (t) { return t.id !== q.id; }); });
             state.atual = null; montar(); avancar();
             ciclo(g, true);   // pede a próxima leva já conferida (forcar respeita o mínimo de 5 s no servidor)
@@ -449,7 +518,9 @@
         if (!q) return;
         var s = lsGet('snooze', {}), now = agoraS();
         Object.keys(s).forEach(function (k) { if (s[k] <= now) delete s[k]; });
-        s[q.id] = now + 15 * 60; lsSet('snooze', s);
+        s[q.id] = now + 15 * 60;
+        if (state.modoFila === 'closer') s['E:' + q.etype + ':' + q.eid] = now + 15 * 60;
+        lsSet('snooze', s);
         state.atual = null; montar(); avancar();
       }
       function avancar() {
@@ -677,7 +748,16 @@
         if (conf.position.indexOf('bottom') === 0) { c.style.bottom = conf.offset + 'px'; c.style.top = ''; } else { c.style.top = Math.max(64, conf.offset) + 'px'; c.style.bottom = ''; }
         return c;
       }
+      function tagCloser(q) {
+        var n = q.nivelCloser, rot, cls = 'm1';
+        if (n === 0) { rot = 'Chat sem resposta'; cls = 'm0'; }
+        else if (n === 0.5) { rot = 'Reunião ' + hora(q.reuniao_em); cls = 'm0'; }
+        else if (q.etapa_pendente) { rot = 'etapa a confirmar'; cls = ''; }
+        else { rot = q.etapa || (n === 8 ? 'Outros funis' : 'Etapa'); cls = n <= 2 ? 'm1' : (n <= 5 ? 'm2' : ''); }
+        return '<span class="rpv-tag ' + cls + '">' + esc(rot) + '</span>' + (q.pendentes ? '<span class="rpv-tag" title="outras tarefas pendentes deste lead">+' + q.pendentes + '</span>' : '');
+      }
       function tag(q) {
+        if (state.modoFila === 'closer' && q.nivelCloser != null) return tagCloser(q);
         return '<span class="rpv-tag m' + Math.floor(Fila.nivel(q)) + '">' + esc(Fila.ROTULO[q.momento] || 'Outras') + '</span>' +
                (q.origemPendente ? '<span class="rpv-tag" title="origem ainda não consultada: prioridade provisória">origem pendente</span>'
                 : (q.grupo && q.grupo !== 'G9' ? '<span class="rpv-tag">' + esc(Fila.ROTULO_GRUPO[q.grupo]) + '</span>' : (q.momento === 'prospeccao' ? '<span class="rpv-tag">origem não informada</span>' : '')));

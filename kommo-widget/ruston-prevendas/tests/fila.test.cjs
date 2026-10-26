@@ -128,3 +128,57 @@ test('telefone: rótulo "sua ligação" só para chamada integrada E pedida (nun
   assert.match(Fila.mensagemVoz('sem_permissao'), /dono deste lead/)
   assert.match(Fila.mensagemVoz('xpto'), /xpto/)
 })
+
+// ---------------- modo CLOSER (PROPOSTA §7) ----------------
+const FC = 11010459, ALTA = 102174784, BAIXA = 102174776, CONTRATO = 84456095, PROP = 110113248
+const CC = { etapas: [], antecedencia_closer_min: 120, lookahead: 15 }
+const t = (id, eid, dueMin, extra = {}) => ({ id, etype: 'leads', eid, due: AGORA + dueMin * 60, momento: 'follow_up', pipeline_id: FC, status_id: ALTA, ...extra })
+const eids = (r) => [...r.fila].map((x) => x.eid)
+
+test('closer: um card por lead; o resto vira contagem; ordem pelas etapas da decisão 26/10', () => {
+  const r = Fila.ordenarCloser([
+    t(1, 10, -60, { status_id: BAIXA }), t(2, 10, -50, { status_id: BAIXA }), t(3, 10, -40, { status_id: BAIXA }),
+    t(4, 20, -5, { status_id: CONTRATO }), t(5, 30, -5, { status_id: PROP }), t(6, 40, -500),
+  ], CC, AGORA)
+  assert.deepEqual(eids(r), [20, 30, 40, 10])               // CONTRATO, PROPOSTA, ALTA, BAIXA (última)
+  const baixa = r.fila[3]; assert.equal(baixa.id, 1); assert.equal(baixa.pendentes, 2)   // representativa = a mais antiga
+})
+
+test('closer: reunião na janela (2 h antes a 30 min depois) passa à frente do backlog de contrato', () => {
+  const r = Fila.ordenarCloser([t(1, 20, -600, { status_id: CONTRATO }), t(2, 30, -5, { status_id: BAIXA, reuniao_em: AGORA + 90 * 60 })], CC, AGORA)
+  assert.deepEqual(eids(r), [30, 20]); assert.equal(r.fila[0].nivelCloser, 0.5)
+  const passou = Fila.ordenarCloser([t(1, 20, -600, { status_id: CONTRATO }), t(2, 30, -5, { status_id: BAIXA, reuniao_em: AGORA - 31 * 60 })], CC, AGORA)
+  assert.deepEqual(eids(passou), [20, 30])                 // passou há mais de 30 min: volta para a etapa
+  const longe = Fila.ordenarCloser([t(2, 30, -5, { status_id: BAIXA, reuniao_em: AGORA + 3 * 3600 })], CC, AGORA)
+  assert.equal(longe.fila[0].nivelCloser, 7)               // fora da janela: nível da etapa
+})
+
+test('closer: na reunião, a representativa é a tarefa mais próxima dela (não o follow antigo)', () => {
+  const r = Fila.ordenarCloser([t(1, 30, -3000), t(2, 30, 5, { reuniao_em: AGORA + 60 * 60 }), t(3, 30, -20)].map((x) => ({ ...x, reuniao_em: AGORA + 60 * 60 })), CC, AGORA)
+  assert.equal(r.fila.length, 1); assert.equal(r.fila[0].id, 2); assert.equal(r.fila[0].pendentes, 2)
+})
+
+test('closer: reunião sem tarefa elegível não cria card; +5 min sem vencida entra; futura só de lead fora da fila', () => {
+  const r = Fila.ordenarCloser([t(1, 30, 60, { reuniao_em: AGORA + 30 * 60 }), t(2, 40, 5), t(3, 40, 300)], CC, AGORA)
+  assert.deepEqual(eids(r), [40]); assert.equal(r.fila[0].pendentes, 0)
+  assert.equal(r.futura.eid, 30)                            // a do lead 40 (futura) não conta: ele já está na fila
+})
+
+test('closer: chat no topo; etapa pendente, outros funis e contato no nível 8; lead e contato de mesmo id = 2 cards', () => {
+  const r = Fila.ordenarCloser([
+    t(1, 10, -5, { pipeline_id: 14062116, status_id: 1 }),                // funil de disparo (decisão 4)
+    t(2, 20, -5, { etapa_pendente: true }),
+    { id: 3, etype: 'contacts', eid: 30, due: AGORA - 5, momento: 'follow_up' },
+    t(4, 30, -5, { status_id: BAIXA }),
+    { id: -50, etype: 'leads', eid: 50, due: AGORA - 900, momento: 'chat_sem_resposta', urgente: true },
+    t(5, 50, -5, { status_id: CONTRATO }),
+  ], CC, AGORA)
+  assert.equal(r.fila[0].id, -50); assert.equal(r.fila[0].nivelCloser, 0); assert.equal(r.fila[0].pendentes, 1)
+  assert.deepEqual([...r.fila].map((x) => Fila.chaveEnt(x)), ['leads:50', 'leads:30', 'leads:10', 'leads:20', 'contacts:30'])
+  assert.deepEqual([...r.fila].slice(2).map((x) => x.nivelCloser), [8, 8, 8])
+})
+
+test('closer: etapas configuráveis (setting etapas_closer)', () => {
+  const r = Fila.ordenarCloser([t(1, 10, -5, { status_id: CONTRATO }), t(2, 20, -5, { status_id: BAIXA })], { ...CC, etapas: [BAIXA, CONTRATO] }, AGORA)
+  assert.deepEqual(eids(r), [20, 10])
+})

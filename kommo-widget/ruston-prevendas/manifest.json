@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "interface_version": 2,
     "init_once": true,
     "locale": [
@@ -81,6 +81,21 @@
     },
     "endpoint_voz": {
       "name": "settings.endpoint_voz",
+      "type": "text",
+      "required": false
+    },
+    "modo": {
+      "name": "settings.modo",
+      "type": "text",
+      "required": false
+    },
+    "etapas_closer": {
+      "name": "settings.etapas_closer",
+      "type": "text",
+      "required": false
+    },
+    "antecedencia_closer_min": {
+      "name": "settings.antecedencia_closer_min",
       "type": "text",
       "required": false
     }

@@ -18,6 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
+import { aplicarCloser, decidirModo, paraConfirmar, type EtapaLead } from '../_shared/prevendas_closer.ts'
 import { chatsSemResposta, itensDeChat, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
@@ -28,6 +29,8 @@ const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 60, MAX_PAGINAS = 12, MAX_LOTES_
 const PRAZO_MS = 40_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
 // chats sem resposta: leitura da CONTA inteira (eventos de chat), cache compartilhado na linha kommo_user = 0
 const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 60, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20
+// versão da regra da resposta: cache de outro modo/regra nunca é reusado
+const REGRA = 'v5-closer', MAX_LOTES_CONFIRMAR = 2
 const CHATS_DIAS = Math.min(30, Math.max(1, Number(Deno.env.get('PREVENDAS_CHATS_DIAS') ?? '7') || 7))
 
 const cors = (origin: string | null) => ({
@@ -54,12 +57,14 @@ Deno.serve(async (req) => {
   if (!v.ok) return json({ erro: v.erro }, 401, origin)
   const uid = v.userId
   const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
-  const { data: membro, error: eM } = await sb.from('team_members').select('id,active').eq('kommo_user_id', uid).maybeSingle()
+  const { data: membro, error: eM } = await sb.from('team_members').select('id,active,role').eq('kommo_user_id', uid).maybeSingle()
   if (eM) return json({ erro: 'falha_banco' }, 503, origin)
   if (!membro?.active) return json({ erro: 'usuario_inativo' }, 403, origin)
 
   let body: any = {}
   try { body = await req.json() } catch { body = {} }
+  // modo decidido no SERVIDOR pelo papel; override de teste (body.modo) só vale para gestor
+  const modo = decidirModo(membro.role ?? null, body?.modo)
 
   // 2) cache + trava
   const { data: cache, error: eC } = await sb.from('prevendas_cache').select('resposta,em').eq('kommo_user', uid).maybeSingle()
@@ -67,12 +72,13 @@ Deno.serve(async (req) => {
   // reuso de resposta montada: a validade dos chats é conferida de novo AGORA (tarefas ficam; chat vencido sai)
   const reuso = (r: any) => revalidarChats(r, Math.floor(Date.now() / 1000), CHATS_MAX_IDADE_S)
   const idade = cache?.em ? (Date.now() - Date.parse(cache.em)) / 1000 : Infinity
-  if (cache?.resposta && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade) }, 200, origin)
+  const cacheOk = !!cache?.resposta && cache.resposta.modo === modo && cache.resposta.regra === REGRA
+  if (cacheOk && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade) }, 200, origin)
   const { data: token, error: eT } = await sb.rpc('prevendas_travar', { p_user: uid, p_seg: TRAVA_S })
   if (eT) return json({ erro: 'falha_banco' }, 503, origin)
   if (!token) {
     // outra execução do mesmo usuário em curso: só devolve cache AINDA VÁLIDO (nunca vencido como autoritativo)
-    if (cache?.resposta && idade < CACHE_S) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), em_andamento: true }, 200, origin)
+    if (cacheOk && idade < CACHE_S) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), em_andamento: true }, 200, origin)
     return json({ erro: 'em_andamento', retry_after: 3 }, 503, origin)
   }
   const inicio = Date.now()
@@ -159,7 +165,7 @@ Deno.serve(async (req) => {
       }
       for (const l of j?._embedded?.leads ?? []) {
         const cf = (l.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === ORIGEM_FIELD)
-        leads[String(l.id)] = { nome: l.name ?? null, etapa: null, origem: cf?.values?.[0]?.value ?? null }
+        leads[String(l.id)] = { nome: l.name ?? null, etapa: null, origem: cf?.values?.[0]?.value ?? null, status_id: l.status_id ?? null, pipeline_id: l.pipeline_id ?? null }
       }
     }
 
@@ -206,11 +212,43 @@ Deno.serve(async (req) => {
       else { console.error('[prevendas-fila] chats', (e as Error).message); motivos.push('chats_indisponiveis') }
     }
 
+    // 4e) modo CLOSER (PROPOSTA §7): etapa + compromisso (closer efetivo); exclusão da fila SÓ com etapa confirmada
+    //     ao vivo — sem confirmação (orçamento/429), o item fica com etapa_pendente e nunca é escondido.
+    let itensFinal: any[] = itens
+    if (modo === 'closer') {
+      const leadIds = [...new Set(itens.filter((i) => i.entity_type === 'leads').map((i) => Number(i.entity_id)))]
+      const faltamRep = leadIds.filter((id) => !leads[String(id)])           // ex.: leads que só vieram pelos chats
+      if (faltamRep.length) {
+        const r2 = await sb.rpc('prevendas_leads', { p_ids: faltamRep })
+        if (r2.error) throw new Error('falha_banco')
+        Object.assign(leads, (r2.data ?? {}) as Record<string, LeadDados>)
+      }
+      const agoraC = Date.now()
+      const rc = leadIds.length
+        ? await sb.rpc('prevendas_compromissos', { p_kommo_user: uid, p_ids: leadIds, p_de: new Date(agoraC - 30 * 60_000).toISOString(), p_ate: new Date(agoraC + 24 * 3600_000).toISOString() })
+        : { data: {}, error: null }
+      if (rc.error) throw new Error('falha_banco')
+      const vivos: Record<string, EtapaLead> = {}
+      const conf = paraConfirmar(itens, leads as Record<string, EtapaLead>)
+      for (let i = 0, lotes = 0; i < conf.length; i += 50, lotes++) {
+        if (lotes >= MAX_LOTES_CONFIRMAR) { motivos.push('etapas_nao_confirmadas'); break }
+        try {
+          const j = await kommoGet(`/api/v4/leads?${conf.slice(i, i + 50).map((id) => `filter[id][]=${id}`).join('&')}&limit=50`)
+          for (const l of j?._embedded?.leads ?? []) vivos[String(l.id)] = { status_id: l.status_id ?? null, pipeline_id: l.pipeline_id ?? null }
+        } catch (e) {
+          if (e instanceof Interrupcao) { motivos.push('etapas_nao_confirmadas'); break }
+          if (e instanceof KommoLimite) { motivos.push('etapas_nao_confirmadas'); retryAfter = Math.max(retryAfter, e.retryAfter); break }
+          throw e
+        }
+      }
+      itensFinal = aplicarCloser(itens, leads as Record<string, EtapaLead>, vivos, (rc.data ?? {}) as Record<string, number>)
+    }
+
     const fres = await sb.rpc('prevendas_fila_frescor')
     const resposta = {
-      ok: true, itens, total: itens.length,
+      ok: true, modo, regra: REGRA, itens: itensFinal, total: itensFinal.length,
       parcial: motivos.length > 0, motivos_parcial: motivos,
-      origem_pendente: itens.filter((i) => i.origem_pendente).length,
+      origem_pendente: itensFinal.filter((i) => i.origem_pendente).length,
       frescor_leads: fres.error ? null : fres.data,
       gerado_em: lidoEm, chats_em: chatsEm,
       ...(retryAfter ? { retry_after: retryAfter } : {}),
