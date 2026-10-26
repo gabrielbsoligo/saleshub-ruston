@@ -12,6 +12,21 @@ const DIA = 24 * 60 * 60 * 1000
 // A sondagem de site NÃO é feita daqui: a edge não consegue fixar a conexão no IP validado (DNS rebinding).
 // Fica no motor (enriquecedor/server/sonda.mjs), que conecta no IP aprovado preservando Host/SNI e revalida
 // cada salto. Aqui só a pré-checagem barata do host e a chamada à rota.
+/** anúncios VALIDADOS como da empresa (meta.validados); modo 'pagina' = identidade confirmada; keyword com
+ *  itens a validar/descartados = parcial (confirmado:false). Nunca conta descartados. */
+export function interpretarAnuncios(body: any): { ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string } {
+  if (!body || body.ok === false) return { ok: false, ativos: null, nota: String(body?.note ?? 'anúncios indisponíveis') }
+  const meta = body.meta
+  if (!meta) return { ok: false, ativos: null, nota: String(body.note ?? 'sem medição') }
+  const validados = Array.isArray(meta.validados) ? meta.validados.length : 0
+  const aValidar = Array.isArray(meta.aValidar) ? meta.aValidar.length : 0
+  const descartados = Array.isArray(meta.descartados) ? meta.descartados.length : 0
+  if (meta.modo === 'pagina') return { ok: true, ativos: Number(meta.total ?? validados), confirmado: true }
+  if (validados > 0) return { ok: true, ativos: validados, confirmado: aValidar === 0, nota: aValidar ? `${aValidar} a validar` : undefined }
+  if (aValidar > 0) return { ok: true, ativos: aValidar, confirmado: false, nota: 'identidade não confirmada' }
+  return { ok: true, ativos: 0, confirmado: descartados === 0, nota: descartados ? `${descartados} anúncios de terceiros descartados` : undefined }
+}
+
 export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch): Deps {
   const chave = (prefixo: string, ...p: unknown[]) => `${prefixo}:${p.map((x) => String(x ?? '').toLowerCase().trim()).join('|')}`.slice(0, 900)
   // cache é best-effort: erro de leitura = sem cache (segue para o motor); erro de escrita = aviso no log
