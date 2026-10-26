@@ -12,6 +12,7 @@ export interface CaseSugerido {
   id_cliente: number; nome: string; cidade?: string | null; uf?: string | null; status?: string | null; tier?: string | null;
   produto_origem?: string | null; lt_meses?: number | null; site?: string | null; instagram?: string | null;
   anuncios?: { ativos: number | null; url: string; nota?: string | null; confirmado?: boolean } | null; por_que?: string[]; score_final?: number;
+  qualidade?: number; site_no_ar?: boolean | null; instagram_existe?: boolean | null; google?: { encontrado: boolean; rating: number | null; avaliacoes: number | null } | null;
 }
 export interface CasesSugestao {
   id: string; reuniao_id: string | null; lead_id: string | null; empresa: string; nicho: string | null;
@@ -71,6 +72,7 @@ const CaseCard: React.FC<{ c: CaseSugerido }> = ({ c }) => (
         </div>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
+        {c.qualidade != null && <span title="Qualidade do case (presença digital): site no ar, Instagram, anúncios confirmados, Google Business" className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${c.qualidade >= 60 ? 'bg-emerald-900/60 text-emerald-200' : c.qualidade >= 30 ? 'bg-amber-900/60 text-amber-200' : 'bg-slate-800 text-slate-300'}`}>{c.qualidade}</span>}
         {c.site && <a href={c.site} target="_blank" rel="noopener" title={c.site} className="text-[var(--color-v4-text-muted)] hover:text-white"><Globe size={14} /></a>}
         {c.instagram && <a href={`https://www.instagram.com/${c.instagram}/`} target="_blank" rel="noopener" title={`@${c.instagram}`} className="text-[var(--color-v4-text-muted)] hover:text-white"><Instagram size={14} /></a>}
         {c.anuncios && (() => {
@@ -100,7 +102,7 @@ const SugestaoBloco: React.FC<{ s: CasesSugestao; compacto?: boolean }> = ({ s, 
         <div className="min-w-0">
           <span className="font-medium text-sm truncate">{s.empresa}</span>
           <span className="ml-2 text-[11px] text-[var(--color-v4-text-muted)]">
-            {s.profundidade === 'profunda' ? 'profunda' : 'leve'} · {andamento ? (ETAPA_LABEL[s.etapa ?? ''] ?? 'na fila…') : s.status === 'erro' ? `erro: ${s.erro ?? ''}` : `${s.candidatos?.length ?? 0} cases`}
+            {s.profundidade === 'profunda' ? 'expandida' : 'leve'} · {andamento ? (ETAPA_LABEL[s.etapa ?? ''] ?? 'na fila…') : s.status === 'erro' ? `erro: ${s.erro ?? ''}` : `${s.candidatos?.length ?? 0} cases`}
             {s.nicho ? ` · ${s.nicho}` : ''}
           </span>
         </div>
@@ -108,7 +110,7 @@ const SugestaoBloco: React.FC<{ s: CasesSugestao; compacto?: boolean }> = ({ s, 
       </button>
       {aberto && (
         andamento ? <div className="mt-2 text-xs text-[var(--color-v4-text-muted)] flex items-center gap-2"><RefreshCw size={12} className="animate-spin" /> {ETAPA_LABEL[s.etapa ?? ''] ?? 'na fila…'}</div>
-        : s.candidatos?.length ? <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">{s.candidatos.map(c => <CaseCard key={c.id_cliente} c={c} />)}</div>
+        : s.candidatos?.length ? <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">{[...s.candidatos].sort((a, b) => (b.qualidade ?? 0) - (a.qualidade ?? 0) || (b.score_final ?? 0) - (a.score_final ?? 0)).map(c => <CaseCard key={c.id_cliente} c={c} />)}</div>
         : <div className="mt-2 text-xs text-[var(--color-v4-text-muted)]">Nenhum case parecido encontrado pelo nome. Tente "Aprofundar" com o segmento preenchido no briefing.</div>
       )}
     </div>
@@ -136,7 +138,7 @@ export const CasesPanel: React.FC<{ leadId: string | null | undefined; empresa: 
         {leadId && (
           <button onClick={aprofundar} disabled={pedindo || emAndamento}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 text-white">
-            <RefreshCw size={12} className={emAndamento ? 'animate-spin' : ''} /> {emAndamento ? 'processando…' : 'Aprofundar'}
+            <RefreshCw size={12} className={emAndamento ? 'animate-spin' : ''} /> {emAndamento ? 'processando…' : 'Buscar de novo'}
           </button>
         )}
         </div>

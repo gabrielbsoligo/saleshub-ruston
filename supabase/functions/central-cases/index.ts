@@ -45,6 +45,7 @@ async function autenticar(req: Request, sb: any): Promise<{ ok: true; via: 'segr
 /** contexto do lead: RPC cases_contexto_lead (public.leads + custom_fields da réplica Kommo); nicho = briefing.inputs.segmento > leads.segmento_disparos > "Segmento do lead" (réplica) > produto. Falha de leitura LANÇA. */
 async function contexto(sb: any, s: Sugestao) {
   let empresa = s.empresa, nicho: string | null = null, uf: string | null = null, cidade: string | null = null
+  const pessoas: string[] = []   // nome do contato do lead: não vira termo de busca
   if (s.lead_id) {
     const { data, error } = await sb.rpc('cases_contexto_lead', { p_lead_id: s.lead_id })
     if (error) throw new Error(`cases_contexto_lead: ${error.message}`)
@@ -55,11 +56,14 @@ async function contexto(sb: any, s: Sugestao) {
       uf = l.uf && /^[A-Z]{2}$/.test(l.uf) ? l.uf : null
       cidade = l.cidade || null
     }
+    const { data: lc, error: elc } = await sb.from('leads').select('nome_contato').eq('id', s.lead_id).maybeSingle()
+    if (elc) throw new Error(`leads: ${elc.message}`)
+    if (lc?.nome_contato) pessoas.push(String(lc.nome_contato))
     const { data: b, error: e2 } = await sb.from('prep_briefings').select('inputs').eq('lead_id', s.lead_id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     if (e2) throw new Error(`prep_briefings: ${e2.message}`)
     if (b?.inputs?.segmento) nicho = String(b.inputs.segmento)
   }
-  return { empresa, nicho, uf, cidade }
+  return { empresa, nicho, uf, cidade, pessoas }
 }
 
 /** escrita sob posse: confere erro E linha afetada (token ainda dono) — senão GravacaoFalhou */
@@ -81,7 +85,7 @@ async function processar(sb: any, s: Sugestao) {
     let tok: string | null = null
     const tokenMotor = async () => (tok ??= await sessaoMotor(SUPABASE_URL, ANON_KEY))
     const deps = depsReais(sb, MOTOR_URL, tokenMotor)
-    const finais = await gerarCases(deps, { empresa: ctx.empresa, nicho: ctx.nicho, cidade: ctx.cidade, uf: ctx.uf, profundidade: s.profundidade },
+    const finais = await gerarCases(deps, { empresa: ctx.empresa, nicho: ctx.nicho, cidade: ctx.cidade, uf: ctx.uf, pessoas: ctx.pessoas, profundidade: s.profundidade },
       async (etapa, cands: Candidato[]) => {
         // progresso + renovação do lease a cada etapa; perder a posse aborta (GravacaoFalhou)
         await gravarSobPosse(sb, s.id, token, { etapa, candidatos: cands, nicho: [ctx.nicho, ctx.empresa].filter(Boolean).join(' · ') })
@@ -131,7 +135,7 @@ Deno.serve(async (req) => {
       const { data: r, error: er } = await sb.from('reunioes').select('id, lead_id, empresa, sdr_id').eq('id', body.reuniao_id).maybeSingle()
       if (er) return json({ error: er.message }, 500)
       if (!r) return json({ error: 'reunião não existe' }, 404)
-      const { data: nova, error: ei } = await sb.from('cases_sugestoes').insert({ reuniao_id: r.id, lead_id: r.lead_id, empresa: r.empresa ?? '', profundidade: 'leve', pedido_por: auth.member_id ?? r.sdr_id }).select(COLS).single()
+      const { data: nova, error: ei } = await sb.from('cases_sugestoes').insert({ reuniao_id: r.id, lead_id: r.lead_id, empresa: r.empresa ?? '', profundidade: 'profunda', pedido_por: auth.member_id ?? r.sdr_id }).select(COLS).single()
       if (ei || !nova) return json({ error: ei?.message ?? 'não gravou' }, 500)
       s = nova as Sugestao
     } else return json({ ok: true, ja_concluida: ja.id, status: ja.status })
@@ -140,7 +144,7 @@ Deno.serve(async (req) => {
     const { data: l, error: el } = await sb.from('leads').select('id, empresa').eq('id', body.lead_id).maybeSingle()
     if (el) return json({ error: el.message }, 500)
     if (!l) return json({ error: 'lead não existe' }, 404)
-    const { data: nova, error: ei } = await sb.from('cases_sugestoes').insert({ lead_id: l.id, empresa: l.empresa ?? '', profundidade: body.profundidade === 'profunda' ? 'profunda' : 'leve', pedido_por: auth.member_id }).select(COLS).single()
+    const { data: nova, error: ei } = await sb.from('cases_sugestoes').insert({ lead_id: l.id, empresa: l.empresa ?? '', profundidade: 'profunda', pedido_por: auth.member_id }).select(COLS).single()
     if (ei || !nova) return json({ error: ei?.message ?? 'não gravou' }, 500)
     s = nova as Sugestao
   } else return json({ error: 'informe reuniao_id ou lead_id' }, 400)

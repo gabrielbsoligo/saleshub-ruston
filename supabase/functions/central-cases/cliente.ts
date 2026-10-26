@@ -58,10 +58,42 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
   }
   return {
     agora: () => Math.floor(Date.now() / 1000),
-    async base(termos, uf, limite) {
-      const { data, error } = await sb.rpc('cases_buscar', { p_termos: termos, p_uf: uf, p_limit: limite })
+    async base(nicho, nome, uf, limite) {
+      const { data, error } = await sb.rpc('cases_buscar', { p_nicho: nicho, p_nome: nome, p_uf: uf, p_limit: limite })
       if (error) throw new ErroCritico(`cases_buscar: ${error.message}`)
       return (data ?? []).map((r: any) => ({ ...r, score: Number(r.score ?? 0), termos_casados: r.termos_casados ?? [] })) as Candidato[]
+    },
+    // site no ar: GET direto (sem motor), 8 s, segue redirect; 2xx/3xx = no ar; 4xx/5xx = fora; rede/timeout = null
+    async siteNoAr(url) {
+      const k = chave('site', url)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.no_ar !== 'undefined') return hit.no_ar
+      let v: boolean | null = null
+      try { const r = await fetchFn(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8_000), headers: { 'user-agent': 'Mozilla/5.0 (compatible; SalesHub-Cases/1.0)' } }); v = r.status < 400 } catch { v = null }
+      if (v !== null) await cacheSet(k, { no_ar: v }, 7 * DIA)
+      return v
+    },
+    async instagramExiste(handle) {
+      const k = chave('ig', handle)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.existe !== 'undefined') return hit.existe
+      const r = await motor('/api/ops/rede-existe', { instagram: handle })
+      if (r.status !== 200 || !r.body?.instagram) return null
+      const existe = r.body.instagram.existe === true ? true : r.body.instagram.existe === false ? false : null
+      if (existe !== null) await cacheSet(k, { existe }, 7 * DIA)
+      return existe
+    },
+    async googleNegocio(nome, cidade) {
+      const k = chave('gmn', nome, cidade)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.encontrado !== 'undefined') return { ok: true, ...hit }
+      const r = await motor('/api/google-negocio', { company: nome, cidade })
+      if (r.status !== 200 || !r.body) return { ok: false, encontrado: false, rating: null, avaliacoes: null }
+      const b = r.body
+      const encontrado = b.found === true || (!!b.title && b.ok !== false)
+      const out = { encontrado, rating: encontrado && b.rating != null ? Number(b.rating) : null, avaliacoes: encontrado && b.reviews != null ? Number(b.reviews) : null }
+      await cacheSet(k, out, 7 * DIA)
+      return { ok: true, ...out }
     },
     async buscaWeb(consulta) {
       const k = chave('web', consulta)

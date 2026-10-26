@@ -21,6 +21,17 @@ o closer **aprofunda** na própria aba.
    lead com **Aprofundar** (edge com JWT do usuário; exige `team_members`).
 4. Cron `central-cases-varrer` (*/10) retoma pendentes/travados (>5 min), até 3 tentativas.
 
+## Relevância e qualidade (feedback do Gabriel, 26/10 — migration_167)
+- A passada automática já é a **expandida** (40 candidatos → 15 na web → 5 na Biblioteca de Anúncios → 10 finais).
+- **Relevância** (RPC `cases_buscar(p_nicho, p_nome, uf, limit)`): nicho (segmento/CNAE + sinônimos) pesa 60/termo
+  + similaridade; nome 10/termo (só desempata); se o lead tem nicho, o candidato PRECISA casar o nicho; Ativo +25.
+  Stopwords de termos genéricos (consultoria, gestão, serviços, ltda…) e de nomes de pessoa (lista + nome do
+  contato do lead) nunca viram termo.
+- **Qualidade 0–100** (`qualidadeDe`, mostrada no card e usada para ORDENAR): site no ar 25 (achado sem medir 10),
+  Instagram confirmado 20 (não medido 15), anúncios Meta confirmados 15 (1–2) / 30 (3+), Google Business 10 +
+  avaliações (≥10: +5, ≥50: +10) + nota ≥4,5: +5. Sinais via motor (`/api/ops/rede-existe`, `/api/google-negocio`)
+  e GET direto no site (8 s), tudo com cache em `cases_web_cache`.
+
 ## Base do BI
 `cases_base_v4` só tem colunas de EMPRESA (id, nome, razão social, CNPJ, cidade/UF, categoria, tier,
 status, produto, tipo de serviço, canal, safras, LT, fee). Stakeholder/e-mail/telefone **não entram**.
