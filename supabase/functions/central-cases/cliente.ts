@@ -12,6 +12,13 @@ const DIA = 24 * 60 * 60 * 1000
 // A sondagem de site NÃO é feita daqui: a edge não consegue fixar a conexão no IP validado (DNS rebinding).
 // Fica no motor (enriquecedor/server/sonda.mjs), que conecta no IP aprovado preservando Host/SNI e revalida
 // cada salto. Aqui só a pré-checagem barata do host e a chamada à rota.
+export async function sessaoMotor(supabaseUrl: string, anonKey: string): Promise<string> {
+  const login = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data, error } = await login.auth.signInWithPassword({ email: Deno.env.get('ENRIQ_INTEG_EMAIL') ?? '', password: Deno.env.get('ENRIQ_INTEG_SENHA') ?? '' })
+  if (error || !data?.session?.access_token) throw new Error(`auth integração falhou: ${error?.message ?? 'sem sessão'}`)
+  return data.session.access_token as string
+}
+
 /** anúncios VALIDADOS como da empresa (meta.validados); modo 'pagina' = identidade confirmada; keyword com
  *  itens a validar/descartados = parcial (confirmado:false). Nunca conta descartados. */
 export function interpretarAnuncios(body: any): { ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string } {
