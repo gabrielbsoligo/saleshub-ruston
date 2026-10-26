@@ -11,8 +11,8 @@ export type Candidato = {
   id_cliente: number; nome: string; razao_social?: string | null; cidade?: string | null; uf?: string | null
   status?: string | null; tier?: string | null; categoria?: string | null; produto_origem?: string | null
   lt_meses?: number | null; fee?: number | null; score: number; termos_casados: string[]
-  site?: string | null; instagram?: string | null
-  anuncios?: { ativos: number | null; url: string; nota?: string | null } | null
+  site?: string | null; instagram?: string | null; instagram_nao_confirmado?: string | null
+  anuncios?: { ativos: number | null; url: string; nota?: string | null; confirmado?: boolean } | null
   por_que?: string[]
   score_final?: number
 }
@@ -20,7 +20,8 @@ export type ResultadoWeb = { url: string; title: string; desc: string }
 export type Deps = {
   base: (termos: string[], uf: string | null, limite: number) => Promise<Candidato[]>
   buscaWeb: (consulta: string) => Promise<{ ok: boolean; results: ResultadoWeb[]; nota?: string }>
-  anuncios: (c: { company: string; siteDomain: string | null; cidade: string | null; fbHandle: string | null }) => Promise<{ ok: boolean; ativos: number | null; nota?: string }>
+  // ativos = anúncios VALIDADOS como da empresa (página confirmada ou validação cruzada); confirmado=false = parcial
+  anuncios: (c: { company: string; siteDomain: string | null; cidade: string | null; fbHandle: string | null }) => Promise<{ ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string }>
   agora: () => number
 }
 export type Perfil = { leve: boolean }
@@ -64,14 +65,28 @@ export function termosDe(empresa: string, nicho: string | null | undefined): str
 const SOCIAIS = /(^|\.)(instagram|facebook|linkedin|youtube|tiktok|twitter|x)\.com$/
 const DIRETORIOS = /(^|\.)(google|bing|cnpj\.biz|cnpja|econodata|casadosdados|consultacnpj|cnpj\.info|solutudo|apontador|telelistas|guiamais|reclameaqui|jusbrasil|escavador|glassdoor|indeed|catho|infojobs|olx|mercadolivre|ifood|booking|tripadvisor|yelp|wikipedia|gov\.br|receita|empresascnpj|cadastroempresa|informecadastral|listamais|hotfrog|kekanto|cylex|encontra|foursquare|waze|maps)\./
 export function hostDe(url: string): string | null { try { return new URL(url).hostname.toLowerCase().replace(/^www\./, '') } catch { return null } }
-export function extrairPresenca(results: ResultadoWeb[], nome: string): { site: string | null; instagram: string | null } {
-  let site: string | null = null, instagram: string | null = null
+// Identidade: um handle/domínio "casa" com o nome quando contém um token (≥4 letras) do nome, ou
+// quando o nome compactado (sem espaços) contém o handle/domínio compactado (ou vice-versa, ≥6 letras).
+export function casaComNome(chave: string, nome: string): boolean {
+  const k = normalizar(chave).replace(/[^a-z0-9]/g, '')
+  if (k.length < 3) return false
+  const toks = tokens(nome)
+  if (toks.some((t) => t.length >= 4 && k.includes(t))) return true
+  const nk = toks.join('')
+  return nk.length >= 6 && (nk.includes(k) || (k.length >= 6 && k.includes(nk)))
+}
+export function extrairPresenca(results: ResultadoWeb[], nome: string): { site: string | null; instagram: string | null; instagram_nao_confirmado: string | null } {
+  let site: string | null = null, instagram: string | null = null, instagram_nao_confirmado: string | null = null
   const toks = tokens(nome)
   for (const r of results) {
     const h = hostDe(r.url); if (!h) continue
-    if (!instagram && /(^|\.)instagram\.com$/.test(h)) {
+    if (/(^|\.)instagram\.com$/.test(h)) {
       const m = r.url.match(/instagram\.com\/([A-Za-z0-9_.]{2,40})\/?(\?|$)/)
-      if (m && !['p', 'reel', 'explore', 'accounts', 'stories'].includes(m[1])) instagram = m[1]
+      if (m && !['p', 'reel', 'explore', 'accounts', 'stories'].includes(m[1])) {
+        // só vira "Instagram da empresa" se o handle casa com o nome; senão fica como candidato sem bônus
+        if (!instagram && casaComNome(m[1], nome)) instagram = m[1]
+        else if (!instagram_nao_confirmado) instagram_nao_confirmado = m[1]
+      }
       continue
     }
     if (site || SOCIAIS.test(h) || DIRETORIOS.test(h)) continue
@@ -79,7 +94,7 @@ export function extrairPresenca(results: ResultadoWeb[], nome: string): { site: 
     const casa = toks.some((t) => t.length >= 4 && hk.includes(t)) || toks.length === 0
     if (casa) site = `https://${h}`
   }
-  return { site, instagram }
+  return { site, instagram, instagram_nao_confirmado }
 }
 
 // ── 3/4) pipeline ───────────────────────────────────────────────────────────────
@@ -95,14 +110,14 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
     const r = await deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim())
     if (!r.ok) { c.por_que!.push('busca web indisponível'); continue }
     const p = extrairPresenca(r.results, c.nome)
-    c.site = p.site; c.instagram = p.instagram
+    c.site = p.site; c.instagram = p.instagram; c.instagram_nao_confirmado = p.instagram_nao_confirmado
   }
   await progresso?.('web', cands)
   // anúncios da Meta nos 3 melhores com alguma presença (site ou instagram) — senão nos 3 primeiros
   const alvo = [...cands.slice(0, L.web)].sort((a, b) => pontuar(b) - pontuar(a)).slice(0, L.anuncios)
   for (const c of alvo) {
     const r = await deps.anuncios({ company: c.nome, siteDomain: c.site ? hostDe(c.site) : null, cidade: c.cidade ?? null, fbHandle: c.instagram ?? null })
-    c.anuncios = { ativos: r.ok ? r.ativos : null, url: urlAdLibrary(c.nome), nota: r.ok ? null : (r.nota ?? 'indisponível') }
+    c.anuncios = { ativos: r.ok ? r.ativos : null, confirmado: r.ok ? r.confirmado !== false : false, url: urlAdLibrary(c.nome), nota: r.ok ? (r.nota ?? null) : (r.nota ?? 'indisponível') }
   }
   await progresso?.('anuncios', cands)
   for (const c of cands) { c.score_final = pontuar(c); c.por_que = [...porQue(c, entrada), ...(c.por_que ?? [])] }  // mantém avisos (ex.: busca indisponível)
@@ -112,7 +127,7 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
 }
 export const urlAdLibrary = (nome: string) => `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR&q=${encodeURIComponent(nome)}&search_type=keyword_unordered&media_type=all`
 export function pontuar(c: Candidato): number {
-  return Number(c.score ?? 0) + (c.site ? 20 : 0) + (c.instagram ? 15 : 0) + ((c.anuncios?.ativos ?? 0) > 0 ? 25 : 0)
+  return Number(c.score ?? 0) + (c.site ? 20 : 0) + (c.instagram ? 15 : 0) + ((c.anuncios?.ativos ?? 0) > 0 && c.anuncios?.confirmado !== false ? 25 : 0)
 }
 export function porQue(c: Candidato, e: { nicho?: string | null; uf?: string | null }): string[] {
   const m: string[] = []
@@ -123,8 +138,11 @@ export function porQue(c: Candidato, e: { nicho?: string | null; uf?: string | n
   if (e.uf && c.uf === e.uf) m.push(`mesma UF (${c.uf})`)
   if (c.site) m.push('tem site')
   if (c.instagram) m.push(`Instagram @${c.instagram}`)
-  if ((c.anuncios?.ativos ?? 0) > 0) m.push(`${c.anuncios!.ativos} anúncios ativos na Meta`)
+  else if (c.instagram_nao_confirmado) m.push(`Instagram a confirmar: @${c.instagram_nao_confirmado}`)
+  if ((c.anuncios?.ativos ?? 0) > 0 && c.anuncios?.confirmado !== false) m.push(`${c.anuncios!.ativos} anúncios ativos na Meta (confirmados)`)
+  else if ((c.anuncios?.ativos ?? 0) > 0) m.push(`${c.anuncios!.ativos} anúncios na Meta a confirmar`)
   else if (c.anuncios && c.anuncios.ativos === 0) m.push('sem anúncios ativos na Meta')
+  else if (c.anuncios && c.anuncios.nota) m.push(`anúncios: ${c.anuncios.nota}`)
   if (c.produto_origem) m.push(`produto: ${c.produto_origem}`)
   return m
 }

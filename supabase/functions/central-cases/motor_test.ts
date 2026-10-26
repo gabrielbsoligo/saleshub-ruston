@@ -1,6 +1,6 @@
 // deno test --allow-read supabase/functions/central-cases/motor_test.ts
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { extrairPresenca, gerarCases, pontuar, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { casaComNome, extrairPresenca, gerarCases, pontuar, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
 
 Deno.test('termosDe: nicho com sinônimos primeiro, depois tokens do nome sem sufixos jurídicos/stopwords', () => {
   const t = termosDe('Clínica Sorriso Odontologia LTDA - ME', 'odonto')
@@ -19,8 +19,27 @@ Deno.test('extrairPresenca: site = 1º domínio não-social/não-diretório que 
     { url: 'https://outraempresa.com.br/', title: '', desc: '' },                 // não casa com o nome
     { url: 'https://www.clinicasorriso.com.br/sobre', title: '', desc: '' },
   ]
-  assertEquals(extrairPresenca(r, 'Clínica Sorriso'), { site: 'https://clinicasorriso.com.br', instagram: 'clinicasorriso' })
-  assertEquals(extrairPresenca([], 'X'), { site: null, instagram: null })
+  assertEquals(extrairPresenca(r, 'Clínica Sorriso'), { site: 'https://clinicasorriso.com.br', instagram: 'clinicasorriso', instagram_nao_confirmado: null })
+  assertEquals(extrairPresenca([], 'X'), { site: null, instagram: null, instagram_nao_confirmado: null })
+})
+
+Deno.test('R1#10 Instagram sem identidade confirmada NÃO vira o Instagram da empresa: fica como candidato, sem bônus e sem ir como fbHandle', async () => {
+  assert(casaComNome('clinicasorriso', 'Clínica Sorriso') && casaComNome('sorriso.odonto', 'Clínica Sorriso') && !casaComNome('outra_empresa', 'Clínica Sorriso'))
+  const r = [{ url: 'https://www.instagram.com/outra_empresa/', title: '', desc: '' }]
+  assertEquals(extrairPresenca(r, 'Clínica Sorriso'), { site: null, instagram: null, instagram_nao_confirmado: 'outra_empresa' })
+  const handles: (string | null)[] = []
+  const deps: Deps = { agora: () => 1, base: async () => [cand(1, 'Clinica Sorriso', 90)], buscaWeb: async () => ({ ok: true, results: r }), anuncios: async (c) => { handles.push(c.fbHandle); return { ok: true, ativos: 0 } } }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'leve' })
+  assertEquals(handles, [null]); assertEquals(out[0].instagram ?? null, null)
+  assertEquals(pontuar(out[0]), 90); assert(out[0].por_que!.some((m) => m.includes('a confirmar: @outra_empresa')))
+})
+
+Deno.test('R1#8 anúncios só pontuam quando CONFIRMADOS; parcial (a validar) vira "a confirmar", sem bônus', async () => {
+  const deps: Deps = { agora: () => 1, base: async () => [cand(1, 'A', 50), cand(2, 'B', 50)], buscaWeb: async () => ({ ok: true, results: [] }),
+    anuncios: async (c) => c.company === 'A' ? { ok: true, ativos: 10, confirmado: false, nota: 'identidade não confirmada' } : { ok: true, ativos: 2, confirmado: true } }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'leve' })
+  assertEquals(out[0].nome, 'B'); assertEquals(pontuar(out[0]), 75); assertEquals(pontuar(out[1]), 50)
+  assert(out[1].por_que!.some((m) => m.includes('10 anúncios na Meta a confirmar')))
 })
 
 function depsFake(opts: { base?: Candidato[]; webOk?: boolean; adsAtivos?: Record<string, number | null>; adsFalha?: boolean }) {

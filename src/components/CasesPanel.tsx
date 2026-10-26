@@ -51,6 +51,13 @@ function useSugestoes(filtro: { leadId?: string | null; limite?: number }) {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [carregar, filtro.leadId]);
+  // recuperação: enquanto houver sugestão em andamento, repete a leitura a cada 15 s (se o realtime falhar)
+  const andamento = lista.some(s => s.status === 'pendente' || s.status === 'processando');
+  useEffect(() => {
+    if (!andamento) return;
+    const t = setInterval(() => { carregar(); }, 15000);
+    return () => clearInterval(t);
+  }, [andamento, carregar]);
   return { lista, loading, recarregar: carregar };
 }
 
@@ -104,13 +111,13 @@ const SugestaoBloco: React.FC<{ s: CasesSugestao; compacto?: boolean }> = ({ s, 
 
 /** Painel por LEAD (gaveta do briefing): sugestões do lead + botão Aprofundar. */
 export const CasesPanel: React.FC<{ leadId: string | null | undefined; empresa: string }> = ({ leadId, empresa }) => {
-  const { lista, loading } = useSugestoes({ leadId: leadId ?? undefined, limite: 5 });
+  const { lista, loading, recarregar } = useSugestoes({ leadId: leadId ?? undefined, limite: 5 });
   const [pedindo, setPedindo] = useState(false);
   const emAndamento = lista.some(s => s.status === 'pendente' || s.status === 'processando');
   const aprofundar = async () => {
     if (!leadId) return;
     setPedindo(true);
-    try { await pedirCases(leadId, 'profunda'); toast.success('Aprofundando cases — acompanhe aqui'); }
+    try { await pedirCases(leadId, 'profunda'); toast.success('Aprofundando cases — acompanhe aqui'); await recarregar(); }
     catch (e: any) { toast.error(e?.message || 'não foi possível pedir'); }
     finally { setPedindo(false); }
   };
@@ -118,12 +125,15 @@ export const CasesPanel: React.FC<{ leadId: string | null | undefined; empresa: 
     <div className="mt-6 border-t border-[var(--color-v4-border)] pt-4">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-semibold flex items-center gap-2"><Sparkles size={14} /> Cases da rede parecidos com {empresa}</h3>
+        <div className="flex items-center gap-2">
+        <button onClick={() => { recarregar(); }} title="Atualizar" className="p-1.5 rounded border border-[var(--color-v4-border)] text-[var(--color-v4-text-muted)] hover:text-white"><RefreshCw size={12} /></button>
         {leadId && (
           <button onClick={aprofundar} disabled={pedindo || emAndamento}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs bg-[var(--color-v4-red)] hover:bg-[var(--color-v4-red-hover)] disabled:opacity-50 text-white">
             <RefreshCw size={12} className={emAndamento ? 'animate-spin' : ''} /> {emAndamento ? 'processando…' : 'Aprofundar'}
           </button>
         )}
+        </div>
       </div>
       {!leadId ? <p className="text-xs text-[var(--color-v4-text-muted)]">Briefing sem lead vinculado — os cases são sugeridos a partir do lead da reunião.</p>
         : loading ? <p className="text-xs text-[var(--color-v4-text-muted)]">carregando…</p>

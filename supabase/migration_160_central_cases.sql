@@ -12,12 +12,22 @@
 --   cases_sugestoes    — 1 linha por reunião (ou por lead, quando chamada manual): estado, candidatos
 --                        e enriquecimento em JSONB; versão 'leve' (automática) ou 'profunda' (closer).
 --   cases_web_cache    — cache da busca web/anúncios por chave (TTL), compartilhado entre rodadas.
--- RPC cases_buscar(): busca por nome (pg_trgm + tokens) com pontuação; só service_role.
--- Gatilho: AFTER INSERT em reunioes → pg_net POST na edge central-cases (segredo em
--- integracao_config.central_cases_secret). A edge responde rápido e processa em segundo plano.
--- ADITIVA e idempotente. Reverter: DROP TRIGGER trg_reunioes_central_cases; DROP FUNCTION
--- reunioes_central_cases_fire, cases_buscar; DROP TABLE cases_sugestoes, cases_web_cache, cases_base_v4;
--- DELETE FROM integracao_config WHERE key='central_cases_secret'.
+-- RPCs (só service_role): cases_buscar (nome, pg_trgm + tokens, pontuação), cases_claim/cases_renovar
+-- (posse atômica com lease+token; 3ª tentativa interrompida vira 'erro'), cases_contexto_lead (empresa,
+-- segmento, UF/cidade/nicho — public.leads + custom_fields da réplica kommo.leads, schema fechado).
+-- Gatilho: AFTER INSERT em reunioes → INSERT da pendência (durável) e, num bloco isolado, pg_net POST
+-- na edge central-cases (segredo em integracao_config.central_cases_secret). A edge responde 202 e
+-- processa em segundo plano; o cron */10 retoma pendências/leases vencidos.
+-- Leitura: só team_members ATIVOS (RLS); a edge também exige membro ativo para o Bearer de usuário.
+-- ADITIVA e idempotente. Reverter (nesta ordem):
+--   SELECT cron.unschedule('central-cases-varrer');
+--   DROP TRIGGER IF EXISTS trg_reunioes_central_cases ON public.reunioes;
+--   DROP FUNCTION IF EXISTS public.reunioes_central_cases_fire(), public.cases_buscar(TEXT[],TEXT,INT),
+--     public.cases_claim(UUID,INT,INT), public.cases_renovar(UUID,UUID,INT), public.cases_contexto_lead(UUID);
+--   ALTER PUBLICATION supabase_realtime DROP TABLE public.cases_sugestoes;
+--   DROP TABLE IF EXISTS public.cases_sugestoes, public.cases_web_cache, public.cases_base_v4;
+--   DROP FUNCTION IF EXISTS public.immutable_unaccent(TEXT);
+--   DELETE FROM public.integracao_config WHERE key = 'central_cases_secret';
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
@@ -56,7 +66,7 @@ CREATE INDEX IF NOT EXISTS ix_cases_base_uf ON public.cases_base_v4 (uf, status)
 ALTER TABLE public.cases_base_v4 ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cases_base_v4_leitura_membros ON public.cases_base_v4;
 CREATE POLICY cases_base_v4_leitura_membros ON public.cases_base_v4 FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.team_members tm WHERE tm.auth_user_id = auth.uid()));
+  USING (EXISTS (SELECT 1 FROM public.team_members tm WHERE tm.auth_user_id = auth.uid() AND tm.active IS DISTINCT FROM false));
 REVOKE ALL ON public.cases_base_v4 FROM anon;
 GRANT SELECT ON public.cases_base_v4 TO authenticated;
 
@@ -73,6 +83,8 @@ CREATE TABLE IF NOT EXISTS public.cases_sugestoes (
   candidatos    JSONB NOT NULL DEFAULT '[]'::jsonb,     -- [{id_cliente,nome,cidade,uf,status,tier,produto,lt,fee,score,motivos:[...], site, instagram, anuncios:{ativos,url}, por_que}]
   erro          TEXT,
   tentativas    INT NOT NULL DEFAULT 0,
+  claim_token   UUID,                                   -- posse do worker (cases_claim)
+  lease_ate     TIMESTAMPTZ,                            -- validade da posse; vencida = outro worker pode retomar
   pedido_por    UUID REFERENCES public.team_members(id) ON DELETE SET NULL,
   criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
   atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -85,12 +97,70 @@ CREATE INDEX IF NOT EXISTS ix_cases_sugestoes_pendentes ON public.cases_sugestoe
 ALTER TABLE public.cases_sugestoes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS cases_sugestoes_leitura_membros ON public.cases_sugestoes;
 CREATE POLICY cases_sugestoes_leitura_membros ON public.cases_sugestoes FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.team_members tm WHERE tm.auth_user_id = auth.uid()));
-DROP POLICY IF EXISTS cases_sugestoes_pedido_membros ON public.cases_sugestoes;
-CREATE POLICY cases_sugestoes_pedido_membros ON public.cases_sugestoes FOR INSERT TO authenticated
-  WITH CHECK (EXISTS (SELECT 1 FROM public.team_members tm WHERE tm.auth_user_id = auth.uid()));
+  USING (EXISTS (SELECT 1 FROM public.team_members tm WHERE tm.auth_user_id = auth.uid() AND tm.active IS DISTINCT FROM false));
+DROP POLICY IF EXISTS cases_sugestoes_pedido_membros ON public.cases_sugestoes;   -- pedidos só pela edge (service_role)
 REVOKE ALL ON public.cases_sugestoes FROM anon;
-GRANT SELECT, INSERT ON public.cases_sugestoes TO authenticated;
+GRANT SELECT ON public.cases_sugestoes TO authenticated;
+ALTER TABLE public.cases_sugestoes ADD COLUMN IF NOT EXISTS claim_token UUID;
+ALTER TABLE public.cases_sugestoes ADD COLUMN IF NOT EXISTS lease_ate TIMESTAMPTZ;
+
+-- Realtime (o painel acompanha a conclusão); idempotente
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'cases_sugestoes') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.cases_sugestoes;
+  END IF;
+END $$;
+
+-- Posse atômica: pendente, ou processando com lease vencido; incrementa tentativas no banco;
+-- quando a tentativa que seria feita ultrapassa p_max, encerra como 'erro' (tentativas esgotadas).
+CREATE OR REPLACE FUNCTION public.cases_claim(p_id UUID, p_lease_s INT DEFAULT 300, p_max INT DEFAULT 3)
+RETURNS TABLE (token UUID, tentativa INT)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE t UUID := gen_random_uuid(); n INT;
+BEGIN
+  UPDATE public.cases_sugestoes s
+     SET status = 'processando', tentativas = s.tentativas + 1, claim_token = t,
+         lease_ate = now() + make_interval(secs => greatest(p_lease_s, 30)), atualizado_em = now(), erro = NULL
+   WHERE s.id = p_id AND s.tentativas < p_max
+     AND (s.status = 'pendente' OR (s.status = 'processando' AND (s.lease_ate IS NULL OR s.lease_ate < now())))
+  RETURNING s.tentativas INTO n;
+  IF n IS NOT NULL THEN RETURN QUERY SELECT t, n; RETURN; END IF;
+  -- sem posse: se era uma tentativa interrompida já no limite, encerra explicitamente
+  UPDATE public.cases_sugestoes s SET status = 'erro', erro = coalesce(s.erro, 'tentativas esgotadas (interrompida)'), claim_token = NULL, lease_ate = NULL, atualizado_em = now()
+   WHERE s.id = p_id AND s.status IN ('pendente', 'processando') AND s.tentativas >= p_max AND (s.lease_ate IS NULL OR s.lease_ate < now());
+  RETURN;
+END $$;
+-- Renova/escreve sob posse: só grava se o token ainda é o dono. Devolve se gravou.
+CREATE OR REPLACE FUNCTION public.cases_renovar(p_id UUID, p_token UUID, p_lease_s INT DEFAULT 300)
+RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  WITH u AS (UPDATE public.cases_sugestoes SET lease_ate = now() + make_interval(secs => greatest(p_lease_s, 30)), atualizado_em = now()
+              WHERE id = p_id AND claim_token = p_token AND status = 'processando' RETURNING 1)
+  SELECT EXISTS (SELECT 1 FROM u);
+$$;
+REVOKE EXECUTE ON FUNCTION public.cases_claim(UUID, INT, INT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.cases_claim(UUID, INT, INT) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.cases_renovar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.cases_renovar(UUID, UUID, INT) TO service_role;
+
+-- Contexto do lead para a busca: public.leads + custom_fields da réplica kommo.leads (schema fechado,
+-- por isso via RPC). Nomes de campo da conta: "Segmento do lead", "Segmento Disparos", "Estado", "Cidade".
+CREATE OR REPLACE FUNCTION public.cases_contexto_lead(p_lead_id UUID)
+RETURNS TABLE (empresa TEXT, segmento TEXT, produto TEXT, uf TEXT, cidade TEXT, nicho TEXT, instagram TEXT, site TEXT)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, kommo AS $$
+  WITH l AS (SELECT id, empresa, segmento_disparos, produto, kommo_id FROM public.leads WHERE id = p_lead_id),
+       k AS (SELECT custom_fields FROM kommo.leads kl JOIN l ON kl.id = l.kommo_id::bigint WHERE l.kommo_id IS NOT NULL AND l.kommo_id ~ '^[0-9]+$'),
+       cf AS (SELECT f->>'field_name' AS nome, f->'values'->0->>'value' AS valor FROM k, jsonb_array_elements(coalesce(k.custom_fields, '[]'::jsonb)) f)
+  SELECT l.empresa, l.segmento_disparos, l.produto,
+         nullif(upper(left(coalesce((SELECT valor FROM cf WHERE nome ILIKE 'estado' LIMIT 1), ''), 2)), ''),
+         (SELECT valor FROM cf WHERE nome ILIKE 'cidade' LIMIT 1),
+         coalesce((SELECT valor FROM cf WHERE nome ILIKE 'segmento do lead' LIMIT 1), (SELECT valor FROM cf WHERE nome ILIKE 'segmento disparos' LIMIT 1)),
+         (SELECT valor FROM cf WHERE nome ILIKE 'link instagram' OR nome ILIKE 'instagram' LIMIT 1),
+         (SELECT valor FROM cf WHERE nome ILIKE 'website' OR nome ILIKE 'link site cliente' LIMIT 1)
+    FROM l;
+$$;
+REVOKE EXECUTE ON FUNCTION public.cases_contexto_lead(UUID) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.cases_contexto_lead(UUID) TO service_role;
 
 -- 3) Cache web/anúncios -----------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.cases_web_cache (
@@ -131,8 +201,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
    ORDER BY score DESC, c.lt_meses DESC NULLS LAST
    LIMIT greatest(coalesce(p_limit, 12), 1);
 $$;
-REVOKE EXECUTE ON FUNCTION public.cases_buscar(TEXT[], TEXT, INT) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.cases_buscar(TEXT[], TEXT, INT) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.cases_buscar(TEXT[], TEXT, INT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.cases_buscar(TEXT[], TEXT, INT) TO service_role;
 
 -- 5) Disparo automático ao agendar ------------------------------------------------------
 INSERT INTO public.integracao_config (key, value)
@@ -145,17 +215,25 @@ DECLARE base TEXT; seg TEXT;
 BEGIN
   SELECT value INTO base FROM public.integracao_config WHERE key = 'edge_base_url';
   SELECT value INTO seg  FROM public.integracao_config WHERE key = 'central_cases_secret';
-  IF base IS NULL OR seg IS NULL THEN RETURN NEW; END IF;
-  -- 1 pedido por reunião (idempotente: a edge reaproveita a linha pendente/processando)
-  INSERT INTO public.cases_sugestoes (reuniao_id, lead_id, empresa, profundidade, pedido_por)
-    VALUES (NEW.id, NEW.lead_id, coalesce(NEW.empresa, ''), 'leve', NEW.sdr_id);
-  PERFORM net.http_post(
-    url     := base || '/central-cases',
-    headers := jsonb_build_object('Content-Type', 'application/json', 'x-central-cases-secret', seg),
-    body    := jsonb_build_object('acao', 'gerar', 'reuniao_id', NEW.id));
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'central-cases: disparo falhou para reuniao %: %', NEW.id, SQLERRM;   -- nunca bloqueia o agendamento
+  -- 1) pendência DURÁVEL (fica mesmo se o POST falhar: o cron retoma)
+  BEGIN
+    INSERT INTO public.cases_sugestoes (reuniao_id, lead_id, empresa, profundidade, pedido_por)
+      VALUES (NEW.id, NEW.lead_id, coalesce(NEW.empresa, ''), 'leve', NEW.sdr_id);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'central-cases: não registrou pendência da reunião %: %', NEW.id, SQLERRM;   -- nunca bloqueia o agendamento
+    RETURN NEW;
+  END;
+  -- 2) acorda a edge, em bloco isolado: falha aqui não desfaz o INSERT acima
+  IF base IS NOT NULL AND seg IS NOT NULL THEN
+    BEGIN
+      PERFORM net.http_post(
+        url     := base || '/central-cases',
+        headers := jsonb_build_object('Content-Type', 'application/json', 'x-central-cases-secret', seg),
+        body    := jsonb_build_object('acao', 'gerar', 'reuniao_id', NEW.id));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'central-cases: POST falhou para reuniao % (cron retoma): %', NEW.id, SQLERRM;
+    END;
+  END IF;
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS trg_reunioes_central_cases ON public.reunioes;
@@ -173,7 +251,7 @@ BEGIN
         headers := jsonb_build_object('Content-Type','application/json',
                      'x-central-cases-secret', (SELECT value FROM integracao_config WHERE key='central_cases_secret')),
         body    := '{"acao":"varrer"}'::jsonb)
-      WHERE EXISTS (SELECT 1 FROM cases_sugestoes WHERE status IN ('pendente','processando') AND atualizado_em < now() - interval '5 minutes')
+      WHERE EXISTS (SELECT 1 FROM cases_sugestoes WHERE (status = 'pendente' OR (status = 'processando' AND (lease_ate IS NULL OR lease_ate < now()))) AND atualizado_em < now() - interval '2 minutes')
     $job$);
   END IF;
 END $$;

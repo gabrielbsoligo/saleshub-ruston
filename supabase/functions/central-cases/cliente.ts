@@ -1,25 +1,48 @@
 // central-cases/cliente.ts — adaptadores reais (Supabase, motor do Enriquecedor) para o motor.ts.
 // A busca web NÃO chama a Brave daqui: passa pelo motor do Enriquecedor (Railway), que já tem
 // chave, cache em Postgres (enriquecedor_cache, 14 dias) e ritmo (1/s). Idem a Biblioteca de
-// Anúncios (/api/anuncios, headless + proxy). Auth no motor = login do usuário de integração.
+// Anúncios (/api/anuncios, headless + proxy). Auth no motor = login do usuário de integração,
+// feito num CLIENTE SEPARADO (anon key): o cliente admin (service_role) nunca recebe sessão de usuário.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import type { Candidato, Deps, ResultadoWeb } from './motor.ts'
 
 export type Sb = any
 const DIA = 24 * 60 * 60 * 1000
 
-export async function sessaoMotor(sb: Sb): Promise<string> {
-  const { data, error } = await sb.auth.signInWithPassword({ email: Deno.env.get('ENRIQ_INTEG_EMAIL') ?? '', password: Deno.env.get('ENRIQ_INTEG_SENHA') ?? '' })
+export async function sessaoMotor(supabaseUrl: string, anonKey: string): Promise<string> {
+  const login = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data, error } = await login.auth.signInWithPassword({ email: Deno.env.get('ENRIQ_INTEG_EMAIL') ?? '', password: Deno.env.get('ENRIQ_INTEG_SENHA') ?? '' })
   if (error || !data?.session?.access_token) throw new Error(`auth integração falhou: ${error?.message ?? 'sem sessão'}`)
   return data.session.access_token as string
 }
 
+/** anúncios VALIDADOS como da empresa (meta.validados); modo 'pagina' = identidade confirmada; keyword com
+ *  itens a validar/descartados = parcial (confirmado:false). Nunca conta descartados. */
+export function interpretarAnuncios(body: any): { ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string } {
+  if (!body || body.ok === false) return { ok: false, ativos: null, nota: String(body?.note ?? 'anúncios indisponíveis') }
+  const meta = body.meta
+  if (!meta) return { ok: false, ativos: null, nota: String(body.note ?? 'sem medição') }
+  const validados = Array.isArray(meta.validados) ? meta.validados.length : 0
+  const aValidar = Array.isArray(meta.aValidar) ? meta.aValidar.length : 0
+  const descartados = Array.isArray(meta.descartados) ? meta.descartados.length : 0
+  if (meta.modo === 'pagina') return { ok: true, ativos: Number(meta.total ?? validados), confirmado: true }
+  if (validados > 0) return { ok: true, ativos: validados, confirmado: aValidar === 0, nota: aValidar ? `${aValidar} a validar` : undefined }
+  if (aValidar > 0) return { ok: true, ativos: aValidar, confirmado: false, nota: 'identidade não confirmada' }
+  return { ok: true, ativos: 0, confirmado: descartados === 0, nota: descartados ? `${descartados} anúncios de terceiros descartados` : undefined }
+}
+
 export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch): Deps {
   const chave = (prefixo: string, ...p: unknown[]) => `${prefixo}:${p.map((x) => String(x ?? '').toLowerCase().trim()).join('|')}`.slice(0, 900)
+  // cache é best-effort: erro de leitura = sem cache (segue para o motor); erro de escrita = aviso no log
   const cacheGet = async (k: string) => {
     const r = await sb.from('cases_web_cache').select('valor').eq('chave', k).gt('expira_em', new Date().toISOString()).maybeSingle()
-    return r.error ? undefined : r.data?.valor
+    if (r.error) { console.warn('central-cases cache: leitura falhou', r.error.message); return undefined }
+    return r.data?.valor
   }
-  const cacheSet = async (k: string, valor: unknown, ttl: number) => { await sb.from('cases_web_cache').upsert({ chave: k, valor, expira_em: new Date(Date.now() + ttl).toISOString() }, { onConflict: 'chave' }) }
+  const cacheSet = async (k: string, valor: unknown, ttl: number) => {
+    const r = await sb.from('cases_web_cache').upsert({ chave: k, valor, expira_em: new Date(Date.now() + ttl).toISOString() }, { onConflict: 'chave' })
+    if (r.error) console.warn('central-cases cache: gravação falhou', r.error.message)
+  }
   const motor = async (rota: string, body: unknown) => {
     const r = await fetchFn(`${motorUrl}${rota}`, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
     const txt = await r.text(); let j: any = null; try { j = txt ? JSON.parse(txt) : null } catch { /* corpo não-JSON */ }
@@ -45,16 +68,14 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       return { ok: true, results }
     },
     async anuncios(c) {
-      const k = chave('ads', c.company, c.siteDomain, c.cidade)
+      const k = chave('ads', c.company, c.siteDomain, c.cidade, c.fbHandle)
       const hit = await cacheGet(k)
-      if (hit && typeof hit.ativos !== 'undefined') return { ok: true, ativos: hit.ativos }
+      if (hit && typeof hit.ativos !== 'undefined') return { ok: true, ativos: hit.ativos, confirmado: hit.confirmado, nota: hit.nota }
       const r = await motor('/api/anuncios', { company: c.company, fbHandle: c.fbHandle, siteDomain: c.siteDomain, cidade: c.cidade })
       if (r.status !== 200 || !r.body) return { ok: false, ativos: null, nota: `motor HTTP ${r.status}` }
-      if (r.body.ok === false) return { ok: false, ativos: null, nota: r.body.note ?? 'anúncios indisponíveis' }
-      const ativos = r.body.meta ? Number(r.body.meta.total ?? 0) : 0   // meta:null com ok:true = bloqueio/cap → conta como desconhecido? não: nota
-      if (!r.body.meta && r.body.note) return { ok: false, ativos: null, nota: String(r.body.note) }
-      await cacheSet(k, { ativos }, 7 * DIA)
-      return { ok: true, ativos }
+      const out = interpretarAnuncios(r.body)
+      if (out.ok) await cacheSet(k, { ativos: out.ativos, confirmado: out.confirmado, nota: out.nota ?? null }, 7 * DIA)
+      return out
     },
   }
 }

@@ -32,4 +32,9 @@ service_role, lotes de 1000). RLS: leitura para membros autenticados; escrita s�
   opcional. Deploy: `supabase functions deploy central-cases --no-verify-jwt`.
 - Motor: rota nova `/api/busca-web` (Railway, deploy pelo push na main; `versao` em `/api/health`).
 - Testes: `deno test --allow-read` em `supabase/functions/central-cases` (6).
-- Reverter: cabeçalho da `migration_160_central_cases.sql`; front = remover `CasesPanel` do `PrepCallView`.
+- Reverter (ordem): `SELECT cron.unschedule('central-cases-varrer'); DROP TRIGGER IF EXISTS trg_reunioes_central_cases ON public.reunioes;
+  DROP FUNCTION IF EXISTS public.reunioes_central_cases_fire(), public.cases_buscar(TEXT[],TEXT,INT), public.cases_claim(UUID,INT,INT),
+  public.cases_renovar(UUID,UUID,INT), public.cases_contexto_lead(UUID); ALTER PUBLICATION supabase_realtime DROP TABLE public.cases_sugestoes;
+  DROP TABLE IF EXISTS public.cases_sugestoes, public.cases_web_cache, public.cases_base_v4; DROP FUNCTION IF EXISTS public.immutable_unaccent(TEXT);
+  DELETE FROM public.integracao_config WHERE key='central_cases_secret';` — depois `supabase functions delete central-cases`; front = remover `CasesPanel`/`CasesRecentes` do `PrepCallView`.
+- Posse: `cases_claim` (lease 5 min + token; `cases_renovar` a cada etapa); escritas só sob posse; 3ª tentativa interrompida vira `erro`.
