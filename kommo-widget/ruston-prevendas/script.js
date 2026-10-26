@@ -4,7 +4,8 @@
  * - FILA: vem do servidor (edge prevendas-fila), autenticada pelo token descartável do Kommo ($authorizedAjax).
  *   O servidor lê AO VIVO no Kommo a lista de tarefas abertas do próprio usuário (fonte autoritativa) e a
  *   classifica com dados de lead da réplica/API. O widget ordena e só age sobre essa lista; com dados velhos
- *   ou falha, as ações ficam suspensas. Vazão: cache 40 s + trava por usuário + orçamento da conta no servidor.
+ *   ou falha, as ações CONTINUAM (Concluir confere a tarefa ao vivo no Kommo) com aviso discreto da idade.
+ *   Vazão: cache 40 s + trava por usuário + orçamento da conta no servidor.
  * - MODO DEGRADADO (servidor indisponível): lê as próprias tarefas pela sessão do Kommo, paginado, com
  *   respeito a 429/Retry-After, e ordena só por vencimento (aviso visível).
  * - Várias abas: uma "líder" por usuário consulta; as outras usam o resultado compartilhado (localStorage).
@@ -200,7 +201,7 @@
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
       var MAX_PAGINAS_DEGRADADO = 4, PASSO_PAGINA_MS = 1500, MAX_NOTIF_CICLO = 5, ATRASO_MAX_S = 600;
       var MARCA_TTL_MS = 2 * 60 * 1000;
-      var CHATS_MAX_S = 120;                     // chat exibido/notificado só com leitura de até 2 min (servidor: 60 s + ciclo)          // só "concluí agora", até o servidor refletir
+      var CHATS_MAX_S = 180;                     // chat exibido/notificado só com leitura de até 2 min (servidor: 120 s + ciclo)          // só "concluí agora", até o servidor refletir
       var ABA = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
       var state = {
@@ -208,7 +209,7 @@
         uid: null, sub: 'acc', base: '', audio: null,
         itens: [], motivos: [],
         modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
-        fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false
+        fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false, carregandoEm: 0, reTentar: 0
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
@@ -299,9 +300,10 @@
       function intervalo(fn, ms) { var h = setInterval(fn, ms); state.timers.push({ t: 'i', h: h }); return h; }
       function atraso(fn, ms) { var h = setTimeout(fn, ms); state.timers.push({ t: 't', h: h }); return h; }
       function ouvir(alvo, ev, fn, opt) { alvo.addEventListener(ev, fn, opt); state.ouvintes.push([alvo, ev, fn, opt]); }
-      // ações só com dados confirmados e recentes (servidor/degradado ok, sem falha, < 3 ciclos)
+      // notificações só com dados confirmados e recentes (< 3 ciclos, sem falha); AÇÕES com qualquer lista recebida
+      // (decisão do Gabriel: dado velho não trava o trabalho — Concluir confere a tarefa ao vivo no Kommo)
       function dadosRecentes() { return !!state.dadosEm && (agoraS() - state.dadosEm) < cfg().poll * 3; }
-      function podeAgir() { return !state.falha && dadosRecentes() && (state.modo === 'servidor' || state.modo === 'degradado'); }
+      function podeAgir() { return !!state.dadosEm && (state.modo === 'servidor' || state.modo === 'degradado'); }
 
       // ---------------- navegação ----------------
       function seg(etype) { return { leads: 'leads', contacts: 'contacts', companies: 'companies', customers: 'customers' }[etype] || 'leads'; }
@@ -372,20 +374,25 @@
       function pausado() { return Date.now() < (lsGet('pausa', 0) || 0); }
 
       function ciclo(g, manual) {
-        if (!vivo(g) || state.carregando) return;
+        if (!vivo(g)) return;
+        // watchdog: um pedido que nunca volta (token do Kommo/rede) não pode congelar a fila — depois de 45 s, segue
+        if (state.carregando && Date.now() - state.carregandoEm < 45000) return;
         if (pausado()) { if (manual) { state.aviso = 'O Kommo pediu uma pausa (limite de uso). Tento de novo em instantes.'; render(); } return; }
         var lock = lsGet('lider', null);
         if (!Fila.devoLiderar(lock, ABA, Date.now())) { carregarSnapshot(); return; }
         lsSet('lider', { aba: ABA, ate: Date.now() + cfg().poll * 2500 });
-        state.carregando = true;
+        state.carregando = true; state.carregandoEm = Date.now();
         if (manual) render();
         lerServidor(manual, function (err, r) {
           if (!vivo(g)) return;
+          try { tratar(err, r); } catch (e) { state.carregando = false; if (window.console) console.error('[ruston-prevendas] ciclo', e); }
+        });
+        function tratar(err, r) {
           if (!err) {
             var aviso = '', f = r.frescor_leads;
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
-            if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
+            if (r.em_andamento) reTentarLogo(g);           // outra aba/navegador está montando a lista: busca a nova em segundos
             medirDesvio(r.servidor_agora);                 // só ajusta o "agora"; os carimbos do servidor continuam brutos
             recalibrar();                                  // carimbos locais (falha/degradado) vão para o referencial novo
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
@@ -394,7 +401,7 @@
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
-          if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
+          if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; reTentarLogo(g); return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
           var inicio = { t: agoraS(), d: marca() };                   // instante e marca juntos, no início
           lerKommo(g, function (e2, lista, parcial) {
@@ -405,7 +412,12 @@
             publicar({ itens: lista.map(deKommo), modo: 'degradado',
                        aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, lidoEm, marcaLida);
           });
-        });
+        }
+      }
+      // uma nova tentativa ~7 s depois (fora do ciclo normal), no máximo uma agendada por vez
+      function reTentarLogo(g) {
+        if (state.reTentar) return;
+        state.reTentar = atraso(function () { state.reTentar = 0; ciclo(g, false); }, 7000);
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
@@ -508,6 +520,24 @@
       function concluirEProximo(q) {
         if (!q || !podeAgir() || q.id < 0) { render(); return; }   // id < 0 = chat sem resposta (não é tarefa)
         var g = state.geracao;
+        // a lista pode estar velha: confere a tarefa AO VIVO (aberta e do usuário) antes de concluir
+        $.ajax({ url: '/api/v4/tasks/' + encodeURIComponent(q.id), method: 'GET', dataType: 'json' })
+          .done(function (t) {
+            if (!vivo(g)) return;
+            if (!t || t.is_completed || Number(t.responsible_user_id) !== Number(state.uid)) {
+              mutar(function (s) { s.itens = (s.itens || []).filter(function (x) { return x.id !== q.id; }); });
+              state.aviso = 'Essa tarefa já estava ' + (t && t.is_completed ? 'concluída' : 'com outra pessoa') + ' no Kommo; segui para a próxima.';
+              state.atual = null; montar(); avancar(); return;
+            }
+            concluirAgora(q, g);
+          })
+          .fail(function (x) {
+            if (!vivo(g)) return;
+            if (x && x.status === 404) { mutar(function (s) { s.itens = (s.itens || []).filter(function (y) { return y.id !== q.id; }); }); state.atual = null; montar(); avancar(); return; }
+            alert('Não consegui conferir a tarefa no Kommo (' + ((x && x.status) || 'erro') + ').');
+          });
+      }
+      function concluirAgora(q, g) {
         $.ajax({ url: '/api/v4/tasks/' + encodeURIComponent(q.id), method: 'PATCH', contentType: 'application/json', dataType: 'json',
                  data: JSON.stringify({ is_completed: true, result: { text: 'Concluída pelo PRÓXIMO' } }) })
           .done(function () {
@@ -809,7 +839,7 @@
 '.rpv-it .pos{width:16px;color:#A5A3A0;text-align:right}.rpv-it .bd{flex:1;min-width:0}.rpv-it .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
 '.rpv-tag{border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;background:#EEF3F8;color:#5C6E80}.rpv-tag.m1{background:#FFE9E9;color:#B4232B}.rpv-tag.m2,.rpv-tag.m3{background:#FFF1E0;color:#A35300}' +
 '.rpv-late{color:#B4232B;font-weight:700}.rpv-f{padding:7px 12px;border-top:1px solid #EFEEEC;font-size:10px;color:#8C8A88;display:flex;justify-content:space-between;gap:8px}' +
-'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}' +
+'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-nota{color:#8A8885;padding:4px 12px;font-size:10.5px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}' +
 '.rpv-num{width:100%;box-sizing:border-box;border:1px solid #E2E1DE;border-radius:7px;padding:5px 8px;font-size:12.5px}' +
 '.rpv-tag.m0{background:#E30613;color:#fff}.rpv-ligar{border-radius:7px;border:1px solid #1E8E3E;background:#1E8E3E;color:#fff;padding:4px 10px;cursor:pointer;font-weight:700;font-size:11.5px;align-self:center}.rpv-ligar[disabled]{opacity:.5;cursor:default}';
 
@@ -855,8 +885,8 @@
         if (state.open) {
           html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
                   '<button data-act="atualizar" title="Atualizar">↻</button><button data-act="painel" title="Fechar">×</button></div>';
-          if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
-          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + ', há ' + Math.max(0, agoraS() - state.dadosEm) + ' s): ações suspensas até atualizar.</div>';
+          if (state.falha) html += '<div class="rpv-nota">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + '; ao concluir, confiro a tarefa no Kommo.</div>';
+          else if (state.dadosEm && !dadosRecentes()) html += '<div class="rpv-nota">Lista das ' + hora(state.dadosEm) + ' (há ' + Math.max(0, agoraS() - state.dadosEm) + ' s), atualizando; ao concluir, confiro a tarefa no Kommo.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
           if (state.chatsVencidos) html += '<div class="rpv-warn">Chats sem resposta desatualizados: escondidos até a próxima leitura.</div>';
           var mot = state.motivos || [], motChat = mot.filter(function (m) { return /^chats_/.test(m); }), motTar = mot.filter(function (m) { return !/^chats_/.test(m); });

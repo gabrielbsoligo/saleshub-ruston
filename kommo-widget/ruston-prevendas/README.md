@@ -139,3 +139,17 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
 3. Faça isso sempre que um usuário sair da lista `PREVENDAS_VOZ_USUARIOS`, mudar de ramal ou houver suspeita de vazamento.
 
 Decisão do Gabriel (26/10): opção B, seguir sem pedir à 4com o bloqueio de saída direta dos ramais, com as mitigações acima.
+
+## 0.4.6 — a fila nunca prende o usuário
+
+- **Servidor (`prevendas-fila`):**
+  - A leitura dos chats da conta (cerca de 20 s pelo orçamento de 2 GET/s) roda em segundo plano, depois da resposta (`EdgeRuntime.waitUntil`). A fila usa o último cache de chats, com até 120 s.
+  - Trava curta: 35 s, com prazo de execução de 25 s.
+  - Se outra execução do mesmo usuário estiver em curso (outra aba ou outro navegador), o servidor devolve o último snapshot com a idade real (`em_andamento`). O 503 só aparece se ainda não existir nenhum snapshot.
+- **Widget:**
+  - Lista velha ou com falha não suspende mais as ações. Aparece só um aviso discreto ("Lista das HH:MM…").
+  - O "Concluir" confere a tarefa ao vivo antes do PATCH (`GET /api/v4/tasks/{id}`). Se ela já estiver concluída ou com outra pessoa, sai da lista sem ser concluída.
+  - Com `em_andamento`, tenta de novo em cerca de 7 s.
+  - Um watchdog de 45 s impede que um pedido que nunca volta congele a fila.
+  - As notificações continuam só com dado recente.
+- **Reverter:** redeploy da `prevendas-fila` do commit anterior e o zip 0.4.5. Nada muda no banco.
