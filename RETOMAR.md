@@ -7,7 +7,7 @@ Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, 
 - **Telefone 4com + chat sem resposta:**
   - migration 161;
   - secrets `API4COM_TOKEN` (permanente), `API4COM_DOMAIN`, `API4COM_WSS`, `PREVENDAS_VOZ_USUARIOS=11420911`, `PREVENDAS_VOZ_TELEFONES_TESTE=47997293673`, `PREVENDAS_CHATS_DIAS=7`;
-  - edges `prevendas-fila` e `prevendas-voz` = 3ba7688 + correção do JWT (1b923af + 046d1c0, Vedor APROVADO), publicadas a partir do worktree `C:Usersgabridevsaleshub-deploy-jwt`. Motivo: o T1 do Gabriel deu `jwt_emissor` — o `iss` real não vinha como na doc.
+  - edges `prevendas-fila` e `prevendas-voz` = 3ba7688 + correção do JWT (1b923af + 046d1c0, Vedor APROVADO), publicadas a partir do worktree `C:/Users/gabri/dev/saleshub-deploy-jwt`. Port no hub-comercial: dd77705. Motivo: o T1 do Gabriel deu `jwt_emissor` — o `iss` real não vinha como na doc.
 - **Zip 0.4.0:** entregue ao Oraculo, que troca na integração. T1 (registro) liberado; T2 (UMA ligação para 47997293673) só com o aviso do Oraculo, e o Gabriel clica em Atender.
 - **hub-comercial (port/enriquecedor):**
   - a21fe5c: fatia 2, migration_161;
