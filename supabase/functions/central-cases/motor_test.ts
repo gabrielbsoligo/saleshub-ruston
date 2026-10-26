@@ -1,6 +1,7 @@
 // deno test --allow-read supabase/functions/central-cases/motor_test.ts
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { ErroCritico, casaComNome, extrairPresenca, gerarCases, pontuar, qualidadeDe, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { ErroCritico, casaComNome, extrairPresenca, gerarCases, hostPublico, ipPrivado, pontuar, qualidadeDe, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { sondarSite } from './cliente.ts'
 // sinais de presença neutros (não medidos) para os fakes inline
 const sinais = { siteNoAr: async () => null, instagramExiste: async () => null, googleNegocio: async () => ({ ok: false, encontrado: false, rating: null, avaliacoes: null }) }
 import { depsReais } from './cliente.ts'
@@ -9,12 +10,19 @@ import { assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
 Deno.test('termosDe: nicho com sinônimos primeiro, depois tokens do nome sem sufixos jurídicos/stopwords', () => {
   const t = termosDe('Clínica Sorriso Odontologia LTDA - ME', 'odonto')
   assertEquals(t.nicho.slice(0, 5), ['odonto', 'odontologia', 'odontologica', 'dental', 'dentista'])
-  assert(t.nicho.includes('clinica') && t.nome.includes('sorriso') && !t.nome.includes('ltda') && !t.nome.includes('me'))
+  assert(!t.nicho.includes('clinica') && t.nome.includes('clinica') && t.nome.includes('sorriso') && !t.nome.includes('ltda') && !t.nome.includes('me'))   // nicho explícito: 'clinica' do nome fica como NOME
   assertEquals(termosDe('A B LTDA', null), { nicho: [], nome: [] })   // nada com 3+ letras
   // Gabriel (26/10): genéricos e nomes de pessoa NÃO viram termo; nicho pesa, nome só desempata
   assertEquals(termosDe('Fraternidade Alex Salomão', null, ['Alex Salomão']), { nicho: [], nome: [] })
   assertEquals(termosDe('Consultoria Gestão XYZ Serviços Ltda', null), { nicho: [], nome: ['xyz'] })
   assertEquals(termosDe('Quality remodeling by alex', 'Imobiliária'), { nicho: ['imobiliaria', 'imoveis', 'imobiliario', 'construtora', 'incorporadora'], nome: ['quality', 'remodeling'] })
+  // R2#3 nicho EXPLÍCITO é o filtro: "clinica" do nome NÃO entra no nicho (uma Clínica Veterinária não passaria);
+  // sem nicho explícito, o nome infere o nicho
+  const comNicho = termosDe('Clinica Sorriso', 'odontologia')
+  assertEquals(comNicho.nicho, ['odontologia', 'odonto', 'odontologica', 'dental']); assert(!comNicho.nicho.includes('clinica') && comNicho.nome.includes('clinica') && comNicho.nome.includes('sorriso'))
+  const semNicho = termosDe('Clinica Sorriso', null)
+  assert(semNicho.nicho.includes('clinica') && semNicho.nicho.includes('saude') && semNicho.nome.includes('sorriso'))
+  assertEquals(termosDe('XYZ Ltda', null).nome, ['xyz'])   // 3 letras passam (mesmo mínimo da RPC)
   assertEquals(termosDe('ALEX GENOVESE', null, ['Alex']).nome, [])
   assertEquals(tokens('Grupo Imóveis & Cia S/A'), ['imoveis'])        // grupo/cia/sa são sufixos; "imóveis" normalizado
 })
@@ -157,4 +165,53 @@ Deno.test('ordem final = qualidade primeiro: case menos relevante mas com presen
   assertEquals(out.map((c) => c.nome), ['Odonto Forte', 'Odonto Fraca'])
   assertEquals(out[0].qualidade, 100); assertEquals(out[1].qualidade, 0)
   assert(out[0].por_que!.some((m) => m.includes('Google Business 4.7★ (80 avaliações)')) && out[0].por_que!.some((m) => m === 'site no ar'))
+})
+
+
+Deno.test('R2#1 sondarSite (SSRF): só http(s) público; redirect para loopback/privado/link-local/metadata = null; DNS privado = null; redirect público segue', async () => {
+  assert(ipPrivado('127.0.0.1') && ipPrivado('10.1.2.3') && ipPrivado('172.16.0.9') && ipPrivado('192.168.0.1') && ipPrivado('169.254.169.254') && ipPrivado('::1') && ipPrivado('fd00::1') && ipPrivado('0.0.0.0'))
+  assert(!ipPrivado('8.8.8.8') && !ipPrivado('200.1.2.3') && !ipPrivado('2800:3f0::1'))
+  assert(!hostPublico('localhost') && !hostPublico('app.internal') && !hostPublico('127.0.0.1') && !hostPublico('[::1]') && !hostPublico('semponto') && hostPublico('clinicasorriso.com.br'))
+  const chamadas: string[] = []
+  const fetchFake = (async (u: string | URL | Request) => {
+    const url = String(u); chamadas.push(url)
+    if (url.startsWith('https://redir-privado.com/')) return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:8080/admin' } })
+    if (url.startsWith('https://redir-meta.com/')) return new Response(null, { status: 301, headers: { location: 'http://169.254.169.254/latest/meta-data' } })
+    if (url.startsWith('https://redir-ok.com/')) return new Response(null, { status: 301, headers: { location: 'https://www.redir-ok.com/home' } })
+    if (url.startsWith('https://www.redir-ok.com/home')) return new Response('ok', { status: 200 })
+    if (url.startsWith('https://fora.com/')) return new Response('x', { status: 503 })
+    return new Response('ok', { status: 200 })
+  }) as unknown as typeof fetch
+  const dns = async (h: string) => h === 'dns-privado.com' ? ['10.0.0.5'] : ['200.10.20.30']
+  assertEquals(await sondarSite('https://redir-privado.com/', fetchFake, dns), null)
+  assertEquals(await sondarSite('https://redir-meta.com/', fetchFake, dns), null)
+  assertEquals(await sondarSite('https://dns-privado.com/', fetchFake, dns), null)
+  assertEquals(await sondarSite('ftp://x.com/', fetchFake, dns), null)
+  assertEquals(await sondarSite('https://redir-ok.com/', fetchFake, dns), true)
+  assertEquals(await sondarSite('https://fora.com/', fetchFake, dns), false)
+  assert(!chamadas.some((u) => u.includes('127.0.0.1') || u.includes('169.254')))   // nunca bateu no destino privado
+})
+
+Deno.test('R2#2 pulso de posse é chamado entre candidatos e chamadas lentas (web ×3 por candidato + anúncios); se lançar, a rodada aborta', async () => {
+  let pulsos = 0
+  const base = Array.from({ length: 4 }, (_, i) => cand(i + 1, `Odonto${i + 1}`, 90 - i))
+  const deps: Deps = { ...sinais, agora: () => 1, base: async () => base, buscaWeb: async () => ({ ok: true, results: [] }), anuncios: async () => ({ ok: true, ativos: 0 }), pulso: async () => { pulsos++ } }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'profunda' })
+  assertEquals(out.length, 4); assertEquals(pulsos, 4 * 3 + 4)
+  const perde: Deps = { ...deps, pulso: async () => { throw new ErroCritico('posse perdida') } }
+  await assertRejects(() => gerarCases(perde, { empresa: 'X', nicho: 'odonto', profundidade: 'profunda' }), ErroCritico)
+})
+
+Deno.test('R2#4 Google Business: resposta do motor com ok:false = indisponível (ok:false, google=null) e NÃO cacheia; found:false cacheia como não encontrado', async () => {
+  const escritas: any[] = []
+  const sbFake = { rpc: async () => ({ data: [], error: null }), from: () => ({ select: () => ({ eq: () => ({ gt: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }), upsert: async (row: any) => { escritas.push(row); return { error: null } } }) }
+  const fetchFake = (resp: unknown) => (async () => new Response(JSON.stringify(resp), { status: 200 })) as unknown as typeof fetch
+  const d1 = depsReais(sbFake, 'https://motor.x', async () => 'jwt', fetchFake({ ok: false, found: false, note: 'serper_indisponivel' }))
+  assertEquals(await d1.googleNegocio('A', null), { ok: false, encontrado: false, rating: null, avaliacoes: null }); assertEquals(escritas.length, 0)
+  const d2 = depsReais(sbFake, 'https://motor.x', async () => 'jwt', fetchFake({ ok: true, found: false }))
+  assertEquals((await d2.googleNegocio('A', null)).encontrado, false); assertEquals(escritas.length, 1)
+  // no motor.ts, ok:false vira google=null (não "não encontrado")
+  const deps: Deps = { ...sinais, agora: () => 1, base: async () => [cand(1, 'A', 50)], buscaWeb: async () => ({ ok: true, results: [] }), anuncios: async () => ({ ok: true, ativos: 0 }), googleNegocio: async () => ({ ok: false, encontrado: false, rating: null, avaliacoes: null }) }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'profunda' })
+  assertEquals(out[0].google ?? null, null)
 })

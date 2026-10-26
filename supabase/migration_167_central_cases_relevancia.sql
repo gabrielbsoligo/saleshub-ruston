@@ -17,7 +17,7 @@ RETURNS TABLE (id_cliente BIGINT, nome TEXT, razao_social TEXT, cidade TEXT, uf 
                categoria TEXT, produto_origem TEXT, lt_meses INT, fee NUMERIC, score NUMERIC, termos_casados TEXT[])
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   WITH tn AS (SELECT DISTINCT lower(public.immutable_unaccent(t)) AS t FROM unnest(coalesce(p_nicho, '{}')) t WHERE length(t) >= 3),
-       tm AS (SELECT DISTINCT lower(public.immutable_unaccent(t)) AS t FROM unnest(coalesce(p_nome, '{}')) t WHERE length(t) >= 4),
+       tm AS (SELECT DISTINCT lower(public.immutable_unaccent(t)) AS t FROM unnest(coalesce(p_nome, '{}')) t WHERE length(t) >= 3),   -- mesmo mínimo do motor (tokens ≥ 3)
        tem_nicho AS (SELECT EXISTS (SELECT 1 FROM tn) AS v),
        cand AS (
          SELECT b.*,

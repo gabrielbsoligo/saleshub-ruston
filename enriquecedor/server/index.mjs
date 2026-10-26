@@ -4590,7 +4590,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'busca-web-2026-10-26',
+        versao: 'cases-gmn3-2026-10-26',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4742,6 +4742,19 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
 
+    // Central de Cases: Google Business com 3 estados — {ok:false} indisponível (Serper falhou; NÃO cacheia),
+    // {ok:true, found:false} não encontrado (cacheado), {ok:true, found:true, rating, reviews, ...} encontrado.
+    if (url.pathname === '/api/cases/google-negocio' && req.method === 'POST') {
+      const body = await readJson(req);
+      const ck = chaveCache('places3', body.company, body.cidade);
+      const hit = await cacheGet(ck);
+      if (hit !== undefined && hit !== null) return send(res, 200, hit);
+      const r = await serperPlaces(body.company, body.cidade, [], {}).catch(() => ({ ok: false, found: false }));
+      if (!r || r.ok === false) return send(res, 200, { ok: false, found: false, note: r?.note ?? 'serper_indisponivel' });
+      const val = r.found ? { ok: true, found: true, title: r.title ?? null, rating: r.rating ?? null, reviews: r.reviews ?? null, cid: r.cid ?? null } : { ok: true, found: false };
+      void cacheSet(ck, val, 14 * DIA);
+      return send(res, 200, val);
+    }
     if (url.pathname === '/api/google-negocio' && req.method === 'POST') {
       const body = await readJson(req);
       const cached = await serperPlacesCached(body.company, body.cidade, body.rejeitados ?? []);

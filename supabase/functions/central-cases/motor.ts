@@ -29,6 +29,8 @@ export type Deps = {
   siteNoAr: (url: string) => Promise<boolean | null>                                   // null = não deu para medir
   instagramExiste: (handle: string) => Promise<boolean | null>
   googleNegocio: (nome: string, cidade: string | null) => Promise<{ ok: boolean; encontrado: boolean; rating: number | null; avaliacoes: number | null }>
+  /** batimento de posse: chamado entre candidatos/chamadas lentas (renova o lease); opcional */
+  pulso?: () => Promise<void>
   buscaWeb: (consulta: string) => Promise<{ ok: boolean; results: ResultadoWeb[]; nota?: string }>
   // ativos = anúncios VALIDADOS como da empresa (página confirmada ou validação cruzada); confirmado=false = parcial
   anuncios: (c: { company: string; siteDomain: string | null; cidade: string | null; fbHandle: string | null }) => Promise<{ ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string }>
@@ -71,16 +73,39 @@ export function tokens(t: string): string[] {
 /** termos para cases_buscar, separados: NICHO (segmento/CNAE + sinônimos; pesa) e NOME (tokens do nome da
  *  empresa sem genéricos, sem nomes de pessoa e sem o nome do contato/sócio; só desempata) */
 export function termosDe(empresa: string, nicho: string | null | undefined, pessoas: string[] = []): { nicho: string[]; nome: string[] } {
-  const n: string[] = [], m: string[] = []
+  const n: string[] = [], m: string[] = [], inferido: string[] = []
   const por = (arr: string[], x: string) => { const v = normalizar(x); if (v && !arr.includes(v)) arr.push(v) }
   for (const tk of tokens(nicho ?? '')) { por(n, tk); for (const s of SINONIMOS[tk] ?? []) por(n, s) }
   const pessoaTk = new Set(pessoas.flatMap((p) => tokens(p)))
   for (const tk of tokens(empresa)) {
     if (NOMES_PESSOA.has(tk) || pessoaTk.has(tk)) continue
-    for (const s of SINONIMOS[tk] ?? []) por(n, s)   // "odonto" no nome do lead também revela o nicho
-    if (!(SINONIMOS[tk] ?? []).length) por(m, tk)
+    // nicho INFERIDO pelo nome ("odonto", "clinica"): só vira filtro de nicho quando NÃO há nicho explícito;
+    // com nicho explícito ele fica como termo de NOME (desempate) — "Clínica Sorriso"+odontologia não deixa
+    // passar uma Clínica Veterinária só por "clinica"
+    const sin = SINONIMOS[tk] ?? []
+    if (sin.length) { for (const s of sin) por(inferido, s); por(m, tk) } else por(m, tk)
   }
-  return { nicho: n.slice(0, 12), nome: m.slice(0, 8) }
+  const nichoFinal = n.length ? n : inferido
+  return { nicho: nichoFinal.slice(0, 12), nome: m.slice(0, 8) }
+}
+
+// ── rede: um host é "público" se não é IP de loopback/privado/link-local/multicast nem nome local.
+// Usado pela sondagem de site (SSRF): cada salto de redirect e cada IP resolvido passam por aqui.
+export function ipPrivado(ip: string): boolean {
+  const v4 = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224
+  }
+  const v6 = ip.toLowerCase().replace(/^\[|\]$/g, '')
+  if (v6.includes(':')) return v6 === '::1' || v6 === '::' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('::ffff:') || v6.startsWith('ff')
+  return true   // não é IP válido: trata como não-público
+}
+export function hostPublico(host: string): boolean {
+  const h = host.toLowerCase().replace(/\.$/, '')
+  if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.home.arpa') || !h.includes('.')) return false
+  if (/^[\d.]+$/.test(h) || h.includes(':')) return !ipPrivado(h)
+  return true
 }
 
 // ── 2) presença digital a partir de uma busca web ───────────────────────────────
@@ -131,14 +156,18 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   // presença digital nos N melhores (1 busca por case; cache/ritmo ficam no deps.buscaWeb)
   // etapas OPCIONAIS (web/anúncios): falha de transporte de um candidato vira aviso nele, nunca aborta
   const tenta = async <T>(fn: () => Promise<T>, falha: (msg: string) => T): Promise<T> => { try { return await fn() } catch (e) { if (e instanceof ErroCritico) throw e; return falha(String((e as Error)?.message ?? e).slice(0, 120)) } }
+  const pulso = async () => { if (deps.pulso) await deps.pulso() }   // posse renovada ENTRE candidatos/chamadas lentas (crítico: se lançar, aborta)
   for (const c of cands.slice(0, L.web)) {
+    await pulso()
     const r = await tenta(() => deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim()), (msg) => ({ ok: false, results: [], nota: msg }))
     if (!r.ok) { c.por_que!.push(`busca web indisponível${r.nota ? ` (${r.nota})` : ''}`); continue }
     const p = extrairPresenca(r.results, c.nome)
     c.site = p.site; c.instagram = p.instagram; c.instagram_nao_confirmado = p.instagram_nao_confirmado
     // sinais de presença (opcionais; falha vira null, nunca aborta)
     c.site_no_ar = c.site ? await tenta(() => deps.siteNoAr(c.site!), () => null) : null
+    await pulso()
     c.instagram_existe = c.instagram ? await tenta(() => deps.instagramExiste(c.instagram!), () => null) : null
+    await pulso()
     const g = await tenta(() => deps.googleNegocio(c.nome, c.cidade ?? null), () => ({ ok: false, encontrado: false, rating: null, avaliacoes: null }))
     c.google = g.ok ? { encontrado: g.encontrado, rating: g.rating, avaliacoes: g.avaliacoes } : null
   }
@@ -146,6 +175,7 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   // anúncios da Meta nos 3 melhores com alguma presença (site ou instagram) — senão nos 3 primeiros
   const alvo = [...cands.slice(0, L.web)].sort((a, b) => qualidadeDe(b) - qualidadeDe(a) || pontuar(b) - pontuar(a)).slice(0, L.anuncios)
   for (const c of alvo) {
+    await pulso()
     const r = await tenta(() => deps.anuncios({ company: c.nome, siteDomain: c.site ? hostDe(c.site) : null, cidade: c.cidade ?? null, fbHandle: c.instagram ?? null }), (msg) => ({ ok: false, ativos: null, nota: msg }))
     c.anuncios = { ativos: r.ok ? r.ativos : null, confirmado: r.ok ? r.confirmado !== false : false, url: urlAdLibrary(c.nome), nota: r.ok ? (r.nota ?? null) : (r.nota ?? 'indisponível') }
   }

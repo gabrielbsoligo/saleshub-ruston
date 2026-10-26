@@ -4,7 +4,37 @@
 // Anúncios (/api/anuncios, headless + proxy). Auth no motor = login do usuário de integração,
 // feito num CLIENTE SEPARADO (anon key): o cliente admin (service_role) nunca recebe sessão de usuário.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { ErroCritico, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
+import { ErroCritico, hostPublico, ipPrivado, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
+
+export type ResolveDns = (host: string) => Promise<string[]>
+const resolveDnsPadrao: ResolveDns = async (host) => {
+  const out: string[] = []
+  for (const t of ['A', 'AAAA'] as const) { try { out.push(...(await (Deno as any).resolveDns(host, t))) } catch { /* sem registro desse tipo */ } }
+  return out
+}
+/** sondagem HTTP segura: só http(s) público; redirects seguidos MANUALMENTE (≤5), validando host e IPs resolvidos
+ *  a cada salto; nunca segue para loopback/privado/link-local. null = não deu para medir. */
+export async function sondarSite(url: string, fetchFn: typeof fetch, resolver: ResolveDns = resolveDnsPadrao, saltos = 5): Promise<boolean | null> {
+  let atual = url
+  for (let i = 0; i <= saltos; i++) {
+    let u: URL
+    try { u = new URL(atual) } catch { return null }
+    if (!/^https?:$/.test(u.protocol) || !hostPublico(u.hostname)) return null
+    if (!/^[\d.]+$/.test(u.hostname) && !u.hostname.includes(':')) {
+      const ips = await resolver(u.hostname).catch(() => [] as string[])
+      if (!ips.length || ips.some((ip) => ipPrivado(ip))) return null
+    }
+    let r: Response
+    try { r = await fetchFn(u.toString(), { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8_000), headers: { 'user-agent': 'Mozilla/5.0 (compatible; SalesHub-Cases/1.0)' } }) } catch { return null }
+    if (r.status >= 300 && r.status < 400) {
+      const loc = r.headers.get('location'); if (!loc) return null
+      try { atual = new URL(loc, u).toString() } catch { return null }
+      continue
+    }
+    return r.status < 400
+  }
+  return null   // redirects demais
+}
 
 export type Sb = any
 const DIA = 24 * 60 * 60 * 1000
@@ -31,7 +61,7 @@ export function interpretarAnuncios(body: any): { ok: boolean; ativos: number | 
   return { ok: true, ativos: 0, confirmado: descartados === 0, nota: descartados ? `${descartados} anúncios de terceiros descartados` : undefined }
 }
 
-export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch): Deps {
+export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch, resolver: ResolveDns = resolveDnsPadrao): Deps {
   const chave = (prefixo: string, ...p: unknown[]) => `${prefixo}:${p.map((x) => String(x ?? '').toLowerCase().trim()).join('|')}`.slice(0, 900)
   // cache é best-effort: erro de leitura = sem cache (segue para o motor); erro de escrita = aviso no log
   const cacheGet = async (k: string) => {
@@ -63,13 +93,12 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       if (error) throw new ErroCritico(`cases_buscar: ${error.message}`)
       return (data ?? []).map((r: any) => ({ ...r, score: Number(r.score ?? 0), termos_casados: r.termos_casados ?? [] })) as Candidato[]
     },
-    // site no ar: GET direto (sem motor), 8 s, segue redirect; 2xx/3xx = no ar; 4xx/5xx = fora; rede/timeout = null
+    // site no ar: sondagem segura (sondarSite): só público, redirects validados salto a salto; rede/timeout/privado = null
     async siteNoAr(url) {
       const k = chave('site', url)
       const hit = await cacheGet(k)
       if (hit && typeof hit.no_ar !== 'undefined') return hit.no_ar
-      let v: boolean | null = null
-      try { const r = await fetchFn(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8_000), headers: { 'user-agent': 'Mozilla/5.0 (compatible; SalesHub-Cases/1.0)' } }); v = r.status < 400 } catch { v = null }
+      const v = await sondarSite(url, fetchFn, resolver)
       if (v !== null) await cacheSet(k, { no_ar: v }, 7 * DIA)
       return v
     },
@@ -83,14 +112,15 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       if (existe !== null) await cacheSet(k, { existe }, 7 * DIA)
       return existe
     },
+    // Google Business pela rota que DISTINGUE indisponível (ok:false, não cacheia) de não encontrado (ok:true, found:false)
     async googleNegocio(nome, cidade) {
       const k = chave('gmn', nome, cidade)
       const hit = await cacheGet(k)
       if (hit && typeof hit.encontrado !== 'undefined') return { ok: true, ...hit }
-      const r = await motor('/api/google-negocio', { company: nome, cidade })
-      if (r.status !== 200 || !r.body) return { ok: false, encontrado: false, rating: null, avaliacoes: null }
+      const r = await motor('/api/cases/google-negocio', { company: nome, cidade })
+      if (r.status !== 200 || !r.body || r.body.ok !== true) return { ok: false, encontrado: false, rating: null, avaliacoes: null }
       const b = r.body
-      const encontrado = b.found === true || (!!b.title && b.ok !== false)
+      const encontrado = b.found === true
       const out = { encontrado, rating: encontrado && b.rating != null ? Number(b.rating) : null, avaliacoes: encontrado && b.reviews != null ? Number(b.reviews) : null }
       await cacheSet(k, out, 7 * DIA)
       return { ok: true, ...out }

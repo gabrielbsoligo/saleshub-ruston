@@ -85,6 +85,10 @@ async function processar(sb: any, s: Sugestao) {
     let tok: string | null = null
     const tokenMotor = async () => (tok ??= await sessaoMotor(SUPABASE_URL, ANON_KEY))
     const deps = depsReais(sb, MOTOR_URL, tokenMotor)
+    deps.pulso = async () => {   // renova a posse entre candidatos/chamadas lentas; perdê-la aborta (crítico)
+      const { data: ok, error } = await sb.rpc('cases_renovar', { p_id: s.id, p_token: token, p_lease_s: LEASE_S })
+      if (error || ok !== true) throw new GravacaoFalhou(`renovar: ${error?.message ?? 'posse perdida'}`)
+    }
     const finais = await gerarCases(deps, { empresa: ctx.empresa, nicho: ctx.nicho, cidade: ctx.cidade, uf: ctx.uf, pessoas: ctx.pessoas, profundidade: s.profundidade },
       async (etapa, cands: Candidato[]) => {
         // progresso + renovação do lease a cada etapa; perder a posse aborta (GravacaoFalhou)
