@@ -11,6 +11,7 @@ import { LeadDetail } from './views/LeadDetail';
 import { WorkflowView } from './views/WorkflowView';
 import { ArquitetoView } from './views/ArquitetoView';
 import { Placeholder } from './views/Placeholder';
+import { ClienteOcultoView } from './views/ClienteOcultoView';
 
 export default function App() {
   const { profile, loading } = useAuth();
@@ -83,7 +84,7 @@ export default function App() {
       case 'cadencia':
         return <Placeholder title="Cadência multicanal" phase="Fase 4" />;
       case 'cliente_oculto':
-        return <Placeholder title="Cliente oculto" phase="Fase 3" />;
+        return <ClienteOcultoView />;
       case 'usuarios':
         return <Placeholder title="Usuários" phase="Fase 1 (em breve)" />;
       case 'configuracoes':
