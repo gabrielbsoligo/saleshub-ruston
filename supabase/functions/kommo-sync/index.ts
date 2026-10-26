@@ -17,14 +17,10 @@
 //      kommo.tasks_removidas (migration_158). Cron a cada 30 min.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { conferirTodas, montarUrl, type GetRaw } from './reconcile.ts'
+import { conferirTodas, type GetRaw } from './reconcile.ts'
+import { GravacaoFalhou, bulk, embed, setStatus, syncEntity, syncEvents, tsISO } from './sync.ts'
 
 const KOMMO_BASE = 'https://financeirorustonengenhariacombr.kommo.com'
-const MAX_PAGES_PER_RUN = 8
-const EVENT_BACKFILL_DAYS = 90
-const TOUCH_TYPES = new Set([
-  'outgoing_chat_message','incoming_chat_message','talk_created','conversation_answered','entity_direct_message','lead_status_changed',
-])
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type' }
 
 class RateLimiter {
@@ -38,7 +34,6 @@ class RateLimiter {
     }
   }
 }
-const tsISO = (e?: number | null) => (e ? new Date(e * 1000).toISOString() : null)
 
 async function getKommoToken(sb: any): Promise<string | null> {
   const { data } = await sb.from('integracao_config').select('value').eq('key', 'kommo_access_token').maybeSingle()
@@ -75,29 +70,7 @@ function makeClients(sb: any, token: string, rl: RateLimiter) {
   }
   return { kget, raw }
 }
-const embed = (d: any) => { const k = Object.keys(d?._embedded ?? {})[0]; return k ? d._embedded[k] : [] }
 
-async function getStatus(sb: any, entity: string) {
-  const { data, error } = await sb.rpc('kommo_sync_get', { p_entity: entity })
-  if (error) throw new GravacaoFalhou(entity, `kommo_sync_get(${entity}): ${error.message}`) // nunca tratar falha de leitura como estado inicial
-  return data?.[0] ?? { full_done: false, full_page: null, last_delta_at: null }
-}
-class GravacaoFalhou extends Error { constructor(public entity: string, msg: string) { super(msg) } }
-async function setStatus(sb: any, entity: string, patch: any) {
-  const { error } = await sb.rpc('kommo_sync_set', {
-    p_entity: entity, p_status: patch.status ?? null, p_full_done: patch.full_done ?? null,
-    p_full_page: patch.full_page ?? null, p_reset_page: patch.reset_page ?? false,
-    p_last_delta_at: patch.last_delta_at ?? null, p_error: patch.error ?? null, p_count: patch.count ?? null,
-  })
-  if (error) throw new GravacaoFalhou(entity, `kommo_sync_set(${entity}): ${error.message}`)
-}
-// grava e CONFERE: erro de gravação lança (quem chamou não avança cursor nem marca done)
-async function bulk(sb: any, name: string, rows: any[]) {
-  if (!rows.length) return 0
-  const { data, error } = await sb.rpc('kommo_bulk_' + name, { p: rows })
-  if (error) throw new GravacaoFalhou(name, `kommo_bulk_${name}: ${error.message}`)
-  return Number(data ?? 0)
-}
 // roda uma entidade isolando a falha: registra em sync_status (status=error) sem mexer no cursor
 async function comFalhaIsolada(sb: any, entity: string, fn: () => Promise<any>) {
   try { return await fn() } catch (e) {
@@ -106,65 +79,6 @@ async function comFalhaIsolada(sb: any, entity: string, fn: () => Promise<any>) 
     try { await setStatus(sb, entity, { status: 'error', error: msg }) } catch (e2) { console.error('kommo-sync: não gravou o erro', e2) }
     return { entity, done: false, error: msg }
   }
-}
-
-async function syncEntity(sb: any, kget: any, entity: string, base: string, table: string, map: (x: any) => any, full: boolean, afterPage?: (items: any[]) => Promise<void>) {
-  const st = await getStatus(sb, entity)
-  const doFull = full || !st.full_done
-  let count = 0, maxUpdated = st.last_delta_at ?? 0
-  if (doFull) {
-    let page = full ? 1 : (st.full_page ?? 1)
-    await setStatus(sb, entity, { status: 'running' })
-    for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-      const d = await kget(montarUrl(base, { 'order[updated_at]': 'asc', limit: '250', page: String(page) })); const items = embed(d)
-      if (!items.length) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
-      await bulk(sb, table, items.map(map).filter(Boolean))   // lança se falhar: cursor não avança
-      if (afterPage) await afterPage(items)
-      for (const it of items) if (it.updated_at > maxUpdated) maxUpdated = it.updated_at
-      count += items.length; page++
-      if (!d?._links?.next) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
-    }
-    await setStatus(sb, entity, { status: 'running', full_page: page, last_delta_at: maxUpdated })
-    return { entity, done: false, next_page: page, count }
-  }
-  let page = 1
-  for (;;) {
-    const params: Record<string, string> = { 'order[updated_at]': 'asc', limit: '250', page: String(page) }
-    if (st.last_delta_at) params['filter[updated_at][from]'] = String(st.last_delta_at)
-    const d = await kget(montarUrl(base, params)); const items = embed(d)
-    if (!items.length) break
-    await bulk(sb, table, items.map(map).filter(Boolean))
-    if (afterPage) await afterPage(items)
-    for (const it of items) if (it.updated_at > maxUpdated) maxUpdated = it.updated_at
-    count += items.length
-    if (!d?._links?.next) break
-    page++
-  }
-  await setStatus(sb, entity, { status: 'done', last_delta_at: maxUpdated, count })
-  return { entity, done: true, count }
-}
-
-// Eventos vêm em ordem DECRESCENTE e a paginação é por offset: a janela (filter[created_at][from])
-// precisa ficar ESTÁVEL enquanto se pagina. Por isso o cursor last_delta_at só é consolidado quando
-// a paginação termina (antes, uma rodada parcial gravava page=9 + cursor novo e a próxima paginava
-// outro conjunto, pulando os eventos antigos). Eventos repetidos entre rodadas são inofensivos
-// (kommo_bulk_events é upsert).
-async function syncEvents(sb: any, kget: any, full: boolean) {
-  const st = await getStatus(sb, 'events')
-  const from = (!full && st.last_delta_at) ? st.last_delta_at : Math.floor(Date.now() / 1000) - EVENT_BACKFILL_DAYS * 86400
-  let page = full ? 1 : (st.full_page ?? 1), count = 0, maxCreated = st.last_delta_at ?? from
-  await setStatus(sb, 'events', { status: 'running' })
-  const concluir = async () => { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count }); return { entity: 'events', done: true, count } }
-  for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-    const d = await kget(montarUrl('/events', { 'filter[created_at][from]': String(from), limit: '250', page: String(page) })); const items = embed(d)
-    if (!items.length) return await concluir()
-    for (const e of items) if (e.created_at > maxCreated) maxCreated = e.created_at
-    const rows = items.filter((e: any) => TOUCH_TYPES.has(e.type)).map((e: any) => ({ id: e.id, type: e.type, entity_type: e.entity_type, entity_id: e.entity_id, created_by: e.created_by, kommo_created_at: tsISO(e.created_at) }))
-    await bulk(sb, 'events', rows); count += rows.length; page++
-    if (!d?._links?.next) return await concluir()
-  }
-  await setStatus(sb, 'events', { status: 'running', full_page: page }) // SEM last_delta_at: janela segue a mesma na próxima rodada
-  return { entity: 'events', done: false, next_page: page, count }
 }
 
 async function syncPipelines(sb: any, kget: any) {
@@ -208,11 +122,13 @@ async function upsertLeadLinks(sb: any, items: any[]) {
 async function reconcileTasks(sb: any, raw: GetRaw, limite = 300) {
   const { data, error } = await sb.rpc('kommo_tasks_para_conferir', { p_limit: limite })
   if (error) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_para_conferir: ${error.message}`)
-  const sel: { id: number; kommo_updated_at: string | null }[] = (data ?? []).map((r: any) => ({ id: Number(r.id), kommo_updated_at: r.kommo_updated_at ?? null })).filter((r: any) => Number.isFinite(r.id))
+  const sel: { id: number; kommo_updated_at: string | null; synced_at: string | null }[] = (data ?? []).map((r: any) => ({ id: Number(r.id), kommo_updated_at: r.kommo_updated_at ?? null, synced_at: r.synced_at ?? null })).filter((r: any) => Number.isFinite(r.id))
   if (!sel.length) return { entity: 'tasks_reconcile', done: true, conferidas: 0, removidas: 0 }
   const { vistas, ausentes } = await conferirTodas(raw, sel.map((r) => r.id))       // lança → nada gravado
-  const versao = new Map(sel.map((r) => [r.id, r.kommo_updated_at]))
-  const { data: n, error: e2 } = await sb.rpc('kommo_tasks_conferidas', { p_vistas: vistas, p_ausentes: ausentes.map((id) => ({ id, versao: versao.get(id) ?? null })) })
+  const porId = new Map(sel.map((r) => [r.id, r]))
+  // versão (kommo_updated_at) E versão local (synced_at) vistas na seleção viajam até a gravação:
+  // a 1ª ausência fica amarrada a elas e a remoção só acontece se nada mudou no meio
+  const { data: n, error: e2 } = await sb.rpc('kommo_tasks_conferidas', { p_vistas: vistas, p_ausentes: ausentes.map((id) => ({ id, versao: porId.get(id)?.kommo_updated_at ?? null, synced: porId.get(id)?.synced_at ?? null })) })
   if (e2) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_conferidas: ${e2.message}`)
   await setStatus(sb, 'tasks_reconcile', { status: 'done', full_done: true, count: sel.length, last_delta_at: Math.floor(Date.now() / 1000) })
   return { entity: 'tasks_reconcile', done: true, conferidas: sel.length, vistas: vistas.length, ausentes: ausentes.length, removidas: Number(n ?? 0), ausentes_ids: ausentes.slice(0, 50) }

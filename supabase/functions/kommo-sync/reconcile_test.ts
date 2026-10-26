@@ -1,6 +1,6 @@
 // deno test supabase/functions/kommo-sync/reconcile_test.ts
 import { assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { ReconciliacaoAbortada, conferirLote, conferirTodas, montarUrl, type GetRaw } from './reconcile.ts'
+import { ReconciliacaoAbortada, conferirLote, conferirTodas, janelaEventos, montarUrl, paginaFull, type GetRaw } from './reconcile.ts'
 
 const ok = (ids: number[]) => ({ status: 200, body: { _embedded: { tasks: ids.map((id) => ({ id })) } } })
 function fake(rotas: Record<string, { status: number; body?: any }>, log: string[] = []): GetRaw {
@@ -56,4 +56,22 @@ Deno.test('conferirTodas: erro no último lote aborta a rodada inteira (nada par
   let chamadas = 0
   const get: GetRaw = async (p) => { chamadas++; if (chamadas === 2) return { status: 500, body: null }; return rotas[p.startsWith('/tasks/') ? p : 'lote'] }
   await assertRejects(() => conferirTodas(get, [1, 2], 1), ReconciliacaoAbortada)
+})
+
+
+Deno.test('paginaFull: full:true inicia e persiste o modo; rodadas full:false continuam de full_page até full_done', () => {
+  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, true), { doFull: true, page: 1, iniciar: true })
+  assertEquals(paginaFull({ full_done: false, full_page: 9, last_delta_at: 100, full_cursor: null }, false), { doFull: true, page: 9, iniciar: false })
+  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, false), { doFull: false, page: 1, iniciar: false })
+})
+
+Deno.test('janelaEventos: full:true usa janela nova; continuação usa a janela GRAVADA (não o cursor novo) e a página; delta normal usa o cursor', () => {
+  const agora = 10_000_000, dias = 90, base = agora - dias * 86400
+  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, true, agora, dias), { from: base, page: 1, iniciarBackfill: true })
+  // rodada seguinte (full:false) de um backfill em curso: página 9 da MESMA janela
+  assertEquals(janelaEventos({ full_done: false, full_page: 9, last_delta_at: 9_999_000, full_cursor: String(base) }, false, agora, dias), { from: base, page: 9, iniciarBackfill: false })
+  // paginação de delta em curso com cursor inicial nulo: janela gravada, não recalculada
+  assertEquals(janelaEventos({ full_done: true, full_page: 3, last_delta_at: null, full_cursor: '123' }, false, agora, dias), { from: 123, page: 3, iniciarBackfill: false })
+  // delta normal
+  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, false, agora, dias), { from: 9_999_000, page: 1, iniciarBackfill: false })
 })

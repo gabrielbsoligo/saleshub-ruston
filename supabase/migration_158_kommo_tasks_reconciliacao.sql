@@ -13,10 +13,11 @@
 --    (recém-criada/atualizada pode ainda não aparecer no GET por id);
 --  * RECONFIRMAÇÃO: a 1ª ausência só carimba ausente_em; a remoção acontece numa rodada posterior,
 --    com a tarefa ainda ausente e ausente_em há mais de 20 min (ausência estável);
---  * VERSÃO: a remoção é condicional à versão vista na seleção (kommo_updated_at IS NOT DISTINCT
---    FROM a selecionada) e à tarefa continuar elegível (aberta): se webhook/delta a atualizou,
---    concluiu ou restaurou no meio, não remove; o tombstone sai do próprio DELETE … RETURNING
---    (uma instrução: snapshot = exatamente a linha removida).
+--  * VERSÃO: a 1ª ausência fica amarrada à versão da tarefa naquele momento (ausente_versao =
+--    kommo_updated_at, ausente_synced = synced_at); se delta/webhook mudar a tarefa (reaparecer,
+--    v2…), a espera REINICIA. A remoção exige: ausência > 20 min, versão igual à da 1ª ausência E à
+--    da seleção desta rodada, synced_at igual ao da seleção (nenhum upsert no meio) e tarefa ainda
+--    aberta; o tombstone sai do próprio DELETE … RETURNING (snapshot = a linha removida).
 --
 -- Reverter com segurança (NÃO dropar o tombstone antes de restaurar):
 --   -- 1) restaurar o que foi removido indevidamente, sem sobrescrever tarefa já reinserida/mais nova:
@@ -26,10 +27,15 @@
 --   -- 2) só depois: cron.unschedule('kommo-tasks-reconcile'); DROP FUNCTION kommo_tasks_para_conferir,
 --   --    kommo_tasks_conferidas; DROP TABLE kommo.tasks_removidas; ALTER TABLE kommo.tasks DROP COLUMN checked_at, ausente_em.
 -- Dados pulados no passado pelo bug (a) do sync (cursor avançando com gravação falha) não voltam
--- sozinhos: reprocessar com POST kommo-sync {"entity":"<x>","full":true} (full fatiado) por entidade.
+-- sozinhos: reprocessar com POST kommo-sync {"entity":"<x>","full":true} UMA vez por entidade — isso
+-- persiste o modo backfill (full_done=false, page=1 e, para events, a janela em full_cursor) e as
+-- rodadas normais do cron (full:false) continuam o backfill fatiado até terminar; não repetir full:true
+-- antes do fim (reinicia da página 1).
 
 ALTER TABLE kommo.tasks ADD COLUMN IF NOT EXISTS checked_at TIMESTAMPTZ;   -- última conferência
-ALTER TABLE kommo.tasks ADD COLUMN IF NOT EXISTS ausente_em TIMESTAMPTZ;   -- 1ª vez que o Kommo não devolveu (reconfirmação)
+ALTER TABLE kommo.tasks ADD COLUMN IF NOT EXISTS ausente_em TIMESTAMPTZ;      -- 1ª vez que o Kommo não devolveu (reconfirmação)
+ALTER TABLE kommo.tasks ADD COLUMN IF NOT EXISTS ausente_versao TIMESTAMPTZ;  -- kommo_updated_at na 1ª ausência
+ALTER TABLE kommo.tasks ADD COLUMN IF NOT EXISTS ausente_synced TIMESTAMPTZ;  -- synced_at na 1ª ausência
 CREATE INDEX IF NOT EXISTS ix_kommo_tasks_conferir ON kommo.tasks (checked_at NULLS FIRST, complete_till DESC) WHERE is_completed IS DISTINCT FROM true;
 
 CREATE TABLE IF NOT EXISTS kommo.tasks_removidas (
@@ -40,10 +46,11 @@ CREATE TABLE IF NOT EXISTS kommo.tasks_removidas (
 );
 
 -- Tarefas abertas a conferir, com CARÊNCIA; devolve também a versão para a remoção condicional.
+DROP FUNCTION IF EXISTS public.kommo_tasks_para_conferir(INT);
 CREATE OR REPLACE FUNCTION public.kommo_tasks_para_conferir(p_limit INT DEFAULT 300)
-RETURNS TABLE (id BIGINT, kommo_updated_at TIMESTAMPTZ, ausente_em TIMESTAMPTZ)
+RETURNS TABLE (id BIGINT, kommo_updated_at TIMESTAMPTZ, synced_at TIMESTAMPTZ, ausente_em TIMESTAMPTZ)
 LANGUAGE sql SECURITY DEFINER SET search_path=kommo,public AS $$
-  SELECT t.id, t.kommo_updated_at, t.ausente_em FROM kommo.tasks t
+  SELECT t.id, t.kommo_updated_at, t.synced_at, t.ausente_em FROM kommo.tasks t
    WHERE t.is_completed IS DISTINCT FROM true
      AND COALESCE(t.kommo_updated_at, t.kommo_created_at, now()) < now() - interval '15 minutes'
      AND t.synced_at < now() - interval '15 minutes'
@@ -53,30 +60,37 @@ $$;
 
 -- Resultado da conferência.
 --   p_vistas:   [id, ...]                        → checked_at = now(), ausente_em = NULL
---   p_ausentes: [{"id":..,"versao":"<kommo_updated_at ISO|null>"}, ...]
---      1ª ausência (ausente_em NULL)            → só carimba ausente_em (reconfirmação depois)
---      ausente_em há > 20 min E mesma versão E ainda aberta → DELETE … RETURNING → tombstone
+--   p_ausentes: [{"id":..,"versao":"<kommo_updated_at ISO|null>","synced":"<synced_at ISO>"}, ...]
+--      1ª ausência (ausente_em NULL) ou versão mudou desde a 1ª → carimba ausente_em/ausente_versao/ausente_synced (espera reinicia)
+--      ausente_em há > 20 min E versão == da 1ª ausência == da seleção E synced_at == da seleção E ainda aberta
+--        → DELETE … RETURNING → tombstone
 -- Devolve quantas foram removidas.
 CREATE OR REPLACE FUNCTION public.kommo_tasks_conferidas(p_vistas JSONB, p_ausentes JSONB)
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path=kommo,public AS $$
 DECLARE n INT := 0;
 BEGIN
-  UPDATE kommo.tasks SET checked_at = now(), ausente_em = NULL
+  UPDATE kommo.tasks SET checked_at = now(), ausente_em = NULL, ausente_versao = NULL, ausente_synced = NULL
    WHERE id IN (SELECT (v)::bigint FROM jsonb_array_elements_text(COALESCE(p_vistas, '[]'::jsonb)) v);
 
-  -- 1ª ausência: marca e espera
-  UPDATE kommo.tasks t SET checked_at = now(), ausente_em = now()
-    FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ)
-   WHERE t.id = a.id AND t.ausente_em IS NULL;
+  -- 1ª ausência, ou tarefa mudou desde a 1ª ausência (reapareceu/atualizou): (re)inicia a espera amarrada à versão atual
+  UPDATE kommo.tasks t SET checked_at = now(), ausente_em = now(), ausente_versao = t.kommo_updated_at, ausente_synced = t.synced_at
+    FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ, synced TIMESTAMPTZ)
+   WHERE t.id = a.id
+     AND (t.ausente_em IS NULL
+          OR t.kommo_updated_at IS DISTINCT FROM t.ausente_versao
+          OR t.synced_at IS DISTINCT FROM t.ausente_synced);
 
-  -- ausência estável + versão inalterada + ainda elegível: remove com tombstone na mesma instrução
+  -- ausência estável, mesma versão desde a 1ª ausência e desde a seleção, nenhum upsert no meio, ainda aberta
   WITH alvo AS (
-    SELECT a.id, a.versao FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ)
+    SELECT a.id, a.versao, a.synced FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ, synced TIMESTAMPTZ)
   ), removidas AS (
     DELETE FROM kommo.tasks t USING alvo
      WHERE t.id = alvo.id
        AND t.ausente_em IS NOT NULL AND t.ausente_em < now() - interval '20 minutes'
        AND t.kommo_updated_at IS NOT DISTINCT FROM alvo.versao
+       AND t.kommo_updated_at IS NOT DISTINCT FROM t.ausente_versao
+       AND t.synced_at IS NOT DISTINCT FROM alvo.synced
+       AND t.synced_at IS NOT DISTINCT FROM t.ausente_synced
        AND t.is_completed IS DISTINCT FROM true
     RETURNING t.*
   ), tomb AS (
@@ -89,10 +103,27 @@ BEGIN
 
   -- ausentes que não foram removidas nesta rodada (ainda em carência de reconfirmação): só carimba a conferência
   UPDATE kommo.tasks t SET checked_at = now()
-    FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ)
+    FROM jsonb_to_recordset(COALESCE(p_ausentes, '[]'::jsonb)) AS a(id BIGINT, versao TIMESTAMPTZ, synced TIMESTAMPTZ)
    WHERE t.id = a.id;
   RETURN n;
 END $$;
+
+-- Cursor/janela de paginação que atravessa invocações (kommo-sync: full fatiado e events). Lê/grava
+-- kommo.sync_status.full_cursor (coluna já existia, sem uso). Só service_role.
+CREATE OR REPLACE FUNCTION public.kommo_sync_get_v2(p_entity TEXT)
+RETURNS TABLE (full_done BOOLEAN, full_page INT, last_delta_at BIGINT, full_cursor TEXT)
+LANGUAGE sql SECURITY DEFINER SET search_path=kommo,public AS $$
+  SELECT COALESCE(full_done,false), full_page, last_delta_at, full_cursor FROM kommo.sync_status WHERE entity=p_entity;
+$$;
+CREATE OR REPLACE FUNCTION public.kommo_sync_set_cursor(p_entity TEXT, p_cursor TEXT)
+RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path=kommo,public AS $$
+  INSERT INTO kommo.sync_status (entity, status, full_cursor, updated_at) VALUES (p_entity, 'running', p_cursor, now())
+  ON CONFLICT (entity) DO UPDATE SET full_cursor = EXCLUDED.full_cursor, updated_at = now();
+$$;
+REVOKE EXECUTE ON FUNCTION public.kommo_sync_get_v2(TEXT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.kommo_sync_get_v2(TEXT) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.kommo_sync_set_cursor(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.kommo_sync_set_cursor(TEXT, TEXT) TO service_role;
 
 REVOKE EXECUTE ON FUNCTION public.kommo_tasks_para_conferir(INT) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.kommo_tasks_para_conferir(INT) TO service_role;

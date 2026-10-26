@@ -14,6 +14,24 @@ export type GetRaw = (path: string) => Promise<RespostaHttp>
 
 export class ReconciliacaoAbortada extends Error { constructor(msg: string) { super(msg) } }
 
+// ── Janela/página de uma paginação por offset que atravessa invocações (events e full fatiado).
+// Regra: enquanto uma paginação está em curso (full_page > 1, ou backfill pedido/persistido), a
+// janela (`from`) é a GRAVADA em full_cursor — nunca recalculada; o cursor temporal só consolida ao
+// terminar. `full:true` persiste o modo backfill (full_done=false, page=1, cursor = janela nova).
+export type EstadoSync = { full_done: boolean; full_page: number | null; last_delta_at: number | null; full_cursor: string | null }
+export function janelaEventos(st: EstadoSync, full: boolean, agoraS: number, backfillDias: number): { from: number; page: number; iniciarBackfill: boolean } {
+  const base = agoraS - backfillDias * 86400
+  if (full) return { from: base, page: 1, iniciarBackfill: true }                                    // pedido explícito: reinicia
+  const emCurso = (st.full_page ?? 1) > 1 || !st.full_done
+  if (emCurso && st.full_cursor != null && st.full_cursor !== '') return { from: Number(st.full_cursor), page: st.full_page ?? 1, iniciarBackfill: false }
+  return { from: st.last_delta_at ?? base, page: 1, iniciarBackfill: !st.full_done }
+}
+export function paginaFull(st: EstadoSync, full: boolean): { doFull: boolean; page: number; iniciar: boolean } {
+  if (full) return { doFull: true, page: 1, iniciar: true }                                           // pedido explícito: reinicia e persiste o modo
+  if (!st.full_done) return { doFull: true, page: st.full_page ?? 1, iniciar: false }                // backfill em curso: continua de onde parou
+  return { doFull: false, page: 1, iniciar: false }
+}
+
 export function montarUrl(base: string, params: Record<string, string>): string {
   // base pode já ter query ('/leads?with=contacts,companies'): junta com '&' preservando o que existe
   const [path, q = ''] = base.split('?')
