@@ -642,17 +642,21 @@
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false; voz.orientacao = -1;
           voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
+          var t0 = mono(), ms = function () { return Math.round(mono() - t0) + ' ms'; };
           s.on('peerconnection', function (pe) {
+            try { pe.peerconnection.addEventListener('icegatheringstatechange', function () { dbg('ICE gathering', pe.peerconnection.iceGatheringState, ms()); }); } catch (x) {}
+            try { pe.peerconnection.addEventListener('iceconnectionstatechange', function () { dbg('ICE conexão', pe.peerconnection.iceConnectionState, ms()); }); } catch (x) {}
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
-          s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
+          s.on('accepted', function () { dbg('aceita (200 OK enviado e confirmado)', ms()); if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
           var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
-          s.on('ended', fim); s.on('failed', function (e) { dbg('chamada falhou', e && e.cause); fim(e); });
+          s.on('ended', function (e) { dbg('encerrada por', e && e.originator, e && e.cause, ms()); fim(e); });
+          s.on('failed', function (e) { dbg('chamada falhou', e && e.cause, 'por', e && e.originator, (e && e.message && e.message.status_code) || '', ms()); fim(e); });
           if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
             voz.atendidaNaTentativa = voz.tentativa;                          // consome a autorização desta tentativa
-            dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')');
+            dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')', ms());
             atenderVoz();
           } else { som(); render(); }                                          // fora da tentativa: toca e espera o clique
         });
@@ -719,7 +723,15 @@
         if (manual) pedido.manual = true;
         // a 4com entrega a chamada ao ÚLTIMO registro do ramal: re-registra agora e só então pede a discagem
         // (confirmação do REGISTER ou, no máximo, 2,5 s depois)
-        var feito = false, pedir = function () { if (feito || t !== voz.tentativa || posse !== voz.posse) return; feito = true; voz.aposRegistro = null; enviar(); };
+        var feito = false, pedir = function () {
+          if (feito || t !== voz.tentativa || posse !== voz.posse) return;
+          feito = true; voz.aposRegistro = null;
+          if (voz.sessao || voz.estado !== 'registrado') {                  // ficou ocupado/sem ramal durante a espera: cancela
+            voz.discando = false; voz.pendenteAte = 0; voz.orientacao = -1;
+            voz.aviso = voz.sessao ? 'Ligação cancelada: você já está em outra chamada.' : 'Ligação cancelada: o telefone não está pronto.'; render(); return;
+          }
+          enviar();
+        };
         voz.aposRegistro = pedir;
         try { if (voz.ua && voz.ua.register) voz.ua.register(); else pedir(); } catch (e) { pedir(); }
         atraso(pedir, 2500);

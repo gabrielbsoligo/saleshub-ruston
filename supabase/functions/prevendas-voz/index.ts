@@ -165,9 +165,11 @@ Deno.serve(async (req) => {
     // ---------------- entidade: autorização com os objetos devolvidos ----------------
     // manual: a entidade é só para a nota; se não houver ou não for autorizada, liga sem nota
     let d: ReturnType<typeof decidirEntidade> | null = null
-    if (etype) {
+    // lookup da entidade: obrigatório no fluxo normal; no MANUAL é auxiliar (só para a nota) — qualquer falha nele
+    // (Kommo, orçamento, 429) só suprime a nota; a discagem já foi autorizada por usuário/ramal/limites
+    const resolverEntidade = async () => {
       const ent = await kommo(`/api/v4/${etype}/${eid}${etype === 'leads' ? '?with=contacts' : ''}`)
-      if (!ent && !manual) { await registrar(ev, 'negado', 'entidade inexistente'); return json({ erro: 'entidade_inexistente' }, 404, origin) }
+      let dec: ReturnType<typeof decidirEntidade> | null = null
       if (ent) {
         let tarefas: unknown = []
         if (!motivoAutorizacao({ papel: membro.role ?? null, uid, donoEntidade: ent?.responsible_user_id ?? null, temTarefaPropria: false })) {
@@ -179,8 +181,13 @@ Deno.serve(async (req) => {
           const ids = (Array.isArray(ent?._embedded?.contacts) ? ent._embedded.contacts : []).map((c: any) => Number(c?.id)).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, MAX_CONTATOS)
           if (ids.length) devolvidos = (await kommo(`/api/v4/contacts?${ids.map((id: number) => `filter[id][]=${id}`).join('&')}&limit=${MAX_CONTATOS}`))?._embedded?.contacts ?? []
         }
-        d = decidirEntidade({ uid, papel: membro.role ?? null, etype, eid, entidade: ent, tarefas, contatosDevolvidos: devolvidos })
+        dec = decidirEntidade({ uid, papel: membro.role ?? null, etype: etype!, eid, entidade: ent, tarefas, contatosDevolvidos: devolvidos })
       }
+      return { ent, dec }
+    }
+    if (etype) {
+      if (manual) { try { d = (await resolverEntidade()).dec } catch (e) { console.warn('[prevendas-voz] manual sem nota:', (e as Error).message); d = null } }
+      else { const r0 = await resolverEntidade(); d = r0.dec; if (!r0.ent) { await registrar(ev, 'negado', 'entidade inexistente'); return json({ erro: 'entidade_inexistente' }, 404, origin) } }
       if (!manual && (!d || !d.ok)) { const er = d && !d.ok ? d.erro : 'entidade_inconsistente'; await registrar(ev, 'negado', er); return json({ erro: er }, er === 'sem_permissao' ? 403 : 409, origin) }
     }
     if (acao === 'telefones') {
@@ -198,7 +205,7 @@ Deno.serve(async (req) => {
       if (!daEntidade && !deTeste) { await registrar(ev, 'negado', 'telefone fora da entidade'); return json({ erro: 'telefone_fora_da_entidade' }, 403, origin) }
     }
 
-    let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal
+    let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal, t0Post = Date.now()
     if (provedor === '3c') {
       // PREPARAÇÃO (ramal do agente) — prepararAgente3c, testada: falha aqui NUNCA é "incerto" (o /click2call não foi chamado)
       const prep = await prepararAgente3c(async () => { const { r, u } = await usuario3c(); return { status: r.status, retryAfter: r.headers.get('Retry-After'), u } })
@@ -217,6 +224,7 @@ Deno.serve(async (req) => {
       ramalUsado = c.ramal
       // ENVIO: daqui em diante, falha de rede = incerto (a ligação pode ter saído)
       try {
+        t0Post = Date.now()
         r = await fetch(`${API3C}/click2call`, {
           method: 'POST', headers: { Authorization: `Bearer ${token3c}`, 'Content-Type': 'application/json', Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
           body: JSON.stringify({ extension: c.ramal, phone: telefone3c(destino!) }),
@@ -224,16 +232,18 @@ Deno.serve(async (req) => {
         try { corpo = await r.json() } catch { corpo = null }
       } catch { r = null }
     } else try {
+      t0Post = Date.now()
       r = await fetch(`${API4COM}/calls`, {
         method: 'POST', headers: { Authorization: token4com, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
         body: JSON.stringify({ extension: ramal, caller: ramal, called: destino, metadata: { origem: 'kommo-widget', kommo_user: uid, entity_type: etype, entity_id: eid } }),
       })
       try { corpo = await r.json() } catch { corpo = null }
     } catch { r = null }
+    const msPost = Date.now() - t0Post                                   // quanto o provedor levou para responder
     const res = provedor === '3c' ? interpretar3c(r?.status ?? 0, corpo) : interpretar4com(r?.status ?? 0, corpo)
     if (!res.ok) {
       const ra = r && r.status === 429 ? await bloquear('discar', r) : 0
-      await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem}`)
+      await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem} (${msPost} ms)`)
       return json({ erro: res.erro, mensagem: res.mensagem, incerto: !!res.incerto, ...(ra ? { retry_after: ra } : {}) }, res.incerto ? 504 : 502, origin)
     }
     // nota no Kommo (melhor esforço, com prazo PRÓPRIO a partir de agora; a ligação já aconteceu e nunca é repetida)
@@ -243,7 +253,7 @@ Deno.serve(async (req) => {
         params: { text: `📞 Ligação ${provedor === '3c' ? '3C' : '4com'} iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramalUsado}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) }, Date.now() + PRAZO_NOTA_MS)
     } catch (e) { nota = false; console.error('[prevendas-voz] nota', (e as Error).message) }
     // auditoria registra a ligação e, se for o caso, a nota pendente (para retomada manual)
-    await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${manual ? '; manual' : ''}${notaOk && !nota ? '; NOTA PENDENTE' : ''}`)
+    await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${manual ? '; manual' : ''}${notaOk && !nota ? '; NOTA PENDENTE' : ''} (${msPost} ms)`)
     return json({ ok: true, provedor, chamada_id: res.chamada_id, ramal: ramalUsado, nota }, 200, origin)
   } catch (e) {
     const m = (e as Error).message

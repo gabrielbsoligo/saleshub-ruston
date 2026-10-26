@@ -1011,3 +1011,24 @@ test('0.4.5: ao discar re-registra o ramal e só pede a discagem após o REGISTE
   env.rodarTimers('t')                                                     // REGISTER não confirmou: segue em 2,5 s
   assert.equal(discagens(), 2)
 })
+
+test('0.4.5: chamada atendida durante a espera do REGISTER cancela a discagem (nem a confirmação nem o fallback enviam)', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush()
+  reg.ua.register = () => {}
+  reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })              // espera o REGISTER
+  const avulsa = sessao(false); reg.emit('newRTCSession', avulsa)          // chega uma chamada avulsa
+  clicar(env, 'voz-atender')                                               // o usuário atende
+  reg.emit('registered')                                                   // REGISTER confirma depois
+  env.rodarTimers('t')                                                     // e o fallback também vence
+  assert.equal(chamadas.filter((c) => c.acao === 'discar').length, 0)
+  assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
+})
