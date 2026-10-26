@@ -123,10 +123,14 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
   useEffect(() => () => { invalidar(); qrPendente.current = false; }, [invalidar]);   // desmontar
   useEffect(() => { if (conectado && modo !== 'ocioso') { parar(); toast.success('Número conectado!'); } }, [conectado, modo, parar]);
 
-  /** executa na FILA (serializado); devolve null só se a geração de UI mudou (resposta descartada para a tela) */
+  const pollNaFila = useRef(false);   // coalesce: no máximo 1 'estado' esperando na fila
+  /** executa na FILA (serializado). A geração é conferida ANTES de chamar a edge: operação enfileirada que ficou
+   *  obsoleta (parar/open/troca de modo/desmontar) sai com null SEM I/O; e de novo depois, para a tela. */
   const chamar = useCallback((op: Op, extra: Record<string, unknown> = {}) => {
     const g = gen.current;
-    const p = fila.current.then(() => ocultoRepo.instancia(op, extra)).then((r) => (g === gen.current ? r : null), (e) => { if (g === gen.current) throw e; return null; });
+    const p = fila.current
+      .then(() => (g === gen.current ? ocultoRepo.instancia(op, extra) : null))
+      .then((r) => (g === gen.current ? r : null), (e) => { if (g === gen.current) throw e; return null; });
     fila.current = p.catch(() => undefined);
     return p;
   }, []);
@@ -159,12 +163,15 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
   useEffect(() => {
     if (modo === 'ocioso') return;
     const p = setInterval(async () => {
+      if (pollNaFila.current) return;   // coalesce: rede mais lenta que 5 s não acumula pedidos
+      pollNaFila.current = true;
       try {
         const r = await chamar('estado');
         if (!r) return;
         setEstado(r.estado ?? null);
         if (r.estado === 'open') { parar(); toast.success('Número conectado!'); onChange(); }
       } catch { /* próxima volta */ }
+      finally { pollNaFila.current = false; }
     }, 5000);
     return () => clearInterval(p);
   }, [modo, chamar, parar, onChange]);
