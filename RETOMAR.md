@@ -3,11 +3,14 @@
 Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, só local, nunca enviada ao remoto.
 
 ## O que está no ar (SalesHub `iaompeiokjxbffwehhrx`)
-- **Fatia 2 em teste, só para o usuário 11420911:** migration 160, secrets `KOMMO_WIDGET_*` e `KOMMO_ACCOUNT_ID`, edge `prevendas-fila` no código do commit 25d9381.
-- **Zip 0.3.0** instalado pelo Oraculo na integração "Ruston Pre-vendas".
-- **Cópia para o Patrick:** feita no hub-comercial (branch `port/enriquecedor`, commit a21fe5c) como `migration_161_prevendas_fila`, registrada no `PORT-PENDENTES.md`.
+- **Fatia 2 + telefone 4com + chat sem resposta**, em teste só para o 11420911:
+  - migrations 160 e 161;
+  - secrets `KOMMO_WIDGET_*`, `KOMMO_ACCOUNT_ID`, `API4COM_*` e `PREVENDAS_*`;
+  - edges `prevendas-fila` e `prevendas-voz` (commit 3ba7688, Vedor APROVADO na rodada 4).
+- **Zip 0.4.0:** entregue ao Oraculo para trocar na integração. T1 liberado; T2 (UMA ligação) só com o aviso do Oraculo.
+- **hub-comercial (port/enriquecedor):** a21fe5c (fatia 2, migration_161) e 1c8c2e7 (0.4.0, migration_163), registrados no PORT-PENDENTES.md.
 
-## Ainda NÃO aplicado (só no código local)
+## Em andamento (só local)
 - **Telefone no Kommo (webphone 4com):**
   - edge `prevendas-voz`, `_shared/prevendas_voz.ts`, `migration_161_prevendas_voz.sql`;
   - widget 0.4.0 com o JsSIP empacotado e setting `voz=Y`;

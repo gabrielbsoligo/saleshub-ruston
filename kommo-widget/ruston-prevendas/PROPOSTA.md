@@ -489,3 +489,13 @@ Os closers também têm tarefas fora do funil Closer:
 6. A BAIXA tem 8 semanas, não é infinita.
 Rev. 2.1 (2ª revisão do Vedor): compromisso pelo closer efetivo `COALESCE(closer_confirmado_id, closer_id)`.
 Também: override de modo só para gestor validado no servidor, e cache, snapshot e trava com modo e versão da regra.
+
+### 7.5 Decisões do Gabriel (26/10) sobre a §7.4
+1. **Ordem:** a dos níveis 1–7 está aprovada, assim como a janela do compromisso (2 h antes até 30 min depois).
+2. **BAIXA:** entra, por último.
+3. **SDR dono de lead no funil Closer:** segue a fila de SDR (sem mudança).
+4. **Tarefas de closer nos funis de disparo:** entram no fim (nível 8).
+5. **Concluir em lote:** NÃO.
+6. **Follow infinito:** SIM, mas é mudança de cadência → PENDÊNCIA (não implementar agora).
+
+Suposição a confirmar: no modo closer, o "chat sem resposta" (decisão de 26/10 para a fila) fica no topo (nível 0), e o compromisso marcado vem logo depois (0.5).
