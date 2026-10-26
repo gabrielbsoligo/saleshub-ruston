@@ -884,3 +884,58 @@ test('0.4.4: em chamada some o "Chamando…"; ramal registrado em outro lugar é
   const html = env.elems['rpv-root'].innerHTML
   assert.match(html, /Em chamada/); assert.doesNotMatch(html, /Chamando…|não chegou/)
 })
+
+test('0.4.4: a orientação "não chegou" persiste ao 200 tardio SEM INVITE; timer atrasado além da janela não orienta', async () => {
+  const env = ambiente(), reg = {}
+  let perf = 1000; env.ctx.performance = { now: () => perf }
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  perf += 25000; env.rodarTimers('t')                                     // 25 s sem INVITE
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  adiadas[0].ok({ ok: true, chamada_id: 'c1' })                            // 200 tardio, ainda sem INVITE (atendida em outro lugar)
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  // nova tentativa com timer atrasado (aba suspensa): o timer só roda depois da janela de 60 s
+  w.callbacks.init(); clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não chegou/)      // tentativa nova limpa
+  perf += 61000; env.rodarTimers('t')
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não chegou/)
+})
+
+test('0.4.4: "has been failed" orienta a desativar a extensão API4COM; 2º INVITE com chamada ativa é recusado e a 1ª segue', async () => {
+  const env = ambiente(), reg = {}
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  adiadas[0].err({ status: 502, responseJSON: { erro: 'provedor_recusou', mensagem: 'call from 1006 to +5547997293673 has been failed' } })
+  assert.match(env.elems['rpv-root'].innerHTML, /Desative a extensão API4COM do Chrome/)
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  const a = sessao(true); reg.emit('newRTCSession', a)
+  assert.equal(a.session.atendida, true)
+  const b = sessao(true); let recusada = null; b.session.terminate = (o) => { recusada = o }; reg.emit('newRTCSession', b)
+  assert.equal(recusada && recusada.status_code, 486); assert.equal(b.session.atendida, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)                // a primeira continua
+})
+
+test('notificações iguais do mesmo lead aparecem num card só e "×" fecha o grupo', () => {
+  const env = ambiente()
+  const agora = Math.floor(Date.now() / 1000)
+  const t = (id) => ({ id, entity_type: 'leads', entity_id: 777, due: agora - 60, momento: 'sem_classificacao', grupo: 'G9', texto: 'CONEXÃO — igual', lead_nome: 'X' })
+  const w = instanciar(env, [{ ok: true, itens: [t(1), t(2)] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  let html = env.elems['rpv-root'].innerHTML
+  assert.equal((html.match(/rpv-ntf/g) || []).length, 1); assert.match(html, /2 iguais/)
+  clicar(env, 'fechar-ntf', { 'data-tid': '1,2' })
+  html = env.elems['rpv-root'].innerHTML
+  assert.equal((html.match(/rpv-ntf/g) || []).length, 0)
+})

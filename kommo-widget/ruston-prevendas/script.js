@@ -98,6 +98,21 @@
       return { mostrar: novas.slice(0, max), resumidas: Math.max(0, novas.length - max), visto: proximoVisto };
     }
 
+    /**
+     * Notificações para exibir: sem repetir a mesma tarefa (id) e agrupando avisos iguais do mesmo lead (mesmo texto)
+     * num card só, com a contagem e os ids (fechar o card fecha todos).
+     */
+    function agruparNotif(pilha) {
+      var porId = {}, grupos = {}, ordem = [];
+      (pilha || []).forEach(function (n) {
+        if (!n || porId[n.id]) return; porId[n.id] = 1;
+        var k = (n.etype || 'leads') + ':' + n.eid + ':' + String(n.titulo || '');
+        if (!grupos[k]) { grupos[k] = { n: n, ids: [] }; ordem.push(k); }
+        grupos[k].ids.push(n.id);
+      });
+      return ordem.map(function (k) { var g = grupos[k], o = {}; for (var p in g.n) o[p] = g.n[p]; o.ids = g.ids; o.qtd = g.ids.length; return o; });
+    }
+
     /** Liderança entre abas: assume se não há líder, se expirou ou se já é desta aba. */
     function devoLiderar(lock, aba, agoraMs) {
       return !lock || !lock.aba || lock.ate < agoraMs || lock.aba === aba;
@@ -159,7 +174,7 @@
     function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
 
     return {
-      contarRegistros: contarRegistros, chamadaPedida: chamadaPedida, deveAtender: deveAtender, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
+      agruparNotif: agruparNotif, contarRegistros: contarRegistros, chamadaPedida: chamadaPedida, deveAtender: deveAtender, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -196,7 +211,7 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, atendidaNaTentativa: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, atendidaNaTentativa: -1, orientacao: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
                   tel: { chave: '', contatos: null, erro: '', carregando: false } };
       var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
@@ -315,6 +330,7 @@
           cb(null, r);
         }, function (x) {
           var j = (x && x.responseJSON) || {};
+          if (cfg().debug_voz && window.console) { try { console.info('[ruston-prevendas][fila] servidor respondeu', x && x.status, j.erro || '', j.retry_after ? 'retry ' + j.retry_after + 's' : ''); } catch (e) {} }
           cb({ erro: j.erro || (x && x.status) || 'erro', retryAfter: j.retry_after || 0 });
         });
       }
@@ -478,6 +494,7 @@
               }
             } catch (e) {}
           });
+          var vistosIds = {}; pilha = pilha.filter(function (n) { if (vistosIds[n.id]) return false; vistosIds[n.id] = 1; return true; });
           if (r.mostrar.length) som();
           lsSet('visto', r.visto); state.resumoNotif = r.resumidas; lsSet('notif', pilha.slice(0, 8));
         }
@@ -621,7 +638,7 @@
               : String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true';
           } catch (e) {}
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
-          voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
+          voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false; voz.orientacao = -1;
           voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
           s.on('peerconnection', function (pe) {
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
@@ -648,7 +665,7 @@
         posseSeq++;
         var sess = voz.sessao, ua = voz.ua, soltar = voz.soltar;
         voz.sessao = null; voz.ua = null; voz.soltar = null; voz.posse = 0; voz.pedindo = 0;
-        voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.discando = false; voz.pedida = false; voz.tentativa++;
+        voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.discando = false; voz.pedida = false; voz.tentativa++; voz.orientacao = -1;
         try { if (sess) sess.terminate(); } catch (e) {}
         try { if (ua) ua.stop(); } catch (e) {}
         try { if (soltar) soltar(); } catch (e) {}
@@ -685,16 +702,18 @@
         if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
         var t = ++voz.tentativa, posse = voz.posse;
         voz.discando = true; voz.aviso = 'Chamando… conectando o seu ramal aqui e depois ligando para o cliente.';
-        var tChamada = t;
+        voz.orientacao = -1;                                              // tentativa nova: limpa a orientação anterior
         atraso(function () {                                              // nada chegou em 25 s: orienta (registro duplicado é a causa mais comum)
-          if (voz.tentativa === tChamada && !voz.sessao && voz.pendenteAte) { voz.aviso = 'A ligação não chegou a este telefone. Se o webphone/app do provedor estiver aberto, feche-o e tente de novo.'; render(); }
+          if (voz.tentativa === t && !voz.sessao && voz.pendenteAte > mono()) { voz.orientacao = t; render(); }
         }, 25000);
         voz.pendenteAte = mono() + 60000;                           // janela de 60 s no relógio monotônico
         render();
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora
           voz.discando = false;
-          if (err) { voz.pendenteAte = 0; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = err.mensagem && /^provedor_/.test(err.erro) ? String(err.mensagem) : Fila.mensagemVoz(err.erro); }   // a mensagem do servidor é a mais precisa (ex.: nenhuma ligação foi feita)
+          if (err) { voz.pendenteAte = 0; voz.orientacao = -1; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = err.erro === 'provedor_recusou' && /has been failed/i.test(String(err.mensagem || ''))
+            ? 'A ligação não completou: o seu ramal provavelmente atendeu em OUTRO lugar. Desative a extensão API4COM do Chrome e feche o webphone/app da 4com, e tente de novo.'
+            : err.mensagem && /^provedor_/.test(err.erro) ? String(err.mensagem) : Fila.mensagemVoz(err.erro); }   // a mensagem do servidor é a mais precisa (ex.: nenhuma ligação foi feita)
           else if (!voz.sessao) voz.aviso = '';
           render();
         });
@@ -732,6 +751,7 @@
             });
           }
         }
+        if (voz.orientacao === voz.tentativa && !voz.sessao) h += '<div class="rpv-warn">A ligação não chegou a este telefone. Se o webphone/app do provedor estiver aberto, feche-o e tente de novo.</div>';
         if (voz.aviso) h += '<div class="rpv-f"><span>' + esc(voz.aviso) + '</span></div>';
         return h + '</div>';
       }
@@ -778,9 +798,9 @@
         podarChats();
         var c = raiz(), now = agoraS(), conf = cfg(), html = '', agir = podeAgir();
 
-        state.notif.slice(0, 3).forEach(function (n) {
-          html += '<div class="rpv-card rpv-ntf"><div class="rpv-h"><span class="tt">🔔 ' + esc(Fila.ROTULO[n.momento] || 'Tarefa') + '</span>' +
-                  '<button data-act="fechar-ntf" data-tid="' + esc(n.id) + '" title="Fechar">×</button></div>' +
+        Fila.agruparNotif(state.notif).slice(0, 3).forEach(function (n) {
+          html += '<div class="rpv-card rpv-ntf"><div class="rpv-h"><span class="tt">🔔 ' + esc(Fila.ROTULO[n.momento] || 'Tarefa') + (n.qtd > 1 ? ' · ' + n.qtd + ' iguais' : '') + '</span>' +
+                  '<button data-act="fechar-ntf" data-tid="' + esc(n.ids.join(',')) + '" title="Fechar">×</button></div>' +
                   '<div class="rpv-b" data-act="abrir" data-et="' + esc(n.etype) + '" data-eid="' + esc(n.eid) + '"><div class="nm">' + esc(n.titulo) + '</div>' +
                   '<div class="mt"><span' + (n.due < now ? ' class="rpv-late"' : '') + '>' + esc(fmtQuando(n.due, now)) + '</span></div></div></div>';
         });
@@ -848,7 +868,7 @@
         else if (act === 'voz-mudo') mudoVoz();
         else if (act === 'voz-aqui') usarAqui(state.geracao);
         else if (act === 'voz-reconectar') { pararVoz(); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao, false); }
-        else if (act === 'fechar-ntf') { var tid = Number(el.getAttribute('data-tid')); state.notif = state.notif.filter(function (n) { return n.id !== tid; }); lsSet('notif', state.notif); render(); }
+        else if (act === 'fechar-ntf') { var tids = String(el.getAttribute('data-tid') || '').split(',').map(Number); state.notif = state.notif.filter(function (n) { return tids.indexOf(n.id) === -1; }); lsSet('notif', state.notif); render(); }
       }
       function aoTeclar(ev) {
         if (!cfg().atalho || !ev.altKey || ev.ctrlKey || ev.metaKey || String(ev.key).toLowerCase() !== 'n') return;
