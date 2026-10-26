@@ -3,13 +3,13 @@
 Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, só local, nunca enviada ao remoto.
 
 ## O que está no ar (SalesHub `iaompeiokjxbffwehhrx`)
-- **Fatia 2 em teste, só para o usuário 11420911:** migration 160, secrets `KOMMO_WIDGET_*` e `KOMMO_ACCOUNT_ID`, edge `prevendas-fila` no código do commit 25d9381.
+- **Fatia 2 em teste, só para o usuário 11420911:** migration 163 (antes 160), secrets `KOMMO_WIDGET_*` e `KOMMO_ACCOUNT_ID`, edge `prevendas-fila` no código do commit 25d9381.
 - **Zip 0.3.0** instalado pelo Oraculo na integração "Ruston Pre-vendas".
 - **Cópia para o Patrick:** feita no hub-comercial (branch `port/enriquecedor`, commit a21fe5c) como `migration_161_prevendas_fila`, registrada no `PORT-PENDENTES.md`.
 
 ## Ainda NÃO aplicado (só no código local)
 - **Telefone no Kommo (webphone 4com):**
-  - edge `prevendas-voz`, `_shared/prevendas_voz.ts`, `migration_161_prevendas_voz.sql`;
+  - edge `prevendas-voz`, `_shared/prevendas_voz.ts`, `migration_164_prevendas_voz.sql`;
   - widget 0.4.0 com o JsSIP empacotado e setting `voz=Y`;
   - atendimento SEMPRE manual;
   - posse do ramal por Web Locks.
@@ -26,11 +26,11 @@ Worktree: `C:\Users\gabri\dev\saleshub-widget`. Branch `feat/widget-prevendas`, 
   5. A recusa limpa o rótulo "Sua ligação"; o callback de discar fica amarrado à tentativa e à posse.
 
 ## Próximo passo exato
-1. Refazer o dry-run da migration 161 + o SQL de rollback do README (BEGIN … ROLLBACK). A última tentativa falhou só porque o `$$` se perdeu no script de bash. Monte o SQL por arquivo, não por variável. Nada foi aplicado; conferido: 0 tabelas `prevendas_voz*`, sem coluna `pausa_ate`.
+1. Refazer o dry-run da migration 164 (antes 161) + o SQL de rollback do README (BEGIN … ROLLBACK). A última tentativa falhou só porque o `$$` se perdeu no script de bash. Monte o SQL por arquivo, não por variável. Nada foi aplicado; conferido: 0 tabelas `prevendas_voz*`, sem coluna `pausa_ate`.
 2. `deno check` nas duas edges, rodar os testes e gerar o zip (`node build-zip.mjs`).
 3. Pedir ao Vedor a rodada 3, sobre o commit desta pausa.
 4. Com APROVADO, aplicar em produção:
-   - migration 161;
+   - migration 164 (antes 161);
    - secrets: `API4COM_TOKEN` (= `API4COM_TOKEN_PERMANENTE` do cofre), `API4COM_DOMAIN`, `API4COM_WSS`, `PREVENDAS_VOZ_USUARIOS=11420911`, `PREVENDAS_VOZ_TELEFONES_TESTE=47997293673`;
    - deploy de `prevendas-voz` e `prevendas-fila` (`--no-verify-jwt --use-api`).
 5. Mandar o zip 0.4.0 ao Oraculo.

@@ -12,7 +12,7 @@ Substitui o **ruston-notify** e o **Ruston Próximo Lead**. Proposta e regras: `
 | `tests/` | `fila.test.cjs`, `widget.test.cjs` (ciclo completo em VM), `servidor.test.ts`, `classificar.test.ts`, `jwt.test.ts` |
 | `../../supabase/functions/prevendas-fila/` | edge: lê **ao vivo** no Kommo a lista de tarefas abertas do usuário (fonte autoritativa), classifica com dados de lead (réplica/API) e slots; cache 40 s, trava por usuário, orçamento de vazão da conta |
 | `../../supabase/functions/_shared/prevendas_servidor.ts` | núcleo puro do servidor (montarItens, leadsFaltando) |
-| `../../supabase/migration_160_prevendas_fila.sql` | `prevendas_leads`, `prevendas_slots`, `prevendas_fila_frescor`, cache/trava (`prevendas_cache`, `prevendas_travar/gravar/liberar`) e orçamento (`prevendas_vazao`, `prevendas_consumir`); tudo só service_role |
+| `../../supabase/migration_163_prevendas_fila.sql` | `prevendas_leads`, `prevendas_slots`, `prevendas_fila_frescor`, cache/trava (`prevendas_cache`, `prevendas_travar/gravar/liberar`) e orçamento (`prevendas_vazao`, `prevendas_consumir`); tudo só service_role |
 | `../../supabase/functions/_shared/prevendas_classificar.ts` | classificador puro, também para o `kommo-call-note` no futuro |
 | `../../supabase/functions/_shared/kommo_jwt.ts` | verificação do JWT descartável do Kommo (HS256) |
 
@@ -40,7 +40,7 @@ Na **ordem**:
    KOMMO_WIDGET_SECRET=<Secret key>
    ```
 4. **Publicar a função SQL e a edge** (Forja):
-   - aplicar `supabase/migration_160_prevendas_fila.sql` no projeto do SalesHub. É só leitura e só o service_role executa;
+   - aplicar `supabase/migration_163_prevendas_fila.sql` no projeto do SalesHub. É só leitura e só o service_role executa;
    - rodar:
    ```bash
    supabase secrets set --project-ref iaompeiokjxbffwehhrx KOMMO_WIDGET_CLIENT_ID=… KOMMO_WIDGET_SECRET=… KOMMO_ACCOUNT_ID=34424367
@@ -77,7 +77,7 @@ Nenhuma ligação; nada é criado. O único efeito colateral possível é o "Con
 Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado consegue originar chamada direto (sonda de 26/10), então a credencial no navegador equivale a uma linha.
 
 **Aplicar (só com o ok):**
-1. `supabase/migration_161_prevendas_voz.sql`: log e limite por usuário; só service_role.
+1. `supabase/migration_164_prevendas_voz.sql`: log e limite por usuário; só service_role.
 2. Secrets:
    ```
    API4COM_TOKEN=<API4COM_TOKEN_PERMANENTE do cofre>
@@ -109,12 +109,12 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
 - `supabase secrets unset API4COM_TOKEN API4COM_DOMAIN API4COM_WSS PREVENDAS_VOZ_USUARIOS PREVENDAS_VOZ_TELEFONES_TESTE`.
 - No banco:
   ```sql
-  -- telefone (só objetos da 161)
+  -- telefone (só objetos da 164)
   drop function if exists public.prevendas_voz_reservar(bigint,text,int,int,int,text,text),
                           public.prevendas_voz_registrar(bigint,text,text),
                           public.prevendas_voz_bloquear(bigint,text,int);
   drop table if exists public.prevendas_voz_eventos, public.prevendas_voz_bloqueio;
-  -- pausa compartilhada: volta o prevendas_consumir da 160 (sem pausa) ANTES de tirar a coluna; a fila segue funcionando
+  -- pausa compartilhada: volta o prevendas_consumir da 163 (sem pausa) ANTES de tirar a coluna; a fila segue funcionando
   create or replace function public.prevendas_consumir(p_n int, p_taxa numeric default 2, p_max numeric default 6)
   returns boolean language plpgsql security definer set search_path = public as $$
   declare ok boolean;
@@ -130,7 +130,7 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
   drop function if exists public.prevendas_pausar(int);
   alter table public.prevendas_vazao drop column if exists pausa_ate;
   ```
-  Ordem: primeiro voltar as edges (a `prevendas-fila` de 25d9381 não chama `prevendas_pausar`), depois o SQL. A tabela `prevendas_vazao` e o balde continuam, porque a fila da 160 depende deles.
+  Ordem: primeiro voltar as edges (a `prevendas-fila` de 25d9381 não chama `prevendas_pausar`), depois o SQL. A tabela `prevendas_vazao` e o balde continuam, porque a fila da 163 depende deles.
 - Chat sem resposta: redeploy da `prevendas-fila` do commit 25d9381.
 
 **Revogar uma credencial SIP já entregue.** Remover a edge ou os secrets NÃO revoga o HA1 que já foi para um navegador: com ele, o ramal continua registrando e originando chamadas direto (fora do limite do servidor).

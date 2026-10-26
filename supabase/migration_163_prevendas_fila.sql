@@ -1,7 +1,7 @@
--- migration_160_prevendas_fila.sql — apoio da edge prevendas-fila (widget kommo-widget/ruston-prevendas).
+-- migration_163_prevendas_fila.sql — apoio da edge prevendas-fila (widget kommo-widget/ruston-prevendas).
 -- Desenho: a LISTA DE TAREFAS vem AO VIVO do Kommo (autoritativa: existe, aberta, do usuário). O banco só
 -- fornece dados do LEAD (réplica kommo.leads/stages: nome, etapa, origem 975168), slots da cadência, cache,
--- trava por usuário e orçamento de vazão da conta. Tudo só para o service_role. Número 160 para não colidir.
+-- trava por usuário e orçamento de vazão da conta. Tudo só para o service_role. Número 163 (era 160; renumerada para não colidir com a main).
 
 -- dados de lead (réplica) para os ids pedidos: {id: {nome, etapa, origem, pipeline_id}}
 create or replace function public.prevendas_leads(p_ids bigint[])
