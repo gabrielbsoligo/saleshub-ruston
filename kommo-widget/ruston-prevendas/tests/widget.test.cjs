@@ -160,11 +160,12 @@ function kommo(env, handler) {
   }
 }
 const SNAP = 'rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'
-const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, complete_till: AGORA - 60, text: 't' + id })
+const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, entity_type: 'leads', entity_id: id * 10, complete_till: AGORA - 60, text: 't' + id })
 
 test('concluir: a réplica atrasada (ainda com a tarefa aberta) não a ressuscita no ciclo seguinte', () => {
   const env = ambiente()
   kommo(env, (o) => {
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/\d+$/.test(o.url)) return { status: 200, body: viva(Number(o.url.split('/').pop())) }
     if (o.method === 'PATCH') return { status: 200, body: {} }
     return { status: 0 }
   })
@@ -253,20 +254,26 @@ test('servidor 503 kommo_429: pausa todas as abas e NÃO cai no modo degradado (
   assert.ok(pausa > Date.now() + 80 * 1000)
 })
 
-test('com falha registrada, ações ficam suspensas (botão Próximo desabilitado, Concluir não envia)', () => {
+test('com falha registrada, ações CONTINUAM (decisão do Gabriel): Próximo ativo, aviso discreto, Concluir confere ao vivo e conclui', () => {
   const env = ambiente()
-  let patches = 0
-  kommo(env, (o) => { if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } } return { status: 0 } })
+  let patches = 0, conferiu = 0
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) { conferiu++; return { status: 200, body: viva(1) } }
+    return { status: 0 }
+  })
   const w = instanciar(env, [
     { ok: true, itens: [tarefa(1)], frescor: { atraso_s: 1, status: 'done' } },
     { erro: 'falha_banco', status: 503 },
   ])
   w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('i')       // 2º ciclo falha (servidor + Kommo)
-  const html = env.elems['rpv-root'].innerHTML
-  assert.match(html, /rpv-pill off/); assert.doesNotMatch(html, /data-act=avancar/)
-  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
-  clique({ target: { closest: () => ({ getAttribute: () => 'concluir' }) } })
-  assert.equal(patches, 0)
+  assert.ok(JSON.parse(env.ctx.localStorage.getItem(SNAP)).falha)
+  assert.match(env.elems['rpv-root'].innerHTML, /data-act="avancar"/)
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /rpv-nota[^>]*>Não consegui atualizar a fila[^<]*confiro a tarefa no Kommo/)
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /data-act="concluir" disabled/)
+  clicar(env, 'concluir')
+  assert.equal(conferiu, 1); assert.equal(patches, 1)
 })
 
 test('lista completa do servidor: o widget ordena; parcial e origem pendente aparecem com motivo', () => {
@@ -292,19 +299,21 @@ test('servidor ocupado/em andamento: pausa curta e NÃO cai no modo degradado', 
   assert.ok(JSON.parse(env.ctx.localStorage.getItem('rpv_pausa_financeirorustonengenhariacombr_11420911')) > Date.now())
 })
 
-test('P1: resposta com dados de 24h (cache em andamento) não rejuvenesce: ações e avisos suspensos', () => {
+test('P1: resposta com dados de 24h (cache em andamento) não rejuvenesce: idade real, sem notificação; ações com aviso', () => {
   const env = ambiente()
   const velho = AGORA - 86400
   const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], em_andamento: true, gerado_em: velho }])
   w.callbacks.init(); env.rodarTimers('t')
   const snap = JSON.parse(env.ctx.localStorage.getItem(SNAP))
   assert.equal(snap.dadosEm, velho)                                   // idade real preservada
-  const html = env.elems['rpv-root'].innerHTML
-  assert.match(html, /rpv-pill off/); assert.doesNotMatch(html, /data-act="avancar"/)
+  let html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /data-act="avancar"/)                           // ação liberada (Concluir confere ao vivo)
   assert.doesNotMatch(html, /rpv-ntf/)                                // sem notificação sobre dado vencido
+  clicar(env, 'painel'); html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /rpv-nota[^>]*>Lista das [^<]*atualizando/)
 })
 
-test('P1: depois de uma falha, um cache velho não limpa a falha nem habilita ações', () => {
+test('P1: depois de uma falha, um cache velho não limpa a falha (idade real mantida)', () => {
   const env = ambiente()
   const w = instanciar(env, [
     { ok: true, itens: [tarefa(1)], gerado_em: AGORA },
@@ -312,8 +321,7 @@ test('P1: depois de uma falha, um cache velho não limpa a falha nem habilita a�
     { ok: true, itens: [tarefa(1)], em_andamento: true, gerado_em: AGORA - 86400 },
   ])
   w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('i'); env.rodarTimers('i')
-  const html = env.elems['rpv-root'].innerHTML
-  assert.match(html, /rpv-pill off/)
+  assert.ok(JSON.parse(env.ctx.localStorage.getItem(SNAP)).falha)      // a falha continua (cache velho não comprova recuperação)
 })
 
 test('P4: origem pendente tem etiqueta própria (não "origem não informada")', () => {
@@ -338,15 +346,15 @@ function cenarioFalha(terceira) {
   w.callbacks.init(); env.rodarTimers('t'); env.rodarTimers('i'); env.rodarTimers('i')
   return { env, snap: JSON.parse(env.ctx.localStorage.getItem(SNAP)) }
 }
-test('após falha: cache ANTERIOR (−30 s, ainda dentro de 3 ciclos) é ignorado — falha, dadosEm, ids e ações preservados', () => {
+test('após falha: cache ANTERIOR (−30 s, ainda dentro de 3 ciclos) é ignorado — falha, dadosEm e ids preservados', () => {
   const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(9)], em_andamento: true, gerado_em: AGORA - 30 })
   assert.ok(snap.falha); assert.equal(snap.dadosEm, AGORA); assert.deepEqual(snap.itens.map((t) => t.id), [1, 2])
-  assert.match(env.elems['rpv-root'].innerHTML, /rpv-pill off/)
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
 })
 test('após falha: cache com o MESMO gerado_em também é ignorado', () => {
   const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(9)], em_andamento: true, gerado_em: AGORA })
   assert.ok(snap.falha); assert.equal(snap.dadosEm, AGORA); assert.deepEqual(snap.itens.map((t) => t.id), [1, 2])
-  assert.match(env.elems['rpv-root'].innerHTML, /rpv-pill off/)
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
 })
 test('após falha: só uma leitura POSTERIOR à falha limpa a falha e reabilita as ações', () => {
   const { env, snap } = cenarioFalha({ ok: true, itens: [tarefa(3)], gerado_em: Math.floor(Date.now() / 1000) + 5 })
@@ -550,17 +558,17 @@ test('chat sem resposta: vai primeiro na fila e o card não oferece "Concluir"',
   assert.match(html, /Responda o cliente no chat/); assert.doesNotMatch(html, /Concluir e próximo/)
 })
 
-test('chat com leitura velha (chats_em > 2 min ou ausente) não aparece nem notifica; as tarefas ficam', () => {
+test('chat com leitura velha (chats_em > 3 min ou ausente) não aparece nem notifica; as tarefas ficam', () => {
   const env = ambiente()
   const agora = Math.floor(Date.now() / 1000)
   const chat = { id: -9, entity_type: 'leads', entity_id: 9, due: agora - 60, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'c', acao: 'chat' }
-  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chat], chats_em: agora - 200 }])
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chat], chats_em: agora - 260 }])
   w.callbacks.init(); env.rodarTimers('t')
   let html = env.elems['rpv-root'].innerHTML
   assert.match(html, /<span class="cnt">1<\/span>/)                 // só a tarefa
   // aba seguidora com snapshot em que o chat ERA válido, mas envelheceu
   const B = ambiente()
-  const snap = { itens: [tarefa(1), chat], modo: 'servidor', dadosEm: agora - 5, chatsEm: agora - 130, rev: 'r1', v: 2, perfil: 'auto.v2' }
+  const snap = { itens: [tarefa(1), chat], modo: 'servidor', dadosEm: agora - 5, chatsEm: agora - 190, rev: 'r1', v: 2, perfil: 'auto.v2' }
   B.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify(snap))
   B.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
   const wb = instanciar(B, [{ ok: true, itens: [] }]); wb.callbacks.init()
@@ -613,14 +621,14 @@ test('chat válido que ENVELHECE com o widget aberto (líder, resposta com o mes
   const env = ambiente(), rel = relogio(env)
   const agora = Math.floor(Date.now() / 1000), g = agora - 1
   const w = instanciar(env, [
-    { ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 119, gerado_em: g },
+    { ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 179, gerado_em: g },
     { ok: true, itens: [tarefa(1)], chats_em: null, gerado_em: g },            // servidor já podou, mesmo gerado_em
   ])
   w.callbacks.init(); env.rodarTimers('t')
   assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
   clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/555')   // ainda válido: abre o chat
   assert.match(env.elems['rpv-root'].innerHTML, /Responda o cliente no chat/)
-  rel.avancar(6000); env.rodarTimers('i')                                   // 125 s: venceu; leitura com mesmo gerado_em é ignorada
+  rel.avancar(6000); env.rodarTimers('i')                                   // 185 s: venceu; leitura com mesmo gerado_em é ignorada
   const html = env.elems['rpv-root'].innerHTML
   assert.doesNotMatch(html, /Responda o cliente no chat/); assert.match(html, /<span class="cnt">1<\/span>/)
   env.ctx.location.pathname = '/leads/pipeline'
@@ -630,7 +638,7 @@ test('chat válido que ENVELHECE com o widget aberto (líder, resposta com o mes
 test('chat que envelhece em aba SEGUIDORA (snapshot sem rev nova): sai pelo relógio', () => {
   const B = ambiente(), rel = relogio(B)
   const agora = Math.floor(Date.now() / 1000)
-  B.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ itens: [tarefa(1), chatItem(agora)], modo: 'servidor', dadosEm: agora - 1, chatsEm: agora - 119, rev: 'r1', v: 2, perfil: 'auto.v2' }))
+  B.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ itens: [tarefa(1), chatItem(agora)], modo: 'servidor', dadosEm: agora - 1, chatsEm: agora - 179, rev: 'r1', v: 2, perfil: 'auto.v2' }))
   B.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 3600000 }))
   const w = instanciar(B, [{ ok: true, itens: [] }]); w.callbacks.init()
   assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
@@ -641,7 +649,7 @@ test('chat que envelhece em aba SEGUIDORA (snapshot sem rev nova): sai pelo rel�
 test('chat que envelhece DURANTE pausa do Kommo: sai pelo relógio, tarefas e dados ficam', () => {
   const env = ambiente(), rel = relogio(env)
   const agora = Math.floor(Date.now() / 1000)
-  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 119, retry_after: 300 }])
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 179, retry_after: 300 }])
   w.callbacks.init(); env.rodarTimers('t')
   assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
   let leu = false; w.$authorizedAjax = () => { leu = true; return { then() {} } }
@@ -706,7 +714,8 @@ test('closer + servidor cai: o degradado mantém o modo closer (2 leads, não 3 
   const w = instanciar(env, [{ ok: true, modo: 'closer', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)], chats_em: a, gerado_em: a - 120 }, { erro: 'falha_banco', status: 503 }])
   let fase = 'patch'
   env.ctx.__kommo = (o) => {
-    if (fase === 'patch') return { done(fn) { fn({}); return this }, fail() { return this } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/\d+$/.test(o.url)) return { done(fn) { fn({ ...viva(1), entity_type: 'leads', entity_id: 10 }); return this }, fail() { return this } }   // conferência ao vivo antes do PATCH
+    if (fase === 'patch' || o.method === 'PATCH') return { done(fn) { fn({}); return this }, fail() { return this } }
     return { done(fn) { fn({ _embedded: { tasks: [1, 2, 3].map((id) => ({ id, entity_type: 'leads', entity_id: id < 3 ? 10 : 20, complete_till: a - 600 + id, text: 't' })) } }, 'ok', { status: 200 }); return this }, fail() { return this } }
   }
   w.callbacks.init(); env.rodarTimers('t')
@@ -1161,4 +1170,130 @@ test('0.4.5: chamada atendida durante a espera do REGISTER cancela a discagem (n
   env.rodarTimers('t')                                                     // e o fallback também vence
   assert.equal(chamadas.filter((c) => c.acao === 'discar').length, 0)
   assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
+})
+
+// ---------------- 0.4.6: fila nunca prende o usuário ----------------
+test('Concluir com lista velha: tarefa já concluída no Kommo NÃO é concluída de novo — sai da lista e segue', () => {
+  const env = ambiente()
+  let patches = 0
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), is_completed: true } }
+    return { status: 0 }
+  })
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)], gerado_em: AGORA - 600 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+  clicar(env, 'concluir')
+  assert.equal(patches, 0)
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(SNAP)).itens.map((t) => t.id), [2])
+  assert.equal(env.ctx.location.pathname, '/leads/detail/20')
+})
+
+test('Concluir: tarefa reatribuída a outra pessoa no Kommo não é concluída', () => {
+  const env = ambiente()
+  let patches = 0
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), responsible_user_id: 999 } }
+    return { status: 0 }
+  })
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'avancar'); clicar(env, 'concluir')
+  assert.equal(patches, 0); assert.equal(JSON.parse(env.ctx.localStorage.getItem(SNAP)).itens.length, 0)
+})
+
+test('em_andamento sem snapshot no servidor: nova tentativa em ~7 s (não espera o ciclo de 45 s)', () => {
+  const env = ambiente()
+  const w = instanciar(env, [])
+  let n = 0
+  w.$authorizedAjax = () => { n++; return { then: (ok, err) => (n === 1 ? err({ status: 503, responseJSON: { erro: 'em_andamento', retry_after: 3 } }) : ok({ ok: true, itens: [tarefa(1)], gerado_em: AGORA })) } }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(n, 1)
+  const re = [...env.timers.values()].find((t) => !t.i && t.ms === 7000)
+  assert.ok(re, 'agendou a nova tentativa')
+  env.ctx.localStorage.setItem('rpv_pausa_financeirorustonengenhariacombr_11420911', '0')   // a pausa curta (5 s) já passou
+  re.fn()
+  assert.equal(n, 2); assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+test('snapshot em_andamento (outra aba/navegador montando): publica com a idade real e agenda nova tentativa curta', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], em_andamento: true, gerado_em: AGORA - 50 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(JSON.parse(env.ctx.localStorage.getItem(SNAP)).dadosEm, AGORA - 50)
+  assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
+})
+
+test('watchdog: pedido que nunca volta não congela a fila — depois de 45 s o ciclo pede de novo', () => {
+  const env = ambiente(), rel = relogio(env)
+  const w = instanciar(env, [])
+  let n = 0
+  w.$authorizedAjax = () => { n++; return { then() {} } }             // nunca resolve
+  w.callbacks.init(); env.rodarTimers('t'); assert.equal(n, 1)
+  rel.avancar(30000); env.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', 'null'); env.rodarTimers('i')
+  assert.equal(n, 1)                                                  // ainda dentro da janela: não duplica
+  rel.avancar(20000); env.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', 'null'); env.rodarTimers('i')
+  assert.equal(n, 2)
+})
+
+test('erro dentro do tratamento da resposta não deixa o ciclo preso em "carregando"', () => {
+  const env = ambiente()
+  const w = instanciar(env, [])
+  let n = 0
+  w.$authorizedAjax = () => { n++; return { then: (ok) => ok(n === 1 ? { ok: true, get itens() { throw new Error('quebrado') }, gerado_em: AGORA } : { ok: true, itens: [tarefa(1)], gerado_em: AGORA + 1 }) } }
+  w.callbacks.init(); env.rodarTimers('t'); assert.equal(n, 1)
+  env.rodarTimers('i')
+  assert.equal(n, 2); assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+for (const [nome, envelope] of [
+  ['vinculada a OUTRO lead', { entity_id: 999 }],
+  ['vinculada a um CONTATO (tipo diferente)', { entity_type: 'contacts' }],
+  ['envelope sem entidade', { entity_type: undefined, entity_id: undefined }],
+  ['envelope de OUTRA tarefa', { id: 2 }],
+  ['is_completed ausente', { is_completed: undefined }],
+]) {
+  test('Concluir: tarefa aberta e do SDR, mas ' + nome + ' → NÃO conclui; o card sai', () => {
+    const env = ambiente()
+    let patches = 0
+    kommo(env, (o) => {
+      if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+      if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), entity_type: 'leads', entity_id: 10, ...envelope } }
+      return { status: 0 }
+    })
+    const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)] }])
+    w.callbacks.init(); env.rodarTimers('t')
+    clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+    clicar(env, 'concluir')
+    assert.equal(patches, 0)
+    assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(SNAP)).itens.map((t) => t.id), [2])
+  })
+}
+
+test('Concluir: envelope completo e igual ao card (tarefa, aberta, dono, lead) → conclui', () => {
+  const env = ambiente()
+  let patches = 0
+  kommo(env, (o) => {
+    if (o.method === 'PATCH') { patches++; return { status: 200, body: {} } }
+    if (o.method === 'GET' && /\/api\/v4\/tasks\/1$/.test(o.url)) return { status: 200, body: { ...viva(1), entity_type: 'leads', entity_id: 10 } }
+    return { status: 0 }
+  })
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'avancar'); clicar(env, 'concluir')
+  assert.equal(patches, 1)
+})
+
+test('retry pendente → destroy → init → novo em_andamento: agenda o retry de 7 s de novo', () => {
+  const env = ambiente()
+  const w = instanciar(env, [])
+  w.$authorizedAjax = () => ({ then: (ok, err) => err({ status: 503, responseJSON: { erro: 'em_andamento', retry_after: 3 } }) })
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
+  w.callbacks.destroy(); assert.equal(env.timers.size, 0)
+  env.ctx.localStorage.setItem('rpv_pausa_financeirorustonengenhariacombr_11420911', '0')
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
 })
