@@ -1,4 +1,4 @@
--- migration_163_cliente_oculto.sql
+-- migration_165_cliente_oculto.sql
 -- CLIENTE OCULTO automatizado no Enriquecedor (decisão do Gabriel, 26/10/2026).
 -- Stack: Evolution API (WhatsApp não oficial, no Railway do Gabriel; número anônimo conectado por QR)
 -- + Claude Haiku (persona de cliente que conversa) + regras determinísticas (tempo de resposta,

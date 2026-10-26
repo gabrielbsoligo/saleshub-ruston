@@ -25,7 +25,7 @@ type Cfg = { instancia: string; ativo: boolean; conectado: boolean; numero: stri
 async function config(sb: any): Promise<Cfg> {
   const { data, error } = await sb.from('oculto_config').select('*').eq('id', 1).maybeSingle()
   if (error) throw new Error(`oculto_config: ${error.message}`)
-  if (!data) throw new Error('oculto_config ausente (migration_163)')
+  if (!data) throw new Error('oculto_config ausente (migration_165)')
   return data as Cfg
 }
 function evo(cfg: Cfg): Evolution | null {

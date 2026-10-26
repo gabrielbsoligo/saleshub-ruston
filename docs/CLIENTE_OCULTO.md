@@ -4,7 +4,7 @@ Persona de cliente (Claude Haiku) conversa pelo WhatsApp **anônimo** (Evolution
 Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos leads; depois concorrentes.
 
 ## Peças
-- `supabase/migration_163_cliente_oculto.sql` — `oculto_config` (instância, ativo, conectado, limites, modelo),
+- `supabase/migration_165_cliente_oculto.sql` — `oculto_config` (instância, ativo, conectado, limites, modelo),
   `oculto_sessoes` (1 por empresa-alvo: persona, estado, métricas, notas, parecer), `oculto_mensagens`
   (histórico in/out, dedupe por `wa_id`). RLS: leitura para membros ativos; escrita só service_role.
   Segredo do webhook em `integracao_config.oculto_webhook_secret`. Cron `oculto-varrer` (*/10, só com sessão aberta).
