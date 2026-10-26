@@ -11,8 +11,10 @@
 //  4) lista viva paginada (até 12 páginas = 3000 tarefas) → leads (réplica; faltantes pela API em lotes de 50)
 //     → slots → classificação com texto/tipo vivos;
 //  5) incompletude é sinalizada (parcial + motivos), nunca silenciosa. Kommo 429/indisponível → 503.
-//  6) chats sem resposta: a leitura da CONTA (~20 s no orçamento de 2 GET/s) roda em SEGUNDO PLANO depois da
-//     resposta (EdgeRuntime.waitUntil); a fila usa o último cache de chats (até 120 s) e nunca espera por ele.
+//  6) chats sem resposta: a leitura da CONTA roda em SEGUNDO PLANO depois da resposta (EdgeRuntime.waitUntil); a
+//     fila usa o último cache de chats (até 120 s) e nunca espera por ele. A janela inteira (7 dias ≈ 3.600 eventos)
+//     é lida uma vez; depois, só os eventos novos (incremental, com sobreposição e sem repetir id). "Parcial" só
+//     quando a leitura realmente truncar.
 // O widget ordena (momento → origem → vencimento) e age só sobre esta lista.
 // Env: KOMMO_API_TOKEN, KOMMO_WIDGET_SECRET, KOMMO_WIDGET_CLIENT_ID, KOMMO_ACCOUNT_ID, PREVENDAS_TIPOS_MOMENTO?
 // Deploy: verify_jwt=false (a autenticação é o JWT do Kommo).
@@ -21,7 +23,7 @@ import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
 import { aplicarCloser, decidirModo, paraConfirmar, type EtapaLead } from '../_shared/prevendas_closer.ts'
-import { chatsSemResposta, itensDeChat, statusDosTalks, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
+import { chatsSemResposta, compactar, expandir, itensDeChat, mesclarEventos, planoLeitura, statusDosTalks, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -30,7 +32,10 @@ const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 35, MAX_PAGINAS = 12, MAX_LOTES_
 // prazo da execução abaixo da trava (25 s + 1 GET de 8 s < 35 s); cada GET com timeout próprio; espera por ficha limitada
 const PRAZO_MS = 25_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
 // chats sem resposta: leitura da CONTA inteira (eventos de chat), cache compartilhado na linha kommo_user = 0
-const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 120, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20, CHATS_PAGINAS_TALKS = 4
+// leitura de chats em segundo plano: prazo e trava próprios (a 1ª leitura cheia tem ~40 páginas) e uma pausa entre
+// GETs para sobrar orçamento à fila de tarefas
+const PRAZO_CHATS_MS = 110_000, TRAVA_CHATS_S = 150, PASSO_CHATS_MS = 300
+const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 120, CHATS_MAX_PAGINAS = 80, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20, CHATS_PAGINAS_TALKS = 4
 // versão da regra da resposta: cache de outro modo/regra nunca é reusado
 const REGRA = 'v5-closer', MAX_LOTES_CONFIRMAR = 2
 const CHATS_DIAS = Math.min(30, Math.max(1, Number(Deno.env.get('PREVENDAS_CHATS_DIAS') ?? '7') || 7))
@@ -110,17 +115,23 @@ Deno.serve(async (req) => {
   }
 
   // eventos de chat da janela → leads com cliente esperando → dono/etapa do lead e status do talk (ao vivo)
-  const lerChatsDaConta = async () => {
+  const lerChatsDaConta = async (anterior: any) => {
     const lidoEmC = Math.floor(Date.now() / 1000)          // idade real = início da leitura
-    const prazoC = Date.now() + PRAZO_MS, get = (p: string) => kommoGet(p, prazoC)
-    const desde = lidoEmC - CHATS_DIAS * 86400
+    const prazoC = Date.now() + PRAZO_CHATS_MS
+    const get = async (p: string) => { const j = await kommoGet(p, prazoC); await new Promise((ok) => setTimeout(ok, PASSO_CHATS_MS)); return j }
+    // incremental (só eventos novos) quando o cache cobre a janela inteira; senão, leitura cheia da janela
+    const plano = planoLeitura(anterior, lidoEmC, CHATS_DIAS)
     const lidas = await lerPaginado<EventoChat>(async (n) => {
-      const j = await get(`/api/v4/events?filter[type]=incoming_chat_message,outgoing_chat_message&filter[created_at][from]=${desde}&limit=100&page=${n}`)
+      const j = await get(`/api/v4/events?filter[type]=incoming_chat_message,outgoing_chat_message&filter[created_at][from]=${plano.desde}&limit=100&page=${n}`)
       const itens = j?._embedded?.events ?? []
       return { itens, temProxima: itens.length === 100 && !!j?._links?.next }
     }, CHATS_MAX_PAGINAS)
-    let parcial = lidas.motivos.length > 0
-    const chats = chatsSemResposta(lidas.tarefas)
+    // truncou (limite de páginas/prazo/orçamento) = parcial DE VERDADE; o cache deixa de ser completo e a próxima
+    // renovação volta a ler a janela inteira (um incremental truncado deixaria buraco)
+    const completo = lidas.motivos.length === 0
+    let parcial = !completo
+    const eventos = mesclarEventos(plano.base, compactar(lidas.tarefas), lidoEmC - CHATS_DIAS * 86400)
+    const chats = chatsSemResposta(expandir(eventos))
     const leadsC: Record<string, LeadChat> = {}, talks: Record<string, string> = {}
     const ids = chats.map((c) => c.lead_id)
     for (let i = 0, lotes = 0; i < ids.length; i += 50, lotes++) {
@@ -132,15 +143,20 @@ Deno.serve(async (req) => {
     const precisa = [...new Set(chats.filter((c) => c.talk_id != null && leadsC[String(c.lead_id)] && ![142, 143].includes(Number(leadsC[String(c.lead_id)].status_id))).map((c) => String(c.talk_id)))]
     Object.assign(talks, await statusDosTalks(precisa, (p) => get(`/api/v4/talks?limit=250&page=${p}`), (id) => get(`/api/v4/talks/${id}`),
       CHATS_PAGINAS_TALKS, CHATS_MAX_TALKS, (e) => e instanceof KommoLimite || e instanceof Interrupcao))
-    return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC }
+    return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC,
+             eventos, completo, ultimo: completo ? lidoEmC : null, lidos: lidas.tarefas.length, incremental: plano.incremental,
+             // checkpoint da última leitura INTEGRAL completa (o incremental o mantém; a reconciliação o renova)
+             integral_em: completo ? (plano.incremental ? Number(anterior?.integral_em) : lidoEmC) : null }
   }
 
   // renova o cache de chats da conta (linha kommo_user = 0) sob a trava da conta; roda em segundo plano
   const renovarChats = async () => {
-    const { data: tk, error: eTk } = await sb.rpc('prevendas_travar', { p_user: 0, p_seg: TRAVA_S })
+    const { data: tk, error: eTk } = await sb.rpc('prevendas_travar', { p_user: 0, p_seg: TRAVA_CHATS_S })
     if (eTk || !tk) return                                // outra execução já está lendo
     try {
-      const novo = await lerChatsDaConta()
+      const { data: ant, error: eAnt } = await sb.from('prevendas_cache').select('resposta').eq('kommo_user', 0).maybeSingle()
+      if (eAnt) throw new Error('falha_banco')
+      const novo = await lerChatsDaConta(ant?.resposta ?? null)
       const { data: gravou, error: eGv } = await sb.rpc('prevendas_gravar', { p_user: 0, p_token: tk, p_resposta: novo })
       if (eGv || gravou !== true) { console.error('[prevendas-fila] cache chats', eGv?.message ?? 'posse perdida'); await sb.rpc('prevendas_liberar', { p_user: 0, p_token: tk }) }
     } catch (e) {
@@ -194,9 +210,12 @@ Deno.serve(async (req) => {
     //     CHATS_MAX_IDADE_S não é publicada (não rejuvenesce); falha aqui NUNCA derruba a fila de tarefas.
     let chatsEm: number | null = null, retryAfter = 0, renovar = false
     try {
-      const { data: cc, error: eCC } = await sb.from('prevendas_cache').select('resposta').eq('kommo_user', 0).maybeSingle()
+      // só os campos usados (os eventos compactos da janela ficam no banco)
+      const { data: cc, error: eCC } = await sb.from('prevendas_cache')
+        .select('chats:resposta->chats,leads:resposta->leads,talks:resposta->talks,parcial:resposta->parcial,gerado_em:resposta->gerado_em')
+        .eq('kommo_user', 0).maybeSingle()
       if (eCC) throw new Error('falha_banco')
-      const conta = (cc?.resposta ?? null) as any
+      const conta = (cc ?? null) as any
       const agoraS = () => Math.floor(Date.now() / 1000)
       renovar = !conta?.gerado_em || agoraS() - Number(conta.gerado_em) >= CHATS_CACHE_S
       const uso = usarChats(conta, agoraS(), CHATS_MAX_IDADE_S)

@@ -89,3 +89,57 @@ test('statusDosTalks: lista com erro comum → tenta 1 a 1; lista parcial → co
   // 429 na lista propaga
   await assert.rejects(statusDosTalks(['1'], async () => { throw new Error('429') }, um({}), 4, 20, fatal), /429/)
 })
+
+// ---------------- leitura incremental (0.4.7) ----------------
+import { compactar, expandir, mesclarEventos, planoLeitura, RECONCILIAR_S, SOBREPOSICAO_S } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+
+const comId = (id: number, e: any) => ({ ...e, id })
+
+test('compactar/expandir: ida e volta preserva o que chatsSemResposta usa; ignora sem lead, sem id ou tipo estranho', () => {
+  const brutos = [comId(1, ent(1, 100)), comId(2, sai(1, 105, 42)), comId(3, ent(2, 200)), { ...ent(3, 300) }, comId(5, { ...ent(4, 1), entity_type: 'contact' }), comId(6, { ...ent(5, 1), type: 'outro' })]
+  const c = compactar(brutos as any)
+  assert.deepEqual(c.map((e) => e.id), ['1', '2', '3'])
+  assert.deepEqual(chatsSemResposta(expandir(c)), chatsSemResposta([ent(1, 100), sai(1, 105, 42), ent(2, 200)]))
+})
+
+test('mesclarEventos: sem repetir id (sobreposição), só dentro da janela, do mais novo ao mais antigo', () => {
+  const a = compactar([comId(1, ent(1, 100)), comId(2, ent(2, 50)), comId(3, ent(3, 300))] as any)
+  const n = compactar([comId(3, ent(3, 300)), comId(4, sai(1, 400, 7))] as any)
+  const m = mesclarEventos(a, n, 60)
+  assert.deepEqual(m.map((e) => e.id), ['4', '3', '1'])                 // id 3 uma vez só; id 2 saiu da janela
+  assert.deepEqual(chatsSemResposta(expandir(m)).map((c) => c.lead_id), [3])   // lead 1 respondido pelo humano
+})
+
+test('planoLeitura: incremental só com cache COMPLETO da mesma janela; senão leitura cheia', () => {
+  const agora = 1_000_000, dias = 7, janela = agora - 7 * 86400
+  assert.deepEqual(planoLeitura(null, agora, dias), { desde: janela, incremental: false, base: [] })
+  const evs = [{ id: '1', tp: 'i', l: 1, k: null, c: agora - 50, b: 0 }]
+  const ok = { completo: true, dias: 7, ultimo: agora - 60, integral_em: agora - 600, eventos: evs }
+  assert.deepEqual(planoLeitura(ok, agora, dias), { desde: agora - 60 - SOBREPOSICAO_S, incremental: true, base: evs })
+  assert.equal(planoLeitura({ ...ok, integral_em: agora - RECONCILIAR_S }, agora, dias).incremental, false)          // hora de reconciliar
+  assert.equal(planoLeitura({ ...ok, integral_em: null }, agora, dias).incremental, false)
+  assert.equal(planoLeitura({ ...ok, completo: false }, agora, dias).incremental, false)   // truncado: relê tudo
+  assert.equal(planoLeitura({ ...ok, dias: 3 }, agora, dias).incremental, false)          // janela mudou
+  assert.equal(planoLeitura({ ...ok, ultimo: null }, agora, dias).incremental, false)
+  assert.equal(planoLeitura({ ...ok, ultimo: janela - 9999 }, agora, dias).desde, janela)  // nunca antes da janela
+})
+
+test('evento que aparece ATRASADO além da sobreposição: o incremental não o vê, a reconciliação integral corrige', () => {
+  // simulação do ciclo do servidor: "kommo" = eventos VISÍVEIS na API no momento da leitura
+  const T0 = 2_000_000, dias = 7
+  const visiveis: any[] = [comId(1, ent(1, T0 - 700))]                       // cliente falou
+  const ler = (cache: any, agora: number) => {
+    const p = planoLeitura(cache, agora, dias)
+    const novos = compactar(visiveis.filter((e) => e.created_at >= p.desde))
+    const eventos = mesclarEventos(p.base, novos, agora - dias * 86400)
+    return { eventos, completo: true, dias, ultimo: agora, integral_em: p.incremental ? cache.integral_em : agora }
+  }
+  let cache = ler(null, T0)                                                       // leitura integral em T0
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 1)
+  visiveis.push(comId(2, sai(1, T0 - 601, 42)))                                  // resposta humana com data ANTIGA, revelada depois
+  for (const t of [T0 + 30, T0 + 60, T0 + 90]) cache = ler(cache, t)              // incrementais: não alcançam T0 − 601
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 1)               // ainda pendente (limite conhecido)
+  cache = ler(cache, T0 + RECONCILIAR_S)                                          // reconciliação integral
+  assert.equal(cache.integral_em, T0 + RECONCILIAR_S)
+  assert.equal(chatsSemResposta(expandir(cache.eventos)).length, 0)               // corrigido
+})
