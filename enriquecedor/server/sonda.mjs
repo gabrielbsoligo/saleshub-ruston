@@ -35,21 +35,35 @@ const resolverPadrao = async (host) => {
   for (const fn of [() => dns.resolve4(host), () => dns.resolve6(host)]) { try { out.push(...(await fn())); } catch { /* sem registro */ } }
   return out;
 };
-// requisição com IP FIXADO: `lookup` devolve o IP aprovado; `servername`/Host ficam com o hostname original
-const requisitarPadrao = (u, ip, timeoutMs) => new Promise((resolve) => {
-  const mod = u.protocol === 'https:' ? https : http;
+// requisição com IP FIXADO: `lookup` devolve o IP aprovado (contrato do Node: com `all:true` devolve
+// [{address, family}], senão (address, family)); `family` fixada e `autoSelectFamily:false` para o net não
+// pedir outra coisa; `servername`/Host ficam com o hostname original (SNI e virtual host corretos).
+export function opcoesRequisicao(u, ip, timeoutMs) {
   const family = net.isIP(ip) === 6 ? 6 : 4;
-  const req = mod.request({
+  return {
     protocol: u.protocol, hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search, method: 'GET',
     headers: { host: u.host, 'user-agent': 'Mozilla/5.0 (compatible; SalesHub-Cases/1.0)', accept: 'text/html,*/*' },
     servername: u.hostname,
-    lookup: (_host, _opts, cb) => cb(null, ip, family),
+    family,
+    autoSelectFamily: false,
+    lookup: (_host, opts, cb) => {
+      const quer = typeof opts === 'function' ? {} : (opts || {});
+      const done = typeof opts === 'function' ? opts : cb;
+      if (quer.all) return done(null, [{ address: ip, family }]);
+      return done(null, ip, family);
+    },
     timeout: timeoutMs,
-  }, (res) => { res.resume(); resolve({ status: res.statusCode || 0, location: res.headers.location || null }); });
+  };
+}
+const requisitarPadrao = (u, ip, timeoutMs, request) => new Promise((resolve) => {
+  const mod = u.protocol === 'https:' ? https : http;
+  const fazer = request ?? mod.request.bind(mod);
+  const req = fazer(opcoesRequisicao(u, ip, timeoutMs), (res) => { res.resume(); resolve({ status: res.statusCode || 0, location: res.headers.location || null }); });
   req.on('timeout', () => { req.destroy(new Error('timeout')); });
   req.on('error', (e) => resolve({ erro: String(e?.message || e).slice(0, 120) }));
   req.end();
 });
+export { requisitarPadrao };
 
 /**
  * @param {string} url
