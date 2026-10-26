@@ -71,7 +71,7 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
   (`EdgeRuntime.waitUntil`); o trabalho fica gravado em `autoresposta_trabalho` ANTES do 200, então
   falha no processamento vira pendência que o cron retoma.
 - Criar o webhook (token do Kommo em `integracao_config`):
-  `POST /api/v4/webhooks {"destination": "<URL da edge com ?s=segredo>", "settings": ["add_message"]}`.
+  `POST /api/v4/webhooks {"destination": "<URL da edge>/s/<segredo>", "settings": ["add_message"]}  (query string no destino é rejeitada pela API do Kommo)`.
   Listar: `GET /api/v4/webhooks`. Remover: `DELETE /api/v4/webhooks {"destination": "<URL>"}`.
 
 ## Implantação (ordem)
