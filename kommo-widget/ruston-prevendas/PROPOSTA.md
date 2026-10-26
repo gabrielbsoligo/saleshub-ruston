@@ -396,7 +396,7 @@ Os closers também têm tarefas fora do funil Closer:
 - **Funis de disparo:** cerca de 37 tarefas, quase todas vencidas.
 - R1–R3 (recuperação de no-show) são do **SDR** e se ancoram na 1ª reunião. As que apareceram na etapa CALL PROPOSTA AGENDADA são resíduo de lead que avançou, não compromisso da call de proposta.
 
-**Compromisso com hora marcada de verdade** = linha de `public.reunioes` com `data_reuniao`, `closer_id` ou `closer_confirmado_id` = o closer, e `realizada` não verdadeira. Pode ser `tipo='retorno'` (call de proposta; a migration 136 tira o retorno da cadência T/R do SDR) ou `primeira_call` (o closer conduz).
+**Compromisso com hora marcada de verdade** = linha de `public.reunioes` com `data_reuniao`, **closer efetivo** = `COALESCE(closer_confirmado_id, closer_id)` igual ao `team_members.id` do usuário autenticado (o mesmo critério da cadência e da reatribuição: migrations 155:49 e 060:88), e `realizada` não verdadeira. Se a reunião foi reatribuída de A para B (closer_id=A, confirmado=B), só B ganha o compromisso; sem confirmado, vale `closer_id`. Pode ser `tipo='retorno'` (call de proposta; a migration 136 tira o retorno da cadência T/R do SDR) ou `primeira_call` (o closer conduz).
 
 ### 7.2 Desenho
 
@@ -426,7 +426,7 @@ Os closers também têm tarefas fora do funil Closer:
      - duas reuniões no mesmo lead: a mais próxima;
      - contato e lead com o mesmo id: dois cards.
 6. **Níveis (a ordem das etapas é decisão do Gabriel; esta é a proposta):**
-   - **0 Compromisso marcado:** tarefa do closer num lead que tem reunião (`public.reunioes`, closer = usuário) com `data_reuniao` entre agora − 30 min e agora + `antecedencia_closer_min` (padrão 120). Nesse nível, a representativa é a tarefa de prazo mais próximo da reunião. Uma reunião que passou há mais de 30 min sem desfecho **sai do nível 0** e o lead volta para o nível da etapa. Uma tarefa atrasada nunca fica no topo só por pertencer a uma reunião. É a exceção explícita: uma call combinada passa à frente do backlog de contrato.
+   - **0 Compromisso marcado:** tarefa viva do próprio usuário num lead que tem reunião (`public.reunioes`, closer efetivo = usuário) com `data_reuniao` entre agora − 30 min e agora + `antecedencia_closer_min` (padrão 120). Nesse nível, a representativa é a tarefa de prazo mais próximo da reunião. Uma reunião que passou há mais de 30 min sem desfecho **sai do nível 0** e o lead volta para o nível da etapa. Uma tarefa atrasada nunca fica no topo só por pertencer a uma reunião. É a exceção explícita: uma call combinada passa à frente do backlog de contrato.
    - **0b Reunião de hoje sem tarefa elegível:** o lead NÃO entra só pela reunião. A fila é de tarefas. O compromisso só puxa tarefas que já existem.
    - **1–7 por etapa** (`etapas_closer`, lista de status_id configurável). Proposta: CONTRATO NA RUA, CALL PROPOSTA AGENDADA, feedback reunião, MARCAR CALL PROPOSTA, ALTA, MÉDIA, BAIXA.
    - **8:** lead fora do funil Closer (pré-vendas sem reunião próxima, funis de disparo), etapa pendente, contato ou empresa.
@@ -463,7 +463,7 @@ Os closers também têm tarefas fora do funil Closer:
 
 ### 7.3 Testes previstos (antes de qualquer aplicação)
 - **Agrupamento e representativa:** os casos do item 5.
-- **Nível 0:** janela, reunião passada há mais de 30 min, reunião sem tarefa elegível, R3 atrasado não sobe, call marcada à frente de CONTRATO.
+- **Nível 0:** closer efetivo (reatribuição A→B: A não sobe, B sobe; sem confirmado vale `closer_id`), janela, reunião passada há mais de 30 min, reunião sem tarefa elegível, R3 atrasado não sobe, call marcada à frente de CONTRATO.
 - **Exclusão:** só com confirmação ao vivo; lead reaberto (réplica diz ganho, ao vivo diz ALTA: aparece); orçamento esgotado vira etapa pendente, nunca oculta.
 - **Modo:** override negado para não gestor; cache separado por modo.
 - **Cadência:**
@@ -487,4 +487,5 @@ Os closers também têm tarefas fora do funil Closer:
 4. Exclusão por etapa só com confirmação ao vivo; etapa incerta vira pendente, nunca oculta.
 5. A discagem é autorizada por tarefa viva do próprio usuário, não por role.
 6. A BAIXA tem 8 semanas, não é infinita.
+Rev. 2.1 (2ª revisão do Vedor): compromisso pelo closer efetivo `COALESCE(closer_confirmado_id, closer_id)`.
 Também: override de modo só para gestor validado no servidor, e cache, snapshot e trava com modo e versão da regra.
