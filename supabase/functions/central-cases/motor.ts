@@ -7,6 +7,8 @@
 //   4) ordenação final e "por que é bom exemplo"
 // Toda chamada externa vem por `deps` (base, buscaWeb, anuncios, repo) — nada de fetch aqui.
 
+// Erro CRÍTICO (auth, banco, posse): nunca vira aviso — atravessa tenta() e aborta a rodada.
+export class ErroCritico extends Error { constructor(msg: string) { super(msg); this.name = 'ErroCritico' } }
 export type Candidato = {
   id_cliente: number; nome: string; razao_social?: string | null; cidade?: string | null; uf?: string | null
   status?: string | null; tier?: string | null; categoria?: string | null; produto_origem?: string | null
@@ -108,7 +110,7 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   await progresso?.('base', cands)
   // presença digital nos N melhores (1 busca por case; cache/ritmo ficam no deps.buscaWeb)
   // etapas OPCIONAIS (web/anúncios): falha de transporte de um candidato vira aviso nele, nunca aborta
-  const tenta = async <T>(fn: () => Promise<T>, falha: (msg: string) => T): Promise<T> => { try { return await fn() } catch (e) { return falha(String((e as Error)?.message ?? e).slice(0, 120)) } }
+  const tenta = async <T>(fn: () => Promise<T>, falha: (msg: string) => T): Promise<T> => { try { return await fn() } catch (e) { if (e instanceof ErroCritico) throw e; return falha(String((e as Error)?.message ?? e).slice(0, 120)) } }
   for (const c of cands.slice(0, L.web)) {
     const r = await tenta(() => deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim()), (msg) => ({ ok: false, results: [], nota: msg }))
     if (!r.ok) { c.por_que!.push(`busca web indisponível${r.nota ? ` (${r.nota})` : ''}`); continue }

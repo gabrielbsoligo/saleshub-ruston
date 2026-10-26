@@ -1,6 +1,8 @@
 // deno test --allow-read supabase/functions/central-cases/motor_test.ts
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { casaComNome, extrairPresenca, gerarCases, pontuar, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { ErroCritico, casaComNome, extrairPresenca, gerarCases, pontuar, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { depsReais } from './cliente.ts'
+import { assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
 
 Deno.test('termosDe: nicho com sinônimos primeiro, depois tokens do nome sem sufixos jurídicos/stopwords', () => {
   const t = termosDe('Clínica Sorriso Odontologia LTDA - ME', 'odonto')
@@ -44,6 +46,17 @@ Deno.test('R3#1 falha de transporte na busca web/anúncios de um candidato não 
   assertEquals(out.length, 2)
   assert(out.find((c) => c.nome === 'A')!.por_que!.some((m) => m.includes('busca web indisponível (network unavailable)')))
   assert(out.every((c) => c.anuncios?.ativos === null && (c.anuncios?.nota ?? '').includes('timeout')))
+})
+
+Deno.test('R4#1 fluxo completo: login do motor inválido = ErroCritico (rodada rejeita, vai para retomada); timeout de fetch = conclui com aviso', async () => {
+  const sbFake = { rpc: async () => ({ data: [{ id_cliente: 1, nome: 'Odonto A', score: 50, termos_casados: ['odonto'] }], error: null }), from: () => ({ select: () => ({ eq: () => ({ gt: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }), upsert: async () => ({ error: null }) }) }
+  // login falha → crítico mesmo dentro de gerarCases
+  const semLogin = depsReais(sbFake, 'https://motor.x', async () => { throw new Error('auth integração falhou: Invalid login credentials') }, (async () => new Response('{}')) as any)
+  await assertRejects(() => gerarCases(semLogin, { empresa: 'Clinica X', nicho: 'odonto', profundidade: 'leve' }), ErroCritico, 'auth do motor')
+  // login ok, fetch estoura timeout → aviso no candidato, rodada conclui
+  const timeout = depsReais(sbFake, 'https://motor.x', async () => 'jwt', (async () => { throw new DOMException('aborted', 'TimeoutError') }) as any)
+  const out = await gerarCases(timeout, { empresa: 'Clinica X', nicho: 'odonto', profundidade: 'leve' })
+  assertEquals(out.length, 1); assert(out[0].por_que!.some((m) => m.includes('busca web indisponível (motor indisponível: timeout)')))
 })
 
 Deno.test('R3#3 zero anúncios sem confirmação (10 terceiros descartados) diz "nenhum anúncio confirmado", não "sem anúncios ativos"', async () => {

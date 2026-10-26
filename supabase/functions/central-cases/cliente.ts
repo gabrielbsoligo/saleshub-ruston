@@ -4,7 +4,7 @@
 // Anúncios (/api/anuncios, headless + proxy). Auth no motor = login do usuário de integração,
 // feito num CLIENTE SEPARADO (anon key): o cliente admin (service_role) nunca recebe sessão de usuário.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import type { Candidato, Deps, ResultadoWeb } from './motor.ts'
+import { ErroCritico, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
 
 export type Sb = any
 const DIA = 24 * 60 * 60 * 1000
@@ -46,7 +46,8 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
   // Transporte (rede/timeout/abort) do motor NÃO é crítico: vira status 0 + nota, e a etapa fica
   // "indisponível" para aquele candidato. A autenticação (token()) continua lançando: é crítica.
   const motor = async (rota: string, body: unknown): Promise<{ status: number; body: any; nota?: string }> => {
-    const tk = await token()
+    let tk: string
+    try { tk = await token() } catch (e) { throw new ErroCritico(`auth do motor: ${String((e as Error)?.message ?? e).slice(0, 160)}`) }   // crítico: atravessa o tenta() do motor
     try {
       const r = await fetchFn(`${motorUrl}${rota}`, { method: 'POST', headers: { Authorization: `Bearer ${tk}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
       const txt = await r.text(); let j: any = null; try { j = txt ? JSON.parse(txt) : null } catch { /* corpo não-JSON */ }
@@ -59,7 +60,7 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
     agora: () => Math.floor(Date.now() / 1000),
     async base(termos, uf, limite) {
       const { data, error } = await sb.rpc('cases_buscar', { p_termos: termos, p_uf: uf, p_limit: limite })
-      if (error) throw new Error(`cases_buscar: ${error.message}`)
+      if (error) throw new ErroCritico(`cases_buscar: ${error.message}`)
       return (data ?? []).map((r: any) => ({ ...r, score: Number(r.score ?? 0), termos_casados: r.termos_casados ?? [] })) as Candidato[]
     },
     async buscaWeb(consulta) {
