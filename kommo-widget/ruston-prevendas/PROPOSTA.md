@@ -370,55 +370,121 @@ Pendências, por decisão do Gabriel:
 
 Para a fatia 3, junto com o click-to-call: a fila do CLOSER organizada pela etapa do funil Closer.
 
-## 7. Fila do CLOSER pela etapa do funil Closer (desenho, nada aplicado)
+## 7. Fila do CLOSER pela etapa do funil Closer (desenho rev. 2, nada aplicado)
 
-Pedido do Gabriel (26/10, decisão 5): o PRÓXIMO também precisa servir ao closer, com a fila organizada pela **etapa do funil Closer** (11010459), sem criar tipos de tarefa novos.
+Pedido do Gabriel (26/10, decisão 5): o PRÓXIMO também precisa servir ao closer, com a fila organizada pela **etapa do funil Closer** (11010459), sem criar tipos de tarefa novos. A rev. 2 incorpora a revisão do Vedor (6 ajustes, listados no fim).
 
 ### 7.1 O que existe hoje (levantamento só leitura na réplica, 26/10)
-| etapa (status_id) | leads abertos | balde da cadência do closer (`kommo.closer_balde`) |
+| etapa (status_id) | leads abertos | balde (`kommo.closer_balde`) |
 |---|---|---|
 | Incoming leads (84456015) | 28, sem dono mapeado | sem cadência |
 | feedback reunião (84456019) | 12 (closer 2, gestor 4, SDR 4, sem dono 2) | sem cadência; tarefa "Feedback da Reunião" (ALERTA) |
-| MARCAR CALL PROPOSTA (103523344) | 9 | `MARCAR_CALL` |
-| CALL PROPOSTA AGENDADA (110113248) | 4 | `PROP_AGENDADA` (+ recuperação de no-show R1–R3) |
-| BAIXA PRIORIDADE +30d (102174776) | 48 (closer 23, SDR 24) | `BAIXA` (follow semanal infinito) |
+| MARCAR CALL PROPOSTA (103523344) | 9 | `MARCAR_CALL` (P1–P3) |
+| CALL PROPOSTA AGENDADA (110113248) | 4 | `PROP_AGENDADA` (PA1 preparar, PA2 confirmar presença; migration 136) |
+| BAIXA PRIORIDADE +30d (102174776) | 48 (closer 23, SDR 24) | `BAIXA` (BW1..BW8) |
 | MÉDIA PRIORIDADE 11–30d (102174780) | 9 | `MEDIA` |
 | ALTA PRIORIDADE 1–10d (102174784) | 10 | `ALTA` |
 | CONTRATO NA RUA (84456095) | 2 | `CONTRATO` |
 | CONTRATO ASSINADO / ganho / perdido | — | sem cadência |
 
-A cadência do closer está ligada (`cadencia_closer_ativa=true`) e **cria as tarefas com antecedência**, com texto `CLOSER · <BALDE> · <passo>`. Por isso há muitas tarefas por lead:
-- Sandro tem 209 tarefas abertas para 37 leads;
-- um lead da BAIXA chega a ter 22 tarefas abertas, 21 delas vencidas.
+A cadência do closer está ligada (`cadencia_closer_ativa=true`) e cria as tarefas com antecedência, com texto `CLOSER · <BALDE> · <passo>`. Por isso há muitas tarefas abertas por lead: Sandro tem 209 para 37 leads, e um lead da BAIXA tem 22, das quais 21 vencidas.
+
+O "Follow Semanal Infinito" **não é infinito**: a base tem 8 semanas (BW1..BW8, âncora fixa; migrations 072:61–68 e 121:857–899), salvo datas do plano IA. A sweep (099:35–37) não repõe um ciclo esgotado. Recorrência infinita seria uma mudança de cadência, fora desta entrega.
 
 Os closers também têm tarefas fora do funil Closer:
-- Pré-vendas: T0 cliente oculto, T4 WhatsApp na manhã da reunião, Retorno.
-- Funis de disparo (BASE, DISPARO 6): cerca de 37 tarefas, quase todas vencidas.
+- **Pré-vendas:** T0 cliente oculto (alvo = criação + 3 h), T4 WhatsApp às 08h30 do dia da 1ª reunião, Retorno.
+- **Funis de disparo:** cerca de 37 tarefas, quase todas vencidas.
+- R1–R3 (recuperação de no-show) são do **SDR** e se ancoram na 1ª reunião. As que apareceram na etapa CALL PROPOSTA AGENDADA são resíduo de lead que avançou, não compromisso da call de proposta.
+
+**Compromisso com hora marcada de verdade** = linha de `public.reunioes` com `data_reuniao`, `closer_id` ou `closer_confirmado_id` = o closer, e `realizada` não verdadeira. Pode ser `tipo='retorno'` (call de proposta; a migration 136 tira o retorno da cadência T/R do SDR) ou `primeira_call` (o closer conduz).
 
 ### 7.2 Desenho
-1. **Mesmo widget, mesma edge.** O modo é decidido no SERVIDOR: `team_members.role = 'closer'` do usuário do JWT dá `modo: 'closer'`. Uma configuração `modo` (auto | sdr | closer) existe só para teste: o Gabriel (gestor) força `closer` e testa com os 4 leads dele no funil Closer.
-2. **Fonte igual à do SDR.** A lista VIVA de tarefas do usuário vem do Kommo (autoritativa). Os dados do lead vêm da réplica: o RPC `prevendas_leads` passa a devolver também `status_id`, numa migration pequena que só faz `create or replace` de uma função de leitura. Lead que falta é buscado na API (o lote de 50 já devolve `status_id`/`pipeline_id`); se nada disso funcionar, o item fica `etapa_pendente` e vai para o fim, sem chute.
-3. **A unidade da fila é o LEAD, não a tarefa.** É um card por lead, mostrando a tarefa mais antiga vencida e o aviso "+N vencidas". Sem isso, um lead com 21 follows acumulados ocuparia 21 posições.
-4. **Elegível:** tarefa com prazo ≤ agora + `lookahead_min`. As tarefas futuras que a cadência já criou não aparecem.
-5. **Ordem (configurável em `etapas_closer`, lista de status_id):**
-   - **0. Reunião/call com hora marcada:** slots T0/T4 (via `reunioes.cadencia_task_ids`) e recuperação R1–R3, quando o prazo está dentro da antecedência. Hora marcada passa na frente de tudo, como no anti no-show do SDR.
-   - 1. CONTRATO NA RUA
-   - 2. CALL PROPOSTA AGENDADA
-   - 3. feedback reunião
-   - 4. MARCAR CALL PROPOSTA
-   - 5. ALTA (1–10d)
-   - 6. MÉDIA (11–30d)
-   - 7. BAIXA (+30d)
-   - 8. Lead fora do funil Closer (pré-vendas sem slot, funis de disparo) ou etapa pendente
-   - Fora da fila: Incoming leads, CONTRATO ASSINADO, ganho, perdido.
-   - Dentro do mesmo nível, vence o prazo mais antigo.
-6. **"Concluir e próximo" conclui SÓ a tarefa mostrada**, como o closer faria no Kommo. Não fecha em lote as vencidas acumuladas: isso mexeria no mapa `deals.cadencia_closer_task_ids` da cadência, e o comportamento do `cadencia_closer_plan` diante de tarefa concluída à mão precisa ser conferido antes. Fica como pergunta, sem fazer.
-7. **Ligar:** os closers têm `ramal_4com` e não têm agente 3C, então para eles o botão disca pela 4com, usando o mesmo proxy da §4.
-8. **Nada muda** em tipos, cadência ou configuração do Kommo. Fila e ordem são só leitura e apresentação.
 
-### 7.3 Perguntas para o Gabriel
-1. A ordem da §7.2.5 está certa? Em especial, CONTRATO NA RUA antes de CALL PROPOSTA AGENDADA, e feedback reunião antes de MARCAR CALL.
-2. A BAIXA (follow semanal infinito) entra na fila, por último? Hoje são 171 tarefas, 40 vencidas.
+**Modo e autoridade**
+1. **O modo é decidido no SERVIDOR** pelo `team_members.role` do usuário do JWT (`closer` dá `modo: 'closer'`). O filtro continua o mesmo: só tarefas vivas cujo responsável é o usuário do JWT.
+2. **Override de teste** (`modo` = sdr | closer) só é aceito se o servidor validar que o usuário do JWT é `gestor` ativo. Para os demais, o parâmetro é ignorado.
+3. **Cache, snapshot e trava** levam a chave `modo efetivo + versão da regra` (`regra: 'closer-v1'`), para que uma resposta de um modo nunca sirva ao outro.
+
+**Etapa (frescor)**
+
+4. A etapa decide exclusão e elegibilidade, então não pode vir só da réplica.
+   - O `prevendas_leads` passa a devolver `status_id`, `pipeline_id` e `kommo_updated_at`, numa migration pequena que só faz `create or replace` da função de leitura.
+   - A regra para EXCLUIR é: o lead só sai da fila (Incoming, assinado, ganho, perdido) se a etapa for **confirmada ao vivo**. A edge busca na API, em lotes de 50 (o mesmo caminho do lead que falta, com orçamento e prazo), os leads que a réplica põe em etapa de exclusão. Se a confirmação não couber no orçamento, o item fica com **etapa provisória** (`etapa_pendente`), vai para o nível 8 com aviso, e **nunca é ocultado**.
+   - Na ação, "Concluir" age sobre a tarefa (que já é conferida ao vivo pelo PATCH da sessão). Se a etapa mudou entre a leitura e a ação, a próxima leitura reclassifica o item, sem perda.
+
+**Unidade e ordem**
+
+5. **Unidade = lead (por entidade).**
+   - A chave de agrupamento é `entity_type:entity_id`. Contato e empresa não se misturam com lead de mesmo número.
+   - Passo 1: separar as tarefas **elegíveis** do lead (prazo ≤ agora + `lookahead_min`; as futuras criadas pela cadência ficam de fora).
+   - Passo 2: calcular a **chave de prioridade de cada tarefa** (nível, prazo).
+   - Passo 3: a chave do lead é a **melhor** delas, e a **tarefa representativa é a que tem essa chave**. O card mostra prazo, ação e id DELA, e "Concluir" age nela.
+   - As demais elegíveis viram só contagem ("+N pendentes neste lead").
+   - Exemplos que entram em teste:
+     - follow antigo + compromisso agora: o card mostra o compromisso;
+     - tarefa vencendo em +5 min sem nenhuma vencida;
+     - duas reuniões no mesmo lead: a mais próxima;
+     - contato e lead com o mesmo id: dois cards.
+6. **Níveis (a ordem das etapas é decisão do Gabriel; esta é a proposta):**
+   - **0 Compromisso marcado:** tarefa do closer num lead que tem reunião (`public.reunioes`, closer = usuário) com `data_reuniao` entre agora − 30 min e agora + `antecedencia_closer_min` (padrão 120). Nesse nível, a representativa é a tarefa de prazo mais próximo da reunião. Uma reunião que passou há mais de 30 min sem desfecho **sai do nível 0** e o lead volta para o nível da etapa. Uma tarefa atrasada nunca fica no topo só por pertencer a uma reunião. É a exceção explícita: uma call combinada passa à frente do backlog de contrato.
+   - **0b Reunião de hoje sem tarefa elegível:** o lead NÃO entra só pela reunião. A fila é de tarefas. O compromisso só puxa tarefas que já existem.
+   - **1–7 por etapa** (`etapas_closer`, lista de status_id configurável). Proposta: CONTRATO NA RUA, CALL PROPOSTA AGENDADA, feedback reunião, MARCAR CALL PROPOSTA, ALTA, MÉDIA, BAIXA.
+   - **8:** lead fora do funil Closer (pré-vendas sem reunião próxima, funis de disparo), etapa pendente, contato ou empresa.
+   - **Fora da fila:** Incoming, CONTRATO ASSINADO, ganho, perdido, só com confirmação ao vivo (item 4).
+   - **Desempate:** prazo mais antigo, depois o id.
+   - T0 e T4 não são compromissos: T0 é cliente oculto e T4 é WhatsApp às 08h30. Entram pela etapa do lead, ou pelo nível 0 quando a reunião desse lead está na janela.
+
+**Concluir e navegar**
+
+7. "Concluir e próximo" age **somente no id exibido**, pelo mesmo PATCH `is_completed` da sessão.
+   - **Não** altera `deals.cadencia_closer_task_ids`, a âncora, o balde ou o plano. Não limpa slot e não dispara avanço de cadência.
+   - Contrato verificado no código:
+     - O `plan_closer` (migration 121:902–914) decide pela presença do id no mapa e pelo alvo temporal, não por `is_completed`.
+     - Com o id mantido e o alvo futuro, ele emite `patch_move`, e o executor só envia `complete_till`/`text` (kommo-cadencia-closer/index.ts:41–46). Isso não reabre a tarefa e não cria outra.
+     - Com o alvo passado, ele emite `complete`, que é inócuo.
+     - Se o mapa perdesse o id, o planner emitiria `post` e recriaria a tarefa. Por isso o widget nunca toca no mapa.
+8. **Navegação:** depois de concluir, a próxima é **o próximo LEAD da fila**, não outra tarefa do mesmo lead.
+   - O lead concluído recebe uma marca local de 2 min (o mesmo mecanismo das tarefas). Isso evita reapresentá-lo em loop enquanto a leitura não volta.
+   - Se ele ainda tiver pendentes, volta à posição da sua nova chave na leitura seguinte.
+   - Nada é drenado em lote: as outras 20 vencidas continuam no Kommo e aparecem só como contagem.
+
+**Ligar (proxy da §4.2)**
+
+9. A autorização da discagem passa a ser **por tarefa viva**.
+   - O servidor só disca se:
+     - existir, ao vivo, uma tarefa aberta cujo responsável é o usuário do JWT, ligada à entidade (lead/contato) do telefone;
+     - **ou** o usuário for o dono da entidade;
+     - **ou** o usuário for `gestor` ativo.
+   - Continuam valendo: conta, membro ativo com discador configurado, e telefone pertencente a um contato da entidade.
+   - Role e modo **não autorizam** discar para qualquer lead.
+   - Os closers têm `ramal_4com` e não têm agente 3C, então para eles o botão disca pela 4com.
+
+10. **Nada muda** em tipos, cadência ou configuração do Kommo. Fila e ordem são só leitura e apresentação.
+
+### 7.3 Testes previstos (antes de qualquer aplicação)
+- **Agrupamento e representativa:** os casos do item 5.
+- **Nível 0:** janela, reunião passada há mais de 30 min, reunião sem tarefa elegível, R3 atrasado não sobe, call marcada à frente de CONTRATO.
+- **Exclusão:** só com confirmação ao vivo; lead reaberto (réplica diz ganho, ao vivo diz ALTA: aparece); orçamento esgotado vira etapa pendente, nunca oculta.
+- **Modo:** override negado para não gestor; cache separado por modo.
+- **Cadência:**
+  - conclusão antecipada dentro do lookahead seguida de reexecução do planner: sem tarefa nova, sem reabrir;
+  - mudança de balde depois de uma conclusão manual;
+  - conclusão concorrente com o executor (PATCH `is_completed` × PATCH `complete_till`): a tarefa continua concluída.
+- **Discagem:** tarefa própria em lead de SDR (permitido); tarefa alheia ou reatribuída (negado); telefone fora dos contatos da entidade (negado).
+
+### 7.4 Perguntas para o Gabriel
+1. A ordem dos níveis 1–7 está certa? Em especial, CONTRATO NA RUA antes de CALL PROPOSTA AGENDADA, e feedback reunião antes de MARCAR CALL. A janela do nível 0 (2 h antes até 30 min depois da reunião) está boa?
+2. A BAIXA (BW1..BW8) entra na fila, por último? Hoje são 171 tarefas, 40 vencidas.
 3. Há leads do funil Closer com dono SDR (Lary 19, Edric 15, a maioria na BAIXA e na ALTA). Esses SDRs seguem com a fila de SDR, onde essas tarefas caem em "sem classificação", ou a parte do funil Closer usa a ordem do closer?
-4. Tarefas de closer nos funis de disparo, quase todas vencidas: entram no fim ou ficam de fora?
-5. Querem um botão para concluir de uma vez os follows acumulados da cadência do closer? Seria uma entrega separada, só depois de conferir a cadência.
+4. Tarefas de closer nos funis de disparo, quase todas vencidas: entram no nível 8 ou ficam de fora?
+5. Querem um botão para concluir de uma vez as vencidas acumuladas da cadência do closer? Seria uma entrega separada, com efeito no mapa da cadência a desenhar.
+6. A cadência BAIXA para depois de 8 semanas. Querem um follow realmente infinito? Isso é mudança de cadência e fica nas pendências.
+
+### O que mudou na rev. 2 (revisão do Vedor, AJUSTES)
+1. A tarefa representativa é a da melhor chave do lead, não a mais antiga vencida; o agrupamento é por entidade.
+2. O nível 0 vira compromisso real (`public.reunioes`, com janela e regra para reunião passada). R1–R3 deixaram de ser tratados como compromisso, e a afirmação errada sobre PROP_AGENDADA foi corrigida.
+3. A conclusão manual virou contrato verificado no código. O widget nunca toca no mapa da cadência e a navegação é por lead.
+4. Exclusão por etapa só com confirmação ao vivo; etapa incerta vira pendente, nunca oculta.
+5. A discagem é autorizada por tarefa viva do próprio usuário, não por role.
+6. A BAIXA tem 8 semanas, não é infinita.
+Também: override de modo só para gestor validado no servidor, e cache, snapshot e trava com modo e versão da regra.
