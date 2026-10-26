@@ -126,6 +126,12 @@
      * Só RÓTULO ("provavelmente a sua ligação"): chamada integrada da 4com chegando enquanto há um pedido seu.
      * NUNCA autoriza atender sozinho — o header não é prova de origem.
      */
+    /** Quantos registros (Contact) a resposta do REGISTER lista para o ramal — mais de 1 = registrado em outro lugar. */
+    function contarRegistros(contatos) {
+      var n = 0;
+      (contatos || []).forEach(function (c) { n += (String(c || '').match(/<sips?:[^>]+>/gi) || []).length || (String(c || '').trim() ? 1 : 0); });
+      return n;
+    }
     function chamadaPedida(integrada, pendenteAte, agoraMs) { return !!integrada && pendenteAte > agoraMs; }
     /** Decisão do Gabriel (T2): atende sozinho a chamada INTEGRADA da 4com que chega dentro da janela da tentativa
      *  que este widget acabou de pedir; a autorização é consumida no primeiro atendimento (uma por tentativa). */
@@ -153,7 +159,7 @@
     function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
 
     return {
-      chamadaPedida: chamadaPedida, deveAtender: deveAtender, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
+      contarRegistros: contarRegistros, chamadaPedida: chamadaPedida, deveAtender: deveAtender, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -594,7 +600,9 @@
         ua.on('connected', function () { dbg('WSS conectado'); });
         ua.on('registered', function (e) {
           try { var r = e && e.response; dbg('REGISTRADO', r && r.status_code, 'Contact:', r && r.getHeader('Contact'), 'Expires:', r && r.getHeader('Expires')); } catch (x) {}
-          if (meu()) vozEstado('registrado');
+          var outros = 0;
+          try { var hs = e && e.response && (e.response.getHeaders ? e.response.getHeaders('Contact') : [e.response.getHeader('Contact')]); outros = Fila.contarRegistros(hs) - 1; } catch (x) {}
+          if (meu()) vozEstado('registrado', outros > 0 ? 'Este ramal também está registrado em outro lugar (webphone/app/extensão do provedor). Feche os outros, senão as ligações podem tocar lá e não aqui.' : '');
         });
         ua.on('unregistered', function () { if (meu()) vozEstado('reconectando'); });
         ua.on('registrationFailed', function (e) { dbg('REGISTRO FALHOU', e && e.cause, e && e.response && e.response.status_code); if (meu()) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
@@ -618,7 +626,7 @@
           s.on('peerconnection', function (pe) {
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
-          s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
+          s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
           var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
@@ -676,7 +684,11 @@
         var aqui = entidadeAtual();
         if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
         var t = ++voz.tentativa, posse = voz.posse;
-        voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui (atenda) e depois liga para o cliente.';
+        voz.discando = true; voz.aviso = 'Chamando… conectando o seu ramal aqui e depois ligando para o cliente.';
+        var tChamada = t;
+        atraso(function () {                                              // nada chegou em 25 s: orienta (registro duplicado é a causa mais comum)
+          if (voz.tentativa === tChamada && !voz.sessao && voz.pendenteAte) { voz.aviso = 'A ligação não chegou a este telefone. Se o webphone/app do provedor estiver aberto, feche-o e tente de novo.'; render(); }
+        }, 25000);
         voz.pendenteAte = mono() + 60000;                           // janela de 60 s no relógio monotônico
         render();
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {

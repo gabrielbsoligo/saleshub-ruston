@@ -861,3 +861,26 @@ test('trocar provedor_voz nas settings registra o ramal de novo (credencial do p
   const creds = chamadas.filter((c) => c.acao === 'credencial')
   assert.equal(creds.length, 2); assert.equal(creds[1].provedor, '3c'); assert.ok(reg.stopped >= 1)
 })
+
+// ---------------- 0.4.4: ajustes do T2 ----------------
+test('0.4.4: em chamada some o "Chamando…"; ramal registrado em outro lugar é avisado; sem INVITE em 25 s, orienta', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush()
+  reg.emit('registered', { response: { getHeaders: () => ['<sip:1006@abc.invalid;transport=ws>;expires=300', '<sip:1006@10.0.0.5:5060>;expires=600'] } })
+  assert.match(env.elems['rpv-root'].innerHTML, /também está registrado em outro lugar/)
+  reg.emit('registered', { response: { getHeaders: () => ['<sip:1006@abc.invalid;transport=ws>;expires=300'] } })
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /também está registrado/)
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.match(env.elems['rpv-root'].innerHTML, /Chamando…/)
+  env.rodarTimers('t')                                                       // 25 s sem INVITE
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  const inv = sessao(true); reg.emit('newRTCSession', inv)                   // chega (ainda na janela de 60 s)
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Em chamada/); assert.doesNotMatch(html, /Chamando…|não chegou/)
+})
