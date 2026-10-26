@@ -10,18 +10,20 @@ import https from 'node:https';
 import dns from 'node:dns/promises';
 import net from 'node:net';
 
+// Faixas NÃO públicas via net.BlockList (normaliza formas IPv6 expandidas/comprimidas). IPv4-mapped (::ffff:a.b.c.d
+// e a forma hexadecimal ::ffff:7f00:1) é NEGADO por inteiro: endereço IPv4 só é aceito como A record puro.
+// Duas listas: as regras IPv6 incluem ::ffff:0:0/96 (IPv4-mapped), que o Node também aplicaria a QUALQUER IPv4
+// numa lista única — por isso IPv4 é conferido só contra as faixas IPv4.
+const BLOQUEIO4 = new net.BlockList();
+for (const [cidr, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) BLOQUEIO4.addSubnet(cidr, bits, 'ipv4');
+const BLOQUEIO6 = new net.BlockList();
+for (const [cidr, bits] of [['::', 128], ['::1', 128], ['::ffff:0:0', 96], ['64:ff9b::', 96], ['100::', 64], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8], ['2001:db8::', 32]]) BLOQUEIO6.addSubnet(cidr, bits, 'ipv6');
 export function ipPrivado(ip) {
-  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
-  if (v4) {
-    const a = Number(v4[1]), b = Number(v4[2]);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
-  }
-  const v6 = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  if (v6.includes(':')) {
-    if (v6.startsWith('::ffff:')) return ipPrivado(v6.slice(7));
-    return v6 === '::1' || v6 === '::' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('ff');
-  }
-  return true;
+  const limpo = String(ip || '').trim().replace(/^\[|\]$/g, '').replace(/%.*$/, '');   // sem colchetes/zone id
+  const tipo = net.isIP(limpo);
+  if (tipo === 4) return BLOQUEIO4.check(limpo, 'ipv4');
+  if (tipo === 6) return BLOQUEIO6.check(limpo, 'ipv6');
+  return true;   // não é IP válido: trata como não-público
 }
 export function hostPublico(host) {
   const h = String(host || '').toLowerCase().replace(/\.$/, '');
