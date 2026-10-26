@@ -2,7 +2,10 @@
 
 Decisão do Gabriel (23/10/2026): a autoresposta do lead (ausência, menu de bot, saudação padrão do
 WhatsApp Business) **fica na mesma etapa**; só resposta humana vai para RESPONDEU e cai na roleta.
-A decisão roda na edge `kommo-autoresposta`; o Kommo só coleta o texto e chama o webhook.
+A decisão roda na edge `kommo-autoresposta`. **Fonte da mensagem (26/10): webhook de CONTA do Kommo,
+evento `add_message`**, que entrega id, instante, tipo (incoming/outgoing), texto e anexo direto no
+payload — sem Salesbot e sem campo. (O caminho antigo Salesbot → campo "Triagem Resposta" ficou como
+fallback opcional, só se `KOMMO_AUTORESPOSTA_CAMPO` estiver definido.)
 
 ## O que o diagnóstico mostrou (30 dias, funil Outbound Disparo 14062116)
 
@@ -57,7 +60,21 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
 - **Dados pessoais**: `autoresposta_triagem` só é legível por gestor; padrões/config por membros
   ativos (edição só gestor); anon sem acesso; RPCs só `service_role`.
 
-## Implantação (ordem; nada disso foi feito ainda)
+## Webhook de conta (add_message)
+
+- Payload form-urlencoded: `message[add][0][id|chat_id|talk_id|contact_id|text|created_at|element_type|element_id|type|author…|attachment][type]`.
+  `type=outgoing` é ignorado (o disparo já vem de `/events`); `element_type=2` = lead; quando a mensagem
+  vem no contato, a edge busca os leads do contato e só usa se houver exatamente UM num funil com
+  triagem ativa. Áudio sem texto vira `[audio]`, outro anexo `[midia]` (humano forte).
+- Identidade da mensagem = `message[add][0][id]` (o mesmo id que `/events` devolve).
+- A edge responde **200 em seguida** (o Kommo desativa destino que falha) e processa em segundo plano
+  (`EdgeRuntime.waitUntil`); o trabalho fica gravado em `autoresposta_trabalho` ANTES do 200, então
+  falha no processamento vira pendência que o cron retoma.
+- Criar o webhook (token do Kommo em `integracao_config`):
+  `POST /api/v4/webhooks {"destination": "<URL da edge com ?s=segredo>", "settings": ["add_message"]}`.
+  Listar: `GET /api/v4/webhooks`. Remover: `DELETE /api/v4/webhooks {"destination": "<URL>"}`.
+
+## Implantação (ordem)
 
 1. **Migration 157** (`supabase/migration_157_autoresposta_triagem.sql`) — aditiva; cria as 3
    tabelas (padrões, config, triagem, trabalho, ritmo), 24 padrões, config dos 2 funis (inativos, modo observar, etapas de disparo elegíveis),
@@ -68,14 +85,10 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
    autenticação): `supabase functions deploy kommo-autoresposta --no-verify-jwt`
    (ou `verify_jwt = false` em `supabase/config.toml`). Env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`;
    opcional `KOMMO_AUTORESPOSTA_CAMPO` (padrão `Triagem Resposta`).
-4. **Campo no Kommo**: criar campo de texto de lead **"Triagem Resposta"** (Configurações → Campos).
-5. **Salesbot** "Triagem resposta (anti-autoresposta)" — pela tela, no funil Outbound Disparo:
-   1. Gatilho: *Mensagem recebida* nas etapas BASE, DISPARO DALTO, DISPARO 1…6.
-   2. Passo 1 — *Alterar campo*: `Triagem Resposta` = `{{message_text}}`.
-   3. Passo 2 — *Webhook* (POST): `https://<ref>.supabase.co/functions/v1/kommo-autoresposta?s=<segredo>`.
-      Antes de ativar, confirmar o payload real num lead de teste: a edge aceita `leads[add|status|update][0][id]`
-      (form) e `leads.add|status|update[0].id` (JSON); com texto vazio ou mídia a linha fica pendente.
-   4. Fim. Nenhum passo de "mudar etapa" no bot: quem move é a edge.
+4. **Migration 159** (colunas da mensagem em `autoresposta_trabalho`).
+5. **Webhook de conta**: `POST /api/v4/webhooks` com `destination` = URL da edge com `?s=<segredo>` e
+   `settings: ["add_message"]` (conferir com `GET /api/v4/webhooks`). O webhook antigo desativado que
+   aponta para outro projeto (id 47386956) não precisa ser mexido.
 6. **Gatilho antigo** "Mensagem recebida em qualquer canal → RESPONDEU": enquanto `modo = observar`,
    deixe ligado (a edge só registra e dá para comparar classificação × destino real). Ao passar
    para `aplicar`, **desativar** (não apagar) nas mesmas etapas.

@@ -27,7 +27,7 @@ function repoFake(cfg: Cfg | null = cfgBase) {
     repo: {
       async padroesAtivos() { return PADROES },
       async config(p: number) { return estado.cfg && Number(estado.cfg.pipeline_id) === Number(p) ? { ...estado.cfg } : null },
-      async criarTrabalho(leadId: number) { const t = { id: seq++, kommo_lead_id: leadId, tentativas: 0, estado: 'pendente', erro: null }; trabalhos.push(t); return t },
+      async criarTrabalho(leadId: number, msg: any = null) { const t = { id: seq++, kommo_lead_id: leadId, tentativas: 0, estado: 'pendente', erro: null, mensagem_id: msg?.id ?? null, texto: msg?.texto ?? null, recebido_em: msg ? new Date(msg.ts * 1000).toISOString() : null }; trabalhos.push(t); return t },
       async concluirTrabalho(id: number, estado: string, erro: string | null = null) { const t = trabalhos.find((x) => x.id === id)!; t.estado = estado; t.erro = erro; if (estado === 'pendente') t.tentativas++ },
       async trabalhosPendentes(n: number) { return trabalhos.filter((t) => t.estado === 'pendente').slice(0, n) },
       async linhasDoLead(leadId: number) { return copia(linhas.filter((l) => l.kommo_lead_id === leadId)) },
@@ -330,4 +330,30 @@ Deno.test('R5 varredura com eventos fora de ordem: conversa anterior ao último 
     assertEquals(l.intervalo_s, 5, `ordem ${ordem}: intervalo deve ser do disparo T0-10`)
     assert(!k2.escritas.some((e) => e.body?.status_id), `ordem ${ordem}: não pode mover`)
   }
+})
+
+
+// ── webhook de conta (add_message): texto direto, sem campo; evento pode ainda não estar em /events
+Deno.test('WH texto direto do webhook decide sem ler o campo; mensagem ainda ausente em /events é incluída', async () => {
+  const st = repoFake()
+  const k = kommoFake({ texto: '', ins: [], outs: [T0 - 1000] }) // /events sem a mensagem; campo vazio
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh1', ts: T0 - 5, texto: 'Oi, pode falar' })
+  assertEquals(r.classificacao, 'humano'); assertEquals(r.estado, 'aplicado')
+  assertEquals(st.linhas[0].mensagem_id, 'wh1'); assertEquals(st.linhas[0].texto, 'Oi, pode falar')
+  assert(!k.escritas.some((e) => e.p.includes('custom_fields')))
+})
+
+Deno.test('WH áudio ([audio] vindo do parser) é humano forte; autoresposta do webhook marca tag e não move', async () => {
+  const st = repoFake(); const k = kommoFake({ ins: [{ id: 'wh2', ts: T0 - 5 }], outs: [T0 - 10] })
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh2', ts: T0 - 5, texto: '[audio]' })
+  assertEquals(r.classificacao, 'humano')
+  const st2 = repoFake(); const k2 = kommoFake({ ins: [{ id: 'wh3', ts: T0 - 5 }], outs: [T0 - 10] })
+  const r2 = await receberWebhook({ ...deps(st2.repo, k2.fn), campoTexto: '' }, 1, { id: 'wh3', ts: T0 - 5, texto: 'Agradecemos sua mensagem. Não estamos disponíveis.' })
+  assertEquals(r2.classificacao, 'autoresposta'); assert(!k2.escritas.some((e) => e.body?.status_id))
+})
+
+Deno.test('WH sem campo configurado e sem texto: segue o caminho texto_vazio (pendente), sem lançar', async () => {
+  const st = repoFake(); const k = kommoFake({ texto: '', ins: [{ id: 'wh4', ts: T0 - 900 }], outs: [T0 - 1000] })
+  const r = await receberWebhook({ ...deps(st.repo, k.fn), campoTexto: '' }, 1, { id: 'wh4', ts: T0 - 900, texto: '' })
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(st.linhas[0].regras, ['texto_vazio'])
 })

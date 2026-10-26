@@ -20,7 +20,9 @@ export type KommoResp = { ok: boolean; status: number; body: any }
 /** Cliente Kommo. `opts.retries` limita retentativas (POST de nota usa 0: não é idempotente). */
 export type KommoFn = (m: 'GET' | 'PATCH' | 'POST', path: string, body?: unknown, opts?: { etapa?: string; retries?: number; pararEm429?: boolean }) => Promise<KommoResp>
 
-export type Trabalho = { id: number; kommo_lead_id: number; tentativas: number }
+export type Trabalho = { id: number; kommo_lead_id: number; tentativas: number; mensagem_id?: string | null; texto?: string | null; recebido_em?: string | null }
+/** Mensagem trazida pelo webhook de conta (add_message): identidade, instante e texto direto. */
+export type MensagemRecebida = { id: string; ts: number; texto: string }
 export type Linha = {
   id: number; kommo_lead_id: number; mensagem_id: string; pipeline_id: number; status_id_origem: number | null
   texto: string | null; hash: string | null; recebido_em: string; ultimo_disparo_em: string | null; intervalo_s: number | null
@@ -32,7 +34,7 @@ export interface Repo {
   padroesAtivos(): Promise<Padrao[]>
   config(pipeline: number): Promise<Cfg | null>              // sempre relê (sem cache)
   // trabalho
-  criarTrabalho(leadId: number): Promise<Trabalho>
+  criarTrabalho(leadId: number, msg?: MensagemRecebida | null): Promise<Trabalho>
   concluirTrabalho(id: number, estado: 'concluido' | 'pendente' | 'descartado', erro?: string | null): Promise<void>
   trabalhosPendentes(limite: number): Promise<Trabalho[]>
   // mensagens
@@ -82,8 +84,8 @@ function leadValido(r: KommoResp, etapa: string) {
 // ──────────────────────────────────────────────────────────────────────────────────────────
 // 1) WEBHOOK: cria o trabalho ANTES de ler o Kommo e processa; se falhar, fica pendente pro cron.
 // ──────────────────────────────────────────────────────────────────────────────────────────
-export async function receberWebhook(deps: Deps, leadId: number): Promise<Resultado> {
-  const t = await deps.repo.criarTrabalho(leadId)
+export async function receberWebhook(deps: Deps, leadId: number, msg: MensagemRecebida | null = null): Promise<Resultado> {
+  const t = await deps.repo.criarTrabalho(leadId, msg)
   try {
     const r = await processarTrabalho(deps, t)
     return { trabalho: t.id, ...r }
@@ -114,6 +116,9 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
     .map((e) => ({ id: String(e.value_after?.[0]?.message?.id ?? e.id), ts: Number(e.created_at) })).filter((e) => e.id && Number.isFinite(e.ts)).sort((a, b) => a.ts - b.ts)
   const outs = eventos(await kommo('GET', `/api/v4/events?filter[entity][0]=lead&filter[entity_id][0]=${leadId}&filter[type]=outgoing_chat_message&filter[created_at][from]=${de}&limit=50`, undefined, { etapa: 'eventos_out' }), 'eventos_out')
     .map((e) => Number(e.created_at)).filter(Number.isFinite).sort((a, b) => a - b)
+  // a mensagem que chegou pelo webhook de conta é a fonte primária (id + instante + texto); /events pode atrasar
+  const msgWebhook: MensagemRecebida | null = t.mensagem_id ? { id: String(t.mensagem_id), ts: Math.floor(new Date(t.recebido_em ?? Date.now()).getTime() / 1000), texto: String(t.texto ?? '') } : null
+  if (msgWebhook && !ins.some((i) => i.id === msgWebhook.id)) { ins.push({ id: msgWebhook.id, ts: msgWebhook.ts }); ins.sort((a, b) => a.ts - b.ts) }
   if (!ins.length) {
     // o evento pode ainda não estar visível na API: trabalho continua pendente (cron retoma)
     const estado = t.tentativas + 1 >= deps.maxTentativas ? 'descartado' : 'pendente'
@@ -129,7 +134,8 @@ export async function processarTrabalho(deps: Deps, t: Trabalho): Promise<Result
   if (novas.length) {
     await repo.criarLinhas(novas.map((i) => {
       const disparo = ultimoDisparoAte(outs, i.ts)
-      return { kommo_lead_id: leadId, mensagem_id: i.id, pipeline_id: pipeline, status_id_origem: statusAtual, recebido_em: iso(i.ts), ultimo_disparo_em: disparo ? iso(disparo) : null, intervalo_s: disparo ? i.ts - disparo : null, modo: cfg.modo, classificacao: 'indeterminado', regras: ['nova'], estado_efeito: 'pendente' }
+      const texto = msgWebhook && msgWebhook.id === i.id && msgWebhook.texto ? msgWebhook.texto.slice(0, 2000) : null
+      return { kommo_lead_id: leadId, mensagem_id: i.id, pipeline_id: pipeline, status_id_origem: statusAtual, recebido_em: iso(i.ts), ultimo_disparo_em: disparo ? iso(disparo) : null, intervalo_s: disparo ? i.ts - disparo : null, modo: cfg.modo, classificacao: 'indeterminado', regras: ['nova'], estado_efeito: 'pendente', texto }
     }))
     // mensagens anteriores à última que acabaram de ganhar linha não têm texto (o campo guarda só o
     // último): ficam superadas pela mais nova — registradas, nunca decididas no escuro
@@ -160,15 +166,18 @@ export async function decidirEAplicar(deps: Deps, cfg: Cfg, lead: any, linhaIn: 
   // decisão só enquanto a linha está livre (pendente, sem lease): depois do claim ela é imutável
   if (linha.estado_efeito === 'pendente' && (linha.classificacao === 'indeterminado' || !linha.decidido_em)) {
     let texto = (linha.texto ?? '').trim()
-    if (!texto) {
+    if (!texto && deps.campoTexto) {
+      // fallback legado (Salesbot gravando {{message_text}} num campo). Com o webhook de conta o texto
+      // já vem na linha; se o campo não existir, segue sem texto (caminho texto_vazio → mídia).
       const campos = await kommo('GET', `/api/v4/leads/custom_fields?limit=250`, undefined, { etapa: 'campos' })
       if (!campos.ok) throw new LeituraFalhou('campos', `HTTP ${campos.status}`)
       const lista = campos.body?._embedded?.custom_fields
       if (!Array.isArray(lista)) throw new LeituraFalhou('campos', 'envelope inesperado')
       const campo = lista.find((f: any) => String(f.name).toLowerCase() === deps.campoTexto.toLowerCase())
-      if (!campo) throw new LeituraFalhou('campos', `campo "${deps.campoTexto}" não existe no Kommo`)
-      const cf = (lead.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === Number(campo.id))
-      texto = String(cf?.values?.[0]?.value ?? '').trim()
+      if (campo) {
+        const cf = (lead.custom_fields_values ?? []).find((f: any) => Number(f.field_id) === Number(campo.id))
+        texto = String(cf?.values?.[0]?.value ?? '').trim()
+      }
     }
     if (!texto) {
       const tent = Number(linha.tentativas ?? 0) + 1
