@@ -13,7 +13,7 @@
 // e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PADRAO, classificarEnvio, consolidar, decidir, identidadeEstavel, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, aceitarEvento, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -207,19 +207,19 @@ async function webhook(sb: any, cfg: Cfg, body: any) {
   for (const data of itens) {
     const m = textoDoEvento(data)
     if (!m || !m.de) { out.push({ ignorado: 'sem remetente' }); continue }
-    const waId = identidadeEstavel(m)
-    if (!waId) { console.warn('cliente-oculto: evento sem identidade estável (sem key.id e sem messageTimestamp) — quarentena', String(m.de)); out.push({ de: m.de, ignorado: 'quarentena: sem identidade estável' }); continue }
-    const ts = m.ts ?? agoraS()   // só para fromMe (eco) com id real; entradas exigem ts estável (acima)
+    const ac = aceitarEvento(m)   // identidade estável E instante real; senão quarentena (vale para entrada e eco)
+    if (!ac.ok) { console.warn('cliente-oculto:', ac.motivo, String(m.de)); out.push({ de: m.de, ignorado: ac.motivo }); continue }
+    const { waId, ts } = ac
     const { data: ss, error } = await sb.from('oculto_sessoes').select('*').eq('numero_alvo', m.de).in('status', ABERTAS).order('criado_em', { ascending: false }).limit(1)
     if (error) throw new Error(`oculto_sessoes: ${error.message}`)
     const row = ss?.[0]
     if (!row) { out.push({ de: m.de, ignorado: 'sem sessão aberta' }); continue }
     if (m.fromMe) {   // eco do nosso envio: registra (dedupe por wa_id) — serve de reconciliação; só com id real
-      if (m.texto && m.id) { const r = await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(ts), wa_id: m.id, bruto: null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }); if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`) }
+      if (m.texto && m.id) { const r = await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(ts), wa_id: waId, bruto: null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }); if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`) }
       out.push({ sessao: row.id, nossa: true }); continue
     }
     // entrada em UMA transação idempotente: mensagem + watermark + agendamento (cobre 'pendente' durante a abertura)
-    const { data: ent, error: een } = await sb.rpc('oculto_entrada', { p_id: row.id, p_wa_id: waId, p_texto: m.texto || '[mídia]', p_em: iso(m.ts!), p_bruto: data })
+    const { data: ent, error: een } = await sb.rpc('oculto_entrada', { p_id: row.id, p_wa_id: waId, p_texto: m.texto || '[mídia]', p_em: iso(ts), p_bruto: data })
     if (een) throw new Error(`oculto_entrada: ${een.message}`)
     const e0 = Array.isArray(ent) ? ent[0] : ent
     if (!e0 || typeof e0.nova !== 'boolean') throw new Error('oculto_entrada: resultado inesperado')

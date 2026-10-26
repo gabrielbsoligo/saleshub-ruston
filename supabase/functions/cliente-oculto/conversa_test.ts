@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { classificarEnvio, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { aceitarEvento, classificarEnvio, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 
 const T0 = 1_800_000_000
 const H = 3600
@@ -85,6 +85,12 @@ Deno.test('identidade: key.id > determinística (remetente|messageTimestamp|text
   const semNada = { key: { remoteJid: '5511988887777@s.whatsapp.net' }, message: { conversation: 'oi' } }
   const e1 = textoDoEvento(semNada)!, e2 = textoDoEvento(semNada)!
   assertEquals(e1.ts, null); assertEquals(identidadeEstavel(e1), null); assertEquals(identidadeEstavel(e2), null)
+  // key.id presente mas SEM messageTimestamp: identidade existe, mas o evento NÃO é aceito (nunca iso(null)/epoch)
+  const soId = textoDoEvento({ key: { remoteJid: '5511988887777@s.whatsapp.net', id: 'ABC' }, message: { conversation: 'oi' } })!
+  assertEquals(soId.ts, null); assertEquals(identidadeEstavel(soId), 'ABC')
+  const ac = aceitarEvento(soId); assertEquals(ac.ok, false); assert(!ac.ok && ac.motivo.includes('key.id sem messageTimestamp'))
+  assertEquals(aceitarEvento(e1).ok, false)
+  const okEv = aceitarEvento(comTs); assert(okEv.ok && okEv.ts === T0 && okEv.waId === idDeterministico('5511988887777', T0, 'oi'))
   // timestamp em milissegundos também é aceito e normalizado
   assertEquals(textoDoEvento({ key: { remoteJid: '5511988887777@s.whatsapp.net', id: 'X' }, message: { conversation: 'oi' }, messageTimestamp: T0 * 1000 })!.ts, T0)
 })

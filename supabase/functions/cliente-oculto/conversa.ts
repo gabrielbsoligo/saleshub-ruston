@@ -183,6 +183,15 @@ export function identidadeEstavel(m: { id: string | null; ts: number | null; de:
   if (m.ts != null && m.de) return idDeterministico(m.de, m.ts, m.texto)
   return null   // quarentena
 }
+/** política de aceitação de um evento de mensagem: precisa de identidade estável E instante real (messageTimestamp).
+ *  Sem instante não há cronômetro nem ordem no histórico — vai para quarentena mesmo com key.id (nunca iso(null)). */
+export function aceitarEvento(m: { id: string | null; ts: number | null; de: string | null; texto: string }): { ok: true; waId: string; ts: number } | { ok: false; motivo: string } {
+  if (!m.de) return { ok: false, motivo: 'sem remetente' }
+  if (m.ts == null) return { ok: false, motivo: m.id ? 'quarentena: key.id sem messageTimestamp' : 'quarentena: sem identidade estável (sem key.id e sem messageTimestamp)' }
+  const waId = identidadeEstavel(m)
+  if (!waId) return { ok: false, motivo: 'quarentena: sem identidade estável' }
+  return { ok: true, waId, ts: m.ts }
+}
 export function idDeterministico(de: string, ts: number, texto: string): string {
   let h = 0x811c9dc5
   for (const ch of `${de}|${ts}|${texto}`) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 0x01000193) >>> 0 }
