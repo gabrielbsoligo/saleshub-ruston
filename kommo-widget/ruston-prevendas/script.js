@@ -210,7 +210,8 @@
       sem_permissao: 'Você não é dono deste lead nem tem tarefa aberta nele.',
       telefone_fora_da_entidade: 'Esse telefone não é de um contato deste lead.',
       telefone_invalido: 'Telefone inválido.',
-      ja_discando: 'Já há uma ligação sua iniciada há menos de 20 s.',
+      ja_discando: 'Ligação pedida agora há pouco; aguarde 2 s.',
+      telefone_invalido: 'Número inválido: use DDD + número (ex.: 47 99999-9999).',
       limite: 'Muitas tentativas; aguarde um minuto.',
       provedor_auth: 'O provedor de telefonia recusou a credencial do servidor.',
       provedor_limite: 'Limite de ligações do provedor de telefonia atingido; tente em 1 minuto.',
@@ -265,7 +266,7 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, atendidaNaTentativa: -1, orientacao: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  pendenteAte: 0, discando: false, manual: '', ultimoPedido: 0, aposRegistro: null, pedida: false, tentativa: 0, atendidaNaTentativa: -1, orientacao: -1, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
                   tel: { chave: '', contatos: null, erro: '', carregando: false } };
       var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
@@ -721,6 +722,7 @@
           try { var r = e && e.response; dbg('REGISTRADO', r && r.status_code, 'Contact:', r && r.getHeader('Contact'), 'Expires:', r && r.getHeader('Expires')); } catch (x) {}
           var outros = 0;
           try { var hs = e && e.response && (e.response.getHeaders ? e.response.getHeaders('Contact') : [e.response.getHeader('Contact')]); outros = Fila.contarRegistros(hs) - 1; } catch (x) {}
+          if (meu() && voz.aposRegistro) { var seguir = voz.aposRegistro; voz.aposRegistro = null; seguir(); }
           if (meu()) vozEstado('registrado', outros > 0 ? 'Este ramal também está registrado em outro lugar (webphone/app/extensão do provedor). Feche os outros, senão as ligações podem tocar lá e não aqui.' : '');
         });
         ua.on('unregistered', function () { if (meu()) vozEstado('reconectando'); });
@@ -742,17 +744,22 @@
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false; voz.orientacao = -1;
           voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
+          var t0 = mono(), ms = function () { return Math.round(mono() - t0) + ' ms'; };
           s.on('peerconnection', function (pe) {
+            try { pe.peerconnection.addEventListener('icegatheringstatechange', function () { dbg('ICE gathering', pe.peerconnection.iceGatheringState, ms()); }); } catch (x) {}
+            try { pe.peerconnection.addEventListener('iceconnectionstatechange', function () { dbg('ICE conexão', pe.peerconnection.iceConnectionState, ms()); }); } catch (x) {}
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
-          s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
+          s.on('confirmed', function () { dbg('ACK recebido (chamada confirmada)', ms()); });
+          s.on('accepted', function () { dbg('200 OK enviado (aguardando ACK)', ms()); if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
           var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
-          s.on('ended', fim); s.on('failed', function (e) { dbg('chamada falhou', e && e.cause); fim(e); });
+          s.on('ended', function (e) { dbg('encerrada por', e && e.originator, e && e.cause, ms()); fim(e); });
+          s.on('failed', function (e) { dbg('chamada falhou', e && e.cause, 'por', e && e.originator, (e && e.message && e.message.status_code) || '', ms()); fim(e); });
           if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
             voz.atendidaNaTentativa = voz.tentativa;                          // consome a autorização desta tentativa
-            dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')');
+            dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')', ms());
             atenderVoz();
           } else { som(); render(); }                                          // fora da tentativa: toca e espera o clique
         });
@@ -799,9 +806,13 @@
           render();
         });
       }
-      function discarVoz(tel) {
+      function discarVoz(tel, manual) {
         var aqui = entidadeAtual();
-        if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
+        // nova tentativa SUBSTITUI a pendente (a resposta antiga é ignorada pelo número da tentativa); só não disca em
+        // chamada; anti duplo clique de 1 s (o servidor também recusa pedidos a menos de 2 s)
+        if ((!aqui && !manual) || voz.estado !== 'registrado' || voz.sessao || !tel) { render(); return; }
+        if (mono() - voz.ultimoPedido < 1000) return;
+        voz.ultimoPedido = mono();
         var t = ++voz.tentativa, posse = voz.posse;
         voz.discando = true; voz.aviso = 'Chamando… conectando o seu ramal aqui e depois ligando para o cliente.';
         voz.orientacao = -1;                                              // tentativa nova: limpa a orientação anterior
@@ -810,15 +821,34 @@
         }, 25000);
         voz.pendenteAte = mono() + 60000;                           // janela de 60 s no relógio monotônico
         render();
-        chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
+        var pedido = { acao: 'discar', telefone: tel };
+        if (aqui && (aqui.etype === 'leads' || aqui.etype === 'contacts')) { pedido.entity_type = aqui.etype; pedido.entity_id = aqui.eid; }
+        if (manual) pedido.manual = true;
+        // a 4com entrega a chamada ao ÚLTIMO registro do ramal: re-registra agora e só então pede a discagem
+        // (confirmação do REGISTER ou, no máximo, 2,5 s depois)
+        var feito = false, pedir = function () {
+          if (feito || t !== voz.tentativa || posse !== voz.posse) return;
+          feito = true; voz.aposRegistro = null;
+          if (voz.sessao || voz.estado !== 'registrado') {                  // ficou ocupado/sem ramal durante a espera: cancela
+            voz.discando = false; voz.pendenteAte = 0; voz.orientacao = -1;
+            voz.aviso = voz.sessao ? 'Ligação cancelada: você já está em outra chamada.' : 'Ligação cancelada: o telefone não está pronto.'; render(); return;
+          }
+          enviar();
+        };
+        voz.aposRegistro = pedir;
+        try { if (voz.ua && voz.ua.register) voz.ua.register(); else pedir(); } catch (e) { pedir(); }
+        atraso(pedir, 2500);
+        function enviar() {
+        chamarVoz(pedido, function (err) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora
           voz.discando = false;
           if (err) { voz.pendenteAte = 0; voz.orientacao = -1; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = err.erro === 'provedor_recusou' && /has been failed/i.test(String(err.mensagem || ''))
-            ? 'A ligação não completou: o seu ramal provavelmente atendeu em OUTRO lugar. Desative a extensão API4COM do Chrome e feche o webphone/app da 4com, e tente de novo.'
+            ? 'A ligação não completou: a 4com entregou a chamada a outro registro do seu ramal (extensão/webphone/app da 4com). Tente de novo — o widget retoma o ramal.'
             : err.mensagem && /^provedor_/.test(err.erro) ? String(err.mensagem) : Fila.mensagemVoz(err.erro); }   // a mensagem do servidor é a mais precisa (ex.: nenhuma ligação foi feita)
           else if (!voz.sessao) voz.aviso = '';
           render();
         });
+        }
       }
       function mmss(ms) { var t = Math.max(0, Math.floor(ms / 1000)); return pad(Math.floor(t / 60)) + ':' + pad(t % 60); }
       function htmlVoz() {
@@ -841,7 +871,7 @@
               c.telefones.forEach(function (t) {
                 n++;
                 h += '<div class="rpv-it"><span class="bd"><div class="nm">' + esc(c.nome || 'Contato') + '</div><div class="mt">' + esc(t.exibir) + '</div></span>' +
-                     '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t.e164) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
+                     '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t.e164) + '">Ligar</button></div>';
               });
             });
             var inval = 0; (voz.tel.contatos || []).forEach(function (c) { inval += c.invalidos || 0; });
@@ -849,9 +879,13 @@
             else if (inval) h += '<div class="rpv-f"><span>+' + inval + ' telefone(s) em formato não reconhecido.</span></div>';
             (voz.tel.teste || []).forEach(function (t) {
               h += '<div class="rpv-it"><span class="bd"><div class="nm">Número de TESTE</div><div class="mt">' + esc(t) + '</div></span>' +
-                   '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
+                   '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t) + '">Ligar</button></div>';
             });
           }
+        }
+        if (voz.estado === 'registrado' && !voz.sessao) {
+          h += '<div class="rpv-it"><span class="bd"><input id="' + NS + '-manual" class="rpv-num" type="tel" inputmode="tel" placeholder="Digitar número (DDD + número)" value="' + esc(voz.manual) + '"></span>' +
+               '<button class="rpv-ligar" data-act="voz-manual">Ligar</button></div>';
         }
         if (voz.orientacao === voz.tentativa && !voz.sessao) h += '<div class="rpv-warn">A ligação não chegou a este telefone. Se o webphone/app do provedor estiver aberto, feche-o e tente de novo.</div>';
         if (voz.aviso) h += '<div class="rpv-f"><span>' + esc(voz.aviso) + '</span></div>';
@@ -878,6 +912,7 @@
 '.rpv-tag{border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;background:#EEF3F8;color:#5C6E80}.rpv-tag.m1{background:#FFE9E9;color:#B4232B}.rpv-tag.m2,.rpv-tag.m3{background:#FFF1E0;color:#A35300}' +
 '.rpv-late{color:#B4232B;font-weight:700}.rpv-f{padding:7px 12px;border-top:1px solid #EFEEEC;font-size:10px;color:#8C8A88;display:flex;justify-content:space-between;gap:8px}' +
 '.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}' +
+'.rpv-num{width:100%;box-sizing:border-box;border:1px solid #E2E1DE;border-radius:7px;padding:5px 8px;font-size:12.5px}' +
 '.rpv-tag.m0{background:#E30613;color:#fff}.rpv-ligar{border-radius:7px;border:1px solid #1E8E3E;background:#1E8E3E;color:#fff;padding:4px 10px;cursor:pointer;font-weight:700;font-size:11.5px;align-self:center}.rpv-ligar[disabled]{opacity:.5;cursor:default}';
 
       function css() { if (document.getElementById(NS + '-css')) return; var st = document.createElement('style'); st.id = NS + '-css'; st.textContent = CSS; document.head.appendChild(st); }
@@ -958,7 +993,9 @@
         html += '<span class="rpv-pill' + classe + '" title="' + esc(p ? nomeDe(p.item) + ' · ' + (Fila.ROTULO[p.item.momento] || '') : (agir ? 'sem tarefas' : 'fila desatualizada')) + '">' +
                 '<button class="rpv-go" ' + (p ? 'data-act="avancar"' : 'disabled') + '>➜ ' + esc(rotulo) + (state.fila.length ? '<span class="cnt">' + state.fila.length + '</span>' : '') + '</button>' +
                 '<button class="rpv-q" data-act="painel" title="Ver a fila">' + (state.open ? '▾' : '▴') + '</button></span>';
+        var foco = document.activeElement && document.activeElement.id === NS + '-manual', pos = foco ? document.activeElement.selectionStart : 0;
         c.innerHTML = html;
+        if (foco) { var inp = document.getElementById(NS + '-manual'); if (inp && inp.focus) { inp.focus(); try { inp.setSelectionRange(pos, pos); } catch (e) {} } }
       }
 
       function aoClicar(ev) {
@@ -974,6 +1011,7 @@
         else if (act === 'ir') { if (!podeAgir() || podarChats()) { render(); return; } var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
         else if (act === 'abrir') abrir(el.getAttribute('data-et'), el.getAttribute('data-eid'));
         else if (act === 'voz-ligar') discarVoz(el.getAttribute('data-tel'));
+        else if (act === 'voz-manual') discarVoz(String(voz.manual || '').trim(), true);
         else if (act === 'voz-atender') atenderVoz();
         else if (act === 'voz-desligar') desligarVoz();
         else if (act === 'voz-mudo') mudoVoz();
@@ -981,7 +1019,11 @@
         else if (act === 'voz-reconectar') { pararVoz(); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao, false); }
         else if (act === 'fechar-ntf') { var tids = String(el.getAttribute('data-tid') || '').split(',').map(Number); state.notif = state.notif.filter(function (n) { return tids.indexOf(n.id) === -1; }); lsSet('notif', state.notif); render(); }
       }
+      function aoDigitar(ev) {                                              // guarda o que foi digitado (o render recria o campo)
+        if (ev.target && ev.target.id === NS + '-manual') voz.manual = String(ev.target.value || '').slice(0, 30);
+      }
       function aoTeclar(ev) {
+        if (ev.target && ev.target.id === NS + '-manual' && ev.key === 'Enter') { ev.preventDefault(); discarVoz(String(voz.manual || '').trim(), true); return; }
         if (!cfg().atalho || !ev.altKey || ev.ctrlKey || ev.metaKey || String(ev.key).toLowerCase() !== 'n') return;
         var t = ev.target && ev.target.tagName;
         if (t === 'INPUT' || t === 'TEXTAREA' || (ev.target && ev.target.isContentEditable)) return;
@@ -1004,6 +1046,7 @@
         css(); raiz(); initAudio();
         ouvir(document, 'click', aoClicar, false);
         ouvir(document, 'keydown', aoTeclar, false);
+        ouvir(document, 'input', aoDigitar, false);
         ouvir(window, 'storage', aoArmazenar, false);
         var prime = function () {
           try { if (state.audio) { state.audio.muted = true; state.audio.play().then(function () { state.audio.pause(); state.audio.currentTime = 0; state.audio.muted = false; }).catch(function () { state.audio.muted = false; }); } } catch (e) {}

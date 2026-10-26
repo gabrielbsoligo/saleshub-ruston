@@ -143,46 +143,69 @@ Deno.serve(async (req) => {
     }
 
     if (acao !== 'telefones' && acao !== 'discar') return json({ erro: 'acao' }, 400, origin)
-    const etype = body?.entity_type === 'contacts' ? 'contacts' : body?.entity_type === 'leads' ? 'leads' : null
+    // discagem MANUAL (pedido do Gabriel): número digitado no widget; o lead é opcional e só serve para a nota
+    const manual = acao === 'discar' && body?.manual === true
+    let etype: 'leads' | 'contacts' | null = body?.entity_type === 'contacts' ? 'contacts' : body?.entity_type === 'leads' ? 'leads' : null
     const eid = Number(body?.entity_id)
-    if (!etype || !Number.isInteger(eid) || eid <= 0) return json({ erro: 'entidade' }, 400, origin)
+    if (!etype || !Number.isInteger(eid) || eid <= 0) {
+      if (!manual) return json({ erro: 'entidade' }, 400, origin)
+      etype = null
+    }
     const destino = acao === 'discar' ? telefoneE164(String(body?.telefone ?? '')) : null
     if (acao === 'discar' && !destino) return json({ erro: 'telefone_invalido' }, 400, origin)
 
-    // limite ANTES de qualquer GET (telefones: 30 por 10 min; discar: 1 a cada 20 s, 15 por 10 min, 429 bloqueia 60 s)
+    // limite ANTES de qualquer GET (telefones: 30 por 10 min; discar: 15 por 10 min e 2 s entre pedidos — só contra
+    // duplo clique; um 429 do provedor bloqueia pelo Retry-After)
+    const alvo = etype ? `${etype}:${eid}` : 'manual'
     const ev = acao === 'telefones'
-      ? await reservar('telefones', 30, 600, 0, { entidade: `${etype}:${eid}` })
-      : await reservar('discar', 15, 600, 20, { entidade: `${etype}:${eid}`, tel: finalTelefone(destino!) })
-    if (!ev) return json({ erro: acao === 'discar' ? 'ja_discando' : 'limite', retry_after: acao === 'discar' ? 20 : 60 }, acao === 'discar' ? 409 : 429, origin)
+      ? await reservar('telefones', 30, 600, 0, { entidade: alvo })
+      : await reservar('discar', 15, 600, 2, { entidade: manual ? `manual${etype ? ' ' + alvo : ''}` : alvo, tel: finalTelefone(destino!) })
+    if (!ev) return json({ erro: acao === 'discar' ? 'ja_discando' : 'limite', retry_after: acao === 'discar' ? 2 : 60 }, acao === 'discar' ? 409 : 429, origin)
 
     // ---------------- entidade: autorização com os objetos devolvidos ----------------
-    const ent = await kommo(`/api/v4/${etype}/${eid}${etype === 'leads' ? '?with=contacts' : ''}`)
-    if (!ent) { await registrar(ev, 'negado', 'entidade inexistente'); return json({ erro: 'entidade_inexistente' }, 404, origin) }
-    let tarefas: unknown = []
-    if (ent && !motivoAutorizacao({ papel: membro.role ?? null, uid, donoEntidade: ent?.responsible_user_id ?? null, temTarefaPropria: false })) {
-      const t = await kommo(`/api/v4/tasks?filter[responsible_user_id]=${uid}&filter[is_completed]=0&filter[entity_type]=${etype}&filter[entity_id][]=${eid}&limit=50`)
-      tarefas = t?._embedded?.tasks ?? []
+    // manual: a entidade é só para a nota; se não houver ou não for autorizada, liga sem nota
+    let d: ReturnType<typeof decidirEntidade> | null = null
+    // lookup da entidade: obrigatório no fluxo normal; no MANUAL é auxiliar (só para a nota) — qualquer falha nele
+    // (Kommo, orçamento, 429) só suprime a nota; a discagem já foi autorizada por usuário/ramal/limites
+    const resolverEntidade = async () => {
+      const ent = await kommo(`/api/v4/${etype}/${eid}${etype === 'leads' ? '?with=contacts' : ''}`)
+      let dec: ReturnType<typeof decidirEntidade> | null = null
+      if (ent) {
+        let tarefas: unknown = []
+        if (!motivoAutorizacao({ papel: membro.role ?? null, uid, donoEntidade: ent?.responsible_user_id ?? null, temTarefaPropria: false })) {
+          const t = await kommo(`/api/v4/tasks?filter[responsible_user_id]=${uid}&filter[is_completed]=0&filter[entity_type]=${etype}&filter[entity_id][]=${eid}&limit=50`)
+          tarefas = t?._embedded?.tasks ?? []
+        }
+        let devolvidos: unknown = []
+        if (etype === 'leads') {
+          const ids = (Array.isArray(ent?._embedded?.contacts) ? ent._embedded.contacts : []).map((c: any) => Number(c?.id)).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, MAX_CONTATOS)
+          if (ids.length) devolvidos = (await kommo(`/api/v4/contacts?${ids.map((id: number) => `filter[id][]=${id}`).join('&')}&limit=${MAX_CONTATOS}`))?._embedded?.contacts ?? []
+        }
+        dec = decidirEntidade({ uid, papel: membro.role ?? null, etype: etype!, eid, entidade: ent, tarefas, contatosDevolvidos: devolvidos })
+      }
+      return { ent, dec }
     }
-    let devolvidos: unknown = []
-    if (ent && etype === 'leads') {
-      const ids = (Array.isArray(ent?._embedded?.contacts) ? ent._embedded.contacts : []).map((c: any) => Number(c?.id)).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, MAX_CONTATOS)
-      if (ids.length) devolvidos = (await kommo(`/api/v4/contacts?${ids.map((id: number) => `filter[id][]=${id}`).join('&')}&limit=${MAX_CONTATOS}`))?._embedded?.contacts ?? []
+    if (etype) {
+      if (manual) { try { d = (await resolverEntidade()).dec } catch (e) { console.warn('[prevendas-voz] manual sem nota:', (e as Error).message); d = null } }
+      else { const r0 = await resolverEntidade(); d = r0.dec; if (!r0.ent) { await registrar(ev, 'negado', 'entidade inexistente'); return json({ erro: 'entidade_inexistente' }, 404, origin) } }
+      if (!manual && (!d || !d.ok)) { const er = d && !d.ok ? d.erro : 'entidade_inconsistente'; await registrar(ev, 'negado', er); return json({ erro: er }, er === 'sem_permissao' ? 403 : 409, origin) }
     }
-    const d = decidirEntidade({ uid, papel: membro.role ?? null, etype, eid, entidade: ent, tarefas, contatosDevolvidos: devolvidos })
-    if (!d.ok) { await registrar(ev, 'negado', d.erro); return json({ erro: d.erro }, d.erro === 'sem_permissao' ? 403 : 409, origin) }
     if (acao === 'telefones') {
       await registrar(ev, 'ok')
       // números da lista de TESTE do servidor (só existem durante o teste; a discagem os aceita para esta entidade)
       const teste = [...new Set(String(env('PREVENDAS_VOZ_TELEFONES_TESTE')).split(',').map((x) => telefoneE164(x.trim())).filter(Boolean))]
-      return json({ ok: true, contatos: d.contatos, teste, autorizado_por: d.motivo }, 200, origin)
+      return json({ ok: true, contatos: d && d.ok ? d.contatos : [], teste, autorizado_por: d && d.ok ? d.motivo : null }, 200, origin)
     }
+    const notaOk = !!(etype && d && d.ok)                               // nota só em entidade autorizada
 
     // ---------------- discar ----------------
-    const daEntidade = d.contatos.some((c) => c.telefones.some((t) => t.e164 === destino))
-    const deTeste = String(env('PREVENDAS_VOZ_TELEFONES_TESTE')).split(',').map((x) => telefoneE164(x.trim())).includes(destino)
-    if (!daEntidade && !deTeste) { await registrar(ev, 'negado', 'telefone fora da entidade'); return json({ erro: 'telefone_fora_da_entidade' }, 403, origin) }
+    if (!manual) {
+      const daEntidade = !!(d && d.ok) && d.contatos.some((c) => c.telefones.some((t) => t.e164 === destino))
+      const deTeste = String(env('PREVENDAS_VOZ_TELEFONES_TESTE')).split(',').map((x) => telefoneE164(x.trim())).includes(destino)
+      if (!daEntidade && !deTeste) { await registrar(ev, 'negado', 'telefone fora da entidade'); return json({ erro: 'telefone_fora_da_entidade' }, 403, origin) }
+    }
 
-    let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal
+    let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal, t0Post = Date.now()
     if (provedor === '3c') {
       // PREPARAÇÃO (ramal do agente) — prepararAgente3c, testada: falha aqui NUNCA é "incerto" (o /click2call não foi chamado)
       const prep = await prepararAgente3c(async () => { const { r, u } = await usuario3c(); return { status: r.status, retryAfter: r.headers.get('Retry-After'), u } })
@@ -201,6 +224,7 @@ Deno.serve(async (req) => {
       ramalUsado = c.ramal
       // ENVIO: daqui em diante, falha de rede = incerto (a ligação pode ter saído)
       try {
+        t0Post = Date.now()
         r = await fetch(`${API3C}/click2call`, {
           method: 'POST', headers: { Authorization: `Bearer ${token3c}`, 'Content-Type': 'application/json', Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
           body: JSON.stringify({ extension: c.ramal, phone: telefone3c(destino!) }),
@@ -208,26 +232,28 @@ Deno.serve(async (req) => {
         try { corpo = await r.json() } catch { corpo = null }
       } catch { r = null }
     } else try {
+      t0Post = Date.now()
       r = await fetch(`${API4COM}/calls`, {
         method: 'POST', headers: { Authorization: token4com, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
         body: JSON.stringify({ extension: ramal, caller: ramal, called: destino, metadata: { origem: 'kommo-widget', kommo_user: uid, entity_type: etype, entity_id: eid } }),
       })
       try { corpo = await r.json() } catch { corpo = null }
     } catch { r = null }
+    const msPost = Date.now() - t0Post                                   // quanto o provedor levou para responder
     const res = provedor === '3c' ? interpretar3c(r?.status ?? 0, corpo) : interpretar4com(r?.status ?? 0, corpo)
     if (!res.ok) {
       const ra = r && r.status === 429 ? await bloquear('discar', r) : 0
-      await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem}`)
+      await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem} (${msPost} ms)`)
       return json({ erro: res.erro, mensagem: res.mensagem, incerto: !!res.incerto, ...(ra ? { retry_after: ra } : {}) }, res.incerto ? 504 : 502, origin)
     }
     // nota no Kommo (melhor esforço, com prazo PRÓPRIO a partir de agora; a ligação já aconteceu e nunca é repetida)
-    let nota = true
-    try {
+    let nota = notaOk
+    if (notaOk) try {
       await kommo(`/api/v4/${etype}/notes`, { method: 'POST', body: JSON.stringify([{ entity_id: eid, note_type: 'common',
         params: { text: `📞 Ligação ${provedor === '3c' ? '3C' : '4com'} iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramalUsado}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) }, Date.now() + PRAZO_NOTA_MS)
     } catch (e) { nota = false; console.error('[prevendas-voz] nota', (e as Error).message) }
     // auditoria registra a ligação e, se for o caso, a nota pendente (para retomada manual)
-    await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${nota ? '' : '; NOTA PENDENTE'}`)
+    await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${manual ? '; manual' : ''}${notaOk && !nota ? '; NOTA PENDENTE' : ''} (${msPost} ms)`)
     return json({ ok: true, provedor, chamada_id: res.chamada_id, ramal: ramalUsado, nota }, 200, origin)
   } catch (e) {
     const m = (e as Error).message
