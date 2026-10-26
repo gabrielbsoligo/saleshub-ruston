@@ -1,7 +1,6 @@
 // deno test --allow-read supabase/functions/central-cases/motor_test.ts
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
 import { ErroCritico, casaComNome, extrairPresenca, gerarCases, hostPublico, ipPrivado, pontuar, qualidadeDe, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
-import { sondarSite } from './cliente.ts'
 // sinais de presença neutros (não medidos) para os fakes inline
 const sinais = { siteNoAr: async () => null, instagramExiste: async () => null, googleNegocio: async () => ({ ok: false, encontrado: false, rating: null, avaliacoes: null }) }
 import { depsReais } from './cliente.ts'
@@ -168,28 +167,20 @@ Deno.test('ordem final = qualidade primeiro: case menos relevante mas com presen
 })
 
 
-Deno.test('R2#1 sondarSite (SSRF): só http(s) público; redirect para loopback/privado/link-local/metadata = null; DNS privado = null; redirect público segue', async () => {
+Deno.test('R2#1 SSRF: a edge NUNCA faz GET direto no site — pré-checa o host e delega ao motor (sonda.mjs, IP fixado); host não público nem chega ao motor', async () => {
   assert(ipPrivado('127.0.0.1') && ipPrivado('10.1.2.3') && ipPrivado('172.16.0.9') && ipPrivado('192.168.0.1') && ipPrivado('169.254.169.254') && ipPrivado('::1') && ipPrivado('fd00::1') && ipPrivado('0.0.0.0'))
   assert(!ipPrivado('8.8.8.8') && !ipPrivado('200.1.2.3') && !ipPrivado('2800:3f0::1'))
   assert(!hostPublico('localhost') && !hostPublico('app.internal') && !hostPublico('127.0.0.1') && !hostPublico('[::1]') && !hostPublico('semponto') && hostPublico('clinicasorriso.com.br'))
   const chamadas: string[] = []
-  const fetchFake = (async (u: string | URL | Request) => {
-    const url = String(u); chamadas.push(url)
-    if (url.startsWith('https://redir-privado.com/')) return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1:8080/admin' } })
-    if (url.startsWith('https://redir-meta.com/')) return new Response(null, { status: 301, headers: { location: 'http://169.254.169.254/latest/meta-data' } })
-    if (url.startsWith('https://redir-ok.com/')) return new Response(null, { status: 301, headers: { location: 'https://www.redir-ok.com/home' } })
-    if (url.startsWith('https://www.redir-ok.com/home')) return new Response('ok', { status: 200 })
-    if (url.startsWith('https://fora.com/')) return new Response('x', { status: 503 })
-    return new Response('ok', { status: 200 })
-  }) as unknown as typeof fetch
-  const dns = async (h: string) => h === 'dns-privado.com' ? ['10.0.0.5'] : ['200.10.20.30']
-  assertEquals(await sondarSite('https://redir-privado.com/', fetchFake, dns), null)
-  assertEquals(await sondarSite('https://redir-meta.com/', fetchFake, dns), null)
-  assertEquals(await sondarSite('https://dns-privado.com/', fetchFake, dns), null)
-  assertEquals(await sondarSite('ftp://x.com/', fetchFake, dns), null)
-  assertEquals(await sondarSite('https://redir-ok.com/', fetchFake, dns), true)
-  assertEquals(await sondarSite('https://fora.com/', fetchFake, dns), false)
-  assert(!chamadas.some((u) => u.includes('127.0.0.1') || u.includes('169.254')))   // nunca bateu no destino privado
+  const sbFake = { rpc: async () => ({ data: [], error: null }), from: () => ({ select: () => ({ eq: () => ({ gt: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }), upsert: async () => ({ error: null }) }) }
+  const fetchFake = (async (u: string | URL | Request, init?: RequestInit) => { chamadas.push(String(u)); const body = JSON.parse(String(init?.body ?? '{}')); return new Response(JSON.stringify(body.url === 'https://fora.com/' ? { ok: true, noAr: false, status: 503 } : body.url === 'https://indisponivel.com/' ? { ok: false, motivo: 'timeout' } : { ok: true, noAr: true, status: 200 }), { status: 200 }) }) as unknown as typeof fetch
+  const d = depsReais(sbFake, 'https://motor.x', async () => 'jwt', fetchFake)
+  assertEquals(await d.siteNoAr('https://clinicasorriso.com.br/'), true)
+  assertEquals(await d.siteNoAr('https://fora.com/'), false)
+  assertEquals(await d.siteNoAr('https://indisponivel.com/'), null)
+  assertEquals(await d.siteNoAr('http://127.0.0.1/'), null); assertEquals(await d.siteNoAr('https://app.internal/'), null); assertEquals(await d.siteNoAr('ftp://x.com/'), null)
+  assert(chamadas.every((u) => u.startsWith('https://motor.x/api/cases/site-no-ar')))   // só a rota do motor; nunca o site
+  assertEquals(chamadas.length, 3)                                                       // os 3 recusados não chegaram ao motor
 })
 
 Deno.test('R2#2 pulso de posse é chamado entre candidatos e chamadas lentas (web ×3 por candidato + anúncios); se lançar, a rodada aborta', async () => {

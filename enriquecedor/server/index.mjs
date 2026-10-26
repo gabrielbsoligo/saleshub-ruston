@@ -14,6 +14,7 @@ try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node antigo */ }
 import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
+import { sondarSite as sondarSiteSeguro } from './sonda.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 // Contexto da requisição (token do chamador + lead em foco) disponível em
@@ -4590,7 +4591,7 @@ const server = http.createServer(async (req, res) => {
       }
       const fila = await estadoFila().catch(() => null);
       return send(res, 200, {
-        versao: 'cases-gmn3-2026-10-26',
+        versao: 'cases-sonda-2026-10-26',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
         fila,
         ok: true,
@@ -4742,6 +4743,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, r);
     }
 
+    // Central de Cases: "site no ar" com sondagem segura contra SSRF (conexão fixada no IP aprovado; ver sonda.mjs)
+    if (url.pathname === '/api/cases/site-no-ar' && req.method === 'POST') {
+      const body = await readJson(req);
+      const alvo = String(body?.url ?? '').trim();
+      if (!alvo) return send(res, 400, { ok: false, motivo: 'informe url' });
+      const ck = chaveCache('sitear', alvo);
+      const hit = await cacheGet(ck);
+      if (hit !== undefined && hit !== null) return send(res, 200, hit);
+      const r = await sondarSiteSeguro(alvo);
+      if (r.ok) void cacheSet(ck, r, 7 * DIA);
+      return send(res, 200, r);
+    }
     // Central de Cases: Google Business com 3 estados — {ok:false} indisponível (Serper falhou; NÃO cacheia),
     // {ok:true, found:false} não encontrado (cacheado), {ok:true, found:true, rating, reviews, ...} encontrado.
     if (url.pathname === '/api/cases/google-negocio' && req.method === 'POST') {

@@ -6,62 +6,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ErroCritico, hostPublico, ipPrivado, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
 
-export type ResolveDns = (host: string) => Promise<string[]>
-const resolveDnsPadrao: ResolveDns = async (host) => {
-  const out: string[] = []
-  for (const t of ['A', 'AAAA'] as const) { try { out.push(...(await (Deno as any).resolveDns(host, t))) } catch { /* sem registro desse tipo */ } }
-  return out
-}
-/** sondagem HTTP segura: só http(s) público; redirects seguidos MANUALMENTE (≤5), validando host e IPs resolvidos
- *  a cada salto; nunca segue para loopback/privado/link-local. null = não deu para medir. */
-export async function sondarSite(url: string, fetchFn: typeof fetch, resolver: ResolveDns = resolveDnsPadrao, saltos = 5): Promise<boolean | null> {
-  let atual = url
-  for (let i = 0; i <= saltos; i++) {
-    let u: URL
-    try { u = new URL(atual) } catch { return null }
-    if (!/^https?:$/.test(u.protocol) || !hostPublico(u.hostname)) return null
-    if (!/^[\d.]+$/.test(u.hostname) && !u.hostname.includes(':')) {
-      const ips = await resolver(u.hostname).catch(() => [] as string[])
-      if (!ips.length || ips.some((ip) => ipPrivado(ip))) return null
-    }
-    let r: Response
-    try { r = await fetchFn(u.toString(), { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(8_000), headers: { 'user-agent': 'Mozilla/5.0 (compatible; SalesHub-Cases/1.0)' } }) } catch { return null }
-    if (r.status >= 300 && r.status < 400) {
-      const loc = r.headers.get('location'); if (!loc) return null
-      try { atual = new URL(loc, u).toString() } catch { return null }
-      continue
-    }
-    return r.status < 400
-  }
-  return null   // redirects demais
-}
-
 export type Sb = any
 const DIA = 24 * 60 * 60 * 1000
 
-export async function sessaoMotor(supabaseUrl: string, anonKey: string): Promise<string> {
-  const login = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const { data, error } = await login.auth.signInWithPassword({ email: Deno.env.get('ENRIQ_INTEG_EMAIL') ?? '', password: Deno.env.get('ENRIQ_INTEG_SENHA') ?? '' })
-  if (error || !data?.session?.access_token) throw new Error(`auth integração falhou: ${error?.message ?? 'sem sessão'}`)
-  return data.session.access_token as string
-}
-
-/** anúncios VALIDADOS como da empresa (meta.validados); modo 'pagina' = identidade confirmada; keyword com
- *  itens a validar/descartados = parcial (confirmado:false). Nunca conta descartados. */
-export function interpretarAnuncios(body: any): { ok: boolean; ativos: number | null; confirmado?: boolean; nota?: string } {
-  if (!body || body.ok === false) return { ok: false, ativos: null, nota: String(body?.note ?? 'anúncios indisponíveis') }
-  const meta = body.meta
-  if (!meta) return { ok: false, ativos: null, nota: String(body.note ?? 'sem medição') }
-  const validados = Array.isArray(meta.validados) ? meta.validados.length : 0
-  const aValidar = Array.isArray(meta.aValidar) ? meta.aValidar.length : 0
-  const descartados = Array.isArray(meta.descartados) ? meta.descartados.length : 0
-  if (meta.modo === 'pagina') return { ok: true, ativos: Number(meta.total ?? validados), confirmado: true }
-  if (validados > 0) return { ok: true, ativos: validados, confirmado: aValidar === 0, nota: aValidar ? `${aValidar} a validar` : undefined }
-  if (aValidar > 0) return { ok: true, ativos: aValidar, confirmado: false, nota: 'identidade não confirmada' }
-  return { ok: true, ativos: 0, confirmado: descartados === 0, nota: descartados ? `${descartados} anúncios de terceiros descartados` : undefined }
-}
-
-export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch, resolver: ResolveDns = resolveDnsPadrao): Deps {
+// A sondagem de site NÃO é feita daqui: a edge não consegue fixar a conexão no IP validado (DNS rebinding).
+// Fica no motor (enriquecedor/server/sonda.mjs), que conecta no IP aprovado preservando Host/SNI e revalida
+// cada salto. Aqui só a pré-checagem barata do host e a chamada à rota.
+export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>, fetchFn: typeof fetch = fetch): Deps {
   const chave = (prefixo: string, ...p: unknown[]) => `${prefixo}:${p.map((x) => String(x ?? '').toLowerCase().trim()).join('|')}`.slice(0, 900)
   // cache é best-effort: erro de leitura = sem cache (segue para o motor); erro de escrita = aviso no log
   const cacheGet = async (k: string) => {
@@ -93,13 +44,18 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       if (error) throw new ErroCritico(`cases_buscar: ${error.message}`)
       return (data ?? []).map((r: any) => ({ ...r, score: Number(r.score ?? 0), termos_casados: r.termos_casados ?? [] })) as Candidato[]
     },
-    // site no ar: sondagem segura (sondarSite): só público, redirects validados salto a salto; rede/timeout/privado = null
+    // site no ar: pré-checagem do host aqui; medição pelo motor (/api/cases/site-no-ar, sonda.mjs) — nunca GET direto da edge
     async siteNoAr(url) {
+      let host = ''
+      try { const u = new URL(url); if (!/^https?:$/.test(u.protocol)) return null; host = u.hostname } catch { return null }
+      if (!hostPublico(host)) return null
       const k = chave('site', url)
       const hit = await cacheGet(k)
       if (hit && typeof hit.no_ar !== 'undefined') return hit.no_ar
-      const v = await sondarSite(url, fetchFn, resolver)
-      if (v !== null) await cacheSet(k, { no_ar: v }, 7 * DIA)
+      const r = await motor('/api/cases/site-no-ar', { url })
+      if (r.status !== 200 || !r.body || r.body.ok !== true) return null
+      const v = !!r.body.noAr
+      await cacheSet(k, { no_ar: v }, 7 * DIA)
       return v
     },
     async instagramExiste(handle) {
