@@ -355,101 +355,186 @@ test('após falha: só uma leitura POSTERIOR à falha limpa a falha e reabilita 
 })
 
 // ---------------- telefone (webphone 4com) ----------------
+const flush = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)) }
+// Web Locks falso, COMPARTILHADO entre "abas" (ambientes): exclusivo, ifAvailable e steal (rejeita o dono anterior)
+function travasFalsas() {
+  let dono = null
+  return {
+    request(name, opts, cb) {
+      return new Promise((res, rej) => {
+        if (dono && !opts.steal) { Promise.resolve(cb(null)).then(res, rej); return }
+        if (dono && opts.steal) { const d = dono; dono = null; d.rej(Object.assign(new Error('stolen'), { name: 'AbortError' })) }
+        const eu = { rej }; dono = eu
+        Promise.resolve(cb({ name })).then((v) => { if (dono === eu) dono = null; res(v) }, (e) => { if (dono === eu) dono = null; rej(e) })
+      })
+    },
+    temDono: () => !!dono,
+  }
+}
 function fakeJsSIP(reg) {
   return {
     WebSocketInterface: function (url) { this.url = url },
     UA: function (cfg) {
       const h = {}; reg.cfg = cfg; reg.ua = this; reg.n = (reg.n || 0) + 1
-      this.on = (e, f) => { h[e] = f }; this.start = () => { reg.started = true }; this.stop = () => { reg.stopped = true }
+      this.on = (e, f) => { h[e] = f }; this.start = () => { reg.started = (reg.started || 0) + 1 }; this.stop = () => { reg.stopped = (reg.stopped || 0) + 1 }
       reg.emit = (e, a) => h[e] && h[e](a)
     },
   }
 }
 function sessao(integrada) {
   const s = { h: {}, on(e, f) { this.h[e] = f }, answer() { this.atendida = true; this.h.accepted && this.h.accepted() }, terminate() { this.encerrada = true; this.h.ended && this.h.ended({ cause: 'Terminated' }) }, mute() {}, unmute() {} }
-  return { originator: 'remote', session: s, request: { getHeader: (n) => (n === 'X-Api4comintegratedcall' && integrada ? 'true' : undefined) } }
+  return { originator: 'remote', session: s, request: { headers: integrada ? { 'X-Api4comintegratedcall': 1 } : {}, getHeader: (n) => (n === 'X-Api4comintegratedcall' && integrada ? 'true' : undefined) } }
 }
 const CRED = { ok: true, provedor: '4com', wss: 'wss://ruston.api4com.com:6443', dominio: 'ruston.api4com.com', ramal: '1006', realm: 'ruston.api4com.com', ha1: 'h'.repeat(32), uri: 'sip:1006@ruston.api4com.com', nome: 'Gabriel' }
-function comVoz(env, reg, rotas, settings = {}) {
+// rotas: acao → resposta | função(corpo) → resposta | 'adiar' (devolve um controle para responder depois)
+function comVoz(env, reg, rotas, settings = {}, travas = travasFalsas()) {
   env.ctx.window.JsSIP = fakeJsSIP(reg)
-  const w = instanciar(env, [{ ok: true, itens: [] }], { voz: 'Y', ...settings })
-  const chamadas = []
+  env.ctx.navigator = { locks: travas }
+  let conf = { endpoint: 'https://srv/fila', usuarios: '11420911', voz: 'Y', ...settings }
+  const w = instanciar(env, [{ ok: true, itens: [] }])
+  w.get_settings = () => conf
+  const chamadas = [], adiadas = []
   w.$authorizedAjax = (o) => {
     const b = JSON.parse(o.data || '{}'); chamadas.push({ url: o.url, ...b })
-    const r = b.acao ? (rotas[b.acao] || { erro: 'x' }) : { ok: true, itens: [], gerado_em: AGORA + chamadas.length }
+    let r = b.acao ? rotas[b.acao] : { ok: true, itens: [], gerado_em: AGORA + chamadas.length }
+    if (r === 'adiar') return { then: (ok, err) => adiadas.push({ ok, err }) }
+    if (typeof r === 'function') r = r(b)
+    r = r || { erro: 'x' }
     return { then: (ok, err) => (r.erro ? err({ status: 403, responseJSON: r }) : ok(r)) }
   }
-  return { w, chamadas }
+  return { w, chamadas, adiadas, travas, mudar: (x) => { conf = { ...conf, ...x } } }
 }
+const clicar = (env, act, attrs = {}) => env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]({ target: { closest: () => ({ getAttribute: (k) => (k === 'data-act' ? act : attrs[k]) }) } })
 
-test('telefone desligado por padrão: não pede credencial nem carrega o JsSIP', () => {
+test('telefone desligado por padrão: não pede credencial, não reserva o ramal, não carrega o JsSIP', async () => {
   const env = ambiente(), reg = {}
-  const { w, chamadas } = comVoz(env, reg, { credencial: CRED }, { voz: 'N' })
-  w.callbacks.init(); env.rodarTimers()
-  assert.equal(chamadas.filter((c) => c.acao).length, 0); assert.equal(reg.n, undefined)
+  const { w, chamadas, travas } = comVoz(env, reg, { credencial: CRED }, { voz: 'N' })
+  w.callbacks.init(); env.rodarTimers(); await flush()
+  assert.equal(chamadas.filter((c) => c.acao).length, 0); assert.equal(reg.n, undefined); assert.equal(travas.temDono(), false)
   assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone/)
 })
 
-test('telefone: registra com HA1 (sem senha), endpoint derivado, credencial fora do storage', () => {
+test('telefone: registra com HA1 (sem senha), endpoint derivado, credencial fora do storage', async () => {
   const env = ambiente(), reg = {}
-  const { w, chamadas } = comVoz(env, reg, { credencial: CRED })
-  w.callbacks.init()
-  assert.equal(chamadas[0].acao, 'credencial'); assert.equal(chamadas[0].url, 'https://srv/fila')   // sem "prevendas-fila" no nome: usa o mesmo
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED }, { endpoint: 'https://x.supabase.co/functions/v1/prevendas-fila' })
+  w.callbacks.init(); await flush()
+  const c = chamadas.find((x) => x.acao === 'credencial')
+  assert.equal(c.url, 'https://x.supabase.co/functions/v1/prevendas-voz')
   assert.equal(reg.cfg.ha1, CRED.ha1); assert.equal(reg.cfg.password, undefined); assert.equal(reg.cfg.authorization_user, '1006')
-  assert.equal(reg.cfg.realm, 'ruston.api4com.com'); assert.equal(reg.cfg.sockets[0].url, CRED.wss); assert.equal(reg.started, true)
+  assert.equal(reg.cfg.realm, 'ruston.api4com.com'); assert.equal(reg.cfg.sockets[0].url, CRED.wss); assert.equal(reg.started, 1)
   reg.emit('registered')
   assert.match(env.elems['rpv-root'].innerHTML, /Telefone · pronto/)
   for (const st of [env.ctx.localStorage, env.ctx.sessionStorage]) for (const v of st._m.values()) assert.ok(!String(v).includes(CRED.ha1), 'HA1 vazou para o storage')
 })
 
-test('endpoint do telefone: troca prevendas-fila por prevendas-voz', () => {
+test('sem Web Locks no navegador: não registra (fail-closed)', async () => {
   const env = ambiente(), reg = {}
-  const { w, chamadas } = comVoz(env, reg, { credencial: CRED }, { endpoint: 'https://x.supabase.co/functions/v1/prevendas-fila' })
-  w.callbacks.init()
-  assert.equal(chamadas.find((c) => c.acao === 'credencial').url, 'https://x.supabase.co/functions/v1/prevendas-voz')
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED })
+  env.ctx.navigator = {}
+  w.callbacks.init(); await flush()
+  assert.equal(chamadas.filter((c) => c.acao === 'credencial').length, 0); assert.equal(reg.n, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /não controla abas/)
 })
 
-test('discar: lista telefones do lead, pede à 4com e atende sozinho SÓ a chamada integrada pedida', () => {
+test('discar: lista telefones, pede à 4com e NUNCA atende sozinho (nem a integrada pedida, nem uma qualquer)', async () => {
   const env = ambiente(), reg = {}
   const { w, chamadas } = comVoz(env, reg, {
     credencial: CRED,
     telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: '47 99729-3673' }] }] },
-    discar: { ok: true, chamada_id: 'c1' },
+    discar: 'adiar',
   })
-  w.callbacks.init(); reg.emit('registered')
+  w.callbacks.init(); await flush(); reg.emit('registered')
   env.ctx.location.pathname = '/leads/detail/555'
   env.rodarTimers('i')
   assert.match(env.elems['rpv-root'].innerHTML, /data-act="voz-ligar" data-tel="\+5547997293673"/)
-  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
-  clique({ target: { closest: () => ({ getAttribute: (k) => (k === 'data-act' ? 'voz-ligar' : '+5547997293673') }) } })
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
   const d = chamadas.find((c) => c.acao === 'discar')
   assert.deepEqual({ et: d.entity_type, id: d.entity_id, tel: d.telefone }, { et: 'leads', id: 555, tel: '+5547997293673' })
+  // INVITE integrado enquanto o pedido está pendente: só toca, com o rótulo "sua ligação"
   const integrada = sessao(true); reg.emit('newRTCSession', integrada)
-  assert.equal(integrada.session.atendida, true)
-  assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
+  assert.equal(integrada.session.atendida, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /Sua ligação: atenda/)
+  clicar(env, 'voz-atender')                                   // o usuário atende
+  assert.equal(integrada.session.atendida, true); assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
   integrada.session.terminate()
-  // chamada que NÃO pedimos (sem header ou fora da janela): só toca, não atende sozinha
+  // INVITE sem o header (ou não pedido): só toca, rótulo neutro
   const estranha = sessao(false); reg.emit('newRTCSession', estranha)
   assert.equal(estranha.session.atendida, undefined)
-  assert.match(env.elems['rpv-root'].innerHTML, /data-act="voz-atender"/)
+  assert.match(env.elems['rpv-root'].innerHTML, /Chamada recebida/)
 })
 
-test('segunda aba: não registra o ramal enquanto outra aba é dona (a 4com derrubaria a primeira)', () => {
+test('pedido de discagem recusado pelo servidor: nenhuma chamada é atendida sozinha e o aviso aparece', async () => {
   const env = ambiente(), reg = {}
-  env.ctx.localStorage.setItem('rpv_voz_dono_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
-  const { w, chamadas } = comVoz(env, reg, { credencial: CRED })
-  w.callbacks.init()
-  assert.equal(chamadas.filter((c) => c.acao === 'credencial').length, 0); assert.equal(reg.n, undefined)
-  assert.match(env.elems['rpv-root'].innerHTML, /ativo em outra aba/)
+  const { w } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: { erro: 'sem_permissao' },
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.match(env.elems['rpv-root'].innerHTML, /não é dono deste lead/)
+  const inv = sessao(true); reg.emit('newRTCSession', inv)
+  assert.equal(inv.session.atendida, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /Chamada recebida/)    // janela zerada pela recusa: nem rótulo de "sua ligação"
 })
 
-test('destroy desliga o ramal e libera a posse', () => {
+test('duas abas: a segunda não registra; "usar aqui" rouba a posse e a primeira desliga', async () => {
+  const travas = travasFalsas()
+  const A = ambiente(), regA = {}, B = ambiente(), regB = {}
+  const a = comVoz(A, regA, { credencial: CRED }, {}, travas)
+  a.w.callbacks.init(); await flush(); regA.emit('registered')
+  const b = comVoz(B, regB, { credencial: CRED }, {}, travas)
+  b.w.callbacks.init(); await flush()
+  assert.equal(b.chamadas.filter((c) => c.acao === 'credencial').length, 0); assert.equal(regB.n, undefined)
+  assert.match(B.elems['rpv-root'].innerHTML, /ativo em outra aba/)
+  clicar(B, 'voz-aqui'); await flush()
+  assert.equal(regA.stopped, 1); assert.match(A.elems['rpv-root'].innerHTML, /ativo em outra aba/)
+  assert.equal(regB.started, 1)
+})
+
+test('credencial atrasada + outra aba assume no meio: a resposta velha NÃO inicia o ramal', async () => {
+  const travas = travasFalsas()
+  const A = ambiente(), regA = {}, B = ambiente(), regB = {}
+  const a = comVoz(A, regA, { credencial: 'adiar' }, {}, travas)
+  a.w.callbacks.init(); await flush()
+  assert.equal(a.adiadas.length, 1)                            // A pediu a credencial e está esperando
+  const b = comVoz(B, regB, { credencial: CRED }, {}, travas)
+  b.w.callbacks.init(); await flush()
+  clicar(B, 'voz-aqui'); await flush()                         // B rouba a posse
+  assert.equal(regB.started, 1)
+  a.adiadas[0].ok(CRED); await flush()                         // chega a credencial atrasada de A
+  assert.equal(regA.n, undefined, 'A criou UA sem a posse')
+  assert.equal(regB.stopped, undefined, 'o registro de B foi derrubado')
+})
+
+test('voz=N com o ramal ativo: desliga o UA, solta a posse e some do card no próximo tique', async () => {
   const env = ambiente(), reg = {}
-  const { w } = comVoz(env, reg, { credencial: CRED })
-  w.callbacks.init(); reg.emit('registered')
-  w.callbacks.destroy()
-  assert.equal(reg.stopped, true)
-  assert.equal(env.ctx.localStorage.getItem('rpv_voz_dono_financeirorustonengenhariacombr_11420911'), 'null')
+  const { w, travas, mudar } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.equal(travas.temDono(), true)
+  mudar({ voz: 'N' }); w.callbacks.onSave(); await flush()
+  assert.equal(reg.stopped, 1); assert.equal(travas.temDono(), false)
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone/)
+  reg.emit('registered')                                        // evento atrasado do UA velho: ignorado
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone/)
+})
+
+test('destroy desliga o ramal e solta a posse', async () => {
+  const env = ambiente(), reg = {}
+  const { w, travas } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  w.callbacks.destroy(); await flush()
+  assert.equal(reg.stopped, 1); assert.equal(travas.temDono(), false)
+})
+
+test('servidor pede pausa (429 nos chats): a fila vem, e a próxima leitura espera o Retry-After', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], retry_after: 30, motivos_parcial: ['chats_limite'], parcial: true }])
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+  const pausa = Number(env.ctx.localStorage.getItem('rpv_pausa_financeirorustonengenhariacombr_11420911'))
+  assert.ok(pausa > Date.now() + 20000)
 })
 
 test('chat sem resposta: vai primeiro na fila e o card não oferece "Concluir"', () => {

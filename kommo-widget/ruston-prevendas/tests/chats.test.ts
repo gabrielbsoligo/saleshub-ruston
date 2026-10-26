@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/chats.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chatsSemResposta, itensDeChat } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, usarChats } from '../../../supabase/functions/_shared/prevendas_chats.ts'
 
 const ent = (lead: number, em: number, talk = 900 + lead) => ({ type: 'incoming_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: 0, value_after: [{ message: { talk_id: talk } }] })
 const sai = (lead: number, em: number, por: number) => ({ type: 'outgoing_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: por, value_after: [{ message: { talk_id: 900 + lead } }] })
@@ -36,4 +36,27 @@ test('itensDeChat: só leads abertos do usuário, talk encerrado sai, talk desco
   assert.deepEqual(itens.map((i) => i.entity_id), [1, 5])
   assert.equal(itens[0].id, -1); assert.equal(itens[0].momento, 'chat_sem_resposta'); assert.equal(itens[0].due, 100)
   assert.equal(itens[0].acao, 'chat'); assert.equal(itens[0].lead_nome, 'Um')
+})
+
+test('por conversa: resposta no talk B NÃO limpa a espera do talk A do mesmo lead', () => {
+  const r = chatsSemResposta([ent(1, 100, 11), ent(1, 105, 12), { ...sai(1, 110, 7), value_after: [{ message: { talk_id: 12 } }] }])
+  assert.deepEqual(r, [{ lead_id: 1, talk_id: 11, desde: 100, ultima: 100 }])
+})
+
+test('talk fechado não esconde outro talk aberto pendente do mesmo lead (um card por lead)', () => {
+  const chats = chatsSemResposta([ent(1, 100, 11), ent(1, 200, 12), ent(1, 50, 13)])
+  const leads = { 1: { responsavel: 11, status_id: 5 } }
+  const itens = itensDeChat(chats, 11, leads, { 12: 'closed', 13: 'closed' })
+  assert.equal(itens.length, 1); assert.equal(itens[0].due, 100)            // só o talk 11 conta
+  assert.equal(itensDeChat(chats, 11, leads, { 11: 'closed', 12: 'closed', 13: 'closed' }).length, 0)
+  const dois = itensDeChat(chats, 11, leads, {})
+  assert.equal(dois.length, 1); assert.equal(dois[0].due, 50); assert.match(dois[0].texto, /3 conversas/)
+})
+
+test('usarChats: cache velho ou malformado vira motivo, nunca item "atual"', () => {
+  assert.deepEqual(usarChats({ chats: [], gerado_em: 1000 }, 1050, 60), { ok: true })
+  assert.deepEqual(usarChats({ chats: [], gerado_em: 1000 }, 1061, 60), { ok: false, motivo: 'chats_atrasados' })
+  assert.deepEqual(usarChats(null, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
+  assert.deepEqual(usarChats({ chats: 'x', gerado_em: 1000 }, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
+  assert.deepEqual(usarChats({ chats: [] }, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
 })

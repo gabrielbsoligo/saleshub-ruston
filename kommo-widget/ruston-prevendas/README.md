@@ -99,7 +99,7 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
 **Testar:**
 - **T1 (sem ligação):** o card "📞 Telefone · pronto" aparece. O navegador pede o microfone para o Kommo.
 - **T2 (uma ligação):** num lead com o telefone de teste, "Ligar".
-  1. O ramal toca no widget e atende sozinho.
+  1. O ramal toca no widget ("Sua ligação: atenda…") e o usuário clica em **Atender** (não há atendimento automático).
   2. A 4com liga para o número.
   3. Uma nota "📞 Ligação 4com…" é gravada no lead.
 
@@ -113,3 +113,10 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
   drop table public.prevendas_voz_eventos;
   ```
 - Chat sem resposta: redeploy da `prevendas-fila` do commit 25d9381.
+
+**Revogar uma credencial SIP já entregue.** Remover a edge ou os secrets NÃO revoga o HA1 que já foi para um navegador: com ele, o ramal continua registrando e originando chamadas direto (fora do limite do servidor).
+1. Trocar a senha do ramal na 4com (painel, em Ramais, ou `PATCH /extensions`). Isso invalida o HA1 antigo; o próximo pedido de credencial já recebe o novo.
+2. Para encerrar sessões e registros em curso, use o painel da 4com (registros do ramal) ou desligue o ramal.
+3. Faça isso sempre que um usuário sair da lista `PREVENDAS_VOZ_USUARIOS`, mudar de ramal ou houver suspeita de vazamento.
+
+Decisão do Gabriel (26/10): opção B, seguir sem pedir à 4com o bloqueio de saída direta dos ramais, com as mitigações acima.

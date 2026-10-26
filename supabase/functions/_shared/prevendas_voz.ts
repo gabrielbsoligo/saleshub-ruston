@@ -86,6 +86,45 @@ export function motivoAutorizacao(p: { papel: string | null; uid: number; donoEn
   return null
 }
 
+/** Tarefa própria de verdade: confere CADA tarefa devolvida (não confia no filtro enviado à API). */
+export function tarefaPropriaValida(tarefas: unknown, uid: number, etype: string, eid: number): boolean {
+  if (!Array.isArray(tarefas)) return false
+  return tarefas.some((t: any) => t && Number(t.responsible_user_id) === Number(uid) && t.is_completed === false &&
+    t.entity_type === etype && Number(t.entity_id) === Number(eid))
+}
+
+export type DecisaoEntidade =
+  | { ok: true; motivo: 'gestor' | 'dono' | 'tarefa'; contatos: ReturnType<typeof telefonesDosContatos> }
+  | { ok: false; erro: 'entidade_inconsistente' | 'sem_permissao' }
+/**
+ * Decide, com os objetos DEVOLVIDOS pelo Kommo, se o usuário pode usar os telefones da entidade e quais são eles.
+ * - a entidade devolvida tem que ser exatamente a pedida (id); envelope inesperado nega;
+ * - autorização: gestor, dono, ou tarefa aberta própria nessa entidade (conferida tarefa a tarefa);
+ * - telefones: só de contatos VINCULADOS (lead → ids em _embedded.contacts; contato → ele mesmo).
+ */
+export function decidirEntidade(p: {
+  uid: number; papel: string | null; etype: 'leads' | 'contacts'; eid: number
+  entidade: any; tarefas: unknown; contatosDevolvidos: unknown
+}): DecisaoEntidade {
+  const e = p.entidade
+  if (!e || typeof e !== 'object' || Number(e.id) !== Number(p.eid)) return { ok: false, erro: 'entidade_inconsistente' }
+  const motivo = motivoAutorizacao({ papel: p.papel, uid: p.uid, donoEntidade: e.responsible_user_id ?? null,
+    temTarefaPropria: tarefaPropriaValida(p.tarefas, p.uid, p.etype, p.eid) })
+  if (!motivo) return { ok: false, erro: 'sem_permissao' }
+  let contatos: ContatoKommo[] = []
+  if (p.etype === 'contacts') contatos = [e]
+  else {
+    const vinc = Array.isArray(e?._embedded?.contacts) ? e._embedded.contacts : []
+    const ids = new Set<number>(vinc.map((c: any) => Number(c?.id)).filter((n: number) => Number.isInteger(n) && n > 0))
+    const vistos = new Set<number>()
+    for (const c of Array.isArray(p.contatosDevolvidos) ? p.contatosDevolvidos : []) {
+      const id = Number((c as any)?.id)
+      if (ids.has(id) && !vistos.has(id)) { vistos.add(id); contatos.push(c as ContatoKommo) }
+    }
+  }
+  return { ok: true, motivo, contatos: telefonesDosContatos(contatos) }
+}
+
 /** Usuários liberados (lista do servidor, fail-closed: vazia = ninguém). */
 export function usuarioLiberado(lista: string | undefined, uid: number): boolean {
   return String(lista ?? '').split(',').map((x) => x.trim()).filter(Boolean).includes(String(uid))

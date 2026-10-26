@@ -18,7 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
-import { chatsSemResposta, itensDeChat, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -27,7 +27,7 @@ const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 60, MAX_PAGINAS = 12, MAX_LOTES_
 // prazo total da execução bem abaixo da trava (60 s); cada GET com timeout próprio; espera por ficha limitada
 const PRAZO_MS = 40_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
 // chats sem resposta: leitura da CONTA inteira (eventos de chat), cache compartilhado na linha kommo_user = 0
-const CHATS_CACHE_S = 30, CHATS_VELHO_S = 300, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20
+const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 60, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20
 const CHATS_DIAS = Math.min(30, Math.max(1, Number(Deno.env.get('PREVENDAS_CHATS_DIAS') ?? '7') || 7))
 
 const cors = (origin: string | null) => ({
@@ -83,14 +83,20 @@ Deno.serve(async (req) => {
       (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), inicio + PRAZO_MS, ESPERA_FICHA_MS)
     const r = await fetch(`${KOMMO}${path}`, { headers: { Authorization: `Bearer ${Deno.env.get('KOMMO_API_TOKEN')}` }, signal: AbortSignal.timeout(TIMEOUT_GET_MS) })
     if (r.status === 204) return null
-    if (r.status === 429) throw new KommoLimite(Number(r.headers.get('Retry-After')) || 60)
+    if (r.status === 429) {
+      // pausa COMPARTILHADA: nenhuma execução (fila, chats, telefone) consome ficha até o Retry-After
+      const ra = Number(r.headers.get('Retry-After')) || 60
+      await sb.rpc('prevendas_pausar', { p_seg: ra })
+      throw new KommoLimite(ra)
+    }
     if (!r.ok) throw new Error(`kommo ${path.split('?')[0]} ${r.status}`)
     return r.json()
   }
 
   // eventos de chat da janela → leads com cliente esperando → dono/etapa do lead e status do talk (ao vivo)
   const lerChatsDaConta = async () => {
-    const desde = Math.floor(Date.now() / 1000) - CHATS_DIAS * 86400
+    const lidoEmC = Math.floor(Date.now() / 1000)          // idade real = início da leitura
+    const desde = lidoEmC - CHATS_DIAS * 86400
     const lidas = await lerPaginado<EventoChat>(async (n) => {
       const j = await kommoGet(`/api/v4/events?filter[type]=incoming_chat_message,outgoing_chat_message&filter[created_at][from]=${desde}&limit=100&page=${n}`)
       const itens = j?._embedded?.events ?? []
@@ -119,7 +125,7 @@ Deno.serve(async (req) => {
         parcial = true                                     // talk sem status conhecido: o chat entra (não esconde cliente esperando)
       }
     }
-    return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: Math.floor(Date.now() / 1000) }
+    return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC }
   }
 
   const motivos: string[] = []
@@ -162,27 +168,40 @@ Deno.serve(async (req) => {
     try { tiposMomento = JSON.parse(Deno.env.get('PREVENDAS_TIPOS_MOMENTO') ?? '{}') } catch { tiposMomento = {} }
     const itens = montarItens(tarefasUnicas, uid, leads, (rs.data ?? {}) as Record<string, string>, tiposMomento)
 
-    // 4d) chats sem resposta (nível 0). Cache da conta de 30 s; falha aqui NÃO derruba a fila de tarefas (vira motivo).
+    // 4d) chats sem resposta (nível 0). Cache da conta (linha kommo_user = 0) renovado a cada CHATS_CACHE_S.
+    //     Falha aqui NUNCA derruba a fila de tarefas (vira motivo); leitura com mais de CHATS_MAX_IDADE_S não é
+    //     publicada (não rejuvenesce); 429 vira chats_limite + retry_after, com a pausa compartilhada já gravada.
+    let chatsEm: number | null = null, retryAfter = 0
     try {
-      const { data: cc, error: eCC } = await sb.from('prevendas_cache').select('resposta,em').eq('kommo_user', 0).maybeSingle()
+      const { data: cc, error: eCC } = await sb.from('prevendas_cache').select('resposta').eq('kommo_user', 0).maybeSingle()
       if (eCC) throw new Error('falha_banco')
-      let conta = cc?.resposta as any, idadeC = cc?.em ? (Date.now() - Date.parse(cc.em)) / 1000 : Infinity
-      if (idadeC >= CHATS_CACHE_S) {
-        const { data: tk } = await sb.rpc('prevendas_travar', { p_user: 0, p_seg: TRAVA_S })
+      let conta = (cc?.resposta ?? null) as any
+      const agoraS = () => Math.floor(Date.now() / 1000)
+      if (!conta?.gerado_em || agoraS() - Number(conta.gerado_em) >= CHATS_CACHE_S) {
+        const { data: tk, error: eTk } = await sb.rpc('prevendas_travar', { p_user: 0, p_seg: TRAVA_S })
+        if (eTk) throw new Error('falha_banco')
         if (tk) {
-          try { conta = await lerChatsDaConta(); await sb.rpc('prevendas_gravar', { p_user: 0, p_token: tk, p_resposta: conta }); idadeC = 0 }
+          let novo
+          try { novo = await lerChatsDaConta() }
           catch (e) { await sb.rpc('prevendas_liberar', { p_user: 0, p_token: tk }); throw e }
+          conta = novo                                       // leitura própria e fresca: vale mesmo se a gravação falhar
+          const { data: gravou, error: eGv } = await sb.rpc('prevendas_gravar', { p_user: 0, p_token: tk, p_resposta: novo })
+          if (eGv || gravou !== true) {
+            console.error('[prevendas-fila] cache chats', eGv?.message ?? 'posse perdida')
+            await sb.rpc('prevendas_liberar', { p_user: 0, p_token: tk })
+          }
         }
       }
-      if (!conta?.chats || idadeC > CHATS_VELHO_S) motivos.push('chats_indisponiveis')
+      const uso = usarChats(conta, agoraS(), CHATS_MAX_IDADE_S)
+      if (!uso.ok) motivos.push(uso.motivo)
       else {
         itens.unshift(...itensDeChat(conta.chats, uid, conta.leads ?? {}, conta.talks ?? {}))
+        chatsEm = Number(conta.gerado_em)
         if (conta.parcial) motivos.push('chats_parcial')
       }
     } catch (e) {
-      if (e instanceof KommoLimite) throw e
-      console.error('[prevendas-fila] chats', (e as Error).message)
-      motivos.push('chats_indisponiveis')
+      if (e instanceof KommoLimite) { motivos.push('chats_limite'); retryAfter = e.retryAfter }
+      else { console.error('[prevendas-fila] chats', (e as Error).message); motivos.push('chats_indisponiveis') }
     }
 
     const fres = await sb.rpc('prevendas_fila_frescor')
@@ -191,7 +210,8 @@ Deno.serve(async (req) => {
       parcial: motivos.length > 0, motivos_parcial: motivos,
       origem_pendente: itens.filter((i) => i.origem_pendente).length,
       frescor_leads: fres.error ? null : fres.data,
-      gerado_em: lidoEm,
+      gerado_em: lidoEm, chats_em: chatsEm,
+      ...(retryAfter ? { retry_after: retryAfter } : {}),
     }
     // grava só se ainda for o dono da trava (uma execução lenta cuja trava venceu não sobrescreve a mais nova)
     const { error: eG } = await sb.rpc('prevendas_gravar', { p_user: uid, p_token: token, p_resposta: resposta })

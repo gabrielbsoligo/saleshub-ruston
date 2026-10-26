@@ -120,11 +120,11 @@ test('decisão 26/10: chat sem resposta é nível 0, acima do anti no-show', () 
   assert.deepEqual(ids(r), [2, 1])
 })
 
-test('telefone: atende sozinho só chamada integrada E pedida dentro da janela', () => {
-  assert.equal(Fila.deveAtender(true, 2000, 1000), true)
-  assert.equal(Fila.deveAtender(false, 2000, 1000), false)    // sem o header da 4com
-  assert.equal(Fila.deveAtender(true, 500, 1000), false)      // janela vencida
-  assert.equal(Fila.deveAtender(true, 0, 1000), false)        // ninguém pediu
+test('telefone: rótulo "sua ligação" só para chamada integrada E pedida (nunca autoriza atender sozinho)', () => {
+  assert.equal(Fila.chamadaPedida(true, 2000, 1000), true)
+  assert.equal(Fila.chamadaPedida(false, 2000, 1000), false)    // sem o header da 4com
+  assert.equal(Fila.chamadaPedida(true, 500, 1000), false)      // janela vencida
+  assert.equal(Fila.chamadaPedida(true, 0, 1000), false)        // ninguém pediu
   assert.match(Fila.mensagemVoz('sem_permissao'), /dono deste lead/)
   assert.match(Fila.mensagemVoz('xpto'), /xpto/)
 })

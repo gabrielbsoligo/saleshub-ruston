@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import {
-  finalTelefone, ha1, interpretar4com, md5, motivoAutorizacao, telefoneE164, telefonesDosContatos, usuarioLiberado,
+  decidirEntidade, finalTelefone, ha1, interpretar4com, md5, motivoAutorizacao, tarefaPropriaValida, telefoneE164, telefonesDosContatos, usuarioLiberado,
 } from '../../../supabase/functions/_shared/prevendas_voz.ts'
 
 test('md5 próprio = md5 do Node (vazio, ASCII, UTF-8, blocos de 55/56/64/120 bytes)', () => {
@@ -66,4 +66,32 @@ test('interpretar4com: sucesso, credencial, limite, indisponível (incerto) e re
   const ind = interpretar4com(0, null) as any; assert.equal(ind.erro, 'provedor_indisponivel'); assert.equal(ind.incerto, true)
   const rec = interpretar4com(422, { error: { message: 'Ramal  offline' } }) as any
   assert.equal(rec.erro, 'provedor_recusou'); assert.equal(rec.mensagem, 'Ramal offline')
+})
+
+test('tarefaPropriaValida confere tarefa a tarefa (não confia no filtro da API)', () => {
+  const ok = { responsible_user_id: 7, is_completed: false, entity_type: 'leads', entity_id: 50 }
+  assert.equal(tarefaPropriaValida([ok], 7, 'leads', 50), true)
+  assert.equal(tarefaPropriaValida([{ ...ok, responsible_user_id: 8 }], 7, 'leads', 50), false)     // alheia
+  assert.equal(tarefaPropriaValida([{ ...ok, is_completed: true }], 7, 'leads', 50), false)        // concluída
+  assert.equal(tarefaPropriaValida([{ ...ok, entity_id: 51 }], 7, 'leads', 50), false)             // outra entidade
+  assert.equal(tarefaPropriaValida([{ ...ok, entity_type: 'contacts' }], 7, 'leads', 50), false)   // outro tipo
+  assert.equal(tarefaPropriaValida([{ ...ok, is_completed: undefined }], 7, 'leads', 50), false)   // envelope incompleto
+  assert.equal(tarefaPropriaValida({ tasks: [ok] }, 7, 'leads', 50), false)                         // envelope inesperado
+})
+
+test('decidirEntidade: id confere, autorização e só contatos VINCULADOS', () => {
+  const tel = (v: string) => [{ field_code: 'PHONE', values: [{ value: v }] }]
+  const lead = { id: 50, responsible_user_id: 9, _embedded: { contacts: [{ id: 1 }] } }
+  const contatos = [{ id: 1, name: 'Ana', custom_fields_values: tel('47997293673') }, { id: 2, name: 'Intruso', custom_fields_values: tel('11999998888') }]
+  const tarefa = [{ responsible_user_id: 7, is_completed: false, entity_type: 'leads', entity_id: 50 }]
+  const d = decidirEntidade({ uid: 7, papel: 'sdr', etype: 'leads', eid: 50, entidade: lead, tarefas: tarefa, contatosDevolvidos: contatos }) as any
+  assert.equal(d.ok, true); assert.equal(d.motivo, 'tarefa')
+  assert.deepEqual(d.contatos.map((c: any) => c.contato_id), [1])                                   // o contato 2 não é do lead
+  assert.deepEqual(decidirEntidade({ uid: 7, papel: 'sdr', etype: 'leads', eid: 50, entidade: lead, tarefas: [{ ...tarefa[0], responsible_user_id: 8 }], contatosDevolvidos: contatos }), { ok: false, erro: 'sem_permissao' })
+  assert.deepEqual(decidirEntidade({ uid: 7, papel: 'sdr', etype: 'leads', eid: 50, entidade: { ...lead, id: 51 }, tarefas: tarefa, contatosDevolvidos: contatos }), { ok: false, erro: 'entidade_inconsistente' })
+  assert.deepEqual(decidirEntidade({ uid: 7, papel: 'gestor', etype: 'leads', eid: 50, entidade: null, tarefas: [], contatosDevolvidos: [] }), { ok: false, erro: 'entidade_inconsistente' })
+  const semEmbedded = decidirEntidade({ uid: 9, papel: 'sdr', etype: 'leads', eid: 50, entidade: { id: 50, responsible_user_id: 9 }, tarefas: [], contatosDevolvidos: contatos }) as any
+  assert.equal(semEmbedded.ok, true); assert.deepEqual(semEmbedded.contatos, [])                     // sem vínculo = sem telefone
+  const contato = decidirEntidade({ uid: 9, papel: 'sdr', etype: 'contacts', eid: 1, entidade: { id: 1, responsible_user_id: 9, custom_fields_values: tel('47997293673') }, tarefas: [], contatosDevolvidos: [] }) as any
+  assert.equal(contato.ok, true); assert.equal(contato.contatos[0].telefones[0].e164, '+5547997293673')
 })

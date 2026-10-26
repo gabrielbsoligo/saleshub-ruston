@@ -13,8 +13,9 @@
  *   Nível 0 = CHAT SEM RESPOSTA (cliente falou por último e nenhum humano respondeu; decisão 26/10).
  * - TELEFONE (opcional, setting voz=Y): o ramal 4com do próprio usuário registra aqui (JsSIP sobre WSS, áudio no
  *   navegador). A credencial (HA1, nunca a senha) vem da edge prevendas-voz e fica SÓ em memória. Discar = o
- *   servidor pede à 4com, que liga para este ramal (atendido sozinho só se fomos nós que pedimos) e depois para
- *   o cliente. Uma aba por vez é dona do ramal (a 4com derruba o registro anterior).
+ *   servidor pede à 4com, que liga para este ramal (o usuário ATENDE no card; nada é atendido sozinho, pois não há
+ *   como correlacionar com segurança o INVITE à tentativa autorizada) e depois para o cliente. Uma aba por vez é
+ *   dona do ramal (Web Locks; a 4com derrubaria o registro anterior). voz=N desliga o ramal na hora.
  *
  * O bloco "Fila" é puro (sem DOM) e é exportado em module.exports para os testes em Node.
  * Namespace: "rpv-" / "rpv_".
@@ -120,8 +121,11 @@
     }
 
     // ---------------- telefone (puro) ----------------
-    /** Atende sozinho SÓ chamada integrada da 4com que este usuário acabou de pedir (janela de 60 s). */
-    function deveAtender(integrada, pendenteAte, agoraMs) { return !!integrada && pendenteAte > agoraMs; }
+    /**
+     * Só RÓTULO ("provavelmente a sua ligação"): chamada integrada da 4com chegando enquanto há um pedido seu.
+     * NUNCA autoriza atender sozinho — o header não é prova de origem.
+     */
+    function chamadaPedida(integrada, pendenteAte, agoraMs) { return !!integrada && pendenteAte > agoraMs; }
 
     var MSG_VOZ = {
       voz_nao_liberada: 'Telefone ainda não liberado para o seu usuário.',
@@ -140,7 +144,7 @@
     function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
 
     return {
-      deveAtender: deveAtender, mensagemVoz: mensagemVoz,
+      chamadaPedida: chamadaPedida, mensagemVoz: mensagemVoz,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -176,8 +180,9 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, aviso: '', tel: { chave: '', contatos: null, erro: '', carregando: false } };
-      var VOZ_LOCK_MS = 25000;
+                  pendenteAte: 0, discando: false, pedida: false, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  tel: { chave: '', contatos: null, erro: '', carregando: false } };
+      var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
       // ---------------- helpers ----------------
       function cfg() {
@@ -306,6 +311,7 @@
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
+            if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
             publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] }, r.gerado_em || 0);
             return;
           }
@@ -446,8 +452,10 @@
         req.then(function (r) { if (!r || !r.ok) { cb({ erro: (r && r.erro) || 'resposta' }); return; } cb(null, r); },
                  function (x) { var j = (x && x.responseJSON) || {}; cb({ erro: j.erro || (x && x.status) || 'erro', mensagem: j.mensagem || '', incerto: !!j.incerto }); });
       }
-      function vozDono() { var l = lsGet('voz_dono', null); return !!(l && l.aba === ABA && l.ate > Date.now()); }
-      function vozLivre() { var l = lsGet('voz_dono', null); return !l || !l.aba || l.ate < Date.now() || l.aba === ABA; }
+      // posse do ramal entre abas: Web Locks (exclusão real; "usar aqui" rouba com steal). Sem Web Locks: não registra.
+      function travas() { try { return (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) ? navigator.locks : null; } catch (e) { return null; } }
+      function nomeTrava() { return NS + '-voz-' + state.sub + '-' + state.uid; }
+      function tenho(tok, g) { return vivo(g) && cfg().voz && voz.posse === tok; }
       function carregarJsSIP(cb) {
         if (window.JsSIP && window.JsSIP.UA) { cb(null); return; }
         if (!state.base) { cb('sem_base'); return; }
@@ -463,23 +471,39 @@
         return a;
       }
       function vozEstado(e, msg) { voz.estado = e; voz.msg = msg || ''; render(); }
-      function iniciarVoz(g) {
-        if (!cfg().voz || voz.ua || voz.estado === 'carregando') return;
-        if (!vozLivre()) { vozEstado('outra_aba'); return; }
-        lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS });
-        vozEstado('carregando');
+      function iniciarVoz(g, roubar) {
+        if (!cfg().voz || voz.posse || voz.pedindo) return;
+        var L = travas();
+        if (!L) { vozEstado('erro', 'Este navegador não controla abas para o telefone; use o Chrome atualizado.'); return; }
+        var tok = ++posseSeq; voz.pedindo = tok; vozEstado('carregando');
+        var p;
+        try {
+          p = L.request(nomeTrava(), roubar ? { steal: true } : { ifAvailable: true }, function (lock) {
+            if (voz.pedindo === tok) voz.pedindo = 0;
+            if (!lock) { if (vivo(g) && tok === posseSeq) vozEstado('outra_aba'); return; }
+            if (!vivo(g) || !cfg().voz || tok !== posseSeq) return;            // pedido superado: solta na hora
+            voz.posse = tok;
+            return new Promise(function (soltar) { voz.soltar = soltar; comPosse(tok, g); });
+          });
+        } catch (e) { voz.pedindo = 0; vozEstado('erro', 'Falha ao reservar o telefone nesta aba.'); return; }
+        if (p && p.catch) p.catch(function () {                                // posse roubada por outra aba (AbortError)
+          if (voz.pedindo === tok) voz.pedindo = 0;
+          if (voz.posse === tok) { pararVoz(); if (vivo(g)) vozEstado('outra_aba'); }
+        });
+      }
+      function comPosse(tok, g) {
         carregarJsSIP(function (e) {
-          if (!vivo(g)) return;
+          if (!tenho(tok, g)) return;
           if (e) { vozEstado('erro', 'Não consegui carregar o telefone (' + e + ').'); return; }
-          try { if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); }, function () { vozEstado('erro', 'Permita o microfone para este site (cadeado na barra de endereço).'); }); } catch (x) {}
+          try { if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); }, function () { if (tenho(tok, g)) vozEstado('erro', 'Permita o microfone para este site (cadeado na barra de endereço).'); }); } catch (x) {}
           chamarVoz({ acao: 'credencial' }, function (err, c) {
-            if (!vivo(g)) return;
+            if (!tenho(tok, g)) return;                                        // posse perdida durante o pedido: descarta
             if (err) { vozEstado('erro', Fila.mensagemVoz(err.erro)); return; }
-            criarUA(c, g); c = null;   // a credencial só vive na config do UA
+            criarUA(c, tok, g); c = null;                                      // a credencial só vive na config do UA
           });
         });
       }
-      function criarUA(c, g) {
+      function criarUA(c, tok, g) {
         var ua;
         try {
           ua = new window.JsSIP.UA({
@@ -488,48 +512,59 @@
             session_timers: false, no_answer_timeout: 30
           });
         } catch (e) { vozEstado('erro', 'Configuração do telefone inválida.'); return; }
+        var meu = function () { return tenho(tok, g) && voz.ua === ua; };
         voz.ua = ua;
-        ua.on('registered', function () { if (vivo(g)) vozEstado('registrado'); });
-        ua.on('unregistered', function () { if (vivo(g) && voz.ua === ua) vozEstado('reconectando'); });
-        ua.on('registrationFailed', function (e) { if (vivo(g) && voz.ua === ua) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
-        ua.on('disconnected', function () { if (vivo(g) && voz.ua === ua && voz.estado === 'registrado') vozEstado('reconectando'); });
+        ua.on('registered', function () { if (meu()) vozEstado('registrado'); });
+        ua.on('unregistered', function () { if (meu()) vozEstado('reconectando'); });
+        ua.on('registrationFailed', function (e) { if (meu()) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
+        ua.on('disconnected', function () { if (meu() && voz.estado === 'registrado') vozEstado('reconectando'); });
         ua.on('newRTCSession', function (ev) {
-          if (!vivo(g) || ev.originator !== 'remote') return;
+          if (ev.originator !== 'remote') return;
           var s = ev.session;
-          if (voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
+          if (!meu() || voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
           var integ = false;
           try { integ = String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true'; } catch (e) {}
+          try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
+          voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, Date.now());
           s.on('peerconnection', function (pe) {
-            pe.peerconnection.addEventListener('track', function (te) { var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
+            pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
-          s.on('accepted', function () { voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
-          var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0;
+          s.on('accepted', function () { if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
+          var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
           s.on('ended', fim); s.on('failed', fim);
-          if (Fila.deveAtender(integ, voz.pendenteAte, Date.now())) atenderVoz(); else { som(); render(); }
+          som(); render();                                                     // atendimento SEMPRE manual
         });
+        if (!meu()) { try { ua.stop(); } catch (e) {} voz.ua = null; return; }
         ua.start();
       }
       function atenderVoz() { if (!voz.sessao || voz.emChamada) return; try { voz.sessao.answer({ mediaConstraints: { audio: true, video: false } }); } catch (e) { voz.aviso = 'Não consegui atender.'; } render(); }
       function desligarVoz() { if (!voz.sessao) return; try { voz.sessao.terminate(); } catch (e) {} }
       function mudoVoz() { if (!voz.sessao || !voz.emChamada) return; try { if (voz.mudo) voz.sessao.unmute(); else voz.sessao.mute(); voz.mudo = !voz.mudo; } catch (e) {} render(); }
-      function pararVoz(liberar) {
-        try { if (voz.sessao) voz.sessao.terminate(); } catch (e) {}
-        try { if (voz.ua) voz.ua.stop(); } catch (e) {}
-        voz.ua = null; voz.sessao = null; voz.tocando = false; voz.emChamada = false;
-        if (liberar && vozDono()) lsSet('voz_dono', null);
+      // desliga tudo e invalida qualquer passo assíncrono em voo (credencial atrasada, eventos do UA)
+      function pararVoz() {
+        posseSeq++;
+        var sess = voz.sessao, ua = voz.ua, soltar = voz.soltar;
+        voz.sessao = null; voz.ua = null; voz.soltar = null; voz.posse = 0; voz.pedindo = 0;
+        voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.discando = false; voz.pedida = false;
+        try { if (sess) sess.terminate(); } catch (e) {}
+        try { if (ua) ua.stop(); } catch (e) {}
+        try { if (soltar) soltar(); } catch (e) {}
+        try { var a = document.getElementById(NS + '-audio'); if (a) a.srcObject = null; } catch (e) {}
       }
-      // dono do ramal renova a posse; quem perdeu a posse (outra aba assumiu) desliga o próprio UA
-      function batimentoVoz(g) {
-        if (!vivo(g) || !cfg().voz) return;
-        var l = lsGet('voz_dono', null);
-        if (voz.ua) {
-          if (l && l.aba !== ABA && l.ate > Date.now()) { pararVoz(false); vozEstado('outra_aba'); return; }
-          lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS });
-        } else if (voz.estado === 'outra_aba' && vozLivre()) { voz.estado = 'off'; iniciarVoz(g); }
+      // a cada 1 s: voz=N derruba o ramal; voz=Y sem posse tenta assumir (aba ocupada: a cada 5 s, sem roubar)
+      function cicloVoz(g) {
+        if (!vivo(g)) return;
+        if (!cfg().voz) {
+          if (voz.posse || voz.pedindo || voz.ua || voz.estado !== 'off') { pararVoz(); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; render(); }
+          return;
+        }
+        if (!voz.posse && !voz.pedindo && (voz.estado === 'off' || (voz.estado === 'outra_aba' && (++voz.espera % 5 === 0)))) iniciarVoz(g, false);
+        if (voz.estado === 'registrado') telefonesAqui(g);
+        if (voz.emChamada) render();
       }
-      function usarAqui(g) { lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS }); voz.estado = 'off'; iniciarVoz(g); }
+      function usarAqui(g) { pararVoz(); voz.estado = 'off'; iniciarVoz(g, true); }
       function telefonesAqui(g) {
         var aqui = entidadeAtual();
         if (!aqui || (aqui.etype !== 'leads' && aqui.etype !== 'contacts')) { voz.tel = { chave: '', contatos: null, erro: '', carregando: false }; return; }
@@ -565,7 +600,7 @@
                 (voz.estado === 'erro' ? '<button data-act="voz-reconectar" title="Tentar de novo">↻</button>' : '') + '</div>';
         if (voz.msg) h += '<div class="rpv-warn">' + esc(voz.msg) + '</div>';
         if (voz.sessao) {
-          h += '<div class="rpv-b"><div class="nm">' + (voz.emChamada ? 'Em chamada · ' + mmss(Date.now() - voz.inicio) : 'Chamada recebida') + '</div></div><div class="rpv-acts">' +
+          h += '<div class="rpv-b"><div class="nm">' + (voz.emChamada ? 'Em chamada · ' + mmss(Date.now() - voz.inicio) : (voz.pedida ? 'Sua ligação: atenda para falar com o cliente' : 'Chamada recebida')) + '</div></div><div class="rpv-acts">' +
                (voz.emChamada ? '<button data-act="voz-mudo">' + (voz.mudo ? 'Reativar mic' : 'Mudo') + '</button>' : '<button class="pri" data-act="voz-atender">Atender</button>') +
                '<button data-act="voz-desligar">' + (voz.emChamada ? 'Desligar' : 'Recusar') + '</button></div>';
         } else if (voz.estado === 'registrado' && voz.tel.chave) {
@@ -693,7 +728,7 @@
         else if (act === 'voz-desligar') desligarVoz();
         else if (act === 'voz-mudo') mudoVoz();
         else if (act === 'voz-aqui') usarAqui(state.geracao);
-        else if (act === 'voz-reconectar') { pararVoz(true); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao); }
+        else if (act === 'voz-reconectar') { pararVoz(); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao, false); }
         else if (act === 'fechar-ntf') { var tid = Number(el.getAttribute('data-tid')); state.notif = state.notif.filter(function (n) { return n.id !== tid; }); lsSet('notif', state.notif); render(); }
       }
       function aoTeclar(ev) {
@@ -732,15 +767,13 @@
         intervalo(function () { ciclo(g, false); }, cfg().poll * 1000 + Math.floor(Math.random() * 5000));
         var ultima = location.pathname;
         intervalo(function () { if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); } }, 700);
-        if (cfg().voz) {
-          iniciarVoz(g);
-          intervalo(function () { batimentoVoz(g); if (voz.estado === 'registrado') telefonesAqui(g); if (voz.emChamada) render(); }, 1000);
-        }
+        intervalo(function () { cicloVoz(g); }, 1000);                     // liga/desliga o telefone conforme o setting voz
+        if (cfg().voz) iniciarVoz(g, false);
       }
 
       function destruir() {
         state.destruido = true; state.geracao++; state.carregando = false;
-        pararVoz(true); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; voz.tel = { chave: '', contatos: null, erro: '', carregando: false };
+        pararVoz(); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; voz.tel = { chave: '', contatos: null, erro: '', carregando: false };
         state.timers.forEach(function (x) { if (x.t === 'i') clearInterval(x.h); else clearTimeout(x.h); });
         state.timers = [];
         state.ouvintes.forEach(function (o) { try { o[0].removeEventListener(o[1], o[2], o[3]); } catch (e) {} });
@@ -757,7 +790,7 @@
         init: function () { try { boot(); } catch (e) { if (window.console) console.error('[ruston-prevendas] init', e); } return true; },
         bind_actions: function () { return true; },
         settings: function () { return true; },
-        onSave: function () { return true; },
+        onSave: function () { try { cicloVoz(state.geracao); } catch (e) {} return true; },
         destroy: function () { try { destruir(); } catch (e) {} }
       };
       return this;
