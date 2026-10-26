@@ -37,3 +37,17 @@ Deno.test('várias mensagens no mesmo payload saem em ordem; sem message[add] �
   assertEquals(extrairMensagens(desdobrar(form({ 'leads[add][0][id]': '1' }))), [])
   assertEquals(extrairMensagens({ message: { add: [{ id: 'j', type: 'incoming', text: 'oi', element_type: 2, element_id: 5 }] } })[0].leadId, 5)
 })
+
+
+Deno.test('desdobrar: não polui protótipo (__proto__/constructor/prototype descartados), sem protótipo próprio, colisão escalar×objeto ignorada', () => {
+  const p = desdobrar(form({ '__proto__[poluicaoTeste]': 'sim', 'constructor[prototype][x]': '1', 'a': '1', 'a[b]': '2', 'c[d]': '3', 'c': '4', 'message[add][0][id]': 'm' }))
+  assertEquals(({} as any).poluicaoTeste, undefined)
+  assertEquals(Object.getPrototypeOf(p), null)
+  assertEquals(p.a, '1'); assertEquals(p.c.d, '3'); assertEquals(p.message.add['0'].id, 'm')
+  assertEquals('__proto__' in p && Object.prototype.hasOwnProperty.call(p, '__proto__'), false)
+})
+
+Deno.test('mensagem incoming sem texto e sem anexo (sticker/localização) vira [midia]', () => {
+  const [m] = extrairMensagens(desdobrar(form({ 'message[add][0][id]': 's', 'message[add][0][type]': 'incoming' })))
+  assertEquals(m.texto, '[midia]')
+})

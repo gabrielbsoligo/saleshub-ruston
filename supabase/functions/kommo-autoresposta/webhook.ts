@@ -16,17 +16,31 @@ export type MensagemWebhook = {
   anexo: string | null             // tipo do anexo (voice/audio/picture/video/file/…)
 }
 
-/** Transforma o corpo form-urlencoded (chaves com colchetes) num objeto aninhado. */
+const SEGMENTO_PROIBIDO = new Set(['__proto__', 'constructor', 'prototype'])
+/**
+ * Transforma o corpo form-urlencoded (chaves com colchetes) num objeto aninhado SEM protótipo
+ * (Object.create(null)): chave com __proto__/constructor/prototype é descartada e colisão
+ * escalar × objeto também (a chave é ignorada em vez de sobrescrever). Nunca toca o protótipo global.
+ */
 export function desdobrar(form: URLSearchParams | Record<string, string>): Record<string, any> {
-  const out: Record<string, any> = {}
+  const out: Record<string, any> = Object.create(null)
   const entradas = form instanceof URLSearchParams ? [...form.entries()] : Object.entries(form)
   for (const [k, v] of entradas) {
     const partes = k.replace(/\]/g, '').split('[')
-    let cur = out
-    partes.forEach((p, i) => {
-      if (i === partes.length - 1) cur[p] = v
-      else { cur[p] = cur[p] ?? {}; cur = cur[p] }
-    })
+    if (partes.some((p) => SEGMENTO_PROIBIDO.has(p))) continue
+    let cur = out, ok = true
+    for (let i = 0; i < partes.length; i++) {
+      const p = partes[i]
+      if (i === partes.length - 1) {
+        if (Object.prototype.hasOwnProperty.call(cur, p) && typeof cur[p] === 'object') { ok = false; break }
+        cur[p] = v
+      } else {
+        if (!Object.prototype.hasOwnProperty.call(cur, p)) cur[p] = Object.create(null)
+        else if (typeof cur[p] !== 'object' || cur[p] === null) { ok = false; break }
+        cur = cur[p]
+      }
+    }
+    if (!ok) continue
   }
   return out
 }
@@ -47,7 +61,8 @@ export function extrairMensagens(payload: Record<string, any>): MensagemWebhook[
     const tipo: MensagemWebhook['tipo'] = tipoRaw === 'incoming' ? 'incoming' : tipoRaw === 'outgoing' ? 'outgoing' : 'desconhecido'
     const anexo = m.attachment && typeof m.attachment === 'object' ? String(m.attachment.type ?? '').toLowerCase() || null : null
     let texto = String(m.text ?? '').trim()
-    if (!texto && anexo) texto = ANEXO_AUDIO.has(anexo) ? '[audio]' : '[midia]'
+    // sem texto: anexo de voz = [audio]; outro anexo, ou nada (sticker/localização/contato) = [midia] — alguém interagiu
+    if (!texto) texto = anexo && ANEXO_AUDIO.has(anexo) ? '[audio]' : '[midia]'
     const elementType = m.element_type != null && m.element_type !== '' ? Number(m.element_type) : null
     const elementId = m.element_id != null && m.element_id !== '' ? Number(m.element_id) : null
     const created = Number(m.created_at)

@@ -16,7 +16,7 @@
 // --no-verify-jwt (o bot e o cron não têm JWT do Supabase).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { extrairLeadId, type Cfg, type Padrao } from './triagem.ts'
-import { LeituraFalhou, Throttled, receberWebhook, varrer, type Deps, type Linha, type MensagemRecebida, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, processarTrabalho, receberWebhook, varrer, type Deps, type Linha, type MensagemRecebida, type Repo, type Trabalho } from './motor.ts'
 import { clienteKommo } from './cliente.ts'
 import { desdobrar, extrairMensagens, resumo } from './webhook.ts'
 
@@ -37,16 +37,29 @@ function repoSupabase(db: Db): Repo {
   return {
     async padroesAtivos() { return must(await db.from('autoresposta_padroes').select('id, padrao, descricao, tipo').eq('ativo', true).order('id'), 'padroes') as Padrao[] },
     async config(pipeline) { return (must(await db.from('autoresposta_config').select('*').eq('pipeline_id', pipeline).maybeSingle(), 'config') as Cfg | null) },
-    async criarTrabalho(leadId, msg = null) {
-      const row = { kommo_lead_id: leadId, mensagem_id: msg?.id ?? null, texto: msg?.texto?.slice(0, 2000) ?? null, recebido_em: msg ? new Date(msg.ts * 1000).toISOString() : null }
-      return must(await db.from('autoresposta_trabalho').insert(row).select('id, kommo_lead_id, tentativas, mensagem_id, texto, recebido_em').single(), 'trabalho') as Trabalho
+    async criarTrabalho(leadId, msg = null, contactId = null) {
+      const row = { kommo_lead_id: leadId, contact_id: contactId, mensagem_id: msg?.id ?? null, texto: msg?.texto?.slice(0, 2000) ?? null, recebido_em: msg ? new Date(msg.ts * 1000).toISOString() : null }
+      const cols = 'id, kommo_lead_id, tentativas, mensagem_id, texto, recebido_em, contact_id'
+      if (msg?.id) { // idempotente por mensagem: reentrega do lote devolve o trabalho existente
+        const ins = await db.from('autoresposta_trabalho').upsert(row, { onConflict: 'mensagem_id', ignoreDuplicates: true }).select(cols).maybeSingle()
+        if (ins.error) throw new LeituraFalhou('trabalho', ins.error.message)
+        if (ins.data) return ins.data as Trabalho
+        return must(await db.from('autoresposta_trabalho').select(cols).eq('mensagem_id', msg.id).single(), 'trabalho') as Trabalho
+      }
+      return must(await db.from('autoresposta_trabalho').insert(row).select(cols).single(), 'trabalho') as Trabalho
+    },
+    async vincularLead(id, leadId) { must(await db.from('autoresposta_trabalho').update({ kommo_lead_id: leadId, atualizado_em: agoraIso() }).eq('id', id), 'trabalho') },
+    async atualizarTexto(id, texto) {
+      const r = await db.from(T).update({ texto, origem: 'webhook' }).eq('id', id).eq('estado_efeito', 'pendente').is('decidido_em', null).select('id')
+      if (r.error) throw new LeituraFalhou('texto', r.error.message)
+      return (r.data?.length ?? 0) === 1
     },
     async concluirTrabalho(id, estado, erro = null) {
       const patch: Record<string, unknown> = { estado, erro, atualizado_em: agoraIso() }
       if (estado === 'pendente') { const t = must(await db.from('autoresposta_trabalho').select('tentativas').eq('id', id).single(), 'trabalho') as { tentativas: number }; patch.tentativas = t.tentativas + 1 }
       must(await db.from('autoresposta_trabalho').update(patch).eq('id', id), 'trabalho')
     },
-    async trabalhosPendentes(limite) { return must(await db.from('autoresposta_trabalho').select('id, kommo_lead_id, tentativas, mensagem_id, texto, recebido_em').eq('estado', 'pendente').order('criado_em').limit(limite), 'trabalhos') as Trabalho[] },
+    async trabalhosPendentes(limite) { return must(await db.from('autoresposta_trabalho').select('id, kommo_lead_id, tentativas, mensagem_id, texto, recebido_em, contact_id').eq('estado', 'pendente').order('criado_em').limit(limite), 'trabalhos') as Trabalho[] },
     async linhasDoLead(leadId) { return must(await db.from(T).select('*').eq('kommo_lead_id', leadId), 'linhas') as Linha[] },
     async criarLinhas(linhas) { must(await db.from(T).upsert(linhas, { onConflict: 'kommo_lead_id,mensagem_id', ignoreDuplicates: true }), 'criar_linhas') },
     async linha(leadId, mensagemId) { return must(await db.from(T).select('*').eq('kommo_lead_id', leadId).eq('mensagem_id', mensagemId).single(), 'linha') as Linha },
@@ -60,10 +73,11 @@ function repoSupabase(db: Db): Repo {
       const rows = must(await db.from(T).select('kommo_lead_id').eq('hash', hash).neq('kommo_lead_id', leadId).gte('recebido_em', desde), 'r3') as { kommo_lead_id: number }[]
       return new Set(rows.map((r) => r.kommo_lead_id)).size
     },
-    async superar(leadId, excetoId, antesDe, motivo) {
+    async superar(leadId, excetoId, antesDe, motivo, opts = {}) {
       let q = db.from(T).update({ estado_efeito: 'superado', motivo_efeito: motivo, resolvido_em: agoraIso() }).eq('kommo_lead_id', leadId).in('estado_efeito', ['pendente', 'falhou'])
       if (excetoId != null) q = q.neq('id', excetoId)
       if (antesDe) q = q.lt('recebido_em', antesDe)
+      if (opts.somenteSemTexto) q = q.or('texto.is.null,texto.eq.')
       must(await q, 'superar')
     },
     async claim(id, leaseS) {
@@ -88,22 +102,6 @@ function repoSupabase(db: Db): Repo {
         .lt('tentativas', 5).order('recebido_em').limit(limite), 'pendentes') as Linha[]
     },
   }
-}
-
-// Mensagem recebida no CONTATO (element_type != lead): lead do contato que esteja num funil com
-// triagem configurada; se houver 0 ou mais de 1 candidato, ignora (nunca adivinha).
-async function leadPeloContato(deps: Deps, contactId: number): Promise<number | null> {
-  const r = await deps.kommo('GET', `/api/v4/contacts/${contactId}?with=leads`, undefined, { etapa: 'contato', retries: 1 })
-  if (!r.ok) return null
-  const leads = ((r.body?._embedded?.leads ?? []) as { id: number }[]).map((l) => Number(l.id)).filter(Number.isFinite)
-  const candidatos: number[] = []
-  for (const id of leads.slice(0, 10)) {
-    const l = await deps.kommo('GET', `/api/v4/leads/${id}`, undefined, { etapa: 'lead_do_contato', retries: 1 })
-    if (!l.ok) continue
-    const cfg = await deps.repo.config(Number(l.body?.pipeline_id))
-    if (cfg?.ativo) candidatos.push(id)
-  }
-  return candidatos.length === 1 ? candidatos[0] : null
 }
 
 Deno.serve(async (req) => {
@@ -132,22 +130,24 @@ Deno.serve(async (req) => {
     //    e processa em segundo plano (o trabalho fica durável no banco antes de responder).
     const mensagens = extrairMensagens(payload)
     if (mensagens.length) {
-      const aceitas: unknown[] = [], ignoradas: unknown[] = []
+      // 1) persiste TODAS as entradas (lead ou só contato) ANTES de qualquer leitura no Kommo —
+      //    idempotente por mensagem (reentrega do lote não duplica); 2) responde 200; 3) worker.
+      const aceitas: unknown[] = [], ignoradas: unknown[] = [], trabalhos: Trabalho[] = []
       for (const m of mensagens) {
         if (m.tipo !== 'incoming') { ignoradas.push({ ...resumo(m), motivo: m.tipo }); continue } // outgoing: /events já traz o disparo
-        let leadId = m.leadId
-        if (!leadId && m.contactId) leadId = await leadPeloContato(deps, m.contactId)              // mensagem no contato: acha o lead no funil configurado
-        if (!leadId) { ignoradas.push({ ...resumo(m), motivo: 'sem lead' }); continue }
+        if (!m.leadId && !m.contactId) { ignoradas.push({ ...resumo(m), motivo: 'sem lead nem contato' }); continue }
         const msg: MensagemRecebida = { id: m.id, ts: m.createdAt ?? Math.floor(Date.now() / 1000), texto: m.texto }
-        const t = await deps.repo.criarTrabalho(leadId, msg)                                        // durável antes do 200
-        aceitas.push({ trabalho: t.id, lead: leadId, mensagem: m.id })
-        const tarefa = (async () => {
-          try { await import('./motor.ts').then((mod) => mod.processarTrabalho(deps, t)) }
-          catch (e) { try { await deps.repo.concluirTrabalho(t.id, 'pendente', (e as Error).message) } catch { /* fica para a varredura */ } }
-        })()
-        const rt = (globalThis as any).EdgeRuntime
-        if (rt?.waitUntil) rt.waitUntil(tarefa); else await tarefa
+        const t = await deps.repo.criarTrabalho(m.leadId, msg, m.contactId)
+        trabalhos.push(t); aceitas.push({ trabalho: t.id, lead: m.leadId, contato: m.contactId, mensagem: m.id })
       }
+      const tarefa = (async () => {
+        for (const t of trabalhos) {
+          try { await processarTrabalho(deps, t) }
+          catch (e) { try { await deps.repo.concluirTrabalho(t.id, 'pendente', (e as Error).message) } catch { /* fica para a varredura */ } }
+        }
+      })()
+      const rt = (globalThis as any).EdgeRuntime
+      if (rt?.waitUntil) rt.waitUntil(tarefa); else await tarefa
       return json({ ok: true, aceitas, ignoradas })
     }
 
