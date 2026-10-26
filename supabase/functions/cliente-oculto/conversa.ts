@@ -160,20 +160,29 @@ export function numeroWa(n: string): string | null {
   if (x.length === 12 && /^55\d{2}[6-9]/.test(x)) x = `${x.slice(0, 4)}9${x.slice(4)}`
   return /^55\d{10,11}$/.test(x) ? x : null
 }
-export function textoDoEvento(data: any): { de: string | null; fromMe: boolean; id: string | null; texto: string; ts: number } | null {
+// ts = messageTimestamp do WhatsApp; AUSENTE/zero → ts null (sem instante estável). Um evento sem key.id E sem
+// instante estável não tem identidade de reentrega: vai para QUARENTENA (ignorado com nota), nunca recebe
+// um id composto pela hora de recebimento.
+export function textoDoEvento(data: any): { de: string | null; fromMe: boolean; id: string | null; texto: string; ts: number | null } | null {
   const key = data?.key ?? {}
   const remote = String(key.remoteJid ?? '')
   if (!remote || /@g\.us$/.test(remote)) return null   // grupos não contam
   const m = data?.message ?? {}
   const bruto = m.conversation ?? m.extendedTextMessage?.text ?? m.imageMessage?.caption ?? m.videoMessage?.caption ?? (m.audioMessage ? '[áudio]' : (m.documentMessage ? '[documento]' : ''))
   const texto = String(bruto ?? '').trim()
-  const ts = Number(data?.messageTimestamp ?? 0) || Math.floor(Date.now() / 1000)
+  const tsBruto = Number(data?.messageTimestamp ?? 0)
+  const ts = Number.isFinite(tsBruto) && tsBruto > 0 ? Math.floor(tsBruto > 1e12 ? tsBruto / 1000 : tsBruto) : null
   // remetente CANÔNICO pela mesma regra do cadastro (numeroWa) — '551188887777' casa com '5511988887777'
   const de = numeroWa(remote.replace(/@.*$/, ''))
   return { de, fromMe: !!key.fromMe, id: key.id ? String(key.id) : null, texto, ts }
 }
 /** identidade DETERMINÍSTICA para evento sem key.id: mesma entrega reprocessada = mesmo id (idempotente);
  *  FNV-1a de remetente|instante|texto — nunca aleatória */
+export function identidadeEstavel(m: { id: string | null; ts: number | null; de: string | null; texto: string }): string | null {
+  if (m.id) return m.id
+  if (m.ts != null && m.de) return idDeterministico(m.de, m.ts, m.texto)
+  return null   // quarentena
+}
 export function idDeterministico(de: string, ts: number, texto: string): string {
   let h = 0x811c9dc5
   for (const ch of `${de}|${ts}|${texto}`) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 0x01000193) >>> 0 }

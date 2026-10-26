@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { classificarEnvio, consolidar, decidir, idDeterministico, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { classificarEnvio, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 
 const T0 = 1_800_000_000
 const H = 3600
@@ -75,10 +75,18 @@ Deno.test('numeroWa canônico nos DOIS lados: cadastro "11 8888-7777" e remoteJi
   assertEquals(textoDoEvento({ key: { remoteJid: '5511999999999@s.whatsapp.net', fromMe: true }, message: { conversation: 'nossa' }, messageTimestamp: T0 })!.fromMe, true)
 })
 
-Deno.test('idDeterministico: mesma entrega = mesmo id (idempotente); conteúdo diferente = id diferente; nunca aleatório', () => {
+Deno.test('identidade: key.id > determinística (remetente|messageTimestamp|texto) > QUARENTENA (sem id e sem instante: nunca usa a hora de recebimento)', () => {
   const a = idDeterministico('5511988887777', T0, 'oi'), b = idDeterministico('5511988887777', T0, 'oi')
   assertEquals(a, b); assert(a.startsWith(`in-${T0}-`))
   assert(idDeterministico('5511988887777', T0, 'oi!') !== a && idDeterministico('5511988887777', T0 + 1, 'oi') !== a)
+  const comTs = textoDoEvento({ key: { remoteJid: '5511988887777@s.whatsapp.net' }, message: { conversation: 'oi' }, messageTimestamp: T0 })!
+  assertEquals(identidadeEstavel(comTs), idDeterministico('5511988887777', T0, 'oi'))
+  // mesmo payload sem key.id e sem messageTimestamp, "reentregue 10 s depois": ts null nas duas vezes → quarentena nas duas (nenhuma identidade)
+  const semNada = { key: { remoteJid: '5511988887777@s.whatsapp.net' }, message: { conversation: 'oi' } }
+  const e1 = textoDoEvento(semNada)!, e2 = textoDoEvento(semNada)!
+  assertEquals(e1.ts, null); assertEquals(identidadeEstavel(e1), null); assertEquals(identidadeEstavel(e2), null)
+  // timestamp em milissegundos também é aceito e normalizado
+  assertEquals(textoDoEvento({ key: { remoteJid: '5511988887777@s.whatsapp.net', id: 'X' }, message: { conversation: 'oi' }, messageTimestamp: T0 * 1000 })!.ts, T0)
 })
 
 Deno.test('classificarEnvio: aceito = ok; 4xx = definitivo (não reenviar); timeout/rede/5xx/429 = incerto (reconciliar antes de reenviar)', () => {

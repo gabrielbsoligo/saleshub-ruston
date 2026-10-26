@@ -13,7 +13,7 @@
 // e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PADRAO, classificarEnvio, consolidar, decidir, idDeterministico, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, classificarEnvio, consolidar, decidir, identidadeEstavel, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -69,12 +69,6 @@ async function renovar(sb: any, id: string, token: string) {
   if (error) throw new Error(`oculto_renovar: ${error.message}`)
   if (data !== true) throw new PossePerdida('posse perdida (cancelada ou outro worker)')
 }
-async function registrarIn(sb: any, sessaoId: string, de: string, texto: string, ts: number, waId: string | null, bruto?: unknown): Promise<boolean> {
-  // sem key.id: identidade determinística (remetente|instante|texto) — reentrega da mesma mensagem não duplica
-  const r = await sb.from('oculto_mensagens').upsert({ sessao_id: sessaoId, direcao: 'in', texto, em: iso(ts), wa_id: waId ?? idDeterministico(de, ts, texto), bruto: bruto ?? null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }).select('id')
-  if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`)
-  return (r.data?.length ?? 0) > 0
-}
 
 /** fala da persona sob posse: LLM → revalida config e posse → intenção persistida → POST → registro atômico / erro / incerto */
 async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, rev: number, persona: any, hist: Msg[], abertura: boolean) {
@@ -119,19 +113,22 @@ async function reconciliar(sb: any, cfg: Cfg, row: any, token: string, rev: numb
   // (tolerância de 5 s de relógio) — um "Obrigado" enviado antes nunca confirma esta tentativa
   const { data: ecos, error: ee } = await sb.from('oculto_mensagens').select('wa_id, em').eq('sessao_id', row.id).eq('direcao', 'out').eq('texto', texto).gte('em', iso(ini - 5)).order('em')
   if (ee) throw new Error(`oculto_mensagens: ${ee.message}`)
-  const novos = (ecos ?? []).filter((m: any) => m.wa_id && !conhecidas.has(String(m.wa_id)))
-  let achou: { id: string; ts: number } | null = null
-  if (novos.length === 1) achou = { id: String(novos[0].wa_id), ts: seg(novos[0].em)! }
-  if (!achou) {
+  // evidências unidas por wa_id (eco local ∪ provedor); a ambiguidade, uma vez comprovada, não se desfaz
+  const evid = new Map<string, number>()
+  for (const m of ecos ?? []) if (m.wa_id && !conhecidas.has(String(m.wa_id))) evid.set(String(m.wa_id), seg(m.em)!)
+  const ambiguo = async (nota: string) => { await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: `envio incerto: ${nota} — não reenviado` }); return { id: row.id, erro: 'ambíguo' } }
+  if (evid.size > 1) return await ambiguo('mais de uma saída nova igual no histórico')
+  if (evid.size === 0) {
     const r = await wa.buscarMensagens(row.numero_alvo, 30)
     if (!r.ok) {
       if (agoraS() - ini < 1800) { await gravar(sb, row.id, token, { proximo_em: iso(agoraS() + 300) }); return { id: row.id, adiado: 'provedor indisponível para reconciliar' } }
     } else {
-      const cands = r.mensagens.filter((x) => x.fromMe && x.texto === texto && x.id && !conhecidas.has(String(x.id)) && x.ts >= ini - 5)
-      if (cands.length === 1) achou = { id: String(cands[0].id), ts: cands[0].ts }
-      else if (cands.length > 1) { await gravar(sb, row.id, token, { status: 'erro', fase: 'ocioso', envio_pendente: null, erro: 'envio incerto: mais de uma saída igual no provedor — não reenviado' }); return { id: row.id, erro: 'ambíguo' } }
+      for (const x of r.mensagens) if (x.fromMe && x.texto === texto && x.id && !conhecidas.has(String(x.id)) && x.ts >= ini - 5) evid.set(String(x.id), x.ts || ini)
+      if (evid.size > 1) return await ambiguo('mais de uma saída igual no provedor')
     }
   }
+  let achou: { id: string; ts: number } | null = null
+  if (evid.size === 1) { const [id, ts] = [...evid.entries()][0]; achou = { id, ts } }
   if (achou) {
     const status = abertura ? 'enviada' : 'conversando'
     const { data: ok, error } = await sb.rpc('oculto_envio_registrar', { p_id: row.id, p_token: token, p_texto: texto, p_wa_id: achou.id, p_em: iso(achou.ts), p_abertura: abertura, p_proximo_em: iso(proximoAposFala(status, achou.ts)), p_entrada_rev: rev })
@@ -210,18 +207,23 @@ async function webhook(sb: any, cfg: Cfg, body: any) {
   for (const data of itens) {
     const m = textoDoEvento(data)
     if (!m || !m.de) { out.push({ ignorado: 'sem remetente' }); continue }
+    const waId = identidadeEstavel(m)
+    if (!waId) { console.warn('cliente-oculto: evento sem identidade estável (sem key.id e sem messageTimestamp) — quarentena', String(m.de)); out.push({ de: m.de, ignorado: 'quarentena: sem identidade estável' }); continue }
+    const ts = m.ts ?? agoraS()   // só para fromMe (eco) com id real; entradas exigem ts estável (acima)
     const { data: ss, error } = await sb.from('oculto_sessoes').select('*').eq('numero_alvo', m.de).in('status', ABERTAS).order('criado_em', { ascending: false }).limit(1)
     if (error) throw new Error(`oculto_sessoes: ${error.message}`)
     const row = ss?.[0]
     if (!row) { out.push({ de: m.de, ignorado: 'sem sessão aberta' }); continue }
-    if (m.fromMe) {   // eco do nosso envio: registra (dedupe por wa_id) — serve de reconciliação
-      if (m.texto) await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(m.ts), wa_id: m.id ?? `out-${m.ts}` }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true })
+    if (m.fromMe) {   // eco do nosso envio: registra (dedupe por wa_id) — serve de reconciliação; só com id real
+      if (m.texto && m.id) { const r = await sb.from('oculto_mensagens').upsert({ sessao_id: row.id, direcao: 'out', texto: m.texto, em: iso(ts), wa_id: m.id, bruto: null }, { onConflict: 'sessao_id,wa_id', ignoreDuplicates: true }); if (r.error) throw new Error(`oculto_mensagens: ${r.error.message}`) }
       out.push({ sessao: row.id, nossa: true }); continue
     }
-    const nova = await registrarIn(sb, row.id, m.de, m.texto || '[mídia]', m.ts, m.id, data)
-    if (!nova) { out.push({ sessao: row.id, duplicada: true }); continue }
-    const { error: een } = await sb.rpc('oculto_entrada', { p_id: row.id, p_em: iso(m.ts) })   // watermark +1 e proximo_em = agora, atômico
+    // entrada em UMA transação idempotente: mensagem + watermark + agendamento (cobre 'pendente' durante a abertura)
+    const { data: ent, error: een } = await sb.rpc('oculto_entrada', { p_id: row.id, p_wa_id: waId, p_texto: m.texto || '[mídia]', p_em: iso(m.ts!), p_bruto: data })
     if (een) throw new Error(`oculto_entrada: ${een.message}`)
+    const e0 = Array.isArray(ent) ? ent[0] : ent
+    if (!e0 || typeof e0.nova !== 'boolean') throw new Error('oculto_entrada: resultado inesperado')
+    if (!e0.nova) { out.push({ sessao: row.id, duplicada: true }); continue }
     out.push(await avancar(sb, cfg, row))   // se a posse estiver ocupada, quem a tem verá a watermark mudar e reagenda para agora
   }
   return { ok: true, itens: out }

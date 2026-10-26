@@ -26,7 +26,7 @@
 -- ADITIVA e idempotente. Reverter (ordem): SELECT cron.unschedule('oculto-varrer');
 --   DROP FUNCTION IF EXISTS public.oculto_claim(UUID,INT), public.oculto_renovar(UUID,UUID,INT),
 --     public.oculto_envio_registrar(UUID,UUID,TEXT,TEXT,TIMESTAMPTZ,BOOLEAN,TIMESTAMPTZ,INT),
---     public.oculto_entrada(UUID,TIMESTAMPTZ), public.oculto_liberar(UUID,UUID,INT);
+--     public.oculto_entrada(UUID,TEXT,TEXT,TIMESTAMPTZ,JSONB), public.oculto_liberar(UUID,UUID,INT);
 --   ALTER PUBLICATION supabase_realtime DROP TABLE public.oculto_sessoes, public.oculto_mensagens;
 --   DROP TABLE IF EXISTS public.oculto_mensagens, public.oculto_sessoes, public.oculto_config;
 --   DELETE FROM public.integracao_config WHERE key = 'oculto_webhook_secret';
@@ -143,18 +143,28 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
               WHERE id = p_id AND claim_token = p_token AND status IN ('pendente','enviada','conversando','aguardando_followup','avaliando') RETURNING 1)
   SELECT EXISTS (SELECT 1 FROM u);
 $$;
--- Entrada da empresa (webhook): mensagem nova → watermark +1, próximo instante = agora, estado (atômico, sem posse:
--- a entrada nunca espera o worker). Devolve a revisão nova.
-CREATE OR REPLACE FUNCTION public.oculto_entrada(p_id UUID, p_em TIMESTAMPTZ)
-RETURNS INT LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE r INT;
+-- Entrada da empresa (webhook) — UMA transação, idempotente: insere a mensagem (ON CONFLICT (sessao_id, wa_id)
+-- DO NOTHING) e, SÓ se ela é nova, watermark +1, ultima_in_em, proximo_em = agora e enviada→conversando.
+-- Cobre também 'pendente' (resposta chegando durante a abertura em curso: a rev muda e o registrar/liberar
+-- reagendam para agora). Sem posse: a entrada nunca espera o worker. Devolve (nova, rev).
+CREATE OR REPLACE FUNCTION public.oculto_entrada(p_id UUID, p_wa_id TEXT, p_texto TEXT, p_em TIMESTAMPTZ, p_bruto JSONB DEFAULT NULL)
+RETURNS TABLE (nova BOOLEAN, rev INT) LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n INT; r INT;
 BEGIN
+  INSERT INTO public.oculto_mensagens (sessao_id, direcao, texto, wa_id, em, bruto) VALUES (p_id, 'in', p_texto, p_wa_id, p_em, p_bruto)
+    ON CONFLICT (sessao_id, wa_id) DO NOTHING;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n = 0 THEN
+    SELECT s.entrada_rev INTO r FROM public.oculto_sessoes s WHERE s.id = p_id;
+    RETURN QUERY SELECT false, r; RETURN;
+  END IF;
   UPDATE public.oculto_sessoes s
      SET entrada_rev = s.entrada_rev + 1, ultima_in_em = p_em, proximo_em = now(),
          status = CASE WHEN s.status = 'enviada' THEN 'conversando' ELSE s.status END, atualizado_em = now()
-   WHERE s.id = p_id AND s.status IN ('enviada','conversando','aguardando_followup')
+   WHERE s.id = p_id AND s.status IN ('pendente','enviada','conversando','aguardando_followup')
   RETURNING s.entrada_rev INTO r;
-  RETURN r;
+  IF r IS NULL THEN RAISE EXCEPTION 'oculto_entrada: sessão % não está aberta', p_id; END IF;   -- desfaz o INSERT (transação)
+  RETURN QUERY SELECT true, r;
 END $$;
 -- Registro ATÔMICO de um envio aceito: mensagem 'out' + turnos+1 + estado + fase ociosa + próximo instante,
 -- tudo sob posse. p_entrada_rev = watermark lida no início do avanço: se a empresa escreveu no meio
@@ -186,9 +196,10 @@ RETURNS BOOLEAN LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
               WHERE s.id = p_id AND s.claim_token = p_token RETURNING 1)
   SELECT EXISTS (SELECT 1 FROM u);
 $$;
-REVOKE EXECUTE ON FUNCTION public.oculto_entrada(UUID, TIMESTAMPTZ) FROM PUBLIC, anon, authenticated;
+DROP FUNCTION IF EXISTS public.oculto_entrada(UUID, TIMESTAMPTZ);
+REVOKE EXECUTE ON FUNCTION public.oculto_entrada(UUID, TEXT, TEXT, TIMESTAMPTZ, JSONB) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.oculto_liberar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.oculto_entrada(UUID, TIMESTAMPTZ) TO service_role;
+GRANT EXECUTE ON FUNCTION public.oculto_entrada(UUID, TEXT, TEXT, TIMESTAMPTZ, JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.oculto_liberar(UUID, UUID, INT) TO service_role;
 REVOKE EXECUTE ON FUNCTION public.oculto_claim(UUID, INT) FROM PUBLIC, anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.oculto_renovar(UUID, UUID, INT) FROM PUBLIC, anon, authenticated;
