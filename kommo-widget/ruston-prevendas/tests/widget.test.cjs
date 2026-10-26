@@ -423,7 +423,7 @@ test('telefone: registra com HA1 (sem senha), endpoint derivado, credencial fora
   assert.equal(reg.cfg.ha1, CRED.ha1); assert.equal(reg.cfg.password, undefined); assert.equal(reg.cfg.authorization_user, '1006')
   assert.equal(reg.cfg.realm, 'ruston.api4com.com'); assert.equal(reg.cfg.sockets[0].url, CRED.wss); assert.equal(reg.started, 1)
   reg.emit('registered')
-  assert.match(env.elems['rpv-root'].innerHTML, /Telefone · pronto/)
+  assert.match(env.elems['rpv-root'].innerHTML, /Telefone( (4com|3C))? · pronto/)
   for (const st of [env.ctx.localStorage, env.ctx.sessionStorage]) for (const v of st._m.values()) assert.ok(!String(v).includes(CRED.ha1), 'HA1 vazou para o storage')
 })
 
@@ -957,3 +957,115 @@ for (const [nome, saltoPC, decorrido, esperado] of [
     assert.equal(inv.session.atendida, esperado)
   })
 }
+
+// ---------------- 3C no mesmo módulo ----------------
+test('3C: provedor_voz vai nos pedidos; a chamada do 3cplus na tentativa atende sozinha; outra origem só toca', async () => {
+  const env = ambiente(), reg = {}
+  const CRED3C = { ...CRED, provedor: '3c', wss: 'wss://vox-socket.3c.plus:4443', dominio: 'gbsvendas.3c.plus', realm: 'gbsvendas.3c.plus', ramal: '999123', uri: 'sip:999123@gbsvendas.3c.plus' }
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED3C,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  }, { provedor_voz: '3c' })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.equal(chamadas.find((c) => c.acao === 'credencial').provedor, '3c')
+  assert.equal(reg.cfg.sockets[0].url, 'wss://vox-socket.3c.plus:4443')
+  assert.match(env.elems['rpv-root'].innerHTML, /Telefone 3C · pronto/)
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.equal(chamadas.find((c) => c.acao === 'discar').provedor, '3c')
+  const de = (user) => { const x = sessao(false); x.request.from = { uri: { user } }; return x }
+  const outra = de('5547999990000'); reg.emit('newRTCSession', outra)
+  assert.equal(outra.session.atendida, undefined); outra.session.terminate()
+  const integrada = de('3cplus'); reg.emit('newRTCSession', integrada)
+  assert.equal(integrada.session.atendida, true)
+})
+
+test('trocar provedor_voz nas settings registra o ramal de novo (credencial do provedor novo)', async () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas, mudar } = comVoz(env, reg, { credencial: (b) => ({ ...CRED, provedor: b.provedor === '3c' ? '3c' : '4com' }) })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.equal(chamadas.filter((c) => c.acao === 'credencial').length, 1)
+  mudar({ provedor_voz: '3c' }); w.callbacks.onSave(); await flush()      // solta o ramal 4com
+  env.rodarTimers('i'); await flush()
+  const creds = chamadas.filter((c) => c.acao === 'credencial')
+  assert.equal(creds.length, 2); assert.equal(creds[1].provedor, '3c'); assert.ok(reg.stopped >= 1)
+})
+
+// ---------------- 0.4.4: ajustes do T2 ----------------
+test('0.4.4: em chamada some o "Chamando…"; ramal registrado em outro lugar é avisado; sem INVITE em 25 s, orienta', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush()
+  reg.emit('registered', { response: { getHeaders: () => ['<sip:1006@abc.invalid;transport=ws>;expires=300', '<sip:1006@10.0.0.5:5060>;expires=600'] } })
+  assert.match(env.elems['rpv-root'].innerHTML, /também está registrado em outro lugar/)
+  reg.emit('registered', { response: { getHeaders: () => ['<sip:1006@abc.invalid;transport=ws>;expires=300'] } })
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /também está registrado/)
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.match(env.elems['rpv-root'].innerHTML, /Chamando…/)
+  env.rodarTimers('t')                                                       // 25 s sem INVITE
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  const inv = sessao(true); reg.emit('newRTCSession', inv)                   // chega (ainda na janela de 60 s)
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Em chamada/); assert.doesNotMatch(html, /Chamando…|não chegou/)
+})
+
+test('0.4.4: a orientação "não chegou" persiste ao 200 tardio SEM INVITE; timer atrasado além da janela não orienta', async () => {
+  const env = ambiente(), reg = {}
+  let perf = 1000; env.ctx.performance = { now: () => perf }
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  perf += 25000; env.rodarTimers('t')                                     // 25 s sem INVITE
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  adiadas[0].ok({ ok: true, chamada_id: 'c1' })                            // 200 tardio, ainda sem INVITE (atendida em outro lugar)
+  assert.match(env.elems['rpv-root'].innerHTML, /não chegou a este telefone/)
+  // nova tentativa com timer atrasado (aba suspensa): o timer só roda depois da janela de 60 s
+  w.callbacks.init(); clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não chegou/)      // tentativa nova limpa
+  perf += 61000; env.rodarTimers('t')
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não chegou/)
+})
+
+test('0.4.4: "has been failed" orienta a desativar a extensão API4COM; 2º INVITE com chamada ativa é recusado e a 1ª segue', async () => {
+  const env = ambiente(), reg = {}
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  adiadas[0].err({ status: 502, responseJSON: { erro: 'provedor_recusou', mensagem: 'call from 1006 to +5547997293673 has been failed' } })
+  assert.match(env.elems['rpv-root'].innerHTML, /Desative a extensão API4COM do Chrome/)
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  const a = sessao(true); reg.emit('newRTCSession', a)
+  assert.equal(a.session.atendida, true)
+  const b = sessao(true); let recusada = null; b.session.terminate = (o) => { recusada = o }; reg.emit('newRTCSession', b)
+  assert.equal(recusada && recusada.status_code, 486); assert.equal(b.session.atendida, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)                // a primeira continua
+})
+
+test('notificações iguais do mesmo lead aparecem num card só e "×" fecha o grupo', () => {
+  const env = ambiente()
+  const agora = Math.floor(Date.now() / 1000)
+  const t = (id) => ({ id, entity_type: 'leads', entity_id: 777, due: agora - 60, momento: 'sem_classificacao', grupo: 'G9', texto: 'CONEXÃO — igual', lead_nome: 'X' })
+  const w = instanciar(env, [{ ok: true, itens: [t(1), t(2)] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  let html = env.elems['rpv-root'].innerHTML
+  assert.equal((html.match(/rpv-ntf/g) || []).length, 1); assert.match(html, /2 iguais/)
+  clicar(env, 'fechar-ntf', { 'data-tid': '1,2' })
+  html = env.elems['rpv-root'].innerHTML
+  assert.equal((html.match(/rpv-ntf/g) || []).length, 0)
+})

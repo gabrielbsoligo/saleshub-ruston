@@ -20,6 +20,7 @@
     "modo": "Test (manager only): force the \"sdr\" or \"closer\" queue; empty = by your role",
     "etapas_closer": "Closer pipeline stage order (comma-separated ids; empty = default)",
     "antecedencia_closer_min": "Minutes before a meeting when it jumps to the top of the closer queue (default 120)",
-    "debug_voz": "Phone diagnostics: Y logs extension registration and incoming calls to the browser console (no credentials)"
+    "debug_voz": "Phone diagnostics: Y logs extension registration and incoming calls to the browser console (no credentials)",
+    "provedor_voz": "Phone provider: 4com or 3c (empty = server picks from the user record: 4com if there is an extension, otherwise 3C)"
   }
 }

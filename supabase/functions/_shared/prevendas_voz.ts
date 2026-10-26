@@ -146,3 +146,60 @@ export function interpretar4com(status: number, corpo: unknown): Resultado4com {
   if (status === 0 || status >= 500) return { ok: false, erro: 'provedor_indisponivel', mensagem: msg || 'A 4com não respondeu.', incerto: true }
   return { ok: false, erro: 'provedor_recusou', mensagem: msg || `A 4com recusou a ligação (${status}).` }
 }
+
+// ---------------- provedores: 4com e 3C ----------------
+export type Provedor = '4com' | '3c'
+/**
+ * Provedor do telefone do usuário: o pedido (setting do widget) ou o padrão do servidor, desde que o usuário tenha
+ * o dado necessário (ramal_4com p/ 4com; agente_3c_id p/ 3C). Sem pedido/padrão: 4com se houver ramal, senão 3C.
+ */
+export function decidirProvedor(pedido: unknown, m: { ramal_4com?: string | null; agente_3c_id?: string | number | null }, padrao?: unknown): Provedor | null {
+  const tem4 = /^\d{2,8}$/.test(String(m.ramal_4com ?? '').trim()), tem3 = /^\d{1,12}$/.test(String(m.agente_3c_id ?? '').trim())
+  const p = pedido === '3c' || pedido === '4com' ? pedido : (padrao === '3c' || padrao === '4com' ? padrao : null)
+  if (p === '3c') return tem3 ? '3c' : null
+  if (p === '4com') return tem4 ? '4com' : null
+  return tem4 ? '4com' : (tem3 ? '3c' : null)
+}
+
+/** Número no formato do 3C (DDD + número, sem o 55 — como o próprio app do 3C faz na discagem manual). */
+export function telefone3c(e164: string): string { return String(e164).replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '') }
+
+/** Credencial SIP do 3C a partir do usuário (GET /users/{id}?include=extension,company). Senha nunca sai daqui. */
+export function credencial3c(u: any): { wss: string; dominio: string; usuario: string; realm: string; ha1: string; uri: string; ramal: string } | null {
+  const tid = String(u?.telephony_id ?? '').trim(), senha = String(u?.extension_password ?? '')
+  const dom = String((u?.company?.data ?? u?.company)?.domain ?? '').trim().toLowerCase()
+  const ext = String((u?.extension?.data ?? u?.extension)?.extension_number ?? '').trim()
+  if (!/^\d+$/.test(tid) || !senha || !/^[a-z0-9-]+$/.test(dom) || !/^\d+$/.test(ext)) return null
+  const dominio = `${dom}.3c.plus`
+  return { wss: 'wss://vox-socket.3c.plus:4443', dominio, usuario: tid, realm: dominio, ha1: ha1(tid, dominio, senha), uri: `sip:${tid}@${dominio}`, ramal: ext }
+}
+
+/** Lê a resposta do POST /click2call do 3C (mesmo formato de resultado da 4com). */
+export function interpretar3c(status: number, corpo: unknown): Resultado4com {
+  const j = (corpo && typeof corpo === 'object' ? corpo : {}) as Record<string, any>
+  const erros = j?.errors && typeof j.errors === 'object' ? Object.values(j.errors).flat().map(String).join(' ') : ''
+  const msg = String(erros || j?.detail || j?.message || '').replace(/\s+/g, ' ').slice(0, 200)
+  if (status >= 200 && status < 300) { const id = j?.data?.id ?? j?.id ?? j?.call_id ?? null; return { ok: true, chamada_id: id != null ? String(id) : null } }
+  if (status === 401 || status === 403) return { ok: false, erro: 'provedor_auth', mensagem: 'O 3C recusou a credencial do servidor.' }
+  if (status === 429) return { ok: false, erro: 'provedor_limite', mensagem: 'Limite de ligações do 3C atingido; tente em 1 minuto.' }
+  if (status === 0 || status >= 500) return { ok: false, erro: 'provedor_indisponivel', mensagem: msg || 'O 3C não respondeu.', incerto: true }
+  return { ok: false, erro: 'provedor_recusou', mensagem: msg || `O 3C recusou a ligação (${status}).` }
+}
+
+export type Preparo3c =
+  | { tipo: 'ok'; c: NonNullable<ReturnType<typeof credencial3c>> }
+  | { tipo: 'limite'; retryAfter: number }
+  | { tipo: 'sem_ramal' }
+  | { tipo: 'indisponivel' }
+/**
+ * PREPARAÇÃO da discagem 3C (ramal do agente), separada do ENVIO: nada aqui é "incerto", porque o /click2call
+ * ainda não foi chamado. 429 vira limite com o Retry-After recebido (1..3600, padrão 60).
+ */
+export async function prepararAgente3c(obter: () => Promise<{ status: number; retryAfter: string | null; u: unknown }>): Promise<Preparo3c> {
+  let r: { status: number; retryAfter: string | null; u: unknown }
+  try { r = await obter() } catch { return { tipo: 'indisponivel' } }
+  if (r.status === 429) return { tipo: 'limite', retryAfter: Math.min(3600, Math.max(1, Number(r.retryAfter) || 60)) }
+  if (r.status < 200 || r.status >= 300) return { tipo: 'indisponivel' }
+  const c = credencial3c(r.u)
+  return c ? { tipo: 'ok', c } : { tipo: 'sem_ramal' }
+}

@@ -20,6 +20,7 @@
     "modo": "Teste (só gestor): força a fila de \"sdr\" ou \"closer\"; vazio = pelo seu papel",
     "etapas_closer": "Ordem das etapas do funil Closer (ids separados por vírgula; vazio = padrão aprovado em 26/10)",
     "antecedencia_closer_min": "Minutos antes da reunião em que ela passa para o topo da fila do closer (padrão 120)",
-    "debug_voz": "Diagnóstico do telefone: Y registra no console do navegador o registro do ramal e as chamadas recebidas (sem credenciais)"
+    "debug_voz": "Diagnóstico do telefone: Y registra no console do navegador o registro do ramal e as chamadas recebidas (sem credenciais)",
+    "provedor_voz": "Provedor do telefone: 4com ou 3c (vazio = o servidor escolhe pelo cadastro do usuário: 4com se tiver ramal, senão 3C)"
   }
 }

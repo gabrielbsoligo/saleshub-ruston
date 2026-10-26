@@ -97,3 +97,37 @@ test('decidirEntidade: id confere, autorização e só contatos VINCULADOS', () 
   const contato = decidirEntidade({ uid: 9, papel: 'sdr', etype: 'contacts', eid: 1, entidade: { id: 1, responsible_user_id: 9, custom_fields_values: tel('47997293673') }, tarefas: [], contatosDevolvidos: [] }) as any
   assert.equal(contato.ok, true); assert.equal(contato.contatos[0].telefones[0].e164, '+5547997293673')
 })
+
+test('3C: provedor por usuário, número sem 55, credencial (HA1, nunca a senha) e leitura da resposta', async () => {
+  const { decidirProvedor, telefone3c, credencial3c, interpretar3c } = await import('../../../supabase/functions/_shared/prevendas_voz.ts')
+  const ambos = { ramal_4com: '1006', agente_3c_id: '234873' }
+  assert.equal(decidirProvedor(undefined, ambos), '4com')
+  assert.equal(decidirProvedor('3c', ambos), '3c')
+  assert.equal(decidirProvedor(undefined, ambos, '3c'), '3c')                 // padrão do servidor
+  assert.equal(decidirProvedor('3c', { ramal_4com: '1006' }), null)          // pediu 3C sem agente
+  assert.equal(decidirProvedor(undefined, { agente_3c_id: '234873' }), '3c')
+  assert.equal(decidirProvedor(undefined, {}), null)
+  assert.equal(telefone3c('+5547997293673'), '47997293673')
+  assert.equal(telefone3c('+551133334444'), '1133334444')
+  const u = { telephony_id: 999123, extension_password: 'segredo', company: { domain: 'gbsvendas' }, extension: { extension_number: 427178 } }
+  const c = credencial3c(u)!
+  assert.equal(c.dominio, 'gbsvendas.3c.plus'); assert.equal(c.uri, 'sip:999123@gbsvendas.3c.plus'); assert.equal(c.ramal, '427178')
+  assert.equal(c.ha1, ha1('999123', 'gbsvendas.3c.plus', 'segredo')); assert.ok(!JSON.stringify(c).includes('segredo'))
+  assert.equal(credencial3c({ ...u, extension_password: '' }), null)
+  assert.deepEqual(interpretar3c(200, { data: { id: 'x1' } }), { ok: true, chamada_id: 'x1' })
+  const r = interpretar3c(422, { errors: { phone: ['Informe o telefone.'] } }) as any
+  assert.equal(r.erro, 'provedor_recusou'); assert.equal(r.mensagem, 'Informe o telefone.')
+  assert.equal((interpretar3c(503, null) as any).incerto, true)
+})
+
+test('3C — preparação da discagem separada do envio: 429 vira limite com Retry-After; rede/erro = indisponível (nunca incerto)', async () => {
+  const { prepararAgente3c } = await import('../../../supabase/functions/_shared/prevendas_voz.ts')
+  const u = { telephony_id: 1, extension_password: 'x', company: { domain: 'gbsvendas' }, extension: { extension_number: 427178 } }
+  assert.deepEqual(await prepararAgente3c(async () => ({ status: 429, retryAfter: '120', u: null })), { tipo: 'limite', retryAfter: 120 })
+  assert.deepEqual(await prepararAgente3c(async () => ({ status: 429, retryAfter: null, u: null })), { tipo: 'limite', retryAfter: 60 })
+  assert.deepEqual(await prepararAgente3c(async () => { throw new Error('rede') }), { tipo: 'indisponivel' })
+  assert.deepEqual(await prepararAgente3c(async () => ({ status: 503, retryAfter: null, u: null })), { tipo: 'indisponivel' })
+  assert.deepEqual(await prepararAgente3c(async () => ({ status: 200, retryAfter: null, u: { ...u, extension_password: '' } })), { tipo: 'sem_ramal' })
+  const ok = await prepararAgente3c(async () => ({ status: 200, retryAfter: null, u })) as any
+  assert.equal(ok.tipo, 'ok'); assert.equal(ok.c.ramal, '427178')
+})

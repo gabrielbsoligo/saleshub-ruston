@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "interface_version": 2,
     "init_once": true,
     "locale": [
@@ -101,6 +101,11 @@
     },
     "debug_voz": {
       "name": "settings.debug_voz",
+      "type": "text",
+      "required": false
+    },
+    "provedor_voz": {
+      "name": "settings.provedor_voz",
       "type": "text",
       "required": false
     }

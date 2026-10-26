@@ -189,3 +189,16 @@ test('telefone (decisão do Gabriel, T2): atende sozinho a integrada da tentativ
   assert.equal(Fila.deveAtender(true, 500, 1000, false), false)     // janela vencida
   assert.equal(Fila.deveAtender(false, 2000, 1000, false), false)   // sem o header da 4com
 })
+
+test('contarRegistros: conta os Contact da resposta do REGISTER (vírgula ou cabeçalhos separados)', () => {
+  assert.equal(Fila.contarRegistros(['<sip:1006@a.invalid;transport=ws>;expires=300']), 1)
+  assert.equal(Fila.contarRegistros(['<sip:1006@a.invalid>;expires=300, <sip:1006@10.0.0.5:5060>;expires=600']), 2)
+  assert.equal(Fila.contarRegistros(['<sip:1006@a>', '<sip:1006@b>']), 2)
+  assert.equal(Fila.contarRegistros([]), 0)
+})
+
+test('agruparNotif: sem repetir a mesma tarefa; avisos iguais do mesmo lead viram um card com a contagem', () => {
+  const n = (id, eid, titulo) => ({ id, etype: 'leads', eid, titulo })
+  const g = Fila.agruparNotif([n(1, 10, 'CONEXÃO — x'), n(1, 10, 'CONEXÃO — x'), n(2, 10, 'CONEXÃO — x'), n(3, 11, 'CONEXÃO — x'), n(4, 10, 'outra')])
+  assert.deepEqual(JSON.parse(JSON.stringify(g.map((x) => [x.eid, x.qtd, x.ids]))), [[10, 2, [1, 2]], [11, 1, [3]], [10, 1, [4]]])
+})
