@@ -18,7 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
-import { chatsSemResposta, itensDeChat, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -64,13 +64,15 @@ Deno.serve(async (req) => {
   // 2) cache + trava
   const { data: cache, error: eC } = await sb.from('prevendas_cache').select('resposta,em').eq('kommo_user', uid).maybeSingle()
   if (eC) return json({ erro: 'falha_banco' }, 503, origin)
+  // reuso de resposta montada: a validade dos chats é conferida de novo AGORA (tarefas ficam; chat vencido sai)
+  const reuso = (r: any) => revalidarChats(r, Math.floor(Date.now() / 1000), CHATS_MAX_IDADE_S)
   const idade = cache?.em ? (Date.now() - Date.parse(cache.em)) / 1000 : Infinity
-  if (cache?.resposta && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...cache.resposta, cache_s: Math.round(idade) }, 200, origin)
+  if (cache?.resposta && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade) }, 200, origin)
   const { data: token, error: eT } = await sb.rpc('prevendas_travar', { p_user: uid, p_seg: TRAVA_S })
   if (eT) return json({ erro: 'falha_banco' }, 503, origin)
   if (!token) {
     // outra execução do mesmo usuário em curso: só devolve cache AINDA VÁLIDO (nunca vencido como autoritativo)
-    if (cache?.resposta && idade < CACHE_S) return json({ ...cache.resposta, cache_s: Math.round(idade), em_andamento: true }, 200, origin)
+    if (cache?.resposta && idade < CACHE_S) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), em_andamento: true }, 200, origin)
     return json({ erro: 'em_andamento', retry_after: 3 }, 503, origin)
   }
   const inicio = Date.now()

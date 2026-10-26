@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/chats.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chatsSemResposta, itensDeChat, usarChats } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, revalidarChats, usarChats } from '../../../supabase/functions/_shared/prevendas_chats.ts'
 
 const ent = (lead: number, em: number, talk = 900 + lead) => ({ type: 'incoming_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: 0, value_after: [{ message: { talk_id: talk } }] })
 const sai = (lead: number, em: number, por: number) => ({ type: 'outgoing_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: por, value_after: [{ message: { talk_id: 900 + lead } }] })
@@ -59,4 +59,16 @@ test('usarChats: cache velho ou malformado vira motivo, nunca item "atual"', () 
   assert.deepEqual(usarChats(null, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
   assert.deepEqual(usarChats({ chats: 'x', gerado_em: 1000 }, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
   assert.deepEqual(usarChats({ chats: [] }, 1000, 60), { ok: false, motivo: 'chats_indisponiveis' })
+})
+
+test('revalidarChats: reuso de resposta com chat vencido tira só os chats e marca chats_atrasados', () => {
+  const tarefa = { id: 1, momento: 'follow_up' }, chat = { id: -5, momento: 'chat_sem_resposta' }
+  const base = { ok: true, itens: [chat, tarefa], total: 2, parcial: false, motivos_parcial: [] as string[], chats_em: 1000 }
+  assert.equal(revalidarChats(base, 1050, 60), base)                                  // ainda válido: intacto
+  const v = revalidarChats(base, 1070, 60)                                            // envelheceu entre montar e reusar
+  assert.deepEqual(v.itens, [tarefa]); assert.equal(v.total, 1); assert.equal(v.parcial, true); assert.deepEqual(v.motivos_parcial, ['chats_atrasados'])
+  const semChats = revalidarChats({ ...base, itens: [tarefa], chats_em: null }, 1000, 60)  // ausência também é afirmação velha
+  assert.deepEqual(semChats.motivos_parcial, ['chats_atrasados'])
+  const jaMotivo = { ...base, itens: [tarefa], chats_em: null, motivos_parcial: ['chats_limite'], parcial: true }
+  assert.equal(revalidarChats(jaMotivo, 1000, 60), jaMotivo)                         // já sinalizado: não duplica
 })

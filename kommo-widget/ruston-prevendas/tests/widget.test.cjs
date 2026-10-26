@@ -540,11 +540,61 @@ test('servidor pede pausa (429 nos chats): a fila vem, e a próxima leitura espe
 test('chat sem resposta: vai primeiro na fila e o card não oferece "Concluir"', () => {
   const env = ambiente()
   const chat = { id: -555, entity_type: 'leads', entity_id: 555, due: AGORA - 600, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'Cliente aguardando resposta no chat', lead_nome: 'Lead chat', acao: 'chat' }
-  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { momento: 'anti_noshow' }), chat] }])
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { momento: 'anti_noshow' }), chat], chats_em: Math.floor(Date.now() / 1000) - 10 }])
   w.callbacks.init(); env.rodarTimers('t')
   const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
   clique({ target: { closest: () => ({ getAttribute: () => 'avancar' }) } })
   assert.equal(env.ctx.location.pathname, '/leads/detail/555')
   const html = env.elems['rpv-root'].innerHTML
   assert.match(html, /Responda o cliente no chat/); assert.doesNotMatch(html, /Concluir e próximo/)
+})
+
+test('chat com leitura velha (chats_em > 2 min ou ausente) não aparece nem notifica; as tarefas ficam', () => {
+  const env = ambiente()
+  const agora = Math.floor(Date.now() / 1000)
+  const chat = { id: -9, entity_type: 'leads', entity_id: 9, due: agora - 60, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'c', acao: 'chat' }
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chat], chats_em: agora - 200 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  let html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /<span class="cnt">1<\/span>/)                 // só a tarefa
+  // aba seguidora com snapshot em que o chat ERA válido, mas envelheceu
+  const B = ambiente()
+  const snap = { itens: [tarefa(1), chat], modo: 'servidor', dadosEm: agora - 5, chatsEm: agora - 130, rev: 'r1' }
+  B.ctx.localStorage.setItem('rpv_snap_financeirorustonengenhariacombr_11420911', JSON.stringify(snap))
+  B.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
+  const wb = instanciar(B, [{ ok: true, itens: [] }]); wb.callbacks.init()
+  assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+test('INVITE chega ANTES da recusa do servidor: a recusa tira o rótulo "Sua ligação"', async () => {
+  const env = ambiente(), reg = {}
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  const inv = sessao(true); reg.emit('newRTCSession', inv)
+  assert.match(env.elems['rpv-root'].innerHTML, /Sua ligação: atenda/)
+  adiadas[0].err({ status: 403, responseJSON: { erro: 'sem_permissao' } })
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Sua ligação/); assert.match(html, /Chamada recebida/); assert.match(html, /não é dono deste lead/)
+  assert.equal(inv.session.atendida, undefined)
+})
+
+test('resposta de discagem de uma posse antiga não mexe na sessão nova', async () => {
+  const env = ambiente(), reg = {}
+  const { w, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  clicar(env, 'voz-reconectar'); await flush(); reg.emit('registered')   // nova posse
+  adiadas[0].err({ status: 403, responseJSON: { erro: 'sem_permissao' } })
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não é dono deste lead/)
 })

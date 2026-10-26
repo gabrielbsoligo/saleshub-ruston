@@ -109,9 +109,28 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
 - `supabase secrets unset API4COM_TOKEN API4COM_DOMAIN API4COM_WSS PREVENDAS_VOZ_USUARIOS PREVENDAS_VOZ_TELEFONES_TESTE`.
 - No banco:
   ```sql
-  drop function public.prevendas_voz_reservar(bigint,text,int,int,int,text,text), public.prevendas_voz_registrar(bigint,text,text);
-  drop table public.prevendas_voz_eventos;
+  -- telefone (só objetos da 161)
+  drop function if exists public.prevendas_voz_reservar(bigint,text,int,int,int,text,text),
+                          public.prevendas_voz_registrar(bigint,text,text),
+                          public.prevendas_voz_bloquear(bigint,text,int);
+  drop table if exists public.prevendas_voz_eventos, public.prevendas_voz_bloqueio;
+  -- pausa compartilhada: volta o prevendas_consumir da 160 (sem pausa) ANTES de tirar a coluna; a fila segue funcionando
+  create or replace function public.prevendas_consumir(p_n int, p_taxa numeric default 2, p_max numeric default 6)
+  returns boolean language plpgsql security definer set search_path = public as $
+  declare ok boolean;
+  begin
+    update prevendas_vazao
+       set fichas = least(p_max, fichas + extract(epoch from now() - em) * p_taxa) - p_n, em = now()
+     where id = 1 and least(p_max, fichas + extract(epoch from now() - em) * p_taxa) >= p_n
+    returning true into ok;
+    return coalesce(ok, false);
+  end $;
+  revoke all on function public.prevendas_consumir(int,numeric,numeric) from public, anon, authenticated;
+  grant execute on function public.prevendas_consumir(int,numeric,numeric) to service_role;
+  drop function if exists public.prevendas_pausar(int);
+  alter table public.prevendas_vazao drop column if exists pausa_ate;
   ```
+  Ordem: primeiro voltar as edges (a `prevendas-fila` de 25d9381 não chama `prevendas_pausar`), depois o SQL. A tabela `prevendas_vazao` e o balde continuam, porque a fila da 160 depende deles.
 - Chat sem resposta: redeploy da `prevendas-fila` do commit 25d9381.
 
 **Revogar uma credencial SIP já entregue.** Remover a edge ou os secrets NÃO revoga o HA1 que já foi para um navegador: com ele, o ramal continua registrando e originando chamadas direto (fora do limite do servidor).

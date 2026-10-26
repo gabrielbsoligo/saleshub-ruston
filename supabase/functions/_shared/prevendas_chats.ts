@@ -76,3 +76,20 @@ export function usarChats(conta: any, agoraS: number, maxIdadeS: number): { ok: 
   if (agoraS - Number(conta.gerado_em) > maxIdadeS) return { ok: false, motivo: 'chats_atrasados' }
   return { ok: true }
 }
+
+/**
+ * Reuso de uma resposta já montada (cache por usuário): a validade dos chats é conferida DE NOVO na hora do
+ * reuso. Se a leitura dos chats (chats_em) passou de `maxIdadeS` — ou não existe —, tira só os itens de chat,
+ * preserva as tarefas e marca chats_atrasados (a ausência de chat também é uma afirmação velha).
+ */
+export function revalidarChats<R extends { itens?: any[]; total?: number; parcial?: boolean; motivos_parcial?: string[]; chats_em?: number | null }>(
+  r: R, agoraS: number, maxIdadeS: number,
+): R {
+  const motivos = r.motivos_parcial ?? []
+  const jaSinalizado = motivos.some((m) => m === 'chats_indisponiveis' || m === 'chats_limite' || m === 'chats_atrasados')
+  const vencido = r.chats_em == null || !Number.isFinite(Number(r.chats_em)) || agoraS - Number(r.chats_em) > maxIdadeS
+  if (!vencido) return r
+  const itens = (r.itens ?? []).filter((i) => i?.momento !== 'chat_sem_resposta')
+  if (jaSinalizado && itens.length === (r.itens ?? []).length) return r
+  return { ...r, itens, total: itens.length, parcial: true, motivos_parcial: jaSinalizado ? motivos : [...motivos, 'chats_atrasados'] }
+}

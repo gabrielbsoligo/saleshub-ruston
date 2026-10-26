@@ -45,23 +45,38 @@ revoke all on public.prevendas_voz_eventos from anon, authenticated;
 grant select, insert, update on public.prevendas_voz_eventos to service_role;
 grant usage on sequence public.prevendas_voz_eventos_id_seq to service_role;
 
+-- Bloqueio pedido pelo PROVEDOR (429 + Retry-After): vale a partir do instante da RESPOSTA, pelo tempo pedido.
+create table if not exists public.prevendas_voz_bloqueio (
+  kommo_user bigint not null,
+  acao       text   not null,
+  ate        timestamptz not null,
+  primary key (kommo_user, acao)
+);
+alter table public.prevendas_voz_bloqueio enable row level security;
+revoke all on public.prevendas_voz_bloqueio from anon, authenticated;
+grant select, insert, update on public.prevendas_voz_bloqueio to service_role;
+
+create or replace function public.prevendas_voz_bloquear(p_user bigint, p_acao text, p_seg int)
+returns timestamptz language sql security definer set search_path = public as $$
+  insert into prevendas_voz_bloqueio (kommo_user, acao, ate)
+  values (p_user, p_acao, now() + make_interval(secs => least(3600, greatest(1, p_seg))))
+  on conflict (kommo_user, acao) do update set ate = greatest(prevendas_voz_bloqueio.ate, excluded.ate)
+  returning ate;
+$$;
+
 -- Reserva atômica. TODAS as tentativas contam (recusadas também: quem é recusado não pode repetir sem limite).
--- Bloqueia se: p_max tentativas na janela, intervalo mínimo desde a última, ou um 429 do provedor ('limite')
--- nos últimos p_bloqueio_s. Devolve o id do evento reservado, ou null. Serializa por usuário+ação.
+-- Bloqueia se: houver bloqueio do provedor vigente, p_max tentativas na janela, ou intervalo mínimo desde a
+-- última. Devolve o id do evento reservado, ou null. Serializa por usuário+ação.
 create or replace function public.prevendas_voz_reservar(
   p_user bigint, p_acao text, p_max int, p_janela_s int, p_intervalo_s int,
-  p_entidade text default null, p_telefone text default null, p_bloqueio_s int default 0
+  p_entidade text default null, p_telefone text default null
 ) returns bigint
 language plpgsql security definer set search_path = public as $$
-declare v_n int; v_ult timestamptz; v_lim boolean; v_id bigint;
+declare v_n int; v_ult timestamptz; v_id bigint;
 begin
   perform pg_advisory_xact_lock(hashtextextended('prevendas_voz:' || p_acao || ':' || p_user, 0));
-  select count(*), max(em), coalesce(bool_or(resultado = 'limite' and em > now() - make_interval(secs => p_bloqueio_s)), false)
-    into v_n, v_ult, v_lim
-    from prevendas_voz_eventos
-   where kommo_user = p_user and acao = p_acao and em > now() - make_interval(secs => greatest(p_janela_s, p_bloqueio_s));
-  if v_lim then return null; end if;
-  select count(*) into v_n from prevendas_voz_eventos
+  if exists (select 1 from prevendas_voz_bloqueio where kommo_user = p_user and acao = p_acao and ate > now()) then return null; end if;
+  select count(*), max(em) into v_n, v_ult from prevendas_voz_eventos
    where kommo_user = p_user and acao = p_acao and em > now() - make_interval(secs => p_janela_s);
   if v_n >= p_max then return null; end if;
   if v_ult is not null and v_ult > now() - make_interval(secs => p_intervalo_s) then return null; end if;
@@ -79,7 +94,8 @@ do $$
 declare f text;
 begin
   foreach f in array array['prevendas_consumir(int,numeric,numeric)', 'prevendas_pausar(int)',
-                           'prevendas_voz_reservar(bigint,text,int,int,int,text,text,int)', 'prevendas_voz_registrar(bigint,text,text)']
+                           'prevendas_voz_reservar(bigint,text,int,int,int,text,text)', 'prevendas_voz_registrar(bigint,text,text)',
+                           'prevendas_voz_bloquear(bigint,text,int)']
   loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);

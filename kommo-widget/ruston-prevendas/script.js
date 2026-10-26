@@ -141,10 +141,15 @@
       nao_configurado: 'Telefone não configurado no servidor.',
       usuario_inativo: 'Usuário inativo no SalesHub.'
     };
+    /** Chats só valem enquanto a leitura deles (chatsEm) tiver até maxS; depois saem (as tarefas ficam). */
+    function semChatsVencidos(itens, chatsEm, agora, maxS) {
+      var vencido = !chatsEm || (agora - chatsEm) > maxS;
+      return vencido ? itens.filter(function (t) { return t.momento !== 'chat_sem_resposta'; }) : itens;
+    }
     function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
 
     return {
-      chamadaPedida: chamadaPedida, mensagemVoz: mensagemVoz,
+      chamadaPedida: chamadaPedida, mensagemVoz: mensagemVoz, semChatsVencidos: semChatsVencidos,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -168,7 +173,8 @@
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
       var MAX_PAGINAS_DEGRADADO = 4, PASSO_PAGINA_MS = 1500, MAX_NOTIF_CICLO = 5, ATRASO_MAX_S = 600;
-      var MARCA_TTL_MS = 2 * 60 * 1000;          // só "concluí agora", até o servidor refletir
+      var MARCA_TTL_MS = 2 * 60 * 1000;
+      var CHATS_MAX_S = 120;                     // chat exibido/notificado só com leitura de até 2 min (servidor: 60 s + ciclo)          // só "concluí agora", até o servidor refletir
       var ABA = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
       var state = {
@@ -180,7 +186,7 @@
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
-                  pendenteAte: 0, discando: false, pedida: false, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
+                  pendenteAte: 0, discando: false, pedida: false, tentativa: 0, aviso: '', posse: 0, pedindo: 0, soltar: null, espera: 0,
                   tel: { chave: '', contatos: null, erro: '', carregando: false } };
       var posseSeq = 0;   // cada pedido de posse do ramal ganha um token; passos assíncronos conferem o token
 
@@ -312,7 +318,7 @@
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [] }, r.gerado_em || 0);
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0 }, r.gerado_em || 0);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
@@ -358,7 +364,7 @@
       }
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
-        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null;
+        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0;
         state.itens = s.itens || []; state.motivos = s.motivos || [];
         montar();
       }
@@ -371,7 +377,9 @@
       function montar() {
         var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
         var ok = function (t) { return t && t.entity_id && !(snooze[t.id] && snooze[t.id] > now); };
-        var itens = Fila.semMarcadas(state.itens, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
+        var validos = Fila.semChatsVencidos(state.itens, state.chatsEm, now, CHATS_MAX_S);
+        state.chatsVencidos = validos.length !== state.itens.length;
+        var itens = Fila.semMarcadas(validos, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
         var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, grupos: c.grupos }, now, minutoDoDia());
         state.fila = r.fila; state.futura = r.futura;
         if (state.atual) {
@@ -384,7 +392,7 @@
       // ---------------- notify (só sobre itens confirmados) ----------------
       function notificar(souLider) {
         var c = cfg(), now = agoraS();
-        var base = state.itens;
+        var base = Fila.semChatsVencidos(state.itens, state.chatsEm, now, CHATS_MAX_S);
         var r = Fila.paraNotificar(base, lsGet('visto', {}), now, c.lookahead, MAX_NOTIF_CICLO);
         var abertas = {}; base.forEach(function (t) { abertas[t.id] = 1; });
         var pilha = lsGet('notif', []).filter(function (n) { return abertas[n.id]; });
@@ -547,7 +555,7 @@
         posseSeq++;
         var sess = voz.sessao, ua = voz.ua, soltar = voz.soltar;
         voz.sessao = null; voz.ua = null; voz.soltar = null; voz.posse = 0; voz.pedindo = 0;
-        voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.discando = false; voz.pedida = false;
+        voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.discando = false; voz.pedida = false; voz.tentativa++;
         try { if (sess) sess.terminate(); } catch (e) {}
         try { if (ua) ua.stop(); } catch (e) {}
         try { if (soltar) soltar(); } catch (e) {}
@@ -581,12 +589,14 @@
       function discarVoz(tel) {
         var aqui = entidadeAtual();
         if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
-        voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui e depois liga para o cliente.';
+        var t = ++voz.tentativa, posse = voz.posse;
+        voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui (atenda) e depois liga para o cliente.';
         voz.pendenteAte = Date.now() + 60000;
         render();
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
+          if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora
           voz.discando = false;
-          if (err) { voz.pendenteAte = 0; voz.aviso = Fila.mensagemVoz(err.erro, err.mensagem && err.erro === 'provedor_recusou' ? err.mensagem : ''); }
+          if (err) { voz.pendenteAte = 0; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = Fila.mensagemVoz(err.erro, err.mensagem && err.erro === 'provedor_recusou' ? err.mensagem : ''); }
           else if (!voz.sessao) voz.aviso = '';
           render();
         });
@@ -688,6 +698,7 @@
           if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
           else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + '): ações suspensas até atualizar.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
+          if (state.chatsVencidos) html += '<div class="rpv-warn">Chats sem resposta desatualizados: escondidos até a próxima leitura.</div>';
           if (state.parcial) html += '<div class="rpv-warn">Fila parcial' + (state.motivos && state.motivos.length ? ' (' + esc(state.motivos.join(', ')) + ')' : '') + ': algumas tarefas podem faltar.</div>';
           if (!state.fila.length) {
             html += '<div class="rpv-b">' + (state.futura ? 'Nada vencido agora. Próxima às <b>' + esc(fmtQuando(state.futura.due, now)) + '</b> — o botão abre ela.' : 'Nenhuma tarefa pendente.') + '</div>';

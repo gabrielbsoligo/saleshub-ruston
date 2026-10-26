@@ -28,7 +28,7 @@ const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
 const API4COM = 'https://api.api4com.com/api/v1'
 const TIMEOUT_MS = 8_000, TIMEOUT_DISCAR_MS = 45_000   // o POST /calls da 4com só responde quando a chamada conecta
-const PRAZO_MS = 30_000, ESPERA_FICHA_MS = 3_000, MAX_CONTATOS = 10
+const PRAZO_MS = 30_000, PRAZO_NOTA_MS = 12_000, ESPERA_FICHA_MS = 3_000, MAX_CONTATOS = 10
 
 const cors = (origin: string | null) => ({
   'Access-Control-Allow-Origin': origin === KOMMO ? KOMMO : 'null',
@@ -70,22 +70,30 @@ Deno.serve(async (req) => {
   const acao = String(body?.acao ?? '')
   const inicio = Date.now()
 
-  const reservar = async (a: 'credencial' | 'telefones' | 'discar', max: number, janela: number, intervalo: number, extra: { entidade?: string; tel?: string; bloqueio?: number } = {}) => {
+  const reservar = async (a: 'credencial' | 'telefones' | 'discar', max: number, janela: number, intervalo: number, extra: { entidade?: string; tel?: string } = {}) => {
     const { data, error } = await sb.rpc('prevendas_voz_reservar', {
       p_user: uid, p_acao: a, p_max: max, p_janela_s: janela, p_intervalo_s: intervalo,
-      p_entidade: extra.entidade ?? null, p_telefone: extra.tel ?? null, p_bloqueio_s: extra.bloqueio ?? 0,
+      p_entidade: extra.entidade ?? null, p_telefone: extra.tel ?? null,
     })
     if (error) throw new Error('falha_banco')
     return data as number | null
   }
   const registrar = (id: number, resultado: string, detalhe?: string) =>
     sb.rpc('prevendas_voz_registrar', { p_id: id, p_resultado: resultado, p_detalhe: detalhe ?? null })
+  // 429 do provedor: bloqueio a partir de AGORA (instante da resposta) pelo Retry-After efetivo; erro é logado
+  const bloquear = async (a: 'credencial' | 'discar', r: Response) => {
+    const ra = Math.min(3600, Math.max(1, Number(r.headers.get('Retry-After')) || 60))
+    const { error } = await sb.rpc('prevendas_voz_bloquear', { p_user: uid, p_acao: a, p_seg: ra })
+    if (error) console.error('[prevendas-voz] bloqueio', error.message)
+    return ra
+  }
 
   // GET ao Kommo SEMPRE com ficha do orçamento da conta (compartilhado com prevendas-fila); 429 pausa a conta
-  const kommo = async (path: string, init?: RequestInit) => {
+  // prazoFinal: o padrão vale para a autorização; a nota pós-ligação ganha prazo próprio (a 4com pode demorar 45 s)
+  const kommo = async (path: string, init?: RequestInit, prazoFinal = inicio + PRAZO_MS) => {
     await esperarFicha(
       async () => { const { data, error } = await sb.rpc('prevendas_consumir', { p_n: 1 }); if (error) throw new Error('falha_banco'); return !!data },
-      (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), inicio + PRAZO_MS, ESPERA_FICHA_MS)
+      (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), prazoFinal, ESPERA_FICHA_MS)
     const r = await fetch(`${KOMMO}${path}`, { ...init, headers: { Authorization: `Bearer ${env('KOMMO_API_TOKEN')}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (r.status === 204 || r.status === 404) return null
     if (r.status === 429) { const ra = Number(r.headers.get('Retry-After')) || 60; await sb.rpc('prevendas_pausar', { p_seg: ra }); throw new KommoLimite(ra) }
@@ -100,7 +108,8 @@ Deno.serve(async (req) => {
       if (!ev) return json({ erro: 'limite', retry_after: 60 }, 429, origin)
       const filtro = encodeURIComponent(JSON.stringify({ where: { ramal }, fields: { ramal: true, senha: true, domain: true } }))
       const r = await fetch(`${API4COM}/extensions?filter=${filtro}`, { headers: { Authorization: token4com }, signal: AbortSignal.timeout(TIMEOUT_MS) })
-      if (!r.ok) { await registrar(ev, r.status === 429 ? 'limite' : 'incerto', `4com ${r.status}`); return json({ erro: 'provedor_indisponivel' }, 503, origin) }
+      if (r.status === 429) { const ra = await bloquear('credencial', r); await registrar(ev, 'limite', `4com 429 (${ra}s)`); return json({ erro: 'provedor_limite', retry_after: ra }, 503, origin) }
+      if (!r.ok) { await registrar(ev, 'incerto', `4com ${r.status}`); return json({ erro: 'provedor_indisponivel' }, 503, origin) }
       const lista = await r.json()
       const ext = Array.isArray(lista) ? lista.find((x: any) => String(x?.ramal) === ramal) : null
       if (!ext?.senha || String(ext.domain ?? dominio) !== dominio) { await registrar(ev, 'negado', 'ramal nao encontrado'); return json({ erro: 'sem_ramal' }, 403, origin) }
@@ -121,7 +130,7 @@ Deno.serve(async (req) => {
     // limite ANTES de qualquer GET (telefones: 30 por 10 min; discar: 1 a cada 20 s, 15 por 10 min, 429 bloqueia 60 s)
     const ev = acao === 'telefones'
       ? await reservar('telefones', 30, 600, 0, { entidade: `${etype}:${eid}` })
-      : await reservar('discar', 15, 600, 20, { entidade: `${etype}:${eid}`, tel: finalTelefone(destino!), bloqueio: 60 })
+      : await reservar('discar', 15, 600, 20, { entidade: `${etype}:${eid}`, tel: finalTelefone(destino!) })
     if (!ev) return json({ erro: acao === 'discar' ? 'ja_discando' : 'limite', retry_after: acao === 'discar' ? 20 : 60 }, acao === 'discar' ? 409 : 429, origin)
 
     // ---------------- entidade: autorização com os objetos devolvidos ----------------
@@ -156,17 +165,18 @@ Deno.serve(async (req) => {
     } catch { r = null }
     const res = interpretar4com(r?.status ?? 0, corpo)
     if (!res.ok) {
-      const ra = r?.status === 429 ? (Number(r.headers.get('Retry-After')) || 60) : 0
+      const ra = r && r.status === 429 ? await bloquear('discar', r) : 0
       await registrar(ev, ra ? 'limite' : res.incerto ? 'incerto' : 'recusado', `${res.erro}: ${res.mensagem}`)
       return json({ erro: res.erro, mensagem: res.mensagem, incerto: !!res.incerto, ...(ra ? { retry_after: ra } : {}) }, res.incerto ? 504 : 502, origin)
     }
-    await registrar(ev, 'ok', res.chamada_id ? `chamada ${res.chamada_id}` : undefined)
-    // nota no Kommo (melhor esforço: a ligação já aconteceu)
+    // nota no Kommo (melhor esforço, com prazo PRÓPRIO a partir de agora; a ligação já aconteceu e nunca é repetida)
     let nota = true
     try {
       await kommo(`/api/v4/${etype}/notes`, { method: 'POST', body: JSON.stringify([{ entity_id: eid, note_type: 'common',
-        params: { text: `📞 Ligação 4com iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramal}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) })
-    } catch { nota = false }
+        params: { text: `📞 Ligação 4com iniciada pelo widget por ${membro.name ?? uid} (ramal ${ramal}) para ${finalTelefone(destino!)}${res.chamada_id ? ` · id ${res.chamada_id}` : ''}` } }]) }, Date.now() + PRAZO_NOTA_MS)
+    } catch (e) { nota = false; console.error('[prevendas-voz] nota', (e as Error).message) }
+    // auditoria registra a ligação e, se for o caso, a nota pendente (para retomada manual)
+    await registrar(ev, 'ok', `${res.chamada_id ? `chamada ${res.chamada_id}` : 'chamada sem id'}${nota ? '' : '; NOTA PENDENTE'}`)
     return json({ ok: true, chamada_id: res.chamada_id, ramal, nota }, 200, origin)
   } catch (e) {
     const m = (e as Error).message
