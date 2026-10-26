@@ -281,6 +281,13 @@
         return (new Date(now * 1000).toDateString() === d.toDateString() ? '' : pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + ' ') + hora(unix);
       }
       function key(n) { return NS + '_' + n + '_' + state.sub + '_' + state.uid; }
+      // snapshot e liderança são isolados por PERFIL (modo pedido: auto/sdr/closer) + versão do snapshot: trocar o
+      // override ou atualizar o widget nunca reaproveita a fila de outro modo/regra
+      var SNAP_V = 2;
+      function perfil() { return (cfg().modo || 'auto') + '.v' + SNAP_V; }
+      function kSnap() { return 'snap.' + perfil(); }
+      function kLider() { return 'lider.' + perfil(); }
+      function snapValido(s) { return !!s && s.v === SNAP_V && s.perfil === perfil(); }
       function lsGet(n, d) { try { var v = localStorage.getItem(key(n)); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
       function lsSet(n, v) { try { localStorage.setItem(key(n), JSON.stringify(v)); } catch (e) {} }
       function vivo(g) { return !state.destruido && g === state.geracao; }
@@ -349,10 +356,11 @@
         }
         prox();
       }
-      function deKommo(t) {
+      function deKommo(t, closer) {
         var k = Fila.classificarLocal(t);
         return { id: t.id, entity_type: t.entity_type || 'leads', entity_id: t.entity_id, due: t.complete_till || 0,
-                 texto: t.text || '', lead_nome: null, etapa: null, momento: k.momento, grupo: k.grupo, urgente: k.urgente, acao: k.acao };
+                 texto: t.text || '', lead_nome: null, etapa: null, momento: k.momento, grupo: k.grupo, urgente: k.urgente, acao: k.acao,
+                 etapa_pendente: !!closer };   // closer sem servidor: etapa desconhecida → nível 8, agrupado por lead
       }
 
       // ---------------- ciclo (só a aba líder consulta) ----------------
@@ -362,9 +370,9 @@
       function ciclo(g, manual) {
         if (!vivo(g) || state.carregando) return;
         if (pausado()) { if (manual) { state.aviso = 'O Kommo pediu uma pausa (limite de uso). Tento de novo em instantes.'; render(); } return; }
-        var lock = lsGet('lider', null);
+        var lock = lsGet(kLider(), null);
         if (!Fila.devoLiderar(lock, ABA, Date.now())) { carregarSnapshot(); return; }
-        lsSet('lider', { aba: ABA, ate: Date.now() + cfg().poll * 2500 });
+        lsSet(kLider(), { aba: ABA, ate: Date.now() + cfg().poll * 2500 });
         state.carregando = true;
         if (manual) render();
         lerServidor(manual, function (err, r) {
@@ -387,8 +395,11 @@
             if (!vivo(g)) return;
             if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
-            publicar({ itens: lista.map(deKommo), modo: 'degradado',
-                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, inicioLeitura);
+            // mantém o ÚLTIMO modo confirmado pelo servidor; sem nenhum, diz isso e mostra como SDR
+            var mf = state.modoConfirmado === 'closer' || state.modoConfirmado === 'sdr' ? state.modoConfirmado : '';
+            publicar({ itens: lista.map(function (t) { return deKommo(t, mf === 'closer'); }), modo: 'degradado', modoFila: mf,
+                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : '') +
+                              (mf ? '' : ' Modo da fila ainda não confirmado pelo servidor: mostrando como SDR.'), parcial: parcial }, inicioLeitura);
           });
         });
       }
@@ -399,30 +410,31 @@
         snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
         snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
-        lsSet('snap', snap); aplicar(snap);
+        snap.v = SNAP_V; snap.perfil = perfil();
+        lsSet(kSnap(), snap); aplicar(snap);
         if (dadosRecentes() && !state.falha) notificar(true); else state.notif = [];
         render();
       }
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
-        var s = lsGet('snap', null) || { itens: [], modo: state.modo, aviso: '', dadosEm: 0 };
+        var s0 = lsGet(kSnap(), null), s = snapValido(s0) ? s0 : { itens: [], modo: state.modo, aviso: '', dadosEm: 0, modoFila: '', v: SNAP_V, perfil: perfil() };
         s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
         state.carregando = false;
-        lsSet('snap', s); aplicar(s); render();
+        lsSet(kSnap(), s); aplicar(s); render();
       }
       function mutar(fn) {
-        var s = lsGet('snap', null);
-        if (!s) return;
+        var s = lsGet(kSnap(), null);
+        if (!snapValido(s)) return;
         fn(s); s.rev = novaRev();
-        lsSet('snap', s); aplicar(s);
+        lsSet(kSnap(), s); aplicar(s);
       }
       function carregarSnapshot() {
-        var s = lsGet('snap', null);
-        if (s && s.rev !== state.rev) { aplicar(s); if (dadosRecentes() && !state.falha) notificar(false); else state.notif = []; render(); }
+        var s = lsGet(kSnap(), null);
+        if (snapValido(s) && s.rev !== state.rev) { aplicar(s); if (dadosRecentes() && !state.falha) notificar(false); else state.notif = []; render(); }
       }
       function aplicar(s) {
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
-        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0; state.modoFila = s.modoFila === 'closer' ? 'closer' : 'sdr';
+        state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0; state.modoFila = s.modoFila === 'closer' ? 'closer' : 'sdr'; state.modoConfirmado = s.modoFila || '';
         state.itens = s.itens || []; state.motivos = s.motivos || [];
         montar();
       }
@@ -450,8 +462,10 @@
           : Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, grupos: c.grupos }, now, minutoDoDia());
         state.fila = r.fila; state.futura = r.futura;
         if (state.atual) {
-          var alvo = state.atual.id, novo = null;
-          state.fila.concat(state.futura ? [state.futura] : []).forEach(function (q) { if (q.id === alvo) novo = q; });
+          var alvo = state.atual.id, alvoEnt = Fila.chaveEnt(state.atual), novo = null;
+          state.fila.concat(state.futura ? [state.futura] : []).forEach(function (q) {
+            if (closer ? Fila.chaveEnt(q) === alvoEnt : q.id === alvo) novo = novo || q;   // closer: mesma entidade, nova representativa
+          });
           state.atual = novo;     // fora do que foi confirmado: o card some
         }
       }
@@ -844,7 +858,7 @@
         if (t === 'INPUT' || t === 'TEXTAREA' || (ev.target && ev.target.isContentEditable)) return;
         ev.preventDefault(); avancar();
       }
-      function aoArmazenar(ev) { if (ev.key === key('snap')) carregarSnapshot(); }
+      function aoArmazenar(ev) { if (ev.key === key(kSnap())) carregarSnapshot(); }
 
       function boot() {
         if (state.booted && !state.destruido) { raiz(); render(); return; }
@@ -888,8 +902,8 @@
         state.timers = [];
         state.ouvintes.forEach(function (o) { try { o[0].removeEventListener(o[1], o[2], o[3]); } catch (e) {} });
         state.ouvintes = [];
-        var lock = lsGet('lider', null);
-        if (lock && lock.aba === ABA) lsSet('lider', null);
+        var lock = lsGet(kLider(), null);
+        if (lock && lock.aba === ABA) lsSet(kLider(), null);
         var c = document.getElementById(NS + '-root'); if (c && c.parentNode) c.parentNode.removeChild(c);
         var au = document.getElementById(NS + '-audio'); if (au && au.parentNode) { try { au.srcObject = null; } catch (e) {} au.parentNode.removeChild(au); }
         state.booted = false;

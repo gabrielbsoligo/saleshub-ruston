@@ -80,7 +80,7 @@ test('ciclo completo: fila vem do servidor; tarefa que sai (reatribuída/conclu�
   env.rodarTimers('i')                                // 2º ciclo: tarefa 2 saiu
   html = env.elems['rpv-root'].innerHTML
   assert.match(html, /<span class="cnt">1<\/span>/)
-  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap_financeirorustonengenhariacombr_11420911'))
+  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'))
   assert.deepEqual(snap.itens.map((t) => t.id), [1])
 })
 
@@ -131,7 +131,7 @@ test('init → destroy → init: sem timers, ouvintes ou raiz órfãos; lock lib
   assert.ok(env.timers.size > 0); assert.ok(env.ouvintes.length >= 3)
   w.callbacks.destroy()
   assert.equal(env.timers.size, 0); assert.equal(env.ouvintes.length, 0); assert.equal(env.elems['rpv-root'], undefined)
-  assert.equal(env.ctx.localStorage.getItem('rpv_lider_financeirorustonengenhariacombr_11420911'), 'null')
+  assert.equal(env.ctx.localStorage.getItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911'), 'null')
   w.callbacks.init(); env.rodarTimers()
   assert.ok(env.elems['rpv-root']); assert.equal(env.ouvintes.filter((o) => o[0] === 'keydown').length, 1)
 })
@@ -141,7 +141,7 @@ test('segunda aba não consulta enquanto a líder estiver ativa (usa o snapshot)
   const a = instanciar(env, [{ ok: true, itens: [tarefa(1)], frescor: { atraso_s: 1, status: 'done' } }])
   a.callbacks.init(); env.rodarTimers()
   // simula outra aba: lock de outra aba ainda válido
-  env.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
+  env.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
   let chamadas = 0
   a.$authorizedAjax = () => { chamadas++; return { then() {} } }
   env.rodarTimers()
@@ -159,7 +159,7 @@ function kommo(env, handler) {
     }
   }
 }
-const SNAP = 'rpv_snap_financeirorustonengenhariacombr_11420911'
+const SNAP = 'rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'
 const viva = (id) => ({ id, is_completed: false, responsible_user_id: 11420911, complete_till: AGORA - 60, text: 't' + id })
 
 test('concluir: a réplica atrasada (ainda com a tarefa aberta) não a ressuscita no ciclo seguinte', () => {
@@ -559,9 +559,9 @@ test('chat com leitura velha (chats_em > 2 min ou ausente) não aparece nem noti
   assert.match(html, /<span class="cnt">1<\/span>/)                 // só a tarefa
   // aba seguidora com snapshot em que o chat ERA válido, mas envelheceu
   const B = ambiente()
-  const snap = { itens: [tarefa(1), chat], modo: 'servidor', dadosEm: agora - 5, chatsEm: agora - 130, rev: 'r1' }
-  B.ctx.localStorage.setItem('rpv_snap_financeirorustonengenhariacombr_11420911', JSON.stringify(snap))
-  B.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
+  const snap = { itens: [tarefa(1), chat], modo: 'servidor', dadosEm: agora - 5, chatsEm: agora - 130, rev: 'r1', v: 2, perfil: 'auto.v2' }
+  B.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify(snap))
+  B.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
   const wb = instanciar(B, [{ ok: true, itens: [] }]); wb.callbacks.init()
   assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
 })
@@ -629,8 +629,8 @@ test('chat válido que ENVELHECE com o widget aberto (líder, resposta com o mes
 test('chat que envelhece em aba SEGUIDORA (snapshot sem rev nova): sai pelo relógio', () => {
   const B = ambiente(), rel = relogio(B)
   const agora = Math.floor(Date.now() / 1000)
-  B.ctx.localStorage.setItem('rpv_snap_financeirorustonengenhariacombr_11420911', JSON.stringify({ itens: [tarefa(1), chatItem(agora)], modo: 'servidor', dadosEm: agora - 1, chatsEm: agora - 119, rev: 'r1' }))
-  B.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 3600000 }))
+  B.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ itens: [tarefa(1), chatItem(agora)], modo: 'servidor', dadosEm: agora - 1, chatsEm: agora - 119, rev: 'r1', v: 2, perfil: 'auto.v2' }))
+  B.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 3600000 }))
   const w = instanciar(B, [{ ok: true, itens: [] }]); w.callbacks.init()
   assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
   rel.avancar(6000); B.rodarTimers('i')
@@ -671,4 +671,72 @@ test('setting modo vai no pedido ao servidor (o servidor só aceita de gestor)',
   let corpo = null; w.$authorizedAjax = (o) => { corpo = JSON.parse(o.data); return { then() {} } }
   w.callbacks.init(); env.rodarTimers('t')
   assert.deepEqual(corpo, { forcar: false, modo: 'closer' })
+})
+
+// ---------------- closer: card por entidade, degradado e isolamento por perfil (rodada do Vedor) ----------------
+const ctC = (agora, id, eid, extra = {}) => ({ id, entity_type: 'leads', entity_id: eid, due: agora - 600 + id, momento: 'follow_up', grupo: 'G9', texto: 't' + id, pipeline_id: 11010459, status_id: 102174784, ...extra })
+
+for (const [nome, segunda] of [
+  ['compromisso', (a) => [ctC(a, 1, 10), ctC(a, 2, 10, { reuniao_em: a + 1800 }), ctC(a, 3, 20)].map((x) => (x.entity_id === 10 ? { ...x, reuniao_em: a + 1800 } : x))],
+  ['chat', (a) => [ctC(a, 1, 10), { id: -10, entity_type: 'leads', entity_id: 10, due: a - 30, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'c', acao: 'chat' }, ctC(a, 3, 20)]],
+]) {
+  test(`closer: a representativa do lead aberto muda (${nome}) — o card continua e age na NOVA representativa`, () => {
+    const env = ambiente()
+    const a = Math.floor(Date.now() / 1000)
+    const w = instanciar(env, [
+      { ok: true, modo: 'closer', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)], chats_em: a },
+      { ok: true, modo: 'closer', itens: segunda(a), chats_em: a },
+    ])
+    let patch = null
+    env.ctx.__kommo = (o) => { patch = o; return { done(fn) { fn({}); return this }, fail() { return this } } }
+    w.callbacks.init(); env.rodarTimers('t')
+    clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+    env.rodarTimers('i')                                                  // nova leitura: representativa do lead 10 mudou
+    const html = env.elems['rpv-root'].innerHTML
+    if (nome === 'chat') { assert.match(html, /Responda o cliente no chat/); return }
+    assert.match(html, /Concluir e próximo/)
+    clicar(env, 'concluir'); assert.match(patch.url, /\/tasks\/2$/)       // a nova representativa (mais perto da reunião)
+  })
+}
+
+test('closer + servidor cai: o degradado mantém o modo closer (2 leads, não 3 tarefas) e as marcas por lead', () => {
+  const env = ambiente()
+  const a = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [{ ok: true, modo: 'closer', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)], chats_em: a, gerado_em: a - 120 }, { erro: 'falha_banco', status: 503 }])
+  let fase = 'patch'
+  env.ctx.__kommo = (o) => {
+    if (fase === 'patch') return { done(fn) { fn({}); return this }, fail() { return this } }
+    return { done(fn) { fn({ _embedded: { tasks: [1, 2, 3].map((id) => ({ id, entity_type: 'leads', entity_id: id < 3 ? 10 : 20, complete_till: a - 600 + id, text: 't' })) } }, 'ok', { status: 200 }); return this }, fail() { return this } }
+  }
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'avancar')
+  fase = 'degradado'                                                    // a releitura logo após concluir: servidor 503 → sessão (ainda traz a 1)
+  clicar(env, 'concluir')                                              // conclui a 1 do lead 10 → vai ao 20
+  assert.equal(env.ctx.location.pathname, '/leads/detail/20')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /<span class="cnt">1<\/span>/)                      // lead 10 segue marcado; só o 20
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /etapa a confirmar/)
+})
+
+test('degradado sem modo confirmado: avisa e mostra como SDR', () => {
+  const env = ambiente()
+  env.ctx.__kommo = () => ({ done(fn) { fn({ _embedded: { tasks: [{ id: 7, entity_type: 'leads', entity_id: 70, complete_till: AGORA - 10, text: 'x' }] } }, 'ok', { status: 200 }); return this }, fail() { return this } })
+  const w = instanciar(env, [{ erro: 'jwt_conta', status: 401 }])
+  w.callbacks.init(); env.rodarTimers()
+  clicar(env, 'painel')
+  assert.match(env.elems['rpv-root'].innerHTML, /Modo da fila ainda não confirmado/)
+})
+
+test('isolamento por perfil: snapshot closer de outra aba NÃO serve a esta aba com override sdr; versão antiga é ignorada', () => {
+  const env = ambiente()
+  const a = Math.floor(Date.now() / 1000)
+  const snapCloser = { itens: [ctC(a, 1, 10), ctC(a, 2, 10)], modo: 'servidor', modoFila: 'closer', dadosEm: a - 1, chatsEm: a, rev: 'rc', v: 2, perfil: 'auto.v2' }
+  env.ctx.localStorage.setItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify(snapCloser))
+  env.ctx.localStorage.setItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 3600000 }))
+  env.ctx.localStorage.setItem('rpv_snap.sdr.v2_financeirorustonengenhariacombr_11420911', JSON.stringify({ ...snapCloser, perfil: 'sdr.v1', v: 1 }))   // versão antiga
+  const w = instanciar(env, [{ ok: true, modo: 'sdr', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)] }], { modo: 'sdr' })
+  let chamou = 0; const orig = w.$authorizedAjax; w.$authorizedAjax = (o) => { chamou++; return orig(o) }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(chamou, 1)                                                  // lidera o PRÓPRIO perfil e lê o servidor
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">3<\/span>/)   // fila SDR: 3 tarefas
 })
