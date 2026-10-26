@@ -598,3 +598,53 @@ test('resposta de discagem de uma posse antiga não mexe na sessão nova', async
   adiadas[0].err({ status: 403, responseJSON: { erro: 'sem_permissao' } })
   assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não é dono deste lead/)
 })
+
+// relógio simulado dentro da VM: Date.now() = real + deslocamento
+function relogio(env) {
+  const Real = Date; let desloc = 0
+  class D extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + desloc) } static now() { return Real.now() + desloc } }
+  env.ctx.Date = D
+  return { avancar: (ms) => { desloc += ms } }
+}
+const chatItem = (agora) => ({ id: -555, entity_type: 'leads', entity_id: 555, due: agora - 60, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'chat', lead_nome: 'Lead chat', acao: 'chat' })
+
+test('chat válido que ENVELHECE com o widget aberto (líder, resposta com o mesmo gerado_em): sai pelo relógio', () => {
+  const env = ambiente(), rel = relogio(env)
+  const agora = Math.floor(Date.now() / 1000), g = agora - 1
+  const w = instanciar(env, [
+    { ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 119, gerado_em: g },
+    { ok: true, itens: [tarefa(1)], chats_em: null, gerado_em: g },            // servidor já podou, mesmo gerado_em
+  ])
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/555')   // ainda válido: abre o chat
+  assert.match(env.elems['rpv-root'].innerHTML, /Responda o cliente no chat/)
+  rel.avancar(6000); env.rodarTimers('i')                                   // 125 s: venceu; leitura com mesmo gerado_em é ignorada
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Responda o cliente no chat/); assert.match(html, /<span class="cnt">1<\/span>/)
+  env.ctx.location.pathname = '/leads/pipeline'
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')    // vai para a tarefa, não para o chat
+})
+
+test('chat que envelhece em aba SEGUIDORA (snapshot sem rev nova): sai pelo relógio', () => {
+  const B = ambiente(), rel = relogio(B)
+  const agora = Math.floor(Date.now() / 1000)
+  B.ctx.localStorage.setItem('rpv_snap_financeirorustonengenhariacombr_11420911', JSON.stringify({ itens: [tarefa(1), chatItem(agora)], modo: 'servidor', dadosEm: agora - 1, chatsEm: agora - 119, rev: 'r1' }))
+  B.ctx.localStorage.setItem('rpv_lider_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 3600000 }))
+  const w = instanciar(B, [{ ok: true, itens: [] }]); w.callbacks.init()
+  assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
+  rel.avancar(6000); B.rodarTimers('i')
+  assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})
+
+test('chat que envelhece DURANTE pausa do Kommo: sai pelo relógio, tarefas e dados ficam', () => {
+  const env = ambiente(), rel = relogio(env)
+  const agora = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), chatItem(agora)], chats_em: agora - 119, retry_after: 300 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">2<\/span>/)
+  let leu = false; w.$authorizedAjax = () => { leu = true; return { then() {} } }
+  rel.avancar(6000); env.rodarTimers('i')
+  assert.equal(leu, false)                                                   // pausado: não lê
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
+})

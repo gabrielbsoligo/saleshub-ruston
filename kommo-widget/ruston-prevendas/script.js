@@ -390,6 +390,20 @@
       }
 
       // ---------------- notify (só sobre itens confirmados) ----------------
+      // Expiração dos chats pelo RELÓGIO (não depende de leitura nova nem de rev nova do snapshot): tira chat vencido da
+      // fila, do card atual e das notificações; tarefas, dadosEm e falha ficam como estão. Chamado a cada tique,
+      // antes de renderizar e antes de navegar — inclusive durante pausa e em aba seguidora.
+      function ehChat(q) { return !!q && q.momento === 'chat_sem_resposta'; }
+      function podarChats() {
+        if (state.chatsEm && agoraS() - state.chatsEm <= CHATS_MAX_S) return false;
+        var tem = state.fila.some(ehChat) || ehChat(state.futura) || ehChat(state.atual) || state.notif.some(ehChat);
+        if (!tem) return false;
+        state.notif = state.notif.filter(function (n) { return !ehChat(n); });
+        if (ehChat(state.atual)) { state.atual = null; try { sessionStorage.removeItem(key('atual')); } catch (e) {} }
+        montar();                                   // refiltra pela validade (semChatsVencidos) e recalcula a fila
+        return true;
+      }
+
       function notificar(souLider) {
         var c = cfg(), now = agoraS();
         var base = Fila.semChatsVencidos(state.itens, state.chatsEm, now, CHATS_MAX_S);
@@ -439,6 +453,7 @@
         state.atual = null; montar(); avancar();
       }
       function avancar() {
+        podarChats();
         if (!podeAgir()) { render(); return; }
         var p = Fila.proximoDe(state.fila, state.futura, entidadeAtual());
         if (!p) { render(); return; }
@@ -671,6 +686,7 @@
 
       function render() {
         if (state.destruido || !ativoParaEsteUsuario()) return;
+        podarChats();
         var c = raiz(), now = agoraS(), conf = cfg(), html = '', agir = podeAgir();
 
         state.notif.slice(0, 3).forEach(function (n) {
@@ -732,7 +748,7 @@
         else if (act === 'atualizar') ciclo(state.geracao, true);
         else if (act === 'concluir') concluirEProximo(state.atual);
         else if (act === 'pular') pular(state.atual);
-        else if (act === 'ir') { if (!podeAgir()) { render(); return; } var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
+        else if (act === 'ir') { if (!podeAgir() || podarChats()) { render(); return; } var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
         else if (act === 'abrir') abrir(el.getAttribute('data-et'), el.getAttribute('data-eid'));
         else if (act === 'voz-ligar') discarVoz(el.getAttribute('data-tel'));
         else if (act === 'voz-atender') atenderVoz();
@@ -777,7 +793,10 @@
         atraso(function () { ciclo(g, false); }, Math.floor(Math.random() * 3000));          // jitter inicial
         intervalo(function () { ciclo(g, false); }, cfg().poll * 1000 + Math.floor(Math.random() * 5000));
         var ultima = location.pathname;
-        intervalo(function () { if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); } }, 700);
+        intervalo(function () {
+          if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); }
+          else if (podarChats()) render();          // chat venceu pelo relógio (sem leitura nova, pausa ou aba seguidora)
+        }, 700);
         intervalo(function () { cicloVoz(g); }, 1000);                     // liga/desliga o telefone conforme o setting voz
         if (cfg().voz) iniciarVoz(g, false);
       }
