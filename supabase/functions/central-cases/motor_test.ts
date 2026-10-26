@@ -1,6 +1,6 @@
 // deno test --allow-read supabase/functions/central-cases/motor_test.ts
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { ErroCritico, casaComNome, extrairPresenca, gerarCases, hostPublico, ipPrivado, pontuar, qualidadeDe, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
+import { ErroCritico, casaComNome, extrairPresenca, gerarCases, hostPublico, ipPrivado, nomeDeBusca, pontuar, qualidadeDe, termosDe, tokens, type Candidato, type Deps } from './motor.ts'
 // sinais de presença neutros (não medidos) para os fakes inline
 const sinais = { siteNoAr: async () => null, instagramExiste: async () => null, googleNegocio: async () => ({ ok: false, encontrado: false, rating: null, avaliacoes: null }) }
 import { depsReais } from './cliente.ts'
@@ -139,6 +139,18 @@ Deno.test('gerarCases profunda: 40 da base, 15 na web, 5 de anúncios e 10 finai
 })
 
 
+Deno.test('busca web pelo NOME LIMPO (sem LTDA/genéricos) + cidade, sem aspas; 2ª tentativa "site oficial" só se não achou site; termos_casados sem duplicatas', async () => {
+  assertEquals(nomeDeBusca({ nome: 'VERSATI INCORPORADORA E CONSTRUTORA LTDA' }), 'versati incorporadora construtora')
+  assertEquals(nomeDeBusca({ nome: 'LTDA ME' }), 'ltda me')
+  const consultas: string[] = []
+  const deps: Deps = { ...sinais, agora: () => 1, base: async () => [{ ...cand(1, 'VERSATI INCORPORADORA E CONSTRUTORA LTDA', 90, { cidade: 'Campinas' }), termos_casados: ['construtora', 'incorporadora', 'construtora'] }],
+    buscaWeb: async (q) => { consultas.push(q); return q.includes('site oficial') ? { ok: true, results: [{ url: 'https://versati.com.br/', title: '', desc: '' }] } : { ok: true, results: [{ url: 'https://cnpj.biz/x', title: '', desc: '' }] } },
+    anuncios: async () => ({ ok: true, ativos: 0 }) }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'construtora', profundidade: 'profunda' })
+  assertEquals(consultas, ['versati incorporadora construtora Campinas', 'versati incorporadora construtora site oficial'])
+  assertEquals(out[0].site, 'https://versati.com.br'); assertEquals(out[0].termos_casados, ['construtora', 'incorporadora'])
+})
+
 Deno.test('qualidadeDe: 0–100 por presença digital (site no ar, Instagram ativo, anúncios confirmados, Google Business); não medido conta parcial', () => {
   const c = (x: Partial<Candidato>): Candidato => ({ id_cliente: 1, nome: 'A', score: 0, termos_casados: [], ...x })
   assertEquals(qualidadeDe(c({})), 0)
@@ -156,7 +168,7 @@ Deno.test('qualidadeDe: 0–100 por presença digital (site no ar, Instagram ati
 
 Deno.test('ordem final = qualidade primeiro: case menos relevante mas com presença forte vem antes do mais relevante sem presença', async () => {
   const deps: Deps = { ...sinais, agora: () => 1, base: async () => [cand(1, 'Odonto Fraca', 120), cand(2, 'Odonto Forte', 80)],
-    buscaWeb: async (q) => q.includes('Forte') ? { ok: true, results: [{ url: 'https://odontoforte.com.br/', title: '', desc: '' }, { url: 'https://www.instagram.com/odontoforte/', title: '', desc: '' }] } : { ok: true, results: [] },
+    buscaWeb: async (q) => /forte/i.test(q) ? { ok: true, results: [{ url: 'https://odontoforte.com.br/', title: '', desc: '' }, { url: 'https://www.instagram.com/odontoforte/', title: '', desc: '' }] } : { ok: true, results: [] },
     siteNoAr: async () => true, instagramExiste: async () => true,
     googleNegocio: async (nome) => nome.includes('Forte') ? { ok: true, encontrado: true, rating: 4.7, avaliacoes: 80 } : { ok: true, encontrado: false, rating: null, avaliacoes: null },
     anuncios: async (c) => ({ ok: true, ativos: c.company.includes('Forte') ? 4 : 0, confirmado: true }) }
@@ -183,12 +195,12 @@ Deno.test('R2#1 SSRF: a edge NUNCA faz GET direto no site — pré-checa o host 
   assertEquals(chamadas.length, 3)                                                       // os 3 recusados não chegaram ao motor
 })
 
-Deno.test('R2#2 pulso de posse é chamado entre candidatos e chamadas lentas (web ×3 por candidato + anúncios); se lançar, a rodada aborta', async () => {
+Deno.test('R2#2 pulso de posse é chamado entre candidatos e chamadas lentas (web ×4 por candidato + anúncios); se lançar, a rodada aborta', async () => {
   let pulsos = 0
   const base = Array.from({ length: 4 }, (_, i) => cand(i + 1, `Odonto${i + 1}`, 90 - i))
   const deps: Deps = { ...sinais, agora: () => 1, base: async () => base, buscaWeb: async () => ({ ok: true, results: [] }), anuncios: async () => ({ ok: true, ativos: 0 }), pulso: async () => { pulsos++ } }
   const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'profunda' })
-  assertEquals(out.length, 4); assertEquals(pulsos, 4 * 3 + 4)
+  assertEquals(out.length, 4); assertEquals(pulsos, 4 * 4 + 4)   // por candidato: busca, 2ª busca (sem site), Instagram, Google; + anúncios
   const perde: Deps = { ...deps, pulso: async () => { throw new ErroCritico('posse perdida') } }
   await assertRejects(() => gerarCases(perde, { empresa: 'X', nicho: 'odonto', profundidade: 'profunda' }), ErroCritico)
 })
