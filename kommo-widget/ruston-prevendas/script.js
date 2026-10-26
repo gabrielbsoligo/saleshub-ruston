@@ -237,6 +237,8 @@
         am.push(m); am = am.slice(-10);
         lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
       }
+      // relógio MONOTÔNICO (não muda com o acerto do relógio do PC): prazo da autorização de atendimento automático
+      function mono() { try { if (typeof performance !== 'undefined' && performance.now) return performance.now(); } catch (e) {} return Date.now(); }
       function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
       // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
       // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
@@ -597,13 +599,13 @@
         ua.on('newRTCSession', function (ev) {
           if (ev.originator !== 'remote') return;
           var s = ev.session;
-          try { var q = ev.request; dbg('INVITE recebido', q && q.ruri && String(q.ruri), 'de', q && q.from && String(q.from.uri), 'integrada:', q && q.getHeader('X-Api4comintegratedcall'), 'pendente:', voz.pendenteAte > Date.now()); } catch (x) {}
+          try { var q = ev.request; dbg('INVITE recebido', q && q.ruri && String(q.ruri), 'de', q && q.from && String(q.from.uri), 'integrada:', q && q.getHeader('X-Api4comintegratedcall'), 'pendente:', voz.pendenteAte > mono()); } catch (x) {}
           if (!meu() || voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
           var integ = false;
           try { integ = String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true'; } catch (e) {}
           try { if (window.console) console.info('[ruston-prevendas] INVITE recebido; cabeçalhos:', Object.keys((ev.request && ev.request.headers) || {}).join(',')); } catch (e) {}
           voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
-          voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, Date.now());
+          voz.pedida = Fila.chamadaPedida(integ, voz.pendenteAte, mono());
           s.on('peerconnection', function (pe) {
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
@@ -611,7 +613,7 @@
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
           s.on('ended', fim); s.on('failed', function (e) { dbg('chamada falhou', e && e.cause); fim(e); });
-          if (Fila.deveAtender(integ, voz.pendenteAte, Date.now(), voz.atendidaNaTentativa === voz.tentativa)) {
+          if (Fila.deveAtender(integ, voz.pendenteAte, mono(), voz.atendidaNaTentativa === voz.tentativa)) {
             voz.atendidaNaTentativa = voz.tentativa;                          // consome a autorização desta tentativa
             dbg('atendendo automaticamente (tentativa ' + voz.tentativa + ')');
             atenderVoz();
@@ -664,7 +666,7 @@
         if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
         var t = ++voz.tentativa, posse = voz.posse;
         voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui (atenda) e depois liga para o cliente.';
-        voz.pendenteAte = Date.now() + 60000;
+        voz.pendenteAte = mono() + 60000;                           // janela de 60 s no relógio monotônico
         render();
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora

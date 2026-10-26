@@ -804,3 +804,26 @@ test('sem pedido de discagem, a integrada só toca (não atende sozinha)', async
   const semPedido = sessao(true); reg.emit('newRTCSession', semPedido)
   assert.equal(semPedido.session.atendida, undefined)
 })
+
+for (const [nome, saltoPC, decorrido, esperado] of [
+  ['PC acertado para TRÁS após 61 s reais: não amplia a janela (só toca)', -120000, 61000, undefined],
+  ['PC salta para a FRENTE com 30 s reais: a janela continua valendo (atende)', 200000, 30000, true],
+]) {
+  test(`atendimento automático usa relógio monotônico — ${nome}`, async () => {
+    const env = ambiente(), reg = {}
+    const Real = Date; let desloc = 120000, perf = 1000
+    env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + desloc) } static now() { return Real.now() + desloc } }
+    env.ctx.performance = { now: () => perf }
+    const { w } = comVoz(env, reg, {
+      credencial: CRED,
+      telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+      discar: 'adiar',
+    })
+    w.callbacks.init(); await flush(); reg.emit('registered')
+    env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+    clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+    perf += decorrido; desloc += saltoPC                       // passa o tempo real e o relógio do PC salta
+    const inv = sessao(true); reg.emit('newRTCSession', inv)
+    assert.equal(inv.session.atendida, esperado)
+  })
+}
