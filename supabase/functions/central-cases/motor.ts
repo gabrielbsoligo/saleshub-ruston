@@ -73,7 +73,8 @@ export function casaComNome(chave: string, nome: string): boolean {
   const toks = tokens(nome)
   if (toks.some((t) => t.length >= 4 && k.includes(t))) return true
   const nk = toks.join('')
-  return nk.length >= 6 && (nk.includes(k) || (k.length >= 6 && k.includes(nk)))
+  // comparação compactada só com ≥6 letras NOS DOIS lados ("cli" ou "sor" não confirmam "Clínica Sorriso")
+  return nk.length >= 6 && k.length >= 6 && (nk.includes(k) || k.includes(nk))
 }
 export function extrairPresenca(results: ResultadoWeb[], nome: string): { site: string | null; instagram: string | null; instagram_nao_confirmado: string | null } {
   let site: string | null = null, instagram: string | null = null, instagram_nao_confirmado: string | null = null
@@ -106,9 +107,11 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   let cands = (await deps.base(termos, entrada.uf ?? null, L.base)).map((c) => ({ ...c, por_que: [] as string[] }))
   await progresso?.('base', cands)
   // presença digital nos N melhores (1 busca por case; cache/ritmo ficam no deps.buscaWeb)
+  // etapas OPCIONAIS (web/anúncios): falha de transporte de um candidato vira aviso nele, nunca aborta
+  const tenta = async <T>(fn: () => Promise<T>, falha: (msg: string) => T): Promise<T> => { try { return await fn() } catch (e) { return falha(String((e as Error)?.message ?? e).slice(0, 120)) } }
   for (const c of cands.slice(0, L.web)) {
-    const r = await deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim())
-    if (!r.ok) { c.por_que!.push('busca web indisponível'); continue }
+    const r = await tenta(() => deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim()), (msg) => ({ ok: false, results: [], nota: msg }))
+    if (!r.ok) { c.por_que!.push(`busca web indisponível${r.nota ? ` (${r.nota})` : ''}`); continue }
     const p = extrairPresenca(r.results, c.nome)
     c.site = p.site; c.instagram = p.instagram; c.instagram_nao_confirmado = p.instagram_nao_confirmado
   }
@@ -116,7 +119,7 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   // anúncios da Meta nos 3 melhores com alguma presença (site ou instagram) — senão nos 3 primeiros
   const alvo = [...cands.slice(0, L.web)].sort((a, b) => pontuar(b) - pontuar(a)).slice(0, L.anuncios)
   for (const c of alvo) {
-    const r = await deps.anuncios({ company: c.nome, siteDomain: c.site ? hostDe(c.site) : null, cidade: c.cidade ?? null, fbHandle: c.instagram ?? null })
+    const r = await tenta(() => deps.anuncios({ company: c.nome, siteDomain: c.site ? hostDe(c.site) : null, cidade: c.cidade ?? null, fbHandle: c.instagram ?? null }), (msg) => ({ ok: false, ativos: null, nota: msg }))
     c.anuncios = { ativos: r.ok ? r.ativos : null, confirmado: r.ok ? r.confirmado !== false : false, url: urlAdLibrary(c.nome), nota: r.ok ? (r.nota ?? null) : (r.nota ?? 'indisponível') }
   }
   await progresso?.('anuncios', cands)
@@ -141,7 +144,8 @@ export function porQue(c: Candidato, e: { nicho?: string | null; uf?: string | n
   else if (c.instagram_nao_confirmado) m.push(`Instagram a confirmar: @${c.instagram_nao_confirmado}`)
   if ((c.anuncios?.ativos ?? 0) > 0 && c.anuncios?.confirmado !== false) m.push(`${c.anuncios!.ativos} anúncios ativos na Meta (confirmados)`)
   else if ((c.anuncios?.ativos ?? 0) > 0) m.push(`${c.anuncios!.ativos} anúncios na Meta a confirmar`)
-  else if (c.anuncios && c.anuncios.ativos === 0) m.push('sem anúncios ativos na Meta')
+  else if (c.anuncios && c.anuncios.ativos === 0 && c.anuncios.confirmado !== false) m.push('sem anúncios ativos na Meta')
+  else if (c.anuncios && c.anuncios.ativos === 0) m.push(`nenhum anúncio confirmado nesta busca${c.anuncios.nota ? ` (${c.anuncios.nota})` : ''}`)
   else if (c.anuncios && c.anuncios.nota) m.push(`anúncios: ${c.anuncios.nota}`)
   if (c.produto_origem) m.push(`produto: ${c.produto_origem}`)
   return m

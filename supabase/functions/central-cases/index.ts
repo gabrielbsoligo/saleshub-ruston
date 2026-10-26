@@ -42,7 +42,7 @@ async function autenticar(req: Request, sb: any): Promise<{ ok: true; via: 'segr
   return tm?.id && tm.active !== false ? { ok: true, via: 'usuario', member_id: tm.id } : { ok: false, motivo: 'não é membro ativo' }
 }
 
-/** contexto do lead: RPC cases_contexto_lead (public.leads + custom_fields da réplica Kommo); nicho = briefing.inputs.segmento > "Segmento do lead" > segmento_disparos > produto. Falha de leitura LANÇA. */
+/** contexto do lead: RPC cases_contexto_lead (public.leads + custom_fields da réplica Kommo); nicho = briefing.inputs.segmento > leads.segmento_disparos > "Segmento do lead" (réplica) > produto. Falha de leitura LANÇA. */
 async function contexto(sb: any, s: Sugestao) {
   let empresa = s.empresa, nicho: string | null = null, uf: string | null = null, cidade: string | null = null
   if (s.lead_id) {
@@ -51,7 +51,7 @@ async function contexto(sb: any, s: Sugestao) {
     const l = Array.isArray(data) ? data[0] : data
     if (l) {
       empresa = empresa || l.empresa || ''
-      nicho = l.nicho || l.segmento || l.produto || null
+      nicho = l.segmento || l.nicho || l.produto || null   // contrato: briefing > leads.segmento_disparos > custom field da réplica > produto
       uf = l.uf && /^[A-Z]{2}$/.test(l.uf) ? l.uf : null
       cidade = l.cidade || null
     }

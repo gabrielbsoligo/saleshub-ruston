@@ -11,7 +11,7 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 export interface CaseSugerido {
   id_cliente: number; nome: string; cidade?: string | null; uf?: string | null; status?: string | null; tier?: string | null;
   produto_origem?: string | null; lt_meses?: number | null; site?: string | null; instagram?: string | null;
-  anuncios?: { ativos: number | null; url: string; nota?: string | null } | null; por_que?: string[]; score_final?: number;
+  anuncios?: { ativos: number | null; url: string; nota?: string | null; confirmado?: boolean } | null; por_que?: string[]; score_final?: number;
 }
 export interface CasesSugestao {
   id: string; reuniao_id: string | null; lead_id: string | null; empresa: string; nicho: string | null;
@@ -73,8 +73,14 @@ const CaseCard: React.FC<{ c: CaseSugerido }> = ({ c }) => (
       <div className="flex items-center gap-1.5 shrink-0">
         {c.site && <a href={c.site} target="_blank" rel="noopener" title={c.site} className="text-[var(--color-v4-text-muted)] hover:text-white"><Globe size={14} /></a>}
         {c.instagram && <a href={`https://www.instagram.com/${c.instagram}/`} target="_blank" rel="noopener" title={`@${c.instagram}`} className="text-[var(--color-v4-text-muted)] hover:text-white"><Instagram size={14} /></a>}
-        {c.anuncios && <a href={c.anuncios.url} target="_blank" rel="noopener" title={c.anuncios.ativos == null ? (c.anuncios.nota || 'Biblioteca de Anúncios') : `${c.anuncios.ativos} anúncios ativos`}
-          className={c.anuncios.ativos ? 'text-emerald-400' : 'text-[var(--color-v4-text-muted)] hover:text-white'}><Megaphone size={14} /></a>}
+        {c.anuncios && (() => {
+          const a = c.anuncios; const confirmado = a.confirmado !== false;
+          const titulo = a.ativos == null ? (a.nota || 'Biblioteca de Anúncios (não medido)')
+            : a.ativos > 0 ? (confirmado ? `${a.ativos} anúncios ativos (confirmados)` : `${a.ativos} anúncios a confirmar${a.nota ? ` — ${a.nota}` : ''}`)
+            : confirmado ? 'sem anúncios ativos na Meta' : `nenhum anúncio confirmado nesta busca${a.nota ? ` — ${a.nota}` : ''}`;
+          const cor = a.ativos && confirmado ? 'text-emerald-400' : a.ativos ? 'text-amber-400' : 'text-[var(--color-v4-text-muted)] hover:text-white';
+          return <a href={a.url} target="_blank" rel="noopener" title={titulo} className={cor}><Megaphone size={14} /></a>;
+        })()}
       </div>
     </div>
     {!!c.por_que?.length && (

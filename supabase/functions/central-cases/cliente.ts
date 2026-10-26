@@ -43,10 +43,17 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
     const r = await sb.from('cases_web_cache').upsert({ chave: k, valor, expira_em: new Date(Date.now() + ttl).toISOString() }, { onConflict: 'chave' })
     if (r.error) console.warn('central-cases cache: gravação falhou', r.error.message)
   }
-  const motor = async (rota: string, body: unknown) => {
-    const r = await fetchFn(`${motorUrl}${rota}`, { method: 'POST', headers: { Authorization: `Bearer ${await token()}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
-    const txt = await r.text(); let j: any = null; try { j = txt ? JSON.parse(txt) : null } catch { /* corpo não-JSON */ }
-    return { status: r.status, body: j }
+  // Transporte (rede/timeout/abort) do motor NÃO é crítico: vira status 0 + nota, e a etapa fica
+  // "indisponível" para aquele candidato. A autenticação (token()) continua lançando: é crítica.
+  const motor = async (rota: string, body: unknown): Promise<{ status: number; body: any; nota?: string }> => {
+    const tk = await token()
+    try {
+      const r = await fetchFn(`${motorUrl}${rota}`, { method: 'POST', headers: { Authorization: `Bearer ${tk}`, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
+      const txt = await r.text(); let j: any = null; try { j = txt ? JSON.parse(txt) : null } catch { /* corpo não-JSON */ }
+      return { status: r.status, body: j }
+    } catch (e) {
+      return { status: 0, body: null, nota: `motor indisponível: ${String((e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError' ? 'timeout' : (e as Error)?.message ?? e).slice(0, 120)}` }
+    }
   }
   return {
     agora: () => Math.floor(Date.now() / 1000),
@@ -61,7 +68,7 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       if (hit && Array.isArray(hit.results)) return { ok: true, results: hit.results as ResultadoWeb[] }
       const r = await motor('/api/busca-web', { q: consulta })
       const item = r.body?.itens?.[0]
-      if (r.status !== 200 || !item) return { ok: false, results: [], nota: `motor HTTP ${r.status}` }
+      if (r.status !== 200 || !item) return { ok: false, results: [], nota: r.nota ?? `motor HTTP ${r.status}` }
       if (item.ok === false) return { ok: false, results: [], nota: item.note ?? 'busca indisponível' }
       const results = (item.results ?? []).map((x: any) => ({ url: String(x.url ?? ''), title: String(x.title ?? ''), desc: String(x.desc ?? '') })).filter((x: ResultadoWeb) => x.url)
       await cacheSet(k, { results }, 14 * DIA)
@@ -72,7 +79,7 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
       const hit = await cacheGet(k)
       if (hit && typeof hit.ativos !== 'undefined') return { ok: true, ativos: hit.ativos, confirmado: hit.confirmado, nota: hit.nota }
       const r = await motor('/api/anuncios', { company: c.company, fbHandle: c.fbHandle, siteDomain: c.siteDomain, cidade: c.cidade })
-      if (r.status !== 200 || !r.body) return { ok: false, ativos: null, nota: `motor HTTP ${r.status}` }
+      if (r.status !== 200 || !r.body) return { ok: false, ativos: null, nota: r.nota ?? `motor HTTP ${r.status}` }
       const out = interpretarAnuncios(r.body)
       if (out.ok) await cacheSet(k, { ativos: out.ativos, confirmado: out.confirmado, nota: out.nota ?? null }, 7 * DIA)
       return out

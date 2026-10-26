@@ -25,6 +25,9 @@ Deno.test('extrairPresenca: site = 1º domínio não-social/não-diretório que 
 
 Deno.test('R1#10 Instagram sem identidade confirmada NÃO vira o Instagram da empresa: fica como candidato, sem bônus e sem ir como fbHandle', async () => {
   assert(casaComNome('clinicasorriso', 'Clínica Sorriso') && casaComNome('sorriso.odonto', 'Clínica Sorriso') && !casaComNome('outra_empresa', 'Clínica Sorriso'))
+  assert(!casaComNome('cli', 'Clínica Sorriso') && !casaComNome('sor', 'Clínica Sorriso') && !casaComNome('clinic', 'Clínica Sorriso') === false) // 'clinic' casa por token ≥4 ('clinica' contém? não: handle 'clinic' ⊂ token 'clinica' → não; compactado 'clinic' ≥6 ⊂ 'clinicasorriso' → sim)
+  const curtos = [{ url: 'https://www.instagram.com/cli/', title: '', desc: '' }, { url: 'https://www.instagram.com/sor/', title: '', desc: '' }]
+  assertEquals(extrairPresenca(curtos, 'Clínica Sorriso').instagram, null)
   const r = [{ url: 'https://www.instagram.com/outra_empresa/', title: '', desc: '' }]
   assertEquals(extrairPresenca(r, 'Clínica Sorriso'), { site: null, instagram: null, instagram_nao_confirmado: 'outra_empresa' })
   const handles: (string | null)[] = []
@@ -32,6 +35,22 @@ Deno.test('R1#10 Instagram sem identidade confirmada NÃO vira o Instagram da em
   const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'leve' })
   assertEquals(handles, [null]); assertEquals(out[0].instagram ?? null, null)
   assertEquals(pontuar(out[0]), 90); assert(out[0].por_que!.some((m) => m.includes('a confirmar: @outra_empresa')))
+})
+
+Deno.test('R3#1 falha de transporte na busca web/anúncios de um candidato não aborta a rodada: aviso no candidato, demais concluídos', async () => {
+  let n = 0
+  const deps: Deps = { agora: () => 1, base: async () => [cand(1, 'A', 60), cand(2, 'B', 50)], buscaWeb: async (q) => { if (++n === 1) throw new Error('network unavailable'); return { ok: true, results: [] } }, anuncios: async () => { throw new DOMException('timeout', 'TimeoutError') } }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'leve' })
+  assertEquals(out.length, 2)
+  assert(out.find((c) => c.nome === 'A')!.por_que!.some((m) => m.includes('busca web indisponível (network unavailable)')))
+  assert(out.every((c) => c.anuncios?.ativos === null && (c.anuncios?.nota ?? '').includes('timeout')))
+})
+
+Deno.test('R3#3 zero anúncios sem confirmação (10 terceiros descartados) diz "nenhum anúncio confirmado", não "sem anúncios ativos"', async () => {
+  const deps: Deps = { agora: () => 1, base: async () => [cand(1, 'A', 50)], buscaWeb: async () => ({ ok: true, results: [] }), anuncios: async () => ({ ok: true, ativos: 0, confirmado: false, nota: '10 anúncios de terceiros descartados' }) }
+  const out = await gerarCases(deps, { empresa: 'X', nicho: 'odonto', profundidade: 'leve' })
+  assert(out[0].por_que!.some((m) => m.includes('nenhum anúncio confirmado nesta busca (10 anúncios de terceiros descartados)')))
+  assert(!out[0].por_que!.some((m) => m.includes('sem anúncios ativos')))
 })
 
 Deno.test('R1#8 anúncios só pontuam quando CONFIRMADOS; parcial (a validar) vira "a confirmar", sem bônus', async () => {
@@ -73,7 +92,7 @@ Deno.test('gerarCases: busca web indisponível não derruba a rodada (candidatos
   const { deps } = depsFake({ base: [cand(1, 'Odonto A', 90), cand(2, 'Odonto B', 80)], webOk: false, adsFalha: true })
   const r = await gerarCases(deps, { empresa: 'Odonto X', nicho: 'odonto', profundidade: 'leve' })
   assertEquals(r.length, 2); assertEquals(r[0].site ?? null, null)
-  assert(r[0].por_que!.includes('busca web indisponível'))
+  assert(r[0].por_que!.some((m) => m.startsWith('busca web indisponível')))
   assertEquals(r[0].anuncios?.ativos, null); assertEquals(r[0].anuncios?.nota, 'headless_indisponivel')
 })
 
