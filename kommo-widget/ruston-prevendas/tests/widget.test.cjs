@@ -907,8 +907,9 @@ test('0.4.4: a orientação "não chegou" persiste ao 200 tardio SEM INVITE; tim
   assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /não chegou/)
 })
 
-test('0.4.4: "has been failed" orienta a desativar a extensão API4COM; 2º INVITE com chamada ativa é recusado e a 1ª segue', async () => {
+test('0.4.4: "has been failed" explica o outro registro do ramal; 2º INVITE com chamada ativa é recusado e a 1ª segue', async () => {
   const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
   const { w, adiadas } = comVoz(env, reg, {
     credencial: CRED,
     telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
@@ -918,7 +919,8 @@ test('0.4.4: "has been failed" orienta a desativar a extensão API4COM; 2º INVI
   env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
   clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
   adiadas[0].err({ status: 502, responseJSON: { erro: 'provedor_recusou', mensagem: 'call from 1006 to +5547997293673 has been failed' } })
-  assert.match(env.elems['rpv-root'].innerHTML, /Desative a extensão API4COM do Chrome/)
+  assert.match(env.elems['rpv-root'].innerHTML, /outro registro do seu ramal/)
+  perfT += 1500                                                              // anti duplo clique (1 s)
   clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
   const a = sessao(true); reg.emit('newRTCSession', a)
   assert.equal(a.session.atendida, true)
@@ -938,4 +940,74 @@ test('notificações iguais do mesmo lead aparecem num card só e "×" fecha o g
   clicar(env, 'fechar-ntf', { 'data-tid': '1,2' })
   html = env.elems['rpv-root'].innerHTML
   assert.equal((html.match(/rpv-ntf/g) || []).length, 0)
+})
+
+// ---------------- 0.4.5: sem trava de 20 s + discador manual ----------------
+test('0.4.5: nova tentativa substitui a pendente; duplo clique (< 1 s) é ignorado; em chamada não disca', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  const { w, chamadas, adiadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  const discagens = () => chamadas.filter((c) => c.acao === 'discar').length
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })              // duplo clique
+  assert.equal(discagens(), 1)
+  perfT += 1500; clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })   // nova tentativa com a anterior pendente
+  assert.equal(discagens(), 2)
+  adiadas[0].err({ status: 502, responseJSON: { erro: 'provedor_recusou', mensagem: 'velha' } })   // resposta da 1ª: ignorada
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /velha|não completou/)
+  const inv = sessao(true); reg.emit('newRTCSession', inv)                // a chamada da 2ª chega e atende sozinha
+  assert.equal(inv.session.atendida, true)
+  perfT += 1500; clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })   // em chamada: não disca
+  assert.equal(discagens(), 2)
+})
+
+test('0.4.5: discador manual manda manual:true com o lead aberto; número inválido é recusado; o digitado sobrevive ao render', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [] },
+    discar: (b) => (b.telefone === '123' ? { erro: 'telefone_invalido' } : { ok: true, chamada_id: 'm1' }),
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.match(env.elems['rpv-root'].innerHTML, /id="rpv-manual"/)          // aparece mesmo fora de um lead
+  const digitar = env.ouvintes.find((o) => o[0] === 'input')[1]
+  digitar({ target: { id: 'rpv-manual', value: '47 99729-3673' } })
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  assert.match(env.elems['rpv-root'].innerHTML, /value="47 99729-3673"/)    // sobreviveu ao render
+  clicar(env, 'voz-manual')
+  const d = chamadas.find((c) => c.acao === 'discar')
+  assert.deepEqual({ m: d.manual, t: d.telefone, et: d.entity_type, id: d.entity_id }, { m: true, t: '47 99729-3673', et: 'leads', id: 555 })
+  perfT += 1500
+  digitar({ target: { id: 'rpv-manual', value: '123' } }); clicar(env, 'voz-manual')
+  assert.match(env.elems['rpv-root'].innerHTML, /Número inválido/)
+})
+
+test('0.4.5: ao discar re-registra o ramal e só pede a discagem após o REGISTER confirmar (ou em 2,5 s)', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: 'x' }] }] },
+    discar: 'adiar',
+  })
+  w.callbacks.init(); await flush()
+  let registros = 0; reg.ua.register = () => { registros++ }
+  reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  const discagens = () => chamadas.filter((c) => c.acao === 'discar').length
+  clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.equal(registros, 1); assert.equal(discagens(), 0)               // esperando o REGISTER
+  reg.emit('registered')                                                  // confirmou: agora pede
+  assert.equal(discagens(), 1)
+  perfT += 1500; clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
+  assert.equal(registros, 2); assert.equal(discagens(), 1)
+  env.rodarTimers('t')                                                     // REGISTER não confirmou: segue em 2,5 s
+  assert.equal(discagens(), 2)
 })
