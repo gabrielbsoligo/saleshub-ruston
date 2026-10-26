@@ -116,7 +116,7 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
   drop table if exists public.prevendas_voz_eventos, public.prevendas_voz_bloqueio;
   -- pausa compartilhada: volta o prevendas_consumir da 160 (sem pausa) ANTES de tirar a coluna; a fila segue funcionando
   create or replace function public.prevendas_consumir(p_n int, p_taxa numeric default 2, p_max numeric default 6)
-  returns boolean language plpgsql security definer set search_path = public as $
+  returns boolean language plpgsql security definer set search_path = public as $$
   declare ok boolean;
   begin
     update prevendas_vazao
@@ -124,7 +124,7 @@ Pré-requisito de segurança: a decisão A/B do Gabriel. O ramal registrado cons
      where id = 1 and least(p_max, fichas + extract(epoch from now() - em) * p_taxa) >= p_n
     returning true into ok;
     return coalesce(ok, false);
-  end $;
+  end $$;
   revoke all on function public.prevendas_consumir(int,numeric,numeric) from public, anon, authenticated;
   grant execute on function public.prevendas_consumir(int,numeric,numeric) to service_role;
   drop function if exists public.prevendas_pausar(int);
