@@ -213,7 +213,18 @@
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
       function pad(n) { return (n < 10 ? '0' : '') + n; }
-      function agoraS() { return Math.floor(Date.now() / 1000); }
+      // Referencial ÚNICO da fila = relógio do SERVIDOR (prazos do Kommo, gerado_em, chats_em, falhas, idade).
+      // desvio = relógio do PC − servidor, estimado pelo MENOR valor entre as últimas medições (a latência só soma),
+      // guardado por usuário e compartilhado entre abas. Os carimbos do servidor ficam BRUTOS (identidade e ordem).
+      function desvio() { var d = lsGet('desvio', null); return d && typeof d.s === 'number' ? d.s : 0; }
+      function medirDesvio(servidorAgora) {
+        if (!servidorAgora) return;
+        var m = Math.floor(Date.now() / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
+        var am = (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto de relógio: recomeça
+        am.push(m); am = am.slice(-10);
+        lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
+      }
+      function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
       function minutoDoDia() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
       function hora(unixS) { var d = new Date(unixS * 1000); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
       function fmtQuando(unix, now) {
@@ -316,12 +327,10 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
-            // relógio do PC ≠ do servidor: converte os carimbos do servidor para o relógio local (desvio medido agora)
-            var desvio = r.servidor_agora ? agoraS() - r.servidor_agora : 0;
-            var geradoLocal = r.gerado_em ? r.gerado_em + desvio : 0, chatsLocal = r.chats_em ? r.chats_em + desvio : 0;
-            if (!Fila.leituraMaisNova(geradoLocal, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
+            medirDesvio(r.servidor_agora);                 // só ajusta o "agora"; os carimbos continuam brutos
+            if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: chatsLocal }, geradoLocal);
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0 }, r.gerado_em || 0);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
@@ -725,6 +734,7 @@
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
           if (state.chatsVencidos) html += '<div class="rpv-warn">Chats sem resposta desatualizados: escondidos até a próxima leitura.</div>';
           var mot = state.motivos || [], motChat = mot.filter(function (m) { return /^chats_/.test(m); }), motTar = mot.filter(function (m) { return !/^chats_/.test(m); });
+          if (state.parcial && !mot.length) html += '<div class="rpv-warn">Fila parcial: algumas tarefas podem faltar.</div>';
           if (state.parcial && motTar.length) html += '<div class="rpv-warn">Fila parcial (' + esc(motTar.join(', ')) + '): algumas tarefas podem faltar.</div>';
           if (motChat.length) html += '<div class="rpv-warn">Chats: ' + esc(motChat.map(function (m) { return { chats_parcial: 'leitura parcial (pode faltar algum chat)', chats_limite: 'o Kommo pediu pausa', chats_atrasados: 'desatualizados', chats_indisponiveis: 'indisponíveis agora' }[m] || m; }).join('; ')) + '.</div>';
           if (!state.fila.length) {

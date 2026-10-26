@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test kommo-widget/ruston-prevendas/tests/chats.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chatsSemResposta, itensDeChat, revalidarChats, usarChats } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, revalidarChats, statusDosTalks, usarChats } from '../../../supabase/functions/_shared/prevendas_chats.ts'
 
 const ent = (lead: number, em: number, talk = 900 + lead) => ({ type: 'incoming_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: 0, value_after: [{ message: { talk_id: talk } }] })
 const sai = (lead: number, em: number, por: number) => ({ type: 'outgoing_chat_message', entity_type: 'lead', entity_id: lead, created_at: em, created_by: por, value_after: [{ message: { talk_id: 900 + lead } }] })
@@ -71,4 +71,21 @@ test('revalidarChats: reuso de resposta com chat vencido tira só os chats e mar
   assert.deepEqual(semChats.motivos_parcial, ['chats_atrasados'])
   const jaMotivo = { ...base, itens: [tarefa], chats_em: null, motivos_parcial: ['chats_limite'], parcial: true }
   assert.equal(revalidarChats(jaMotivo, 1000, 60), jaMotivo)                         // já sinalizado: não duplica
+})
+
+test('statusDosTalks: lista com erro comum → tenta 1 a 1; lista parcial → completa; 429 propaga; erro individual = desconhecido', async () => {
+  const fatal = (e: unknown) => (e as Error).message === '429'
+  const um = (mapa: Record<string, any>) => async (id: string) => { if (mapa[id] instanceof Error) throw mapa[id]; return mapa[id] }
+  // lista 503 → individual chamado
+  let r = await statusDosTalks(['1', '2'], async () => { throw new Error('503') }, um({ 1: { status: 'closed' }, 2: { status: 'in_work' } }), 4, 20, fatal)
+  assert.deepEqual(r, { 1: 'closed', 2: 'in_work' })
+  // lista traz um; o outro vem 1 a 1; erro individual = desconhecido
+  r = await statusDosTalks(['1', '2', '3'], async () => ({ _embedded: { talks: [{ talk_id: 1, status: 'closed' }] } }), um({ 2: { status: 'in_work' }, 3: new Error('500') }), 4, 20, fatal)
+  assert.deepEqual(r, { 1: 'closed', 2: 'in_work' })
+  // limite do 1 a 1
+  let chamadas = 0
+  r = await statusDosTalks(['1', '2', '3'], async () => ({ _embedded: { talks: [] } }), async () => { chamadas++; return { status: 'in_work' } }, 4, 2, fatal)
+  assert.equal(chamadas, 2)
+  // 429 na lista propaga
+  await assert.rejects(statusDosTalks(['1'], async () => { throw new Error('429') }, um({}), 4, 20, fatal), /429/)
 })

@@ -673,5 +673,45 @@ test('relógio do PC adiantado 2 min: a leitura do servidor NÃO aparece como de
   const html = env.elems['rpv-root'].innerHTML
   assert.doesNotMatch(html, /Fila desatualizada/); assert.match(html, /Concluir|Próximo/)
   const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap_financeirorustonengenhariacombr_11420911'))
-  assert.ok(Math.abs(snap.dadosEm - (servidor - 5 + 120)) <= 1)        // convertido para o relógio do navegador
+  assert.equal(snap.dadosEm, servidor - 5)                             // carimbo BRUTO (identidade/ordem)
+  const d = JSON.parse(env.ctx.localStorage.getItem('rpv_desvio_financeirorustonengenhariacombr_11420911'))
+  assert.ok(Math.abs(d.s - 120) <= 1)                                  // o desvio do PC fica guardado à parte
+})
+
+function pcAdiantado(env, ms) {
+  const Real = Date
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + ms) } static now() { return Real.now() + ms } }
+}
+
+test('PC +120 s: tarefa que vence em 11 min continua FUTURA (antecedência 10 min) — prazo e "agora" no mesmo referencial', () => {
+  const env = ambiente(); pcAdiantado(env, 120000)
+  const S = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { due: S + 11 * 60 })], gerado_em: S - 1, servidor_agora: S }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /<span class="cnt">/); assert.match(html, /Próxima/)    // nada vencido; oferece a futura
+})
+
+test('mesmo cache depois de uma falha, com latência diferente: NÃO limpa a falha (identidade pelo carimbo bruto)', () => {
+  const env = ambiente(); pcAdiantado(env, 120000)
+  const S = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [
+    { ok: true, itens: [tarefa(1)], gerado_em: S, servidor_agora: S },
+    { erro: 'falha_banco', status: 503 },
+    { ok: true, itens: [tarefa(1)], gerado_em: S, servidor_agora: S - 2 },     // o MESMO cache, com mais trânsito que a 1ª leitura
+  ])
+  w.callbacks.init(); env.rodarTimers('t')
+  env.rodarTimers('i')                                                         // 503 e sessão falha → falha registrada
+  env.rodarTimers('i')                                                         // chega o cache igual
+  clicar(env, 'painel')
+  assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
+})
+
+test('degradado com leitura parcial SEM motivo: o aviso de fila parcial aparece', () => {
+  const env = ambiente()
+  env.ctx.__kommo = () => ({ done(fn) { fn({ _embedded: { tasks: Array.from({ length: 250 }, (_, i) => ({ id: i + 1, entity_type: 'leads', entity_id: 9000 + i, complete_till: AGORA - 10, text: 'x' })) } }, 'ok', { status: 200 }); return this }, fail() { return this } })
+  const w = instanciar(env, [{ erro: 'jwt_conta', status: 401 }])
+  w.callbacks.init(); for (let i = 0; i < 6; i++) env.rodarTimers('t')    // páginas do degradado encadeadas por setTimeout
+  clicar(env, 'painel')
+  assert.match(env.elems['rpv-root'].innerHTML, /Fila parcial: algumas tarefas podem faltar/)
 })

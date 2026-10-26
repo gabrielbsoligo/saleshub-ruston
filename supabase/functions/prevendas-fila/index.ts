@@ -18,7 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
-import { chatsSemResposta, itensDeChat, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, statusDosTalks, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -116,29 +116,10 @@ Deno.serve(async (req) => {
       const j = await kommoGet(`/api/v4/leads?${ids.slice(i, i + 50).map((id) => `filter[id][]=${id}`).join('&')}&limit=50`)
       for (const l of j?._embedded?.leads ?? []) leadsC[String(l.id)] = { responsavel: l.responsible_user_id ?? null, status_id: l.status_id ?? null, nome: l.name ?? null }
     }
-    // status dos talks: primeiro pela LISTA (250 por página, os mais recentes), depois um a um até o limite.
-    // Talk sem status conhecido ENTRA na fila (não esconde cliente esperando) e não marca a leitura como parcial.
-    const precisa = new Set(chats.filter((c) => c.talk_id != null && leadsC[String(c.lead_id)] && ![142, 143].includes(Number(leadsC[String(c.lead_id)].status_id))).map((c) => String(c.talk_id)))
-    for (let p = 1; p <= CHATS_PAGINAS_TALKS && [...precisa].some((id) => !talks[id]); p++) {
-      const j = await kommoGet(`/api/v4/talks?limit=250&page=${p}`)
-      const lista = j?._embedded?.talks ?? []
-      for (const t of lista) if (t?.status && precisa.has(String(t.talk_id ?? t.id))) talks[String(t.talk_id ?? t.id)] = String(t.status)
-      if (lista.length < 250) break
-    }
-    let nTalks = 0
-    for (const c of chats) {
-      if (c.talk_id == null || talks[String(c.talk_id)]) continue
-      const l = leadsC[String(c.lead_id)]
-      if (!l || l.status_id === 142 || l.status_id === 143) continue
-      if (++nTalks > CHATS_MAX_TALKS) break               // o resto fica com status desconhecido (entra)
-      try {
-        const t = await kommoGet(`/api/v4/talks/${c.talk_id}`)
-        if (t?.status) talks[String(c.talk_id)] = String(t.status)
-      } catch (e) {
-        if (e instanceof KommoLimite || e instanceof Interrupcao) throw e
-        // talk sem status conhecido: o chat entra (não esconde cliente esperando)
-      }
-    }
+    // status dos talks (lista → 1 a 1; erro comum = desconhecido, o chat entra; 429/orçamento propagam)
+    const precisa = [...new Set(chats.filter((c) => c.talk_id != null && leadsC[String(c.lead_id)] && ![142, 143].includes(Number(leadsC[String(c.lead_id)].status_id))).map((c) => String(c.talk_id)))]
+    Object.assign(talks, await statusDosTalks(precisa, (p) => kommoGet(`/api/v4/talks?limit=250&page=${p}`), (id) => kommoGet(`/api/v4/talks/${id}`),
+      CHATS_PAGINAS_TALKS, CHATS_MAX_TALKS, (e) => e instanceof KommoLimite || e instanceof Interrupcao))
     return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC }
   }
 

@@ -93,3 +93,26 @@ export function revalidarChats<R extends { itens?: any[]; total?: number; parcia
   if (jaSinalizado && itens.length === (r.itens ?? []).length) return r
   return { ...r, itens, total: itens.length, parcial: true, motivos_parcial: jaSinalizado ? motivos : [...motivos, 'chats_atrasados'] }
 }
+
+/**
+ * Status dos talks pendentes: primeiro pela LISTA (páginas de 250, as mais recentes), depois um a um até `maxUm`.
+ * Erro comum (lista ou individual) = status desconhecido (o chat ENTRA); só `fatal(e)` (429/orçamento) propaga.
+ */
+export async function statusDosTalks(
+  precisa: string[], getLista: (pagina: number) => Promise<any>, getUm: (id: string) => Promise<any>,
+  maxPaginas: number, maxUm: number, fatal: (e: unknown) => boolean,
+): Promise<Record<string, string>> {
+  const talks: Record<string, string> = {}, alvo = new Set(precisa)
+  const falta = () => [...alvo].filter((id) => !talks[id])
+  for (let p = 1; p <= maxPaginas && falta().length; p++) {
+    let j: any
+    try { j = await getLista(p) } catch (e) { if (fatal(e)) throw e; break }
+    const lista = j?._embedded?.talks ?? []
+    for (const t of lista) { const id = String(t?.talk_id ?? t?.id); if (t?.status && alvo.has(id)) talks[id] = String(t.status) }
+    if (lista.length < 250) break
+  }
+  for (const id of falta().slice(0, maxUm)) {
+    try { const t = await getUm(id); if (t?.status) talks[id] = String(t.status) } catch (e) { if (fatal(e)) throw e }
+  }
+  return talks
+}
