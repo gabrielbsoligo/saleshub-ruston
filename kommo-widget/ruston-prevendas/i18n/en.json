@@ -14,6 +14,8 @@
     "grupos": "Ordem dos grupos de origem: G1 Indicação, G2 Inbound (inclui Leadbroker, Blackbox, Foodbox), G3 Base própria, G5 Outbound, G9 Sem origem (padrão G1,G2,G3,G5,G9)",
     "sound": "Som no aviso de tarefa? Y ou N (padrão Y)",
     "lookahead_min": "Avisar tarefas que vencem nos próximos X minutos (padrão 15)",
-    "atalho": "Atalho Alt+N para o próximo? Y ou N (padrão Y)"
+    "atalho": "Atalho Alt+N para o próximo? Y ou N (padrão Y)",
+    "voz": "Phone inside Kommo (4com webphone): Y to enable, N to disable (default N). Only for users enabled on the server.",
+    "endpoint_voz": "prevendas-voz edge URL (empty = same as the queue endpoint, with prevendas-fila replaced by prevendas-voz)"
   }
 }

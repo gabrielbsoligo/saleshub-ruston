@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const out = path.join(dir, 'dist')
 const stage = path.join(out, 'stage')
-const arquivos = ['manifest.json', 'script.js', 'notify.mp3', 'i18n', 'images']
+const arquivos = ['manifest.json', 'script.js', 'jssip.min.js', 'LICENSE-JSSIP.txt', 'notify.mp3', 'i18n', 'images']
 
 fs.rmSync(out, { recursive: true, force: true })
 fs.mkdirSync(stage, { recursive: true })

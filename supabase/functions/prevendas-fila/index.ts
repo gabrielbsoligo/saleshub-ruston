@@ -18,6 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
+import { chatsSemResposta, itensDeChat, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -25,6 +26,9 @@ const ORIGEM_FIELD = 975168
 const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 60, MAX_PAGINAS = 12, MAX_LOTES_LEADS = 6
 // prazo total da execução bem abaixo da trava (60 s); cada GET com timeout próprio; espera por ficha limitada
 const PRAZO_MS = 40_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
+// chats sem resposta: leitura da CONTA inteira (eventos de chat), cache compartilhado na linha kommo_user = 0
+const CHATS_CACHE_S = 30, CHATS_VELHO_S = 300, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20
+const CHATS_DIAS = Math.min(30, Math.max(1, Number(Deno.env.get('PREVENDAS_CHATS_DIAS') ?? '7') || 7))
 
 const cors = (origin: string | null) => ({
   'Access-Control-Allow-Origin': origin === KOMMO ? KOMMO : 'null',
@@ -84,6 +88,40 @@ Deno.serve(async (req) => {
     return r.json()
   }
 
+  // eventos de chat da janela → leads com cliente esperando → dono/etapa do lead e status do talk (ao vivo)
+  const lerChatsDaConta = async () => {
+    const desde = Math.floor(Date.now() / 1000) - CHATS_DIAS * 86400
+    const lidas = await lerPaginado<EventoChat>(async (n) => {
+      const j = await kommoGet(`/api/v4/events?filter[type]=incoming_chat_message,outgoing_chat_message&filter[created_at][from]=${desde}&limit=100&page=${n}`)
+      const itens = j?._embedded?.events ?? []
+      return { itens, temProxima: itens.length === 100 && !!j?._links?.next }
+    }, CHATS_MAX_PAGINAS)
+    let parcial = lidas.motivos.length > 0
+    const chats = chatsSemResposta(lidas.tarefas)
+    const leadsC: Record<string, LeadChat> = {}, talks: Record<string, string> = {}
+    const ids = chats.map((c) => c.lead_id)
+    for (let i = 0, lotes = 0; i < ids.length; i += 50, lotes++) {
+      if (lotes >= CHATS_MAX_LOTES) { parcial = true; break }
+      const j = await kommoGet(`/api/v4/leads?${ids.slice(i, i + 50).map((id) => `filter[id][]=${id}`).join('&')}&limit=50`)
+      for (const l of j?._embedded?.leads ?? []) leadsC[String(l.id)] = { responsavel: l.responsible_user_id ?? null, status_id: l.status_id ?? null, nome: l.name ?? null }
+    }
+    let nTalks = 0
+    for (const c of chats) {
+      if (c.talk_id == null || talks[String(c.talk_id)]) continue
+      const l = leadsC[String(c.lead_id)]
+      if (!l || l.status_id === 142 || l.status_id === 143) continue
+      if (++nTalks > CHATS_MAX_TALKS) { parcial = true; break }
+      try {
+        const t = await kommoGet(`/api/v4/talks/${c.talk_id}`)
+        if (t?.status) talks[String(c.talk_id)] = String(t.status)
+      } catch (e) {
+        if (e instanceof KommoLimite || e instanceof Interrupcao) throw e
+        parcial = true                                     // talk sem status conhecido: o chat entra (não esconde cliente esperando)
+      }
+    }
+    return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: Math.floor(Date.now() / 1000) }
+  }
+
   const motivos: string[] = []
   try {
     // 4a) lista VIVA, paginada (interrupção depois da 1ª página = parcial com motivo)
@@ -123,6 +161,29 @@ Deno.serve(async (req) => {
     let tiposMomento: Record<number, Momento> = {}
     try { tiposMomento = JSON.parse(Deno.env.get('PREVENDAS_TIPOS_MOMENTO') ?? '{}') } catch { tiposMomento = {} }
     const itens = montarItens(tarefasUnicas, uid, leads, (rs.data ?? {}) as Record<string, string>, tiposMomento)
+
+    // 4d) chats sem resposta (nível 0). Cache da conta de 30 s; falha aqui NÃO derruba a fila de tarefas (vira motivo).
+    try {
+      const { data: cc, error: eCC } = await sb.from('prevendas_cache').select('resposta,em').eq('kommo_user', 0).maybeSingle()
+      if (eCC) throw new Error('falha_banco')
+      let conta = cc?.resposta as any, idadeC = cc?.em ? (Date.now() - Date.parse(cc.em)) / 1000 : Infinity
+      if (idadeC >= CHATS_CACHE_S) {
+        const { data: tk } = await sb.rpc('prevendas_travar', { p_user: 0, p_seg: TRAVA_S })
+        if (tk) {
+          try { conta = await lerChatsDaConta(); await sb.rpc('prevendas_gravar', { p_user: 0, p_token: tk, p_resposta: conta }); idadeC = 0 }
+          catch (e) { await sb.rpc('prevendas_liberar', { p_user: 0, p_token: tk }); throw e }
+        }
+      }
+      if (!conta?.chats || idadeC > CHATS_VELHO_S) motivos.push('chats_indisponiveis')
+      else {
+        itens.unshift(...itensDeChat(conta.chats, uid, conta.leads ?? {}, conta.talks ?? {}))
+        if (conta.parcial) motivos.push('chats_parcial')
+      }
+    } catch (e) {
+      if (e instanceof KommoLimite) throw e
+      console.error('[prevendas-fila] chats', (e as Error).message)
+      motivos.push('chats_indisponiveis')
+    }
 
     const fres = await sb.rpc('prevendas_fila_frescor')
     const resposta = {

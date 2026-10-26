@@ -353,3 +353,113 @@ test('após falha: só uma leitura POSTERIOR à falha limpa a falha e reabilita 
   assert.equal(snap.falha, null); assert.deepEqual(snap.itens.map((t) => t.id), [3])
   assert.match(env.elems['rpv-root'].innerHTML, /data-act="avancar"/)
 })
+
+// ---------------- telefone (webphone 4com) ----------------
+function fakeJsSIP(reg) {
+  return {
+    WebSocketInterface: function (url) { this.url = url },
+    UA: function (cfg) {
+      const h = {}; reg.cfg = cfg; reg.ua = this; reg.n = (reg.n || 0) + 1
+      this.on = (e, f) => { h[e] = f }; this.start = () => { reg.started = true }; this.stop = () => { reg.stopped = true }
+      reg.emit = (e, a) => h[e] && h[e](a)
+    },
+  }
+}
+function sessao(integrada) {
+  const s = { h: {}, on(e, f) { this.h[e] = f }, answer() { this.atendida = true; this.h.accepted && this.h.accepted() }, terminate() { this.encerrada = true; this.h.ended && this.h.ended({ cause: 'Terminated' }) }, mute() {}, unmute() {} }
+  return { originator: 'remote', session: s, request: { getHeader: (n) => (n === 'X-Api4comintegratedcall' && integrada ? 'true' : undefined) } }
+}
+const CRED = { ok: true, provedor: '4com', wss: 'wss://ruston.api4com.com:6443', dominio: 'ruston.api4com.com', ramal: '1006', realm: 'ruston.api4com.com', ha1: 'h'.repeat(32), uri: 'sip:1006@ruston.api4com.com', nome: 'Gabriel' }
+function comVoz(env, reg, rotas, settings = {}) {
+  env.ctx.window.JsSIP = fakeJsSIP(reg)
+  const w = instanciar(env, [{ ok: true, itens: [] }], { voz: 'Y', ...settings })
+  const chamadas = []
+  w.$authorizedAjax = (o) => {
+    const b = JSON.parse(o.data || '{}'); chamadas.push({ url: o.url, ...b })
+    const r = b.acao ? (rotas[b.acao] || { erro: 'x' }) : { ok: true, itens: [], gerado_em: AGORA + chamadas.length }
+    return { then: (ok, err) => (r.erro ? err({ status: 403, responseJSON: r }) : ok(r)) }
+  }
+  return { w, chamadas }
+}
+
+test('telefone desligado por padrão: não pede credencial nem carrega o JsSIP', () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED }, { voz: 'N' })
+  w.callbacks.init(); env.rodarTimers()
+  assert.equal(chamadas.filter((c) => c.acao).length, 0); assert.equal(reg.n, undefined)
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone/)
+})
+
+test('telefone: registra com HA1 (sem senha), endpoint derivado, credencial fora do storage', () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init()
+  assert.equal(chamadas[0].acao, 'credencial'); assert.equal(chamadas[0].url, 'https://srv/fila')   // sem "prevendas-fila" no nome: usa o mesmo
+  assert.equal(reg.cfg.ha1, CRED.ha1); assert.equal(reg.cfg.password, undefined); assert.equal(reg.cfg.authorization_user, '1006')
+  assert.equal(reg.cfg.realm, 'ruston.api4com.com'); assert.equal(reg.cfg.sockets[0].url, CRED.wss); assert.equal(reg.started, true)
+  reg.emit('registered')
+  assert.match(env.elems['rpv-root'].innerHTML, /Telefone · pronto/)
+  for (const st of [env.ctx.localStorage, env.ctx.sessionStorage]) for (const v of st._m.values()) assert.ok(!String(v).includes(CRED.ha1), 'HA1 vazou para o storage')
+})
+
+test('endpoint do telefone: troca prevendas-fila por prevendas-voz', () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED }, { endpoint: 'https://x.supabase.co/functions/v1/prevendas-fila' })
+  w.callbacks.init()
+  assert.equal(chamadas.find((c) => c.acao === 'credencial').url, 'https://x.supabase.co/functions/v1/prevendas-voz')
+})
+
+test('discar: lista telefones do lead, pede à 4com e atende sozinho SÓ a chamada integrada pedida', () => {
+  const env = ambiente(), reg = {}
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: '47 99729-3673' }] }] },
+    discar: { ok: true, chamada_id: 'c1' },
+  })
+  w.callbacks.init(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'
+  env.rodarTimers('i')
+  assert.match(env.elems['rpv-root'].innerHTML, /data-act="voz-ligar" data-tel="\+5547997293673"/)
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  clique({ target: { closest: () => ({ getAttribute: (k) => (k === 'data-act' ? 'voz-ligar' : '+5547997293673') }) } })
+  const d = chamadas.find((c) => c.acao === 'discar')
+  assert.deepEqual({ et: d.entity_type, id: d.entity_id, tel: d.telefone }, { et: 'leads', id: 555, tel: '+5547997293673' })
+  const integrada = sessao(true); reg.emit('newRTCSession', integrada)
+  assert.equal(integrada.session.atendida, true)
+  assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
+  integrada.session.terminate()
+  // chamada que NÃO pedimos (sem header ou fora da janela): só toca, não atende sozinha
+  const estranha = sessao(false); reg.emit('newRTCSession', estranha)
+  assert.equal(estranha.session.atendida, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /data-act="voz-atender"/)
+})
+
+test('segunda aba: não registra o ramal enquanto outra aba é dona (a 4com derrubaria a primeira)', () => {
+  const env = ambiente(), reg = {}
+  env.ctx.localStorage.setItem('rpv_voz_dono_financeirorustonengenhariacombr_11420911', JSON.stringify({ aba: 'outra', ate: Date.now() + 60000 }))
+  const { w, chamadas } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init()
+  assert.equal(chamadas.filter((c) => c.acao === 'credencial').length, 0); assert.equal(reg.n, undefined)
+  assert.match(env.elems['rpv-root'].innerHTML, /ativo em outra aba/)
+})
+
+test('destroy desliga o ramal e libera a posse', () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init(); reg.emit('registered')
+  w.callbacks.destroy()
+  assert.equal(reg.stopped, true)
+  assert.equal(env.ctx.localStorage.getItem('rpv_voz_dono_financeirorustonengenhariacombr_11420911'), 'null')
+})
+
+test('chat sem resposta: vai primeiro na fila e o card não oferece "Concluir"', () => {
+  const env = ambiente()
+  const chat = { id: -555, entity_type: 'leads', entity_id: 555, due: AGORA - 600, momento: 'chat_sem_resposta', grupo: 'G9', urgente: true, texto: 'Cliente aguardando resposta no chat', lead_nome: 'Lead chat', acao: 'chat' }
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { momento: 'anti_noshow' }), chat] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const clique = env.ouvintes.find((o) => o[0] === 'click' && !o[2])[1]
+  clique({ target: { closest: () => ({ getAttribute: () => 'avancar' }) } })
+  assert.equal(env.ctx.location.pathname, '/leads/detail/555')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Responda o cliente no chat/); assert.doesNotMatch(html, /Concluir e próximo/)
+})

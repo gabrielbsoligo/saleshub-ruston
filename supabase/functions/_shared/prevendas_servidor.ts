@@ -93,10 +93,10 @@ export async function esperarFicha(
 }
 
 /** Lê todas as páginas (até `max`); interrupção depois da 1ª página vira parcial com motivo, nunca silenciosa. */
-export async function lerPaginado(
-  getPagina: (n: number) => Promise<{ itens: TarefaKommo[]; temProxima: boolean }>, max: number,
-): Promise<{ tarefas: TarefaKommo[]; motivos: string[] }> {
-  const tarefas: TarefaKommo[] = [], motivos: string[] = []
+export async function lerPaginado<T = TarefaKommo>(
+  getPagina: (n: number) => Promise<{ itens: T[]; temProxima: boolean }>, max: number,
+): Promise<{ tarefas: T[]; motivos: string[] }> {
+  const tarefas: T[] = [], motivos: string[] = []
   for (let n = 1; n <= max; n++) {
     let p
     try { p = await getPagina(n) }

@@ -113,3 +113,18 @@ test('regras de frescor: leitura só substitui se for mais nova; falha só sai c
   assert.equal(Fila.falhaApos(f, 201), null)
   assert.equal(Fila.falhaApos(null, 1), null)
 })
+
+test('decisão 26/10: chat sem resposta é nível 0, acima do anti no-show', () => {
+  assert.equal(Fila.nivel({ momento: 'chat_sem_resposta' }), 0)
+  const r = Fila.ordenar([it(1, 'anti_noshow', 'G9', -5), it(2, 'chat_sem_resposta', 'G9', -1)], CFG, AGORA, M10H)
+  assert.deepEqual(ids(r), [2, 1])
+})
+
+test('telefone: atende sozinho só chamada integrada E pedida dentro da janela', () => {
+  assert.equal(Fila.deveAtender(true, 2000, 1000), true)
+  assert.equal(Fila.deveAtender(false, 2000, 1000), false)    // sem o header da 4com
+  assert.equal(Fila.deveAtender(true, 500, 1000), false)      // janela vencida
+  assert.equal(Fila.deveAtender(true, 0, 1000), false)        // ninguém pediu
+  assert.match(Fila.mensagemVoz('sem_permissao'), /dono deste lead/)
+  assert.match(Fila.mensagemVoz('xpto'), /xpto/)
+})

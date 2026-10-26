@@ -4,6 +4,7 @@
 // Ver kommo-widget/ruston-prevendas/PROPOSTA.md §2.4.
 
 export type Momento =
+  | 'chat_sem_resposta'   // não vem de tarefa: prevendas_chats.ts (decisão 26/10, nível 0)
   | 'anti_noshow' | 'speed_to_lead' | 'conexao' | 'follow_up' | 'recuperar'
   | 'prospeccao' | 'sem_classificacao'
 export type Acao = 'ligar' | 'whatsapp' | 'email' | 'outro'

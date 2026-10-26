@@ -1,5 +1,5 @@
 /**
- * Ruston Pré-vendas — widget único do Kommo (Web SDK): NOTIFY + PRÓXIMO (+ click-to-call na fatia 3).
+ * Ruston Pré-vendas — widget único do Kommo (Web SDK): NOTIFY + PRÓXIMO + TELEFONE (webphone 4com).
  *
  * - FILA: vem do servidor (edge prevendas-fila), autenticada pelo token descartável do Kommo ($authorizedAjax).
  *   O servidor lê AO VIVO no Kommo a lista de tarefas abertas do próprio usuário (fonte autoritativa) e a
@@ -10,6 +10,11 @@
  * - Várias abas: uma "líder" por usuário consulta; as outras usam o resultado compartilhado (localStorage).
  * - NOTIFY: pop-up + som + notificação do navegador para tarefas que vencem agora (sem inundar com backlog).
  * - PRÓXIMO: momento → origem → vencimento (PROPOSTA.md §2.3). Sem nada vencido, oferece a próxima futura.
+ *   Nível 0 = CHAT SEM RESPOSTA (cliente falou por último e nenhum humano respondeu; decisão 26/10).
+ * - TELEFONE (opcional, setting voz=Y): o ramal 4com do próprio usuário registra aqui (JsSIP sobre WSS, áudio no
+ *   navegador). A credencial (HA1, nunca a senha) vem da edge prevendas-voz e fica SÓ em memória. Discar = o
+ *   servidor pede à 4com, que liga para este ramal (atendido sozinho só se fomos nós que pedimos) e depois para
+ *   o cliente. Uma aba por vez é dona do ramal (a 4com derruba o registro anterior).
  *
  * O bloco "Fila" é puro (sem DOM) e é exportado em module.exports para os testes em Node.
  * Namespace: "rpv-" / "rpv_".
@@ -20,11 +25,11 @@
   // ======================================================================
   var Fila = (function () {
     // decisão 26/10: pré-reunião = anti no-show (um momento só)
-    var NIVEL = { anti_noshow: 1, speed_to_lead: 2, conexao: 3, follow_up: 4, recuperar: 5, sem_classificacao: 9 };
+    var NIVEL = { chat_sem_resposta: 0, anti_noshow: 1, speed_to_lead: 2, conexao: 3, follow_up: 4, recuperar: 5, sem_classificacao: 9 };
     var GRUPOS_PADRAO = ['G1', 'G2', 'G3', 'G5', 'G9'];
     var COM_ORIGEM = { 4: 1, 5: 1, 7: 1 };
     var ROTULO = {
-      anti_noshow: 'Anti no-show', speed_to_lead: 'Speed to lead', conexao: 'Conexão', follow_up: 'Follow-up',
+      chat_sem_resposta: 'Chat sem resposta', anti_noshow: 'Anti no-show', speed_to_lead: 'Speed to lead', conexao: 'Conexão', follow_up: 'Follow-up',
       recuperar: 'Recuperar no-show', prospeccao: 'Prospecção', sem_classificacao: 'Outras'
     };
     var ROTULO_GRUPO = { G1: 'Indicação', G2: 'Inbound', G3: 'Base própria', G5: 'Outbound', G9: 'Sem origem' };
@@ -114,7 +119,28 @@
       return { momento: 'sem_classificacao', grupo: 'G9', urgente: false, acao: 'outro', fonte: 'local' };
     }
 
+    // ---------------- telefone (puro) ----------------
+    /** Atende sozinho SÓ chamada integrada da 4com que este usuário acabou de pedir (janela de 60 s). */
+    function deveAtender(integrada, pendenteAte, agoraMs) { return !!integrada && pendenteAte > agoraMs; }
+
+    var MSG_VOZ = {
+      voz_nao_liberada: 'Telefone ainda não liberado para o seu usuário.',
+      sem_ramal: 'Seu usuário não tem ramal 4com configurado no SalesHub.',
+      sem_permissao: 'Você não é dono deste lead nem tem tarefa aberta nele.',
+      telefone_fora_da_entidade: 'Esse telefone não é de um contato deste lead.',
+      telefone_invalido: 'Telefone inválido.',
+      ja_discando: 'Já há uma ligação sua iniciada há menos de 20 s.',
+      limite: 'Muitas tentativas; aguarde um minuto.',
+      provedor_auth: 'A 4com recusou a credencial do servidor.',
+      provedor_limite: 'Limite de ligações da 4com atingido; tente em 1 minuto.',
+      provedor_indisponivel: 'A 4com não respondeu a tempo; confira se a ligação aconteceu antes de tentar de novo.',
+      nao_configurado: 'Telefone não configurado no servidor.',
+      usuario_inativo: 'Usuário inativo no SalesHub.'
+    };
+    function mensagemVoz(erro, extra) { return (MSG_VOZ[erro] || ('Falha no telefone (' + erro + ').')) + (extra ? ' ' + extra : ''); }
+
     return {
+      deveAtender: deveAtender, mensagemVoz: mensagemVoz,
       ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
@@ -133,7 +159,7 @@
       var DEFAULTS = {
         endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
         antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
-        sound: 'Y', lookahead_min: 15, atalho: 'Y'
+        sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: ''
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
@@ -148,6 +174,10 @@
         modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
         fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false
       };
+      // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
+      var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
+                  pendenteAte: 0, discando: false, aviso: '', tel: { chave: '', contatos: null, erro: '', carregando: false } };
+      var VOZ_LOCK_MS = 25000;
 
       // ---------------- helpers ----------------
       function cfg() {
@@ -165,7 +195,9 @@
           grupos: String(s.grupos || DEFAULTS.grupos).split(',').map(function (x) { return x.trim().toUpperCase(); }).filter(Boolean),
           sound: String(s.sound || DEFAULTS.sound).toUpperCase() !== 'N',
           lookahead: int(s.lookahead_min, DEFAULTS.lookahead_min, 0, 240),
-          atalho: String(s.atalho || DEFAULTS.atalho).toUpperCase() !== 'N'
+          atalho: String(s.atalho || DEFAULTS.atalho).toUpperCase() !== 'N',
+          voz: String(s.voz || DEFAULTS.voz).toUpperCase() === 'Y',
+          endpoint_voz: String(s.endpoint_voz || '').trim()
         };
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -370,7 +402,7 @@
 
       // ---------------- ações (só com dados confirmados e recentes) ----------------
       function concluirEProximo(q) {
-        if (!q || !podeAgir()) { render(); return; }
+        if (!q || !podeAgir() || q.id < 0) { render(); return; }   // id < 0 = chat sem resposta (não é tarefa)
         var g = state.geracao;
         $.ajax({ url: '/api/v4/tasks/' + encodeURIComponent(q.id), method: 'PATCH', contentType: 'application/json', dataType: 'json',
                  data: JSON.stringify({ is_completed: true, result: { text: 'Concluída pelo PRÓXIMO' } }) })
@@ -402,6 +434,159 @@
         render();
       }
 
+      // ---------------- telefone (webphone 4com) ----------------
+      function endpointVoz() { var c = cfg(); return c.endpoint_voz || (c.endpoint ? c.endpoint.replace(/prevendas-fila\/?$/, 'prevendas-voz') : ''); }
+      function chamarVoz(corpo, cb) {
+        var url = endpointVoz();
+        if (!url) { cb({ erro: 'nao_configurado' }); return; }
+        var req;
+        try { req = self.$authorizedAjax({ url: url, method: 'POST', contentType: 'application/json', dataType: 'json', data: JSON.stringify(corpo) }); }
+        catch (e) { cb({ erro: 'sem_authorizedAjax' }); return; }
+        if (!req || typeof req.then !== 'function') { cb({ erro: 'sem_promessa' }); return; }
+        req.then(function (r) { if (!r || !r.ok) { cb({ erro: (r && r.erro) || 'resposta' }); return; } cb(null, r); },
+                 function (x) { var j = (x && x.responseJSON) || {}; cb({ erro: j.erro || (x && x.status) || 'erro', mensagem: j.mensagem || '', incerto: !!j.incerto }); });
+      }
+      function vozDono() { var l = lsGet('voz_dono', null); return !!(l && l.aba === ABA && l.ate > Date.now()); }
+      function vozLivre() { var l = lsGet('voz_dono', null); return !l || !l.aba || l.ate < Date.now() || l.aba === ABA; }
+      function carregarJsSIP(cb) {
+        if (window.JsSIP && window.JsSIP.UA) { cb(null); return; }
+        if (!state.base) { cb('sem_base'); return; }
+        var sc = document.createElement('script');
+        sc.src = state.base + '/jssip.min.js'; sc.async = true;
+        sc.onload = function () { cb(window.JsSIP && window.JsSIP.UA ? null : 'jssip_ausente'); };
+        sc.onerror = function () { cb('jssip_falhou'); };
+        document.head.appendChild(sc);
+      }
+      function audioEl() {
+        var a = document.getElementById(NS + '-audio');
+        if (!a) { a = document.createElement('audio'); a.id = NS + '-audio'; a.autoplay = true; document.body.appendChild(a); }
+        return a;
+      }
+      function vozEstado(e, msg) { voz.estado = e; voz.msg = msg || ''; render(); }
+      function iniciarVoz(g) {
+        if (!cfg().voz || voz.ua || voz.estado === 'carregando') return;
+        if (!vozLivre()) { vozEstado('outra_aba'); return; }
+        lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS });
+        vozEstado('carregando');
+        carregarJsSIP(function (e) {
+          if (!vivo(g)) return;
+          if (e) { vozEstado('erro', 'Não consegui carregar o telefone (' + e + ').'); return; }
+          try { if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) navigator.mediaDevices.getUserMedia({ audio: true }).then(function (st) { st.getTracks().forEach(function (t) { t.stop(); }); }, function () { vozEstado('erro', 'Permita o microfone para este site (cadeado na barra de endereço).'); }); } catch (x) {}
+          chamarVoz({ acao: 'credencial' }, function (err, c) {
+            if (!vivo(g)) return;
+            if (err) { vozEstado('erro', Fila.mensagemVoz(err.erro)); return; }
+            criarUA(c, g); c = null;   // a credencial só vive na config do UA
+          });
+        });
+      }
+      function criarUA(c, g) {
+        var ua;
+        try {
+          ua = new window.JsSIP.UA({
+            sockets: [new window.JsSIP.WebSocketInterface(c.wss)], uri: c.uri, authorization_user: c.ramal,
+            ha1: c.ha1, realm: c.realm, display_name: c.nome, register: true, register_expires: 300,
+            session_timers: false, no_answer_timeout: 30
+          });
+        } catch (e) { vozEstado('erro', 'Configuração do telefone inválida.'); return; }
+        voz.ua = ua;
+        ua.on('registered', function () { if (vivo(g)) vozEstado('registrado'); });
+        ua.on('unregistered', function () { if (vivo(g) && voz.ua === ua) vozEstado('reconectando'); });
+        ua.on('registrationFailed', function (e) { if (vivo(g) && voz.ua === ua) vozEstado('erro', 'O ramal não registrou (' + ((e && e.cause) || 'falha') + ').'); });
+        ua.on('disconnected', function () { if (vivo(g) && voz.ua === ua && voz.estado === 'registrado') vozEstado('reconectando'); });
+        ua.on('newRTCSession', function (ev) {
+          if (!vivo(g) || ev.originator !== 'remote') return;
+          var s = ev.session;
+          if (voz.sessao) { try { s.terminate({ status_code: 486, reason_phrase: 'Busy Here' }); } catch (e) {} return; }
+          var integ = false;
+          try { integ = String(ev.request.getHeader('X-Api4comintegratedcall') || '').toLowerCase() === 'true'; } catch (e) {}
+          voz.sessao = s; voz.tocando = true; voz.emChamada = false; voz.mudo = false;
+          s.on('peerconnection', function (pe) {
+            pe.peerconnection.addEventListener('track', function (te) { var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
+          });
+          s.on('accepted', function () { voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); render(); });
+          var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; voz.pendenteAte = 0;
+                                   voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
+          s.on('ended', fim); s.on('failed', fim);
+          if (Fila.deveAtender(integ, voz.pendenteAte, Date.now())) atenderVoz(); else { som(); render(); }
+        });
+        ua.start();
+      }
+      function atenderVoz() { if (!voz.sessao || voz.emChamada) return; try { voz.sessao.answer({ mediaConstraints: { audio: true, video: false } }); } catch (e) { voz.aviso = 'Não consegui atender.'; } render(); }
+      function desligarVoz() { if (!voz.sessao) return; try { voz.sessao.terminate(); } catch (e) {} }
+      function mudoVoz() { if (!voz.sessao || !voz.emChamada) return; try { if (voz.mudo) voz.sessao.unmute(); else voz.sessao.mute(); voz.mudo = !voz.mudo; } catch (e) {} render(); }
+      function pararVoz(liberar) {
+        try { if (voz.sessao) voz.sessao.terminate(); } catch (e) {}
+        try { if (voz.ua) voz.ua.stop(); } catch (e) {}
+        voz.ua = null; voz.sessao = null; voz.tocando = false; voz.emChamada = false;
+        if (liberar && vozDono()) lsSet('voz_dono', null);
+      }
+      // dono do ramal renova a posse; quem perdeu a posse (outra aba assumiu) desliga o próprio UA
+      function batimentoVoz(g) {
+        if (!vivo(g) || !cfg().voz) return;
+        var l = lsGet('voz_dono', null);
+        if (voz.ua) {
+          if (l && l.aba !== ABA && l.ate > Date.now()) { pararVoz(false); vozEstado('outra_aba'); return; }
+          lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS });
+        } else if (voz.estado === 'outra_aba' && vozLivre()) { voz.estado = 'off'; iniciarVoz(g); }
+      }
+      function usarAqui(g) { lsSet('voz_dono', { aba: ABA, ate: Date.now() + VOZ_LOCK_MS }); voz.estado = 'off'; iniciarVoz(g); }
+      function telefonesAqui(g) {
+        var aqui = entidadeAtual();
+        if (!aqui || (aqui.etype !== 'leads' && aqui.etype !== 'contacts')) { voz.tel = { chave: '', contatos: null, erro: '', carregando: false }; return; }
+        var chave = aqui.etype + ':' + aqui.eid;
+        if (voz.tel.chave === chave) return;
+        voz.tel = { chave: chave, contatos: null, erro: '', carregando: true };
+        chamarVoz({ acao: 'telefones', entity_type: aqui.etype, entity_id: aqui.eid }, function (err, r) {
+          if (!vivo(g) || voz.tel.chave !== chave) return;
+          voz.tel.carregando = false;
+          if (err) voz.tel.erro = Fila.mensagemVoz(err.erro); else voz.tel.contatos = r.contatos || [];
+          render();
+        });
+      }
+      function discarVoz(tel) {
+        var aqui = entidadeAtual();
+        if (!aqui || voz.estado !== 'registrado' || voz.discando || voz.sessao) { render(); return; }
+        voz.discando = true; voz.aviso = 'Chamando… o telefone toca aqui e depois liga para o cliente.';
+        voz.pendenteAte = Date.now() + 60000;
+        render();
+        chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
+          voz.discando = false;
+          if (err) { voz.pendenteAte = 0; voz.aviso = Fila.mensagemVoz(err.erro, err.mensagem && err.erro === 'provedor_recusou' ? err.mensagem : ''); }
+          else if (!voz.sessao) voz.aviso = '';
+          render();
+        });
+      }
+      function mmss(ms) { var t = Math.max(0, Math.floor(ms / 1000)); return pad(Math.floor(t / 60)) + ':' + pad(t % 60); }
+      function htmlVoz() {
+        if (!cfg().voz) return '';
+        var rot = { off: 'desligado', carregando: 'conectando…', registrado: 'pronto', reconectando: 'reconectando…', erro: 'com problema', outra_aba: 'ativo em outra aba' }[voz.estado] || voz.estado;
+        var h = '<div class="rpv-card"><div class="rpv-h"><span class="tt">📞 Telefone · ' + esc(rot) + '</span>' +
+                (voz.estado === 'outra_aba' ? '<button data-act="voz-aqui" title="Usar o telefone nesta aba">usar aqui</button>' : '') +
+                (voz.estado === 'erro' ? '<button data-act="voz-reconectar" title="Tentar de novo">↻</button>' : '') + '</div>';
+        if (voz.msg) h += '<div class="rpv-warn">' + esc(voz.msg) + '</div>';
+        if (voz.sessao) {
+          h += '<div class="rpv-b"><div class="nm">' + (voz.emChamada ? 'Em chamada · ' + mmss(Date.now() - voz.inicio) : 'Chamada recebida') + '</div></div><div class="rpv-acts">' +
+               (voz.emChamada ? '<button data-act="voz-mudo">' + (voz.mudo ? 'Reativar mic' : 'Mudo') + '</button>' : '<button class="pri" data-act="voz-atender">Atender</button>') +
+               '<button data-act="voz-desligar">' + (voz.emChamada ? 'Desligar' : 'Recusar') + '</button></div>';
+        } else if (voz.estado === 'registrado' && voz.tel.chave) {
+          if (voz.tel.carregando) h += '<div class="rpv-b">Buscando telefones…</div>';
+          else if (voz.tel.erro) h += '<div class="rpv-warn">' + esc(voz.tel.erro) + '</div>';
+          else {
+            var n = 0;
+            (voz.tel.contatos || []).forEach(function (c) {
+              c.telefones.forEach(function (t) {
+                n++;
+                h += '<div class="rpv-it"><span class="bd"><div class="nm">' + esc(c.nome || 'Contato') + '</div><div class="mt">' + esc(t.exibir) + '</div></span>' +
+                     '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t.e164) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
+              });
+            });
+            if (!n) h += '<div class="rpv-b">Nenhum telefone nos contatos deste lead.</div>';
+          }
+        }
+        if (voz.aviso) h += '<div class="rpv-f"><span>' + esc(voz.aviso) + '</span></div>';
+        return h + '</div>';
+      }
+
       // ---------------- render ----------------
       var CSS = '' +
 '.rpv-root{position:fixed;z-index:2147483000;display:flex;flex-direction:column;gap:8px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}' +
@@ -421,7 +606,8 @@
 '.rpv-it .pos{width:16px;color:#A5A3A0;text-align:right}.rpv-it .bd{flex:1;min-width:0}.rpv-it .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
 '.rpv-tag{border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;background:#EEF3F8;color:#5C6E80}.rpv-tag.m1{background:#FFE9E9;color:#B4232B}.rpv-tag.m2,.rpv-tag.m3{background:#FFF1E0;color:#A35300}' +
 '.rpv-late{color:#B4232B;font-weight:700}.rpv-f{padding:7px 12px;border-top:1px solid #EFEEEC;font-size:10px;color:#8C8A88;display:flex;justify-content:space-between;gap:8px}' +
-'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}';
+'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}' +
+'.rpv-tag.m0{background:#E30613;color:#fff}.rpv-ligar{border-radius:7px;border:1px solid #1E8E3E;background:#1E8E3E;color:#fff;padding:4px 10px;cursor:pointer;font-weight:700;font-size:11.5px;align-self:center}.rpv-ligar[disabled]{opacity:.5;cursor:default}';
 
       function css() { if (document.getElementById(NS + '-css')) return; var st = document.createElement('style'); st.id = NS + '-css'; st.textContent = CSS; document.head.appendChild(st); }
       function raiz() {
@@ -455,8 +641,11 @@
           html += '<div class="rpv-card"><div class="rpv-b"><div class="nm">' + esc(nomeDe(at)) + '</div><div class="mt">' + tag(at) +
                   '<span' + (at.due && at.due < now ? ' class="rpv-late"' : '') + '>' + esc(fmtQuando(at.due, now)) + '</span>' + (at.etapa ? '<span>' + esc(at.etapa) + '</span>' : '') + '</div>' +
                   '<div class="mt" style="margin-top:4px">' + esc(String(at.texto).slice(0, 160)) + '</div></div>' +
-                  '<div class="rpv-acts"><button class="pri" data-act="concluir"' + (agir ? '' : ' disabled') + '>Concluir e próximo</button><button data-act="pular">Pular 15 min</button></div></div>';
+                  (at.id < 0 ? '<div class="rpv-warn">Responda o cliente no chat deste lead; o item sai da fila quando houver resposta.</div><div class="rpv-acts"><button data-act="pular">Pular 15 min</button></div></div>'
+                   : '<div class="rpv-acts"><button class="pri" data-act="concluir"' + (agir ? '' : ' disabled') + '>Concluir e próximo</button><button data-act="pular">Pular 15 min</button></div></div>');
         }
+
+        html += htmlVoz();
 
         if (state.open) {
           html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
@@ -499,6 +688,12 @@
         else if (act === 'pular') pular(state.atual);
         else if (act === 'ir') { if (!podeAgir()) { render(); return; } var q = state.fila[parseInt(el.getAttribute('data-i'), 10)]; if (q) { state.atual = q; abrir(q.etype, q.eid); render(); } }
         else if (act === 'abrir') abrir(el.getAttribute('data-et'), el.getAttribute('data-eid'));
+        else if (act === 'voz-ligar') discarVoz(el.getAttribute('data-tel'));
+        else if (act === 'voz-atender') atenderVoz();
+        else if (act === 'voz-desligar') desligarVoz();
+        else if (act === 'voz-mudo') mudoVoz();
+        else if (act === 'voz-aqui') usarAqui(state.geracao);
+        else if (act === 'voz-reconectar') { pararVoz(true); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao); }
         else if (act === 'fechar-ntf') { var tid = Number(el.getAttribute('data-tid')); state.notif = state.notif.filter(function (n) { return n.id !== tid; }); lsSet('notif', state.notif); render(); }
       }
       function aoTeclar(ev) {
@@ -536,11 +731,16 @@
         atraso(function () { ciclo(g, false); }, Math.floor(Math.random() * 3000));          // jitter inicial
         intervalo(function () { ciclo(g, false); }, cfg().poll * 1000 + Math.floor(Math.random() * 5000));
         var ultima = location.pathname;
-        intervalo(function () { if (location.pathname !== ultima) { ultima = location.pathname; render(); } }, 700);
+        intervalo(function () { if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); } }, 700);
+        if (cfg().voz) {
+          iniciarVoz(g);
+          intervalo(function () { batimentoVoz(g); if (voz.estado === 'registrado') telefonesAqui(g); if (voz.emChamada) render(); }, 1000);
+        }
       }
 
       function destruir() {
         state.destruido = true; state.geracao++; state.carregando = false;
+        pararVoz(true); voz.estado = 'off'; voz.msg = ''; voz.aviso = ''; voz.tel = { chave: '', contatos: null, erro: '', carregando: false };
         state.timers.forEach(function (x) { if (x.t === 'i') clearInterval(x.h); else clearTimeout(x.h); });
         state.timers = [];
         state.ouvintes.forEach(function (o) { try { o[0].removeEventListener(o[1], o[2], o[3]); } catch (e) {} });
@@ -548,6 +748,7 @@
         var lock = lsGet('lider', null);
         if (lock && lock.aba === ABA) lsSet('lider', null);
         var c = document.getElementById(NS + '-root'); if (c && c.parentNode) c.parentNode.removeChild(c);
+        var au = document.getElementById(NS + '-audio'); if (au && au.parentNode) { try { au.srcObject = null; } catch (e) {} au.parentNode.removeChild(au); }
         state.booted = false;
       }
 
