@@ -115,15 +115,30 @@ RETURNS TABLE (full_done BOOLEAN, full_page INT, last_delta_at BIGINT, full_curs
 LANGUAGE sql SECURITY DEFINER SET search_path=kommo,public AS $$
   SELECT COALESCE(full_done,false), full_page, last_delta_at, full_cursor FROM kommo.sync_status WHERE entity=p_entity;
 $$;
-CREATE OR REPLACE FUNCTION public.kommo_sync_set_cursor(p_entity TEXT, p_cursor TEXT)
+-- Gravação ÚNICA (atômica) de status/modo/página/cursor: a abertura de um backfill (full_done=false,
+-- page=1, janela/max no cursor) é uma instrução só — nunca fica "modo gravado, janela não".
+-- p_set_cursor=false mantém full_cursor; true grava p_cursor (NULL limpa). Semântica dos demais = kommo_sync_set.
+CREATE OR REPLACE FUNCTION public.kommo_sync_set_v2(
+  p_entity TEXT, p_status TEXT, p_full_done BOOLEAN, p_full_page INT, p_reset_page BOOLEAN,
+  p_last_delta_at BIGINT, p_error TEXT, p_count BIGINT, p_set_cursor BOOLEAN, p_cursor TEXT)
 RETURNS VOID LANGUAGE sql SECURITY DEFINER SET search_path=kommo,public AS $$
-  INSERT INTO kommo.sync_status (entity, status, full_cursor, updated_at) VALUES (p_entity, 'running', p_cursor, now())
-  ON CONFLICT (entity) DO UPDATE SET full_cursor = EXCLUDED.full_cursor, updated_at = now();
+  INSERT INTO kommo.sync_status (entity, status, full_done, full_page, last_delta_at, error_message, count, full_cursor, updated_at)
+  VALUES (p_entity, COALESCE(p_status,'running'), COALESCE(p_full_done,false), p_full_page, p_last_delta_at, p_error, p_count,
+          CASE WHEN p_set_cursor THEN p_cursor ELSE NULL END, now())
+  ON CONFLICT (entity) DO UPDATE SET
+    status        = COALESCE(p_status, kommo.sync_status.status),
+    full_done     = COALESCE(p_full_done, kommo.sync_status.full_done),
+    full_page     = CASE WHEN p_reset_page THEN NULL ELSE COALESCE(p_full_page, kommo.sync_status.full_page) END,
+    last_delta_at = COALESCE(p_last_delta_at, kommo.sync_status.last_delta_at),
+    error_message = p_error,
+    count         = COALESCE(p_count, kommo.sync_status.count),
+    full_cursor   = CASE WHEN p_set_cursor THEN p_cursor ELSE kommo.sync_status.full_cursor END,
+    updated_at    = now();
 $$;
 REVOKE EXECUTE ON FUNCTION public.kommo_sync_get_v2(TEXT) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.kommo_sync_get_v2(TEXT) TO service_role;
-REVOKE EXECUTE ON FUNCTION public.kommo_sync_set_cursor(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
-GRANT  EXECUTE ON FUNCTION public.kommo_sync_set_cursor(TEXT, TEXT) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.kommo_sync_set_v2(TEXT,TEXT,BOOLEAN,INT,BOOLEAN,BIGINT,TEXT,BIGINT,BOOLEAN,TEXT) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.kommo_sync_set_v2(TEXT,TEXT,BOOLEAN,INT,BOOLEAN,BIGINT,TEXT,BIGINT,BOOLEAN,TEXT) TO service_role;
 
 REVOKE EXECUTE ON FUNCTION public.kommo_tasks_para_conferir(INT) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.kommo_tasks_para_conferir(INT) TO service_role;

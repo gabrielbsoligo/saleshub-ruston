@@ -60,18 +60,18 @@ Deno.test('conferirTodas: erro no último lote aborta a rodada inteira (nada par
 
 
 Deno.test('paginaFull: full:true inicia e persiste o modo; rodadas full:false continuam de full_page até full_done', () => {
-  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, true), { doFull: true, page: 1, iniciar: true })
-  assertEquals(paginaFull({ full_done: false, full_page: 9, last_delta_at: 100, full_cursor: null }, false), { doFull: true, page: 9, iniciar: false })
-  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, false), { doFull: false, page: 1, iniciar: false })
+  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, true), { doFull: true, page: 1, iniciar: true, max: 100 })
+  assertEquals(paginaFull({ full_done: false, full_page: 9, last_delta_at: 100, full_cursor: null }, false), { doFull: true, page: 9, iniciar: false, max: 100 })
+  assertEquals(paginaFull({ full_done: true, full_page: null, last_delta_at: 100, full_cursor: null }, false), { doFull: false, page: 1, iniciar: false, max: 100 })
 })
 
 Deno.test('janelaEventos: full:true usa janela nova; continuação usa a janela GRAVADA (não o cursor novo) e a página; delta normal usa o cursor', () => {
   const agora = 10_000_000, dias = 90, base = agora - dias * 86400
-  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, true, agora, dias), { from: base, page: 1, iniciarBackfill: true })
+  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, true, agora, dias), { from: base, page: 1, iniciarBackfill: true, max: 9_999_000 })
   // rodada seguinte (full:false) de um backfill em curso: página 9 da MESMA janela
-  assertEquals(janelaEventos({ full_done: false, full_page: 9, last_delta_at: 9_999_000, full_cursor: String(base) }, false, agora, dias), { from: base, page: 9, iniciarBackfill: false })
+  assertEquals(janelaEventos({ full_done: false, full_page: 9, last_delta_at: 9_999_000, full_cursor: JSON.stringify({ from: base, max: 9_999_500 }) }, false, agora, dias), { from: base, page: 9, iniciarBackfill: false, max: 9_999_500 })
   // paginação de delta em curso com cursor inicial nulo: janela gravada, não recalculada
-  assertEquals(janelaEventos({ full_done: true, full_page: 3, last_delta_at: null, full_cursor: '123' }, false, agora, dias), { from: 123, page: 3, iniciarBackfill: false })
+  assertEquals(janelaEventos({ full_done: true, full_page: 3, last_delta_at: null, full_cursor: '123' }, false, agora, dias), { from: 123, page: 3, iniciarBackfill: false, max: 0 }) // formato legado (só o from)
   // delta normal
-  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, false, agora, dias), { from: 9_999_000, page: 1, iniciarBackfill: false })
+  assertEquals(janelaEventos({ full_done: true, full_page: null, last_delta_at: 9_999_000, full_cursor: null }, false, agora, dias), { from: 9_999_000, page: 1, iniciarBackfill: false, max: 9_999_000 })
 })

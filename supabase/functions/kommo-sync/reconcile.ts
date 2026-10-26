@@ -19,17 +19,27 @@ export class ReconciliacaoAbortada extends Error { constructor(msg: string) { su
 // janela (`from`) é a GRAVADA em full_cursor — nunca recalculada; o cursor temporal só consolida ao
 // terminar. `full:true` persiste o modo backfill (full_done=false, page=1, cursor = janela nova).
 export type EstadoSync = { full_done: boolean; full_page: number | null; last_delta_at: number | null; full_cursor: string | null }
-export function janelaEventos(st: EstadoSync, full: boolean, agoraS: number, backfillDias: number): { from: number; page: number; iniciarBackfill: boolean } {
-  const base = agoraS - backfillDias * 86400
-  if (full) return { from: base, page: 1, iniciarBackfill: true }                                    // pedido explícito: reinicia
-  const emCurso = (st.full_page ?? 1) > 1 || !st.full_done
-  if (emCurso && st.full_cursor != null && st.full_cursor !== '') return { from: Number(st.full_cursor), page: st.full_page ?? 1, iniciarBackfill: false }
-  return { from: st.last_delta_at ?? base, page: 1, iniciarBackfill: !st.full_done }
+// full_cursor guarda, em JSON, o estado da paginação em curso: { from?: janela fixa (events), max: maior
+// timestamp já visto nas fatias anteriores }. O max precisa sobreviver entre invocações: /events é
+// DECRESCENTE (a última fatia tem os mais antigos) e, no full por updated_at asc, a última fatia pode
+// vir vazia — sem persistir, o cursor consolidaria um valor velho e o delta seguinte repetiria milhares.
+export type Cursor = { from?: number; max?: number }
+export function lerCursor(s: string | null): Cursor | null {
+  if (s == null || s === '') return null
+  try { const o = JSON.parse(s); if (typeof o === 'number') return { from: o }; return o && typeof o === 'object' ? o : null } catch { return null }
 }
-export function paginaFull(st: EstadoSync, full: boolean): { doFull: boolean; page: number; iniciar: boolean } {
-  if (full) return { doFull: true, page: 1, iniciar: true }                                           // pedido explícito: reinicia e persiste o modo
-  if (!st.full_done) return { doFull: true, page: st.full_page ?? 1, iniciar: false }                // backfill em curso: continua de onde parou
-  return { doFull: false, page: 1, iniciar: false }
+export function janelaEventos(st: EstadoSync, full: boolean, agoraS: number, backfillDias: number): { from: number; page: number; iniciarBackfill: boolean; max: number } {
+  const base = agoraS - backfillDias * 86400
+  if (full) return { from: base, page: 1, iniciarBackfill: true, max: st.last_delta_at ?? 0 }        // pedido explícito: reinicia
+  const emCurso = (st.full_page ?? 1) > 1 || !st.full_done
+  const c = lerCursor(st.full_cursor)
+  if (emCurso && c?.from != null) return { from: c.from, page: st.full_page ?? 1, iniciarBackfill: false, max: Math.max(c.max ?? 0, st.last_delta_at ?? 0) }
+  return { from: st.last_delta_at ?? base, page: 1, iniciarBackfill: !st.full_done, max: st.last_delta_at ?? 0 }
+}
+export function paginaFull(st: EstadoSync, full: boolean): { doFull: boolean; page: number; iniciar: boolean; max: number } {
+  if (full) return { doFull: true, page: 1, iniciar: true, max: st.last_delta_at ?? 0 }               // pedido explícito: reinicia e persiste o modo
+  if (!st.full_done) return { doFull: true, page: st.full_page ?? 1, iniciar: false, max: Math.max(lerCursor(st.full_cursor)?.max ?? 0, st.last_delta_at ?? 0) } // continua de onde parou
+  return { doFull: false, page: 1, iniciar: false, max: st.last_delta_at ?? 0 }
 }
 
 export function montarUrl(base: string, params: Record<string, string>): string {

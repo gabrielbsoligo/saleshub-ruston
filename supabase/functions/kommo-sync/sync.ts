@@ -17,18 +17,19 @@ export async function getStatus(sb: any, entity: string): Promise<EstadoSync> {
   const r = data?.[0]
   return r ? { full_done: !!r.full_done, full_page: r.full_page ?? null, last_delta_at: r.last_delta_at ?? null, full_cursor: r.full_cursor ?? null } : { full_done: false, full_page: null, last_delta_at: null, full_cursor: null }
 }
-export async function setCursorJanela(sb: any, entity: string, cursor: string | null) {
-  const { error } = await sb.rpc('kommo_sync_set_cursor', { p_entity: entity, p_cursor: cursor })
-  if (error) throw new GravacaoFalhou(entity, `kommo_sync_set_cursor(${entity}): ${error.message}`)
-}
 export class GravacaoFalhou extends Error { constructor(public entity: string, msg: string) { super(msg) } }
+// Uma única RPC grava status/modo/página/cursor ATOMICAMENTE (abertura de backfill = 1 instrução:
+// não existe estado intermediário "modo gravado, janela não"). patch.cursor: undefined = mantém,
+// null = limpa, objeto = grava JSON.
 export async function setStatus(sb: any, entity: string, patch: any) {
-  const { error } = await sb.rpc('kommo_sync_set', {
+  const temCursor = 'cursor' in patch
+  const { error } = await sb.rpc('kommo_sync_set_v2', {
     p_entity: entity, p_status: patch.status ?? null, p_full_done: patch.full_done ?? null,
     p_full_page: patch.full_page ?? null, p_reset_page: patch.reset_page ?? false,
     p_last_delta_at: patch.last_delta_at ?? null, p_error: patch.error ?? null, p_count: patch.count ?? null,
+    p_set_cursor: temCursor, p_cursor: temCursor && patch.cursor != null ? JSON.stringify(patch.cursor) : null,
   })
-  if (error) throw new GravacaoFalhou(entity, `kommo_sync_set(${entity}): ${error.message}`)
+  if (error) throw new GravacaoFalhou(entity, `kommo_sync_set_v2(${entity}): ${error.message}`)
 }
 // grava e CONFERE: erro de gravação lança (quem chamou não avança cursor nem marca done)
 export async function bulk(sb: any, name: string, rows: any[]) {
@@ -42,22 +43,24 @@ export async function syncEntity(sb: any, kget: any, entity: string, base: strin
   const st = await getStatus(sb, entity)
   const pf = paginaFull(st, full)
   const doFull = pf.doFull
-  let count = 0, maxUpdated = st.last_delta_at ?? 0
+  let count = 0, maxUpdated = pf.max
   if (doFull) {
     let page = pf.page
-    // full:true vira MODO persistido (full_done=false, page=1): as rodadas seguintes (full:false do
-    // cron) continuam o backfill de onde parou, em vez de cair no delta e ignorar full_page
-    await setStatus(sb, entity, pf.iniciar ? { status: 'running', full_done: false, full_page: 1 } : { status: 'running' })
+    // full:true vira MODO persistido (full_done=false, page=1, cursor zerado) numa ÚNICA gravação:
+    // as rodadas seguintes (full:false do cron) continuam o backfill de onde parou, retomando o max
+    await setStatus(sb, entity, pf.iniciar ? { status: 'running', full_done: false, full_page: 1, cursor: { max: maxUpdated } } : { status: 'running' })
+    const concluir = async () => { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count, cursor: null }); return { entity, done: true, count } }
     for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
       const d = await kget(montarUrl(base, { 'order[updated_at]': 'asc', limit: '250', page: String(page) })); const items = embed(d)
-      if (!items.length) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
+      if (!items.length) return await concluir()
       await bulk(sb, table, items.map(map).filter(Boolean))   // lança se falhar: cursor não avança
       if (afterPage) await afterPage(items)
       for (const it of items) if (it.updated_at > maxUpdated) maxUpdated = it.updated_at
       count += items.length; page++
-      if (!d?._links?.next) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
+      if (!d?._links?.next) return await concluir()
     }
-    await setStatus(sb, entity, { status: 'running', full_page: page }) // SEM last_delta_at: cursor só consolida ao terminar o backfill
+    // SEM last_delta_at (consolida só no fim); página + maior updated_at visto viajam no cursor
+    await setStatus(sb, entity, { status: 'running', full_page: page, cursor: { max: maxUpdated } })
     return { entity, done: false, next_page: page, count }
   }
   let page = 1
@@ -86,12 +89,12 @@ export async function syncEvents(sb: any, kget: any, full: boolean) {
   const st = await getStatus(sb, 'events')
   const j = janelaEventos(st, full, Math.floor(Date.now() / 1000), EVENT_BACKFILL_DAYS)
   const from = j.from
-  let page = j.page, count = 0, maxCreated = Math.max(st.last_delta_at ?? 0, from)
-  // janela FIXA gravada em full_cursor enquanto a paginação atravessa invocações (inclusive com
-  // cursor inicial nulo); full:true persiste o modo backfill (full_done=false, page=1, janela nova)
-  await setStatus(sb, 'events', j.iniciarBackfill ? { status: 'running', full_done: false, full_page: 1 } : { status: 'running' })
-  await setCursorJanela(sb, 'events', String(from))
-  const concluir = async () => { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count }); await setCursorJanela(sb, 'events', null); return { entity: 'events', done: true, count } }
+  let page = j.page, count = 0, maxCreated = Math.max(j.max, from)
+  // janela FIXA + maior created_at já visto gravados juntos em full_cursor enquanto a paginação
+  // atravessa invocações (inclusive com cursor inicial nulo); full:true persiste o modo backfill
+  // (full_done=false, page=1, janela nova) na MESMA gravação — não há estado intermediário
+  await setStatus(sb, 'events', { status: 'running', ...(j.iniciarBackfill ? { full_done: false, full_page: 1 } : {}), cursor: { from, max: maxCreated } })
+  const concluir = async () => { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count, cursor: null }); return { entity: 'events', done: true, count } }
   for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
     const d = await kget(montarUrl('/events', { 'filter[created_at][from]': String(from), limit: '250', page: String(page) })); const items = embed(d)
     if (!items.length) return await concluir()
@@ -100,7 +103,7 @@ export async function syncEvents(sb: any, kget: any, full: boolean) {
     await bulk(sb, 'events', rows); count += rows.length; page++
     if (!d?._links?.next) return await concluir()
   }
-  await setStatus(sb, 'events', { status: 'running', full_page: page }) // SEM last_delta_at: janela segue a mesma na próxima rodada
+  await setStatus(sb, 'events', { status: 'running', full_page: page, cursor: { from, max: maxCreated } }) // SEM last_delta_at: janela segue a mesma; max retomado na próxima fatia
   return { entity: 'events', done: false, next_page: page, count }
 }
 
