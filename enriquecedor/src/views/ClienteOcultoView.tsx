@@ -89,41 +89,46 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
 
 const QR_VALIDADE_S = 40;   // validade típica de um QR da Evolution/WhatsApp (~40 s)
 type Modo = 'ocioso' | 'qr' | 'pairing';
+type Op = 'qr' | 'estado' | 'pairing' | 'criar';
 /**
  * Painel do número anônimo. Regras (Gabriel 26/10 + revisão do Vedor):
- *  - modo QR: "Gerar novo QR" SEMPRE visível enquanto não conectado (manual obrigatório); contagem regressiva da
- *    validade; ao vencer, o QR velho é APAGADO e aparece "QR vencido — clique em Gerar novo QR" (ou, com a
- *    atualização automática ligada, um novo é gerado sozinho);
- *  - modo pareamento: só gera o código e faz polling do estado — nunca chama connect de novo sozinho;
- *  - trocar de modo zera o outro; parar/conectar/trocar/desmontar invalida a GERAÇÃO: respostas atrasadas são
- *    ignoradas; nunca há dois connect/estado em voo ao mesmo tempo.
+ *  - modo QR: "Gerar novo QR" SEMPRE visível enquanto não conectado (manual obrigatório); validade = DEADLINE real
+ *    (Date.now), recalculada a cada tique e ao voltar à aba; ao vencer, o QR é APAGADO e aparece "QR vencido —
+ *    clique em Gerar novo QR" (com a renovação automática ligada, um novo é pedido sozinho);
+ *  - modo pareamento: só gera o código e faz polling do estado — nunca chama connect sozinho;
+ *  - I/O: FILA serializada (uma requisição por vez, independente da geração): pedidos de QR enfileirados são
+ *    retomados quando a fila libera (nunca "esquecidos"); a GERAÇÃO só serve para descartar efeitos de UI de
+ *    respostas de um modo/ciclo anterior (parar/conectar/trocar de modo/desmontar).
  */
 function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChange: () => void }) {
   const [modo, setModo] = useState<Modo>('ocioso');
   const [qr, setQr] = useState<string | null>(null);
   const [qrVencido, setQrVencido] = useState(false);
-  const [restante, setRestante] = useState(0);
+  const [deadline, setDeadline] = useState<number | null>(null);   // epoch ms do vencimento do QR
+  const [agora, setAgora] = useState(() => Date.now());
   const [pairing, setPairing] = useState<string | null>(null);
   const [numeroChip, setNumeroChip] = useState('');
   const [auto, setAuto] = useState(true);
   const [estado, setEstado] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [geracoes, setGeracoes] = useState(0);
-  const gen = useRef(0);            // geração atual: respostas de gerações antigas são ignoradas
-  const emVoo = useRef(false);      // impede connect/estado sobrepostos
+  const gen = useRef(0);                 // geração de UI: respostas de gerações antigas não mexem na tela
+  const fila = useRef<Promise<unknown>>(Promise.resolve());   // fila de I/O: 1 requisição por vez, sempre executa
+  const qrPendente = useRef(false);      // renovação de QR pedida enquanto a fila estava ocupada: retomada ao liberar
   const conectado = !!config?.conectado;
+  const restante = deadline == null ? 0 : Math.max(0, Math.ceil((deadline - agora) / 1000));
 
-  const invalidar = useCallback(() => { gen.current += 1; emVoo.current = false; }, []);
-  const parar = useCallback(() => { invalidar(); setModo('ocioso'); setQr(null); setPairing(null); setQrVencido(false); setRestante(0); }, [invalidar]);
-  useEffect(() => () => { invalidar(); }, [invalidar]);                       // desmontar
+  const invalidar = useCallback(() => { gen.current += 1; }, []);
+  const parar = useCallback(() => { invalidar(); qrPendente.current = false; setModo('ocioso'); setQr(null); setPairing(null); setQrVencido(false); setDeadline(null); }, [invalidar]);
+  useEffect(() => () => { invalidar(); qrPendente.current = false; }, [invalidar]);   // desmontar
   useEffect(() => { if (conectado && modo !== 'ocioso') { parar(); toast.success('Número conectado!'); } }, [conectado, modo, parar]);
 
-  /** chama a edge sem sobrepor e descarta a resposta se a geração mudou no meio */
-  const chamar = useCallback(async (op: 'qr' | 'estado' | 'pairing' | 'criar', extra: Record<string, unknown> = {}) => {
-    if (emVoo.current) return null;
-    emVoo.current = true; const g = gen.current;
-    try { const r = await ocultoRepo.instancia(op, extra); return g === gen.current ? r : null; }
-    finally { if (g === gen.current) emVoo.current = false; }
+  /** executa na FILA (serializado); devolve null só se a geração de UI mudou (resposta descartada para a tela) */
+  const chamar = useCallback((op: Op, extra: Record<string, unknown> = {}) => {
+    const g = gen.current;
+    const p = fila.current.then(() => ocultoRepo.instancia(op, extra)).then((r) => (g === gen.current ? r : null), (e) => { if (g === gen.current) throw e; return null; });
+    fila.current = p.catch(() => undefined);
+    return p;
   }, []);
 
   const gerarQr = useCallback(async (manual: boolean) => {
@@ -131,37 +136,42 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
     if (!r) return;
     setEstado(r.estado ?? null);
     if (r.estado === 'open') { parar(); onChange(); return; }
-    if (r.qr) { setQr(r.qr); setQrVencido(false); setRestante(QR_VALIDADE_S); setGeracoes(n => n + 1); if (manual) toast.success('QR novo — leia agora'); }
-    else { setQr(null); setQrVencido(true); toast(r.nota || r.error || 'provedor não devolveu QR; tente de novo'); }
+    if (r.qr) { setQr(r.qr); setQrVencido(false); setDeadline(Date.now() + QR_VALIDADE_S * 1000); setAgora(Date.now()); setGeracoes(n => n + 1); if (manual) toast.success('QR novo — leia agora'); }
+    else { setQr(null); setQrVencido(true); setDeadline(null); toast(r.nota || r.error || 'provedor não devolveu QR; tente de novo'); }
   }, [chamar, parar, onChange]);
 
-  // relógio de validade (modo QR): ao vencer, apaga o QR; com auto ligado gera outro, senão mostra o aviso
+  // relógio: recalcula pelo tempo REAL (tique de 1 s + ao voltar à aba/foco) — um único callback atrasado já vence
   useEffect(() => {
-    if (modo !== 'qr' || !qr) return;
-    const t = setInterval(() => setRestante(r => r - 1), 1000);
-    return () => clearInterval(t);
-  }, [modo, qr]);
+    if (modo !== 'qr' || !deadline) return;
+    const tick = () => setAgora(Date.now());
+    const t = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick); window.addEventListener('focus', tick);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
+  }, [modo, deadline]);
+  // vencimento: apaga o QR; com auto ligado pede outro (pela fila — nunca se perde)
   useEffect(() => {
-    if (modo !== 'qr' || !qr || restante > 0) return;
-    setQr(null); setQrVencido(true);
-    if (auto) { gerarQr(false).catch(() => {}); }
-  }, [restante, modo, qr, auto, gerarQr]);
+    if (modo !== 'qr' || !qr || !deadline || agora < deadline) return;
+    setQr(null); setQrVencido(true); setDeadline(null);
+    if (auto) { qrPendente.current = true; gerarQr(false).finally(() => { qrPendente.current = false; }).catch(() => {}); }
+  }, [agora, deadline, modo, qr, auto, gerarQr]);
 
-  // polling do estado (QR e pareamento): a cada 5 s, sem sobreposição; para em 'open'
+  // polling do estado (QR e pareamento): a cada 5 s pela fila; para em 'open'
   useEffect(() => {
     if (modo === 'ocioso') return;
     const p = setInterval(async () => {
-      const r = await chamar('estado');
-      if (!r) return;
-      setEstado(r.estado ?? null);
-      if (r.estado === 'open') { parar(); toast.success('Número conectado!'); onChange(); }
+      try {
+        const r = await chamar('estado');
+        if (!r) return;
+        setEstado(r.estado ?? null);
+        if (r.estado === 'open') { parar(); toast.success('Número conectado!'); onChange(); }
+      } catch { /* próxima volta */ }
     }, 5000);
     return () => clearInterval(p);
   }, [modo, chamar, parar, onChange]);
 
-  const entrarQr = async () => { invalidar(); setPairing(null); setModo('qr'); setBusy(true); try { await gerarQr(true); } finally { setBusy(false); } };
+  const entrarQr = async () => { invalidar(); setPairing(null); setQr(null); setQrVencido(false); setDeadline(null); setModo('qr'); setBusy(true); try { await gerarQr(true); } catch (e: any) { toast.error(e?.message || 'falhou'); } finally { setBusy(false); } };
   const entrarPairing = async () => {
-    invalidar(); setQr(null); setQrVencido(false); setModo('pairing'); setBusy(true);
+    invalidar(); setQr(null); setQrVencido(false); setDeadline(null); setModo('pairing'); setBusy(true);
     try {
       const r = await chamar('pairing', { numero: numeroChip });
       if (!r) return;
@@ -210,7 +220,7 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
           ) : (
             <div className="py-6">
               <div className="text-sm font-semibold text-red-700">{qrVencido ? 'QR vencido — clique em "Gerar novo QR"' : busy ? 'gerando QR…' : 'clique em "Gerar novo QR"'}</div>
-              {qrVencido && auto && <div className="mt-1 text-[11px] text-slate-600">renovando sozinho…</div>}
+              {qrVencido && auto && <div className="mt-1 text-[11px] text-slate-600">{qrPendente.current ? 'renovando sozinho…' : 'renovação pedida — se não aparecer, clique em "Gerar novo QR"'}</div>}
             </div>
           )}
         </div>
