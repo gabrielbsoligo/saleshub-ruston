@@ -4,11 +4,14 @@
 // Anúncios (/api/anuncios, headless + proxy). Auth no motor = login do usuário de integração,
 // feito num CLIENTE SEPARADO (anon key): o cliente admin (service_role) nunca recebe sessão de usuário.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { ErroCritico, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
+import { ErroCritico, hostPublico, ipPrivado, type Candidato, type Deps, type ResultadoWeb } from './motor.ts'
 
 export type Sb = any
 const DIA = 24 * 60 * 60 * 1000
 
+// A sondagem de site NÃO é feita daqui: a edge não consegue fixar a conexão no IP validado (DNS rebinding).
+// Fica no motor (enriquecedor/server/sonda.mjs), que conecta no IP aprovado preservando Host/SNI e revalida
+// cada salto. Aqui só a pré-checagem barata do host e a chamada à rota.
 export async function sessaoMotor(supabaseUrl: string, anonKey: string): Promise<string> {
   const login = createClient(supabaseUrl, anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const { data, error } = await login.auth.signInWithPassword({ email: Deno.env.get('ENRIQ_INTEG_EMAIL') ?? '', password: Deno.env.get('ENRIQ_INTEG_SENHA') ?? '' })
@@ -58,10 +61,47 @@ export function depsReais(sb: Sb, motorUrl: string, token: () => Promise<string>
   }
   return {
     agora: () => Math.floor(Date.now() / 1000),
-    async base(termos, uf, limite) {
-      const { data, error } = await sb.rpc('cases_buscar', { p_termos: termos, p_uf: uf, p_limit: limite })
+    async base(nicho, nome, uf, limite) {
+      const { data, error } = await sb.rpc('cases_buscar', { p_nicho: nicho, p_nome: nome, p_uf: uf, p_limit: limite })
       if (error) throw new ErroCritico(`cases_buscar: ${error.message}`)
       return (data ?? []).map((r: any) => ({ ...r, score: Number(r.score ?? 0), termos_casados: r.termos_casados ?? [] })) as Candidato[]
+    },
+    // site no ar: pré-checagem do host aqui; medição pelo motor (/api/cases/site-no-ar, sonda.mjs) — nunca GET direto da edge
+    async siteNoAr(url) {
+      let host = ''
+      try { const u = new URL(url); if (!/^https?:$/.test(u.protocol)) return null; host = u.hostname } catch { return null }
+      if (!hostPublico(host)) return null
+      const k = chave('site', url)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.no_ar !== 'undefined') return hit.no_ar
+      const r = await motor('/api/cases/site-no-ar', { url })
+      if (r.status !== 200 || !r.body || r.body.ok !== true) return null
+      const v = !!r.body.noAr
+      await cacheSet(k, { no_ar: v }, 7 * DIA)
+      return v
+    },
+    async instagramExiste(handle) {
+      const k = chave('ig', handle)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.existe !== 'undefined') return hit.existe
+      const r = await motor('/api/ops/rede-existe', { instagram: handle })
+      if (r.status !== 200 || !r.body?.instagram) return null
+      const existe = r.body.instagram.existe === true ? true : r.body.instagram.existe === false ? false : null
+      if (existe !== null) await cacheSet(k, { existe }, 7 * DIA)
+      return existe
+    },
+    // Google Business pela rota que DISTINGUE indisponível (ok:false, não cacheia) de não encontrado (ok:true, found:false)
+    async googleNegocio(nome, cidade) {
+      const k = chave('gmn', nome, cidade)
+      const hit = await cacheGet(k)
+      if (hit && typeof hit.encontrado !== 'undefined') return { ok: true, ...hit }
+      const r = await motor('/api/cases/google-negocio', { company: nome, cidade })
+      if (r.status !== 200 || !r.body || r.body.ok !== true) return { ok: false, encontrado: false, rating: null, avaliacoes: null }
+      const b = r.body
+      const encontrado = b.found === true
+      const out = { encontrado, rating: encontrado && b.rating != null ? Number(b.rating) : null, avaliacoes: encontrado && b.reviews != null ? Number(b.reviews) : null }
+      await cacheSet(k, out, 7 * DIA)
+      return { ok: true, ...out }
     },
     async buscaWeb(consulta) {
       const k = chave('web', consulta)
