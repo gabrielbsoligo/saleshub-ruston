@@ -17,6 +17,7 @@
 //      kommo.tasks_removidas (migration_158). Cron a cada 30 min.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { conferirTodas, montarUrl, type GetRaw } from './reconcile.ts'
 
 const KOMMO_BASE = 'https://financeirorustonengenhariacombr.kommo.com'
 const MAX_PAGES_PER_RUN = 8
@@ -43,23 +44,42 @@ async function getKommoToken(sb: any): Promise<string | null> {
   const { data } = await sb.from('integracao_config').select('value').eq('key', 'kommo_access_token').maybeSingle()
   return data?.value || null
 }
-function makeClient(token: string, rl: RateLimiter) {
-  return async function kget(path: string): Promise<any> {
+// Ritmo por CONTA: além do limitador local, cada chamada reserva um slot (RPC autoresposta_reservar,
+// 1 slot/200 ms) compartilhado com as outras edges que falam com o mesmo Kommo. Reserva que falha =
+// não chama (fail closed). GET "raw" preserva o status (204 ≠ 200 vazio) para a reconciliação.
+function makeClients(sb: any, token: string, rl: RateLimiter) {
+  const reservar = async () => {
+    const { data, error } = await sb.rpc('autoresposta_reservar', { p_ms: 200 })
+    if (error) throw new Error(`ritmo indisponível: ${error.message}`)
+    const ms = Number(data ?? 0)
+    if (ms > 0) await new Promise((res) => setTimeout(res, ms))
+  }
+  const raw: GetRaw = async (path) => {
     for (let i = 0; i < 6; i++) {
-      await rl.acquire()
-      const r = await fetch(`${KOMMO_BASE}/api/v4${path}`, { headers: { Authorization: `Bearer ${token}` } })
-      if (r.status === 429) { await new Promise((res) => setTimeout(res, 2 ** i * 1000)); continue }
-      if (r.status === 204) return {}
-      if (!r.ok) throw new Error(`Kommo ${r.status} ${path}: ${(await r.text()).slice(0, 200)}`)
-      return await r.json()
+      await rl.acquire(); await reservar()
+      const r = await fetch(`${KOMMO_BASE}/api/v4${path}`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20000) })
+      if (r.status === 429) { const ra = Number(r.headers.get('retry-after') ?? 0); await new Promise((res) => setTimeout(res, (ra > 0 ? ra : 2 ** i) * 1000)); continue }
+      if (r.status === 204) return { status: 204, body: null }
+      const texto = await r.text()
+      let body: any = null
+      try { body = texto ? JSON.parse(texto) : null } catch { if (r.ok) throw new Error(`Kommo ${r.status} ${path}: corpo não é JSON`) }
+      return { status: r.status, body }
     }
     throw new Error('Kommo rate limit')
   }
+  const kget = async (path: string): Promise<any> => {
+    const r = await raw(path)
+    if (r.status === 204) return {}
+    if (r.status < 200 || r.status >= 300) throw new Error(`Kommo ${r.status} ${path}: ${JSON.stringify(r.body ?? '').slice(0, 200)}`)
+    return r.body
+  }
+  return { kget, raw }
 }
 const embed = (d: any) => { const k = Object.keys(d?._embedded ?? {})[0]; return k ? d._embedded[k] : [] }
 
 async function getStatus(sb: any, entity: string) {
-  const { data } = await sb.rpc('kommo_sync_get', { p_entity: entity })
+  const { data, error } = await sb.rpc('kommo_sync_get', { p_entity: entity })
+  if (error) throw new GravacaoFalhou(entity, `kommo_sync_get(${entity}): ${error.message}`) // nunca tratar falha de leitura como estado inicial
   return data?.[0] ?? { full_done: false, full_page: null, last_delta_at: null }
 }
 class GravacaoFalhou extends Error { constructor(public entity: string, msg: string) { super(msg) } }
@@ -96,8 +116,7 @@ async function syncEntity(sb: any, kget: any, entity: string, base: string, tabl
     let page = full ? 1 : (st.full_page ?? 1)
     await setStatus(sb, entity, { status: 'running' })
     for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-      const qs = new URLSearchParams({ 'order[updated_at]': 'asc', limit: '250', page: String(page) }).toString()
-      const d = await kget(`${base}?${qs}`); const items = embed(d)
+      const d = await kget(montarUrl(base, { 'order[updated_at]': 'asc', limit: '250', page: String(page) })); const items = embed(d)
       if (!items.length) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
       await bulk(sb, table, items.map(map).filter(Boolean))   // lança se falhar: cursor não avança
       if (afterPage) await afterPage(items)
@@ -112,7 +131,7 @@ async function syncEntity(sb: any, kget: any, entity: string, base: string, tabl
   for (;;) {
     const params: Record<string, string> = { 'order[updated_at]': 'asc', limit: '250', page: String(page) }
     if (st.last_delta_at) params['filter[updated_at][from]'] = String(st.last_delta_at)
-    const d = await kget(`${base}?${new URLSearchParams(params).toString()}`); const items = embed(d)
+    const d = await kget(montarUrl(base, params)); const items = embed(d)
     if (!items.length) break
     await bulk(sb, table, items.map(map).filter(Boolean))
     if (afterPage) await afterPage(items)
@@ -125,21 +144,26 @@ async function syncEntity(sb: any, kget: any, entity: string, base: string, tabl
   return { entity, done: true, count }
 }
 
+// Eventos vêm em ordem DECRESCENTE e a paginação é por offset: a janela (filter[created_at][from])
+// precisa ficar ESTÁVEL enquanto se pagina. Por isso o cursor last_delta_at só é consolidado quando
+// a paginação termina (antes, uma rodada parcial gravava page=9 + cursor novo e a próxima paginava
+// outro conjunto, pulando os eventos antigos). Eventos repetidos entre rodadas são inofensivos
+// (kommo_bulk_events é upsert).
 async function syncEvents(sb: any, kget: any, full: boolean) {
   const st = await getStatus(sb, 'events')
   const from = (!full && st.last_delta_at) ? st.last_delta_at : Math.floor(Date.now() / 1000) - EVENT_BACKFILL_DAYS * 86400
   let page = full ? 1 : (st.full_page ?? 1), count = 0, maxCreated = st.last_delta_at ?? from
   await setStatus(sb, 'events', { status: 'running' })
+  const concluir = async () => { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count }); return { entity: 'events', done: true, count } }
   for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-    const qs = new URLSearchParams({ 'filter[created_at][from]': String(from), limit: '250', page: String(page) }).toString()
-    const d = await kget(`/events?${qs}`); const items = embed(d)
-    if (!items.length) { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count }); return { entity: 'events', done: true, count } }
+    const d = await kget(montarUrl('/events', { 'filter[created_at][from]': String(from), limit: '250', page: String(page) })); const items = embed(d)
+    if (!items.length) return await concluir()
     for (const e of items) if (e.created_at > maxCreated) maxCreated = e.created_at
     const rows = items.filter((e: any) => TOUCH_TYPES.has(e.type)).map((e: any) => ({ id: e.id, type: e.type, entity_type: e.entity_type, entity_id: e.entity_id, created_by: e.created_by, kommo_created_at: tsISO(e.created_at) }))
     await bulk(sb, 'events', rows); count += rows.length; page++
-    if (!d?._links?.next) { await setStatus(sb, 'events', { status: 'done', full_done: true, reset_page: true, last_delta_at: maxCreated, count }); return { entity: 'events', done: true, count } }
+    if (!d?._links?.next) return await concluir()
   }
-  await setStatus(sb, 'events', { status: 'running', full_page: page, last_delta_at: maxCreated })
+  await setStatus(sb, 'events', { status: 'running', full_page: page }) // SEM last_delta_at: janela segue a mesma na próxima rodada
   return { entity: 'events', done: false, next_page: page, count }
 }
 
@@ -176,47 +200,22 @@ async function upsertLeadLinks(sb: any, items: any[]) {
   await bulk(sb, 'lead_contacts', lc); await bulk(sb, 'lead_companies', lk)
 }
 
-// (b) Tarefas abertas da réplica que o Kommo não devolve mais → tombstone + remoção.
-// Semântica conferida na API (26/10): GET /tasks?filter[id][]=a&filter[id][]=b devolve só as que
-// existem (200) ou 204 se nenhuma; GET /tasks/{id} devolve 200 (existe) ou 204 (não existe).
-// Travas: (1) tarefa fora do lote na resposta = filtro ignorado → aborta (nunca marcar ausente);
-// (2) lote que volta VAZIO é conferido id a id (GET /tasks/{id}) antes de marcar ausente;
-// (3) erro de API em qualquer lote deixa o lote para a próxima rodada (nada é gravado dele).
-async function conferirLote(kget: any, lote: number[]): Promise<{ vistas: number[]; ausentes: number[] }> {
-  const qs = lote.map((id) => `filter[id][]=${id}`).join('&') + '&limit=250'
-  const d = await kget(`/tasks?${qs}`)                             // 204 → {} ; erro → lança
-  const lista = d?._embedded?.tasks
-  const envelopeOk = d && typeof d === 'object' && (!('_embedded' in d) || Array.isArray(lista))
-  if (!envelopeOk) throw new Error('/tasks?filter[id]: envelope inesperado')
-  const devolvidas = new Set(((lista ?? []) as any[]).map((t) => Number(t.id)))
-  if ([...devolvidas].some((id) => !lote.includes(id))) throw new Error('/tasks?filter[id]: ids fora do lote (filtro ignorado) — abortado')
-  if (devolvidas.size === 0) {
-    // ninguém voltou: confere uma a uma (200 = existe, 204 = não existe; outro código lança)
-    const vistas: number[] = [], ausentes: number[] = []
-    for (const id of lote) {
-      const r = await kget(`/tasks/${id}`)
-      if (r && typeof r === 'object' && Number(r.id) === id) vistas.push(id)
-      else if (r && typeof r === 'object' && Object.keys(r).length === 0) ausentes.push(id)   // 204
-      else throw new Error(`/tasks/${id}: resposta inesperada`)
-    }
-    return { vistas, ausentes }
-  }
-  return { vistas: lote.filter((id) => devolvidas.has(id)), ausentes: lote.filter((id) => !devolvidas.has(id)) }
-}
-async function reconcileTasks(sb: any, kget: any, limite = 300) {
+// (b) Tarefas abertas da réplica que o Kommo não devolve mais → tombstone + remoção (migration_158).
+// Política de confirmação em reconcile.ts (testada): 204 ≠ 200 vazio; id fora do lote/página parcial
+// abortam; TODA ausência é confirmada com GET /tasks/{id}. No banco: carência de 15 min, reconfirmação
+// (1ª ausência só marca ausente_em; remove numa rodada posterior, > 20 min) e remoção condicional à
+// versão (kommo_updated_at) vista na seleção, com tombstone no próprio DELETE … RETURNING.
+async function reconcileTasks(sb: any, raw: GetRaw, limite = 300) {
   const { data, error } = await sb.rpc('kommo_tasks_para_conferir', { p_limit: limite })
   if (error) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_para_conferir: ${error.message}`)
-  const ids: number[] = (data ?? []).map((r: any) => Number(r.id)).filter((n: number) => Number.isFinite(n))
-  if (!ids.length) return { entity: 'tasks_reconcile', done: true, conferidas: 0, removidas: 0 }
-  const vistas: number[] = [], ausentes: number[] = []
-  for (let i = 0; i < ids.length; i += 50) {
-    const r = await conferirLote(kget, ids.slice(i, i + 50))
-    vistas.push(...r.vistas); ausentes.push(...r.ausentes)
-  }
-  const { data: n, error: e2 } = await sb.rpc('kommo_tasks_conferidas', { p_vistas: vistas, p_ausentes: ausentes })
+  const sel: { id: number; kommo_updated_at: string | null }[] = (data ?? []).map((r: any) => ({ id: Number(r.id), kommo_updated_at: r.kommo_updated_at ?? null })).filter((r: any) => Number.isFinite(r.id))
+  if (!sel.length) return { entity: 'tasks_reconcile', done: true, conferidas: 0, removidas: 0 }
+  const { vistas, ausentes } = await conferirTodas(raw, sel.map((r) => r.id))       // lança → nada gravado
+  const versao = new Map(sel.map((r) => [r.id, r.kommo_updated_at]))
+  const { data: n, error: e2 } = await sb.rpc('kommo_tasks_conferidas', { p_vistas: vistas, p_ausentes: ausentes.map((id) => ({ id, versao: versao.get(id) ?? null })) })
   if (e2) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_conferidas: ${e2.message}`)
-  await setStatus(sb, 'tasks_reconcile', { status: 'done', full_done: true, count: ids.length, last_delta_at: Math.floor(Date.now() / 1000) })
-  return { entity: 'tasks_reconcile', done: true, conferidas: ids.length, vistas: vistas.length, removidas: Number(n ?? 0), ausentes_ids: ausentes.slice(0, 50) }
+  await setStatus(sb, 'tasks_reconcile', { status: 'done', full_done: true, count: sel.length, last_delta_at: Math.floor(Date.now() / 1000) })
+  return { entity: 'tasks_reconcile', done: true, conferidas: sel.length, vistas: vistas.length, ausentes: ausentes.length, removidas: Number(n ?? 0), ausentes_ids: ausentes.slice(0, 50) }
 }
 
 const mapLead = (x: any) => ({ id: x.id, name: x.name, pipeline_id: x.pipeline_id, status_id: x.status_id, responsible_user_id: x.responsible_user_id, price: x.price, custom_fields: x.custom_fields_values ?? null, is_deleted: false, kommo_created_at: tsISO(x.created_at), kommo_updated_at: tsISO(x.updated_at) })
@@ -239,12 +238,12 @@ Deno.serve(async (req) => {
     if (!token) throw new Error('kommo_access_token ausente em integracao_config')
     const body = await req.json().catch(() => ({}))
     const entity = body.entity ?? 'all'; const full = !!body.full
-    const kget = makeClient(token, new RateLimiter())
+    const { kget, raw } = makeClients(sb, token, new RateLimiter())
     const wants = (e: string) => entity === 'all' || entity === e
     const out: any[] = []
     // 'tasks_reconcile' é ação própria (cron a cada 30 min), fora do 'all' para não pesar o delta de 2 min
     if (entity === 'tasks_reconcile') {
-      out.push(await comFalhaIsolada(sb, 'tasks_reconcile', () => reconcileTasks(sb, kget, Number(body.limit ?? 300))))
+      out.push(await comFalhaIsolada(sb, 'tasks_reconcile', () => reconcileTasks(sb, raw, Number(body.limit ?? 300))))
     } else {
       if (wants('users')) out.push(await comFalhaIsolada(sb, 'users', () => syncUsers(sb, kget)))
       if (wants('pipelines')) out.push(await comFalhaIsolada(sb, 'pipelines', () => syncPipelines(sb, kget)))
