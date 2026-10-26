@@ -116,3 +116,52 @@ export async function statusDosTalks(
   }
   return talks
 }
+
+// ---------------- leitura INCREMENTAL dos eventos de chat (janela de CHATS_DIAS) ----------------
+// A janela de 7 dias passa de 3.600 eventos (37 páginas). Ler tudo a cada renovação seria caro; o cache guarda os
+// eventos em forma compacta e cada renovação lê só os novos (com sobreposição), deduplicando pelo id.
+
+/** Evento de chat compacto (só o que chatsSemResposta usa). */
+export interface EvC { id: string; tp: 'i' | 'o'; l: number; k: number | null; c: number; b: number }
+
+/** Eventos do Kommo → compactos (só de lead, com id e tipo de chat conhecidos). */
+export function compactar(eventos: Array<EventoChat & { id?: string | number | null }>): EvC[] {
+  const out: EvC[] = []
+  for (const e of eventos) {
+    if (e.entity_type !== 'lead' || !e.entity_id || e.id == null) continue
+    const tp = e.type === 'incoming_chat_message' ? 'i' : e.type === 'outgoing_chat_message' ? 'o' : null
+    if (!tp) continue
+    out.push({ id: String(e.id), tp, l: Number(e.entity_id), k: talkDe(e), c: Number(e.created_at), b: Number(e.created_by) || 0 })
+  }
+  return out
+}
+
+/** Compactos → formato de evento que chatsSemResposta entende. */
+export function expandir(evs: EvC[]): EventoChat[] {
+  return evs.map((e) => ({
+    type: e.tp === 'i' ? 'incoming_chat_message' : 'outgoing_chat_message', entity_type: 'lead', entity_id: e.l,
+    created_at: e.c, created_by: e.b, value_after: [{ message: { talk_id: e.k } }],
+  }))
+}
+
+/** Junta o cache com os novos: sem repetir id, só dentro da janela (c >= desde), do mais novo ao mais antigo. */
+export function mesclarEventos(anteriores: EvC[], novos: EvC[], desde: number): EvC[] {
+  const porId = new Map<string, EvC>()
+  for (const e of [...anteriores, ...novos]) if (e && e.c >= desde) porId.set(e.id, e)
+  return [...porId.values()].sort((a, b) => b.c - a.c || (a.id < b.id ? -1 : 1))
+}
+
+export const SOBREPOSICAO_S = 600
+
+/**
+ * De onde ler: incremental (a partir do evento mais novo do cache − sobreposição) só se o cache for COMPLETO
+ * (cobre a janela inteira, sem truncar) e da mesma janela; senão, leitura cheia desde o início da janela.
+ */
+export function planoLeitura(cache: any, agoraS: number, dias: number): { desde: number; incremental: boolean; base: EvC[] } {
+  const janela = agoraS - dias * 86400
+  const evs: EvC[] = Array.isArray(cache?.eventos) ? cache.eventos : []
+  if (cache?.completo === true && Number(cache?.dias) === dias && cache?.ultimo != null && Number.isFinite(Number(cache.ultimo))) {
+    return { desde: Math.max(janela, Number(cache.ultimo) - SOBREPOSICAO_S), incremental: true, base: evs }
+  }
+  return { desde: janela, incremental: false, base: [] }
+}

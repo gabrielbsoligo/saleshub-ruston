@@ -89,3 +89,34 @@ test('statusDosTalks: lista com erro comum → tenta 1 a 1; lista parcial → co
   // 429 na lista propaga
   await assert.rejects(statusDosTalks(['1'], async () => { throw new Error('429') }, um({}), 4, 20, fatal), /429/)
 })
+
+// ---------------- leitura incremental (0.4.7) ----------------
+import { compactar, expandir, mesclarEventos, planoLeitura, SOBREPOSICAO_S } from '../../../supabase/functions/_shared/prevendas_chats.ts'
+
+const comId = (id: number, e: any) => ({ ...e, id })
+
+test('compactar/expandir: ida e volta preserva o que chatsSemResposta usa; ignora sem lead, sem id ou tipo estranho', () => {
+  const brutos = [comId(1, ent(1, 100)), comId(2, sai(1, 105, 42)), comId(3, ent(2, 200)), { ...ent(3, 300) }, comId(5, { ...ent(4, 1), entity_type: 'contact' }), comId(6, { ...ent(5, 1), type: 'outro' })]
+  const c = compactar(brutos as any)
+  assert.deepEqual(c.map((e) => e.id), ['1', '2', '3'])
+  assert.deepEqual(chatsSemResposta(expandir(c)), chatsSemResposta([ent(1, 100), sai(1, 105, 42), ent(2, 200)]))
+})
+
+test('mesclarEventos: sem repetir id (sobreposição), só dentro da janela, do mais novo ao mais antigo', () => {
+  const a = compactar([comId(1, ent(1, 100)), comId(2, ent(2, 50)), comId(3, ent(3, 300))] as any)
+  const n = compactar([comId(3, ent(3, 300)), comId(4, sai(1, 400, 7))] as any)
+  const m = mesclarEventos(a, n, 60)
+  assert.deepEqual(m.map((e) => e.id), ['4', '3', '1'])                 // id 3 uma vez só; id 2 saiu da janela
+  assert.deepEqual(chatsSemResposta(expandir(m)).map((c) => c.lead_id), [3])   // lead 1 respondido pelo humano
+})
+
+test('planoLeitura: incremental só com cache COMPLETO da mesma janela; senão leitura cheia', () => {
+  const agora = 1_000_000, dias = 7, janela = agora - 7 * 86400
+  assert.deepEqual(planoLeitura(null, agora, dias), { desde: janela, incremental: false, base: [] })
+  const evs = [{ id: '1', tp: 'i', l: 1, k: null, c: agora - 50, b: 0 }]
+  assert.deepEqual(planoLeitura({ completo: true, dias: 7, ultimo: agora - 60, eventos: evs }, agora, dias), { desde: agora - 60 - SOBREPOSICAO_S, incremental: true, base: evs })
+  assert.equal(planoLeitura({ completo: false, dias: 7, ultimo: agora - 60, eventos: evs }, agora, dias).incremental, false)   // truncado: relê tudo
+  assert.equal(planoLeitura({ completo: true, dias: 3, ultimo: agora - 60, eventos: evs }, agora, dias).incremental, false)    // janela mudou
+  assert.equal(planoLeitura({ completo: true, dias: 7, ultimo: null, eventos: evs }, agora, dias).incremental, false)
+  assert.equal(planoLeitura({ completo: true, dias: 7, ultimo: janela - 9999, eventos: evs }, agora, dias).desde, janela)      // nunca antes da janela
+})
