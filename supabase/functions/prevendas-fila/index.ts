@@ -19,7 +19,7 @@ import { type Momento } from '../_shared/prevendas_classificar.ts'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { dedupTarefas, esperarFicha, Interrupcao, leadsFaltando, lerPaginado, montarItens, type LeadDados } from '../_shared/prevendas_servidor.ts'
 import { aplicarCloser, decidirModo, paraConfirmar, type EtapaLead } from '../_shared/prevendas_closer.ts'
-import { chatsSemResposta, itensDeChat, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
+import { chatsSemResposta, itensDeChat, statusDosTalks, revalidarChats, usarChats, type EventoChat, type LeadChat } from '../_shared/prevendas_chats.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -28,7 +28,7 @@ const CACHE_S = 40, FORCAR_MIN_S = 5, TRAVA_S = 60, MAX_PAGINAS = 12, MAX_LOTES_
 // prazo total da execução bem abaixo da trava (60 s); cada GET com timeout próprio; espera por ficha limitada
 const PRAZO_MS = 40_000, TIMEOUT_GET_MS = 8_000, ESPERA_FICHA_MS = 3_000
 // chats sem resposta: leitura da CONTA inteira (eventos de chat), cache compartilhado na linha kommo_user = 0
-const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 60, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20
+const CHATS_CACHE_S = 30, CHATS_MAX_IDADE_S = 60, CHATS_MAX_PAGINAS = 10, CHATS_MAX_LOTES = 4, CHATS_MAX_TALKS = 20, CHATS_PAGINAS_TALKS = 4
 // versão da regra da resposta: cache de outro modo/regra nunca é reusado
 const REGRA = 'v5-closer', MAX_LOTES_CONFIRMAR = 2
 const CHATS_DIAS = Math.min(30, Math.max(1, Number(Deno.env.get('PREVENDAS_CHATS_DIAS') ?? '7') || 7))
@@ -76,12 +76,12 @@ Deno.serve(async (req) => {
   const reuso = (r: any) => revalidarChats(r, Math.floor(Date.now() / 1000), CHATS_MAX_IDADE_S)
   const idade = cache?.em ? (Date.now() - Date.parse(cache.em)) / 1000 : Infinity
   const cacheOk = !!cache?.resposta && cache.resposta.modo === modo && cache.resposta.regra === REGRA
-  if (cacheOk && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade) }, 200, origin)
+  if (cacheOk && idade < CACHE_S && !(body?.forcar && idade >= FORCAR_MIN_S)) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), servidor_agora: Math.floor(Date.now() / 1000) }, 200, origin)
   const { data: token, error: eT } = await sb.rpc('prevendas_travar', { p_user: uid, p_seg: TRAVA_S })
   if (eT) return json({ erro: 'falha_banco' }, 503, origin)
   if (!token) {
     // outra execução do mesmo usuário em curso: só devolve cache AINDA VÁLIDO (nunca vencido como autoritativo)
-    if (cacheOk && idade < CACHE_S) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), em_andamento: true }, 200, origin)
+    if (cacheOk && idade < CACHE_S) return json({ ...reuso(cache.resposta), cache_s: Math.round(idade), em_andamento: true, servidor_agora: Math.floor(Date.now() / 1000) }, 200, origin)
     return json({ erro: 'em_andamento', retry_after: 3 }, 503, origin)
   }
   const inicio = Date.now()
@@ -122,20 +122,10 @@ Deno.serve(async (req) => {
       const j = await kommoGet(`/api/v4/leads?${ids.slice(i, i + 50).map((id) => `filter[id][]=${id}`).join('&')}&limit=50`)
       for (const l of j?._embedded?.leads ?? []) leadsC[String(l.id)] = { responsavel: l.responsible_user_id ?? null, status_id: l.status_id ?? null, nome: l.name ?? null }
     }
-    let nTalks = 0
-    for (const c of chats) {
-      if (c.talk_id == null || talks[String(c.talk_id)]) continue
-      const l = leadsC[String(c.lead_id)]
-      if (!l || l.status_id === 142 || l.status_id === 143) continue
-      if (++nTalks > CHATS_MAX_TALKS) { parcial = true; break }
-      try {
-        const t = await kommoGet(`/api/v4/talks/${c.talk_id}`)
-        if (t?.status) talks[String(c.talk_id)] = String(t.status)
-      } catch (e) {
-        if (e instanceof KommoLimite || e instanceof Interrupcao) throw e
-        parcial = true                                     // talk sem status conhecido: o chat entra (não esconde cliente esperando)
-      }
-    }
+    // status dos talks (lista → 1 a 1; erro comum = desconhecido, o chat entra; 429/orçamento propagam)
+    const precisa = [...new Set(chats.filter((c) => c.talk_id != null && leadsC[String(c.lead_id)] && ![142, 143].includes(Number(leadsC[String(c.lead_id)].status_id))).map((c) => String(c.talk_id)))]
+    Object.assign(talks, await statusDosTalks(precisa, (p) => kommoGet(`/api/v4/talks?limit=250&page=${p}`), (id) => kommoGet(`/api/v4/talks/${id}`),
+      CHATS_PAGINAS_TALKS, CHATS_MAX_TALKS, (e) => e instanceof KommoLimite || e instanceof Interrupcao))
     return { chats, leads: leadsC, talks, parcial, dias: CHATS_DIAS, gerado_em: lidoEmC }
   }
 
@@ -259,7 +249,8 @@ Deno.serve(async (req) => {
     // grava só se ainda for o dono da trava (uma execução lenta cuja trava venceu não sobrescreve a mais nova)
     const { error: eG } = await sb.rpc('prevendas_gravar', { p_user: uid, p_token: token, p_resposta: resposta })
     if (eG) { console.error('[prevendas-fila] cache', eG.message); await sb.rpc('prevendas_liberar', { p_user: uid, p_token: token }) }
-    return json(resposta, 200, origin)
+    // servidor_agora: o widget converte gerado_em/chats_em para o relógio do navegador (relógio do PC adiantado/atrasado)
+    return json({ ...resposta, servidor_agora: Math.floor(Date.now() / 1000) }, 200, origin)
   } catch (e) {
     await sb.rpc('prevendas_liberar', { p_user: uid, p_token: token })
     if (e instanceof KommoLimite) return json({ erro: 'kommo_429', retry_after: e.retryAfter }, 503, origin)

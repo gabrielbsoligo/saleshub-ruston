@@ -776,3 +776,151 @@ test('troca de override DURANTE o degradado: a leitura pela sessão antiga é de
   assert.equal(env.ctx.localStorage.getItem('rpv_snap.closer.v2_financeirorustonengenhariacombr_11420911'), null)
   assert.equal(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'), null)
 })
+
+// ---------------- hotfix 0.4.1 (af370ad), trazido para a branch da fila do closer ----------------
+test('telefone: número de TESTE do servidor aparece com "Ligar"; telefone em formato não reconhecido é avisado', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Marcia', telefones: [], invalidos: 1 }], teste: ['+5547997293673'] },
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /formato que não reconheço/)
+  assert.match(html, /Número de TESTE/); assert.match(html, /data-act="voz-ligar" data-tel="\+5547997293673"/)
+})
+
+test('relógio do PC adiantado 2 min: a leitura do servidor NÃO aparece como desatualizada', () => {
+  const env = ambiente()
+  const Real = Date, desloc = 120000
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + desloc) } static now() { return Real.now() + desloc } }
+  const servidor = Math.floor(Real.now() / 1000)                       // relógio do servidor (certo)
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], gerado_em: servidor - 5, servidor_agora: servidor, chats_em: servidor - 10 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'painel')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Fila desatualizada/); assert.match(html, /Concluir|Próximo/)
+  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'))
+  assert.equal(snap.dadosEm, servidor - 5)                             // carimbo BRUTO (identidade/ordem)
+  const d = JSON.parse(env.ctx.localStorage.getItem('rpv_desvio_financeirorustonengenhariacombr_11420911'))
+  assert.ok(Math.abs(d.s - 120) <= 1)                                  // o desvio do PC fica guardado à parte
+})
+
+function pcAdiantado(env, ms) {
+  const Real = Date
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + ms) } static now() { return Real.now() + ms } }
+}
+
+test('PC +120 s: tarefa que vence em 11 min continua FUTURA (antecedência 10 min) — prazo e "agora" no mesmo referencial', () => {
+  const env = ambiente(); pcAdiantado(env, 120000)
+  const S = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1, { due: S + 11 * 60 })], gerado_em: S - 1, servidor_agora: S }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /<span class="cnt">/); assert.match(html, /Próxima/)    // nada vencido; oferece a futura
+})
+
+test('mesmo cache depois de uma falha, com latência diferente: NÃO limpa a falha (identidade pelo carimbo bruto)', () => {
+  const env = ambiente(); pcAdiantado(env, 120000)
+  const S = Math.floor(Date.now() / 1000)
+  const w = instanciar(env, [
+    { ok: true, itens: [tarefa(1)], gerado_em: S, servidor_agora: S },
+    { erro: 'falha_banco', status: 503 },
+    { ok: true, itens: [tarefa(1)], gerado_em: S, servidor_agora: S - 2 },     // o MESMO cache, com mais trânsito que a 1ª leitura
+  ])
+  w.callbacks.init(); env.rodarTimers('t')
+  env.rodarTimers('i')                                                         // 503 e sessão falha → falha registrada
+  env.rodarTimers('i')                                                         // chega o cache igual
+  clicar(env, 'painel')
+  assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
+})
+
+test('degradado com leitura parcial SEM motivo: o aviso de fila parcial aparece', () => {
+  const env = ambiente()
+  env.ctx.__kommo = () => ({ done(fn) { fn({ _embedded: { tasks: Array.from({ length: 250 }, (_, i) => ({ id: i + 1, entity_type: 'leads', entity_id: 9000 + i, complete_till: AGORA - 10, text: 'x' })) } }, 'ok', { status: 200 }); return this }, fail() { return this } })
+  const w = instanciar(env, [{ erro: 'jwt_conta', status: 401 }])
+  w.callbacks.init(); for (let i = 0; i < 6; i++) env.rodarTimers('t')    // páginas do degradado encadeadas por setTimeout
+  clicar(env, 'painel')
+  assert.match(env.elems['rpv-root'].innerHTML, /Fila parcial: algumas tarefas podem faltar/)
+})
+
+// relógio do PC deslocado e avançável (o "servidor" é o relógio real + avanço)
+function pcRelogio(env, deslocMs) {
+  const Real = Date; let avanco = 0
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + deslocMs + avanco) } static now() { return Real.now() + deslocMs + avanco } }
+  return { avancar: (ms) => { avanco += ms }, servidor: () => Math.floor((Real.now() + avanco) / 1000) }
+}
+
+for (const desloc of [120000, -120000]) {
+  test(`1ª calibração (PC ${desloc > 0 ? '+' : ''}${desloc / 1000} s): falha local anterior NÃO bloqueia a leitura nova do servidor; cache anterior à falha segue rejeitado`, () => {
+    const env = ambiente(), rel = pcRelogio(env, desloc)
+    const S = rel.servidor()
+    const w = instanciar(env, [{ erro: 'falha_banco', status: 503 }])
+    w.callbacks.init(); env.rodarTimers('t')                                  // servidor 503 + sessão falha → falha (carimbo local, sem desvio)
+    let resp = null; w.$authorizedAjax = () => ({ then: (ok) => ok(resp) })
+    rel.avancar(5000)
+    resp = { ok: true, itens: [tarefa(1)], gerado_em: S - 30, servidor_agora: S + 5 }   // cache ANTERIOR à falha
+    env.rodarTimers('i'); clicar(env, 'painel')
+    assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
+    rel.avancar(5000)
+    resp = { ok: true, itens: [tarefa(1)], gerado_em: S + 9, servidor_agora: S + 10 }  // leitura NOVA, posterior à falha
+    env.rodarTimers('i')
+    const html = env.elems['rpv-root'].innerHTML
+    assert.doesNotMatch(html, /Não consegui atualizar a fila/); assert.doesNotMatch(html, /desatualizada/)
+  })
+
+  test(`1ª calibração (PC ${desloc > 0 ? '+' : ''}${desloc / 1000} s): dados do degradado não barram a leitura nova do servidor`, () => {
+    const env = ambiente(), rel = pcRelogio(env, desloc)
+    const S = rel.servidor()
+    env.ctx.__kommo = () => ({ done(fn) { fn({ _embedded: { tasks: [{ id: 77, entity_type: 'leads', entity_id: 770, complete_till: S - 10, text: 'x' }] } }, 'ok', { status: 200 }); return this }, fail() { return this } })
+    const w = instanciar(env, [{ erro: 'falha_banco', status: 503 }])
+    w.callbacks.init(); env.rodarTimers('t')                                  // degradado com sucesso (dadosEm local)
+    let resp = null; w.$authorizedAjax = () => ({ then: (ok) => ok(resp) })
+    rel.avancar(3000)
+    resp = { ok: true, itens: [tarefa(1)], gerado_em: S + 2, servidor_agora: S + 3 }
+    env.rodarTimers('i')
+    const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'))
+    assert.equal(snap.modo, 'servidor'); assert.deepEqual(snap.itens.map((t) => t.id), [1])
+  })
+}
+
+// PC com deslocamento AJUSTÁVEL (simula o acerto do relógio do PC) e avanço do tempo real
+function pcAjustavel(env, deslocMs) {
+  const Real = Date; let avanco = 0, desloc = deslocMs
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + desloc + avanco) } static now() { return Real.now() + desloc + avanco } }
+  return { avancar: (ms) => { avanco += ms }, acertar: (ms) => { desloc = ms }, servidor: () => Math.floor((Real.now() + avanco) / 1000) }
+}
+
+test('PC acertado DEPOIS da calibração: a falha já alinhada não se move e a leitura nova libera as ações', () => {
+  const env = ambiente(), rel = pcAjustavel(env, 600000)
+  const S = rel.servidor()
+  let resp = { ok: true, itens: [tarefa(1)], gerado_em: S, servidor_agora: S }
+  const w = instanciar(env, [{ ok: true, itens: [] }]); w.$authorizedAjax = () => ({ then: (ok, err) => (resp.erro ? err({ status: 503, responseJSON: resp }) : ok(resp)) })
+  w.callbacks.init(); env.rodarTimers('t')                                  // calibra: desvio 600
+  rel.avancar(1000); resp = { erro: 'falha_banco' }; env.rodarTimers('i')  // falha em S+1 (alinhada, d=600)
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /Não consegui atualizar a fila/)
+  rel.acertar(0); rel.avancar(1000)                                         // o PC é acertado para a hora real
+  resp = { ok: true, itens: [tarefa(1)], gerado_em: S + 2, servidor_agora: S + 2 }
+  env.rodarTimers('i')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Não consegui atualizar a fila/); assert.doesNotMatch(html, /desatualizada/)
+})
+
+test('outra aba calibra DURANTE o GET degradado: o carimbo usa o instante e a marca do INÍCIO; a leitura nova do servidor é aceita', () => {
+  const env = ambiente(), rel = pcAjustavel(env, 120000)
+  const S = rel.servidor()
+  const sessao = []
+  env.ctx.__kommo = () => ({ done(fn) { sessao.push(fn); return this }, fail() { return this } })
+  let resp = { erro: 'falha_banco' }
+  const w = instanciar(env, [{ ok: true, itens: [] }]); w.$authorizedAjax = () => ({ then: (ok, err) => (resp.erro ? err({ status: 503, responseJSON: resp }) : ok(resp)) })
+  w.callbacks.init(); env.rodarTimers('t')                                  // 503 → GET degradado começa SEM calibração
+  env.ctx.localStorage.setItem('rpv_desvio_financeirorustonengenhariacombr_11420911', JSON.stringify({ s: 120, amostras: [120] }))   // outra aba calibrou
+  sessao[0]({ _embedded: { tasks: [{ id: 77, entity_type: 'leads', entity_id: 770, complete_till: S - 10, text: 'x' }] } }, 'ok', { status: 200 })
+  const deg = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'))
+  assert.equal(deg.modo, 'degradado'); assert.ok(Math.abs(deg.dadosEm - S) <= 1); assert.equal(deg.dLocal, 120)
+  rel.avancar(3000); resp = { ok: true, itens: [tarefa(1)], gerado_em: S + 3, servidor_agora: S + 3 }
+  env.rodarTimers('i')
+  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'))
+  assert.equal(snap.modo, 'servidor'); assert.deepEqual(snap.itens.map((t) => t.id), [1])
+})

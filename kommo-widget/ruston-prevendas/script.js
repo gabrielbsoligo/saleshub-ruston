@@ -271,7 +271,42 @@
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
       function pad(n) { return (n < 10 ? '0' : '') + n; }
-      function agoraS() { return Math.floor(Date.now() / 1000); }
+      function calibrado() { var d = lsGet('desvio', null); return !!d && typeof d.s === 'number'; }
+      function desvio() { var d = lsGet('desvio', null); return d && typeof d.s === 'number' ? d.s : 0; }
+      // (Date.now, performance.now) da última medição DESTA aba: se o relógio do PC saltou (acerto manual/NTP), a
+      // diferença entre os dois cresce; aí as amostras antigas do desvio não valem mais.
+      var ultimoPar = null;
+      function perfAgora() { try { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : null; } catch (e) { return null; } }
+      function medirDesvio(servidorAgora) {
+        if (!servidorAgora) return;
+        var agoraMs = Date.now(), perf = perfAgora();
+        var m = Math.floor(agoraMs / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
+        var saltou = !!ultimoPar && perf !== null && Math.abs((agoraMs - ultimoPar.t) - (perf - ultimoPar.p)) > 5000;
+        ultimoPar = perf !== null ? { t: agoraMs, p: perf } : null;
+        var am = saltou ? [] : (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto grande: recomeça
+        am.push(m); am = am.slice(-10);
+        lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
+      }
+      function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
+      // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
+      // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
+      // ou null (feitos ANTES da 1ª calibração, no relógio do PC). Só os null são convertidos, uma vez, quando a
+      // calibração existir. Carimbos do servidor (gerado_em, chats_em) são brutos. Snapshot antigo sem marca = null.
+      function marca() { return calibrado() ? desvio() : null; }
+      function alinhar(t, d) { return (d === null || d === undefined) && calibrado() ? t - desvio() : t; }
+      function normalizar(s) {
+        if (!s || !calibrado()) return false;
+        var mudou = false;
+        if (s.falha && typeof s.falha.d !== 'number') { s.falha.em = alinhar(s.falha.em, null); s.falha.d = desvio(); mudou = true; }
+        var semMarca = s.dLocal === null || (s.dLocal === undefined && s.modo === 'degradado');
+        if (semMarca) { if (s.dadosEm) s.dadosEm = alinhar(s.dadosEm, null); s.dLocal = desvio(); mudou = true; }
+        return mudou;
+      }
+      // depois de medir o desvio: compatibiliza o snapshot (e o estado) e avisa as outras abas (rev nova)
+      function recalibrar() {
+        var s = lsGet(kSnap(), null);
+        if (s && normalizar(s)) { s.rev = novaRev(); lsSet(kSnap(), s); aplicar(s); }
+      }
       function minutoDoDia() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
       function hora(unixS) { var d = new Date(unixS * 1000); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
       function fmtQuando(unix, now) {
@@ -400,6 +435,8 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
+            medirDesvio(r.servidor_agora);                 // só ajusta o "agora"; os carimbos do servidor continuam brutos
+            recalibrar();                                  // carimbos locais (falha/degradado) vão para o referencial novo
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
             publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0, modoFila: r.modo === 'closer' ? 'closer' : 'sdr' }, r.gerado_em || 0, p);
@@ -408,25 +445,27 @@
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).', p); return; }
           if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
-          var inicioLeitura = agoraS();
+          var inicio = { t: agoraS(), d: marca() };                   // instante e marca juntos, no início
           lerKommo(g, function (e2, lista, parcial) {
             if (!meu()) return;
-            if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
+            var lidoEm = alinhar(inicio.t, inicio.d), marcaLida = inicio.d === null && calibrado() ? desvio() : inicio.d;   // outra aba pode ter calibrado no meio
+            if (!e2 || lista.length) { if (!Fila.leituraMaisNova(lidoEm, state.dadosEm)) { state.carregando = false; render(); return; } }
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').', p); return; }
             // mantém o ÚLTIMO modo confirmado pelo servidor; sem nenhum, diz isso e mostra como SDR
             var mf = state.modoConfirmado === 'closer' || state.modoConfirmado === 'sdr' ? state.modoConfirmado : '';
             publicar({ itens: lista.map(function (t) { return deKommo(t, mf === 'closer'); }), modo: 'degradado', modoFila: mf,
                        aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : '') +
-                              (mf ? '' : ' Modo da fila ainda não confirmado pelo servidor: mostrando como SDR.'), parcial: parcial }, inicioLeitura, p);
+                              (mf ? '' : ' Modo da fila ainda não confirmado pelo servidor: mostrando como SDR.'), parcial: parcial }, lidoEm, p, marcaLida);
           });
         });
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
       // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
-      function publicar(snap, lidoEm, p) {
+      function publicar(snap, lidoEm, p, marcaLocal) {
         if (p !== state.perfil) return;                            // leitura de outro perfil: descarta
         snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
+        if (marcaLocal !== undefined) snap.dLocal = marcaLocal;    // carimbo feito no navegador (degradado): número ou null
         snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
         snap.v = SNAP_V; snap.perfil = p;
@@ -438,7 +477,7 @@
       function falhou(msg, p) {
         if (p !== state.perfil) return;
         var s0 = lsGet(kSnap(), null), s = snapValido(s0) ? s0 : { itens: [], modo: state.modo, aviso: '', dadosEm: 0, modoFila: '', v: SNAP_V, perfil: p };
-        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
+        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg, d: marca() };
         state.carregando = false;
         lsSet(kSnap(), s); aplicar(s); render();
       }
@@ -453,6 +492,7 @@
         if (snapValido(s) && s.rev !== state.rev) { aplicar(s); if (dadosRecentes() && !state.falha) notificar(false); else state.notif = []; render(); }
       }
       function aplicar(s) {
+        normalizar(s);                                             // snapshot de outra aba/sessão: mesmo referencial
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
         state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0; state.modoFila = s.modoFila === 'closer' ? 'closer' : 'sdr'; state.modoConfirmado = s.modoFila || '';
         state.itens = s.itens || []; state.motivos = s.motivos || [];
@@ -702,7 +742,7 @@
         chamarVoz({ acao: 'telefones', entity_type: aqui.etype, entity_id: aqui.eid }, function (err, r) {
           if (!vivo(g) || voz.tel.chave !== chave) return;
           voz.tel.carregando = false;
-          if (err) voz.tel.erro = Fila.mensagemVoz(err.erro); else voz.tel.contatos = r.contatos || [];
+          if (err) voz.tel.erro = Fila.mensagemVoz(err.erro); else { voz.tel.contatos = r.contatos || []; voz.tel.teste = r.teste || []; }
           render();
         });
       }
@@ -745,7 +785,13 @@
                      '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t.e164) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
               });
             });
-            if (!n) h += '<div class="rpv-b">Nenhum telefone nos contatos deste lead.</div>';
+            var inval = 0; (voz.tel.contatos || []).forEach(function (c) { inval += c.invalidos || 0; });
+            if (!n) h += '<div class="rpv-b">' + (inval ? 'Os ' + inval + ' telefone(s) dos contatos deste lead estão num formato que não reconheço.' : 'Nenhum telefone nos contatos deste lead.') + '</div>';
+            else if (inval) h += '<div class="rpv-f"><span>+' + inval + ' telefone(s) em formato não reconhecido.</span></div>';
+            (voz.tel.teste || []).forEach(function (t) {
+              h += '<div class="rpv-it"><span class="bd"><div class="nm">Número de TESTE</div><div class="mt">' + esc(t) + '</div></span>' +
+                   '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
+            });
           }
         }
         if (voz.aviso) h += '<div class="rpv-f"><span>' + esc(voz.aviso) + '</span></div>';
@@ -826,10 +872,13 @@
           html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
                   '<button data-act="atualizar" title="Atualizar">↻</button><button data-act="painel" title="Fechar">×</button></div>';
           if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
-          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + '): ações suspensas até atualizar.</div>';
+          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + ', há ' + Math.max(0, agoraS() - state.dadosEm) + ' s): ações suspensas até atualizar.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
           if (state.chatsVencidos) html += '<div class="rpv-warn">Chats sem resposta desatualizados: escondidos até a próxima leitura.</div>';
-          if (state.parcial) html += '<div class="rpv-warn">Fila parcial' + (state.motivos && state.motivos.length ? ' (' + esc(state.motivos.join(', ')) + ')' : '') + ': algumas tarefas podem faltar.</div>';
+          var mot = state.motivos || [], motChat = mot.filter(function (m) { return /^chats_/.test(m); }), motTar = mot.filter(function (m) { return !/^chats_/.test(m); });
+          if (state.parcial && !mot.length) html += '<div class="rpv-warn">Fila parcial: algumas tarefas podem faltar.</div>';
+          if (state.parcial && motTar.length) html += '<div class="rpv-warn">Fila parcial (' + esc(motTar.join(', ')) + '): algumas tarefas podem faltar.</div>';
+          if (motChat.length) html += '<div class="rpv-warn">Chats: ' + esc(motChat.map(function (m) { return { chats_parcial: 'leitura parcial (pode faltar algum chat)', chats_limite: 'o Kommo pediu pausa', chats_atrasados: 'desatualizados', chats_indisponiveis: 'indisponíveis agora' }[m] || m; }).join('; ')) + '.</div>';
           if (!state.fila.length) {
             html += '<div class="rpv-b">' + (state.futura ? 'Nada vencido agora. Próxima às <b>' + esc(fmtQuando(state.futura.due, now)) + '</b> — o botão abre ela.' : 'Nenhuma tarefa pendente.') + '</div>';
           } else {
