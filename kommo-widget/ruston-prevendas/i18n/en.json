@@ -16,6 +16,7 @@
     "lookahead_min": "Avisar tarefas que vencem nos próximos X minutos (padrão 15)",
     "atalho": "Atalho Alt+N para o próximo? Y ou N (padrão Y)",
     "voz": "Phone inside Kommo (4com webphone): Y to enable, N to disable (default N). Only for users enabled on the server.",
-    "endpoint_voz": "prevendas-voz edge URL (empty = same as the queue endpoint, with prevendas-fila replaced by prevendas-voz)"
+    "endpoint_voz": "prevendas-voz edge URL (empty = same as the queue endpoint, with prevendas-fila replaced by prevendas-voz)",
+    "debug_voz": "Phone diagnostics: Y logs extension registration and incoming calls to the browser console (no credentials)"
   }
 }

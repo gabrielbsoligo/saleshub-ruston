@@ -128,3 +128,10 @@ test('telefone: rótulo "sua ligação" só para chamada integrada E pedida (nun
   assert.match(Fila.mensagemVoz('sem_permissao'), /dono deste lead/)
   assert.match(Fila.mensagemVoz('xpto'), /xpto/)
 })
+
+test('telefone (decisão do Gabriel, T2): atende sozinho a integrada da tentativa, uma vez, dentro da janela', () => {
+  assert.equal(Fila.deveAtender(true, 2000, 1000, false), true)
+  assert.equal(Fila.deveAtender(true, 2000, 1000, true), false)     // já atendida nesta tentativa
+  assert.equal(Fila.deveAtender(true, 500, 1000, false), false)     // janela vencida
+  assert.equal(Fila.deveAtender(false, 2000, 1000, false), false)   // sem o header da 4com
+})

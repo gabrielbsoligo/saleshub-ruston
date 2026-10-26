@@ -436,7 +436,7 @@ test('sem Web Locks no navegador: não registra (fail-closed)', async () => {
   assert.match(env.elems['rpv-root'].innerHTML, /não controla abas/)
 })
 
-test('discar: lista telefones, pede à 4com e NUNCA atende sozinho (nem a integrada pedida, nem uma qualquer)', async () => {
+test('discar (decisão do Gabriel): atende SOZINHO a integrada da tentativa, uma vez; o resto só toca', async () => {
   const env = ambiente(), reg = {}
   const { w, chamadas } = comVoz(env, reg, {
     credencial: CRED,
@@ -450,13 +450,14 @@ test('discar: lista telefones, pede à 4com e NUNCA atende sozinho (nem a integr
   clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
   const d = chamadas.find((c) => c.acao === 'discar')
   assert.deepEqual({ et: d.entity_type, id: d.entity_id, tel: d.telefone }, { et: 'leads', id: 555, tel: '+5547997293673' })
-  // INVITE integrado enquanto o pedido está pendente: só toca, com o rótulo "sua ligação"
+  // INVITE integrado dentro da janela da tentativa: atende sozinho
   const integrada = sessao(true); reg.emit('newRTCSession', integrada)
-  assert.equal(integrada.session.atendida, undefined)
-  assert.match(env.elems['rpv-root'].innerHTML, /Sua ligação: atenda/)
-  clicar(env, 'voz-atender')                                   // o usuário atende
   assert.equal(integrada.session.atendida, true); assert.match(env.elems['rpv-root'].innerHTML, /Em chamada/)
   integrada.session.terminate()
+  // segunda integrada na MESMA tentativa: a autorização já foi consumida → só toca
+  const segunda = sessao(true); reg.emit('newRTCSession', segunda)
+  assert.equal(segunda.session.atendida, undefined)
+  segunda.session.terminate()
   // INVITE sem o header (ou não pedido): só toca, rótulo neutro
   const estranha = sessao(false); reg.emit('newRTCSession', estranha)
   assert.equal(estranha.session.atendida, undefined)
@@ -566,7 +567,7 @@ test('chat com leitura velha (chats_em > 2 min ou ausente) não aparece nem noti
   assert.match(B.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
 })
 
-test('INVITE chega ANTES da recusa do servidor: a recusa tira o rótulo "Sua ligação"', async () => {
+test('INVITE NÃO integrado antes da recusa: só toca; a recusa tira o rótulo "Sua ligação"', async () => {
   const env = ambiente(), reg = {}
   const { w, adiadas } = comVoz(env, reg, {
     credencial: CRED,
@@ -576,8 +577,8 @@ test('INVITE chega ANTES da recusa do servidor: a recusa tira o rótulo "Sua lig
   w.callbacks.init(); await flush(); reg.emit('registered')
   env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
   clicar(env, 'voz-ligar', { 'data-tel': '+5547997293673' })
-  const inv = sessao(true); reg.emit('newRTCSession', inv)
-  assert.match(env.elems['rpv-root'].innerHTML, /Sua ligação: atenda/)
+  const inv = sessao(true); inv.request.getHeader = () => undefined; reg.emit('newRTCSession', inv)   // sem o header da 4com
+  assert.match(env.elems['rpv-root'].innerHTML, /Chamada recebida/)
   adiadas[0].err({ status: 403, responseJSON: { erro: 'sem_permissao' } })
   const html = env.elems['rpv-root'].innerHTML
   assert.doesNotMatch(html, /Sua ligação/); assert.match(html, /Chamada recebida/); assert.match(html, /não é dono deste lead/)
@@ -794,4 +795,12 @@ test('outra aba calibra DURANTE o GET degradado: o carimbo usa o instante e a ma
   env.rodarTimers('i')
   const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap_financeirorustonengenhariacombr_11420911'))
   assert.equal(snap.modo, 'servidor'); assert.deepEqual(snap.itens.map((t) => t.id), [1])
+})
+
+test('sem pedido de discagem, a integrada só toca (não atende sozinha)', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, { credencial: CRED })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  const semPedido = sessao(true); reg.emit('newRTCSession', semPedido)
+  assert.equal(semPedido.session.atendida, undefined)
 })
