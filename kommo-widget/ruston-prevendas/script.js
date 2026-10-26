@@ -225,6 +225,26 @@
         lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
       }
       function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
+      // Carimbos LOCAIS (falha.em; dadosEm do degradado) guardam o desvio com que foram feitos (d / dLocal). Quando o
+      // desvio muda (ex.: primeira calibração), eles passam para o referencial novo: carimbo + d_antigo − d_novo.
+      // Carimbos do servidor (gerado_em, chats_em) são brutos e nunca são convertidos. Snapshot antigo sem marca:
+      // falha e dados do degradado foram feitos com desvio 0.
+      function normalizar(s) {
+        if (!s) return false;
+        var d = desvio(), mudou = false;
+        if (s.falha) {
+          var fd = typeof s.falha.d === 'number' ? s.falha.d : 0;
+          if (fd !== d || typeof s.falha.d !== 'number') { s.falha.em += fd - d; s.falha.d = d; mudou = true; }
+        }
+        var dl = typeof s.dLocal === 'number' ? s.dLocal : (s.modo === 'degradado' ? 0 : null);
+        if (dl !== null && (dl !== d || typeof s.dLocal !== 'number')) { if (s.dadosEm) s.dadosEm += dl - d; s.dLocal = d; mudou = true; }
+        return mudou;
+      }
+      // depois de medir o desvio: compatibiliza o snapshot (e o estado) e avisa as outras abas (rev nova)
+      function recalibrar() {
+        var s = lsGet('snap', null);
+        if (s && normalizar(s)) { s.rev = novaRev(); lsSet('snap', s); aplicar(s); }
+      }
       function minutoDoDia() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
       function hora(unixS) { var d = new Date(unixS * 1000); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
       function fmtQuando(unix, now) {
@@ -327,7 +347,8 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
-            medirDesvio(r.servidor_agora);                 // só ajusta o "agora"; os carimbos continuam brutos
+            medirDesvio(r.servidor_agora);                 // só ajusta o "agora"; os carimbos do servidor continuam brutos
+            recalibrar();                                  // carimbos locais (falha/degradado) vão para o referencial novo
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
             publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0 }, r.gerado_em || 0);
@@ -342,15 +363,16 @@
             if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
             publicar({ itens: lista.map(deKommo), modo: 'degradado',
-                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, inicioLeitura);
+                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, inicioLeitura, true);
           });
         });
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
       // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
-      function publicar(snap, lidoEm) {
+      function publicar(snap, lidoEm, local) {
         snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
+        if (local) snap.dLocal = desvio();                         // carimbo feito no navegador (degradado)
         snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
         lsSet('snap', snap); aplicar(snap);
@@ -360,7 +382,7 @@
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
         var s = lsGet('snap', null) || { itens: [], modo: state.modo, aviso: '', dadosEm: 0 };
-        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
+        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg, d: desvio() };
         state.carregando = false;
         lsSet('snap', s); aplicar(s); render();
       }
@@ -375,6 +397,7 @@
         if (s && s.rev !== state.rev) { aplicar(s); if (dadosRecentes() && !state.falha) notificar(false); else state.notif = []; render(); }
       }
       function aplicar(s) {
+        normalizar(s);                                             // snapshot de outra aba/sessão: mesmo referencial
         state.rev = s.rev || ''; state.modo = s.modo; state.aviso = s.aviso || ''; state.parcial = !!s.parcial;
         state.dadosEm = s.dadosEm || 0; state.falha = s.falha || null; state.chatsEm = s.chatsEm || 0;
         state.itens = s.itens || []; state.motivos = s.motivos || [];
