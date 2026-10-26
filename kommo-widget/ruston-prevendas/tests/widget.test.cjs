@@ -648,3 +648,30 @@ test('chat que envelhece DURANTE pausa do Kommo: sai pelo relógio, tarefas e da
   assert.equal(leu, false)                                                   // pausado: não lê
   assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">1<\/span>/)
 })
+
+test('telefone: número de TESTE do servidor aparece com "Ligar"; telefone em formato não reconhecido é avisado', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [{ contato_id: 1, nome: 'Marcia', telefones: [], invalidos: 1 }], teste: ['+5547997293673'] },
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  env.ctx.location.pathname = '/leads/detail/555'; env.rodarTimers('i')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /formato que não reconheço/)
+  assert.match(html, /Número de TESTE/); assert.match(html, /data-act="voz-ligar" data-tel="\+5547997293673"/)
+})
+
+test('relógio do PC adiantado 2 min: a leitura do servidor NÃO aparece como desatualizada', () => {
+  const env = ambiente()
+  const Real = Date, desloc = 120000
+  env.ctx.Date = class extends Real { constructor(...a) { if (a.length) super(...a); else super(Real.now() + desloc) } static now() { return Real.now() + desloc } }
+  const servidor = Math.floor(Real.now() / 1000)                       // relógio do servidor (certo)
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)], gerado_em: servidor - 5, servidor_agora: servidor, chats_em: servidor - 10 }])
+  w.callbacks.init(); env.rodarTimers('t')
+  clicar(env, 'painel')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Fila desatualizada/); assert.match(html, /Concluir|Próximo/)
+  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap_financeirorustonengenhariacombr_11420911'))
+  assert.ok(Math.abs(snap.dadosEm - (servidor - 5 + 120)) <= 1)        // convertido para o relógio do navegador
+})

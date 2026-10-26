@@ -151,7 +151,12 @@ Deno.serve(async (req) => {
     }
     const d = decidirEntidade({ uid, papel: membro.role ?? null, etype, eid, entidade: ent, tarefas, contatosDevolvidos: devolvidos })
     if (!d.ok) { await registrar(ev, 'negado', d.erro); return json({ erro: d.erro }, d.erro === 'sem_permissao' ? 403 : 409, origin) }
-    if (acao === 'telefones') { await registrar(ev, 'ok'); return json({ ok: true, contatos: d.contatos, autorizado_por: d.motivo }, 200, origin) }
+    if (acao === 'telefones') {
+      await registrar(ev, 'ok')
+      // números da lista de TESTE do servidor (só existem durante o teste; a discagem os aceita para esta entidade)
+      const teste = [...new Set(String(env('PREVENDAS_VOZ_TELEFONES_TESTE')).split(',').map((x) => telefoneE164(x.trim())).filter(Boolean))]
+      return json({ ok: true, contatos: d.contatos, teste, autorizado_por: d.motivo }, 200, origin)
+    }
 
     // ---------------- discar ----------------
     const daEntidade = d.contatos.some((c) => c.telefones.some((t) => t.e164 === destino))

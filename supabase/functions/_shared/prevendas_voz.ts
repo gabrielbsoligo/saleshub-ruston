@@ -52,6 +52,8 @@ export function telefoneE164(bruto: string | null | undefined): string | null {
   const ddd = Number(d.slice(0, 2)), num = d.slice(2)
   if (ddd < 11 || ddd % 10 === 0) return null                               // DDD brasileiro nunca termina em 0
   if (num.length === 9 && num[0] !== '9') return null
+  // celular gravado no formato antigo (8 dígitos, começa com 6–9): hoje tem o 9 na frente
+  if (num.length === 8 && /^[6-9]/.test(num)) return `+55${d.slice(0, 2)}9${num}`
   if (num.length === 8 && !/^[2-5]/.test(num)) return null
   return `+55${d}`
 }
@@ -60,17 +62,19 @@ export function finalTelefone(e164: string): string { return '***' + e164.slice(
 
 export interface ContatoKommo { id: number; name?: string | null; custom_fields_values?: Array<{ field_code?: string | null; values?: Array<{ value?: unknown }> }> | null }
 /** Telefones (E.164, sem repetição) dos contatos, a partir do campo de sistema PHONE. */
-export function telefonesDosContatos(contatos: ContatoKommo[]): Array<{ contato_id: number; nome: string; telefones: Array<{ e164: string; exibir: string }> }> {
+export function telefonesDosContatos(contatos: ContatoKommo[]): Array<{ contato_id: number; nome: string; telefones: Array<{ e164: string; exibir: string }>; invalidos: number }> {
   return contatos.map((c) => {
     const vistos = new Set<string>(), telefones: Array<{ e164: string; exibir: string }> = []
+    let invalidos = 0
     for (const f of c.custom_fields_values ?? []) {
       if (f.field_code !== 'PHONE') continue
       for (const v of f.values ?? []) {
         const e = telefoneE164(String(v.value ?? ''))
         if (e && !vistos.has(e)) { vistos.add(e); telefones.push({ e164: e, exibir: String(v.value) }) }
+        else if (!e && String(v.value ?? '').trim()) invalidos++
       }
     }
-    return { contato_id: Number(c.id), nome: c.name ?? '', telefones }
+    return { contato_id: Number(c.id), nome: c.name ?? '', telefones, invalidos }
   })
 }
 

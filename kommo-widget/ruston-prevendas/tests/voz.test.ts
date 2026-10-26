@@ -24,7 +24,9 @@ test('telefoneE164: normaliza BR e rejeita lixo', () => {
   assert.equal(telefoneE164('011 3333-4444'), '+551133334444')
   assert.equal(telefoneE164('0000000000'), null)          // DDD 00
   assert.equal(telefoneE164('2097293673'), null)          // DDD 20
-  assert.equal(telefoneE164('4787293673'), null)          // 10 dígitos começando com 8: nem fixo (2–5) nem celular
+  assert.equal(telefoneE164('4787293673'), '+5547987293673')   // celular no formato antigo (8 dígitos): ganha o 9
+  assert.equal(telefoneE164('+55 44 9911-8581'), '+5544999118581')   // o caso do T1 ("Tel. comercial" da Marcia)
+  assert.equal(telefoneE164('4717293673'), null)          // 8 dígitos começando com 1: nem fixo nem celular
   assert.equal(telefoneE164('47897293673'), null)         // 11 dígitos sem o 9
   assert.equal(telefoneE164('999999'), null)
   assert.equal(telefoneE164(null), null)
@@ -39,8 +41,8 @@ test('telefonesDosContatos: só o campo PHONE, sem repetir, ignora inválidos', 
     { id: 2, name: null, custom_fields_values: null },
   ])
   assert.deepEqual(r, [
-    { contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: '47 99729-3673' }] },
-    { contato_id: 2, nome: '', telefones: [] },
+    { contato_id: 1, nome: 'Ana', telefones: [{ e164: '+5547997293673', exibir: '47 99729-3673' }], invalidos: 1 },
+    { contato_id: 2, nome: '', telefones: [], invalidos: 0 },
   ])
 })
 

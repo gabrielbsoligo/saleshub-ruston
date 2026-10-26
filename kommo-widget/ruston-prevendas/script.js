@@ -316,9 +316,12 @@
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
             if (r.origem_pendente) aviso += r.origem_pendente + ' tarefa(s) com origem ainda não consultada. ';
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
-            if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
+            // relógio do PC ≠ do servidor: converte os carimbos do servidor para o relógio local (desvio medido agora)
+            var desvio = r.servidor_agora ? agoraS() - r.servidor_agora : 0;
+            var geradoLocal = r.gerado_em ? r.gerado_em + desvio : 0, chatsLocal = r.chats_em ? r.chats_em + desvio : 0;
+            if (!Fila.leituraMaisNova(geradoLocal, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0 }, r.gerado_em || 0);
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: chatsLocal }, geradoLocal);
             return;
           }
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
@@ -597,7 +600,7 @@
         chamarVoz({ acao: 'telefones', entity_type: aqui.etype, entity_id: aqui.eid }, function (err, r) {
           if (!vivo(g) || voz.tel.chave !== chave) return;
           voz.tel.carregando = false;
-          if (err) voz.tel.erro = Fila.mensagemVoz(err.erro); else voz.tel.contatos = r.contatos || [];
+          if (err) voz.tel.erro = Fila.mensagemVoz(err.erro); else { voz.tel.contatos = r.contatos || []; voz.tel.teste = r.teste || []; }
           render();
         });
       }
@@ -640,7 +643,13 @@
                      '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t.e164) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
               });
             });
-            if (!n) h += '<div class="rpv-b">Nenhum telefone nos contatos deste lead.</div>';
+            var inval = 0; (voz.tel.contatos || []).forEach(function (c) { inval += c.invalidos || 0; });
+            if (!n) h += '<div class="rpv-b">' + (inval ? 'Os ' + inval + ' telefone(s) dos contatos deste lead estão num formato que não reconheço.' : 'Nenhum telefone nos contatos deste lead.') + '</div>';
+            else if (inval) h += '<div class="rpv-f"><span>+' + inval + ' telefone(s) em formato não reconhecido.</span></div>';
+            (voz.tel.teste || []).forEach(function (t) {
+              h += '<div class="rpv-it"><span class="bd"><div class="nm">Número de TESTE</div><div class="mt">' + esc(t) + '</div></span>' +
+                   '<button class="rpv-ligar" data-act="voz-ligar" data-tel="' + esc(t) + '"' + (voz.discando ? ' disabled' : '') + '>Ligar</button></div>';
+            });
           }
         }
         if (voz.aviso) h += '<div class="rpv-f"><span>' + esc(voz.aviso) + '</span></div>';
@@ -712,10 +721,12 @@
           html += '<div class="rpv-card"><div class="rpv-h"><span class="tt">Sua fila · ' + state.fila.length + '</span>' +
                   '<button data-act="atualizar" title="Atualizar">↻</button><button data-act="painel" title="Fechar">×</button></div>';
           if (state.falha) html += '<div class="rpv-warn">' + esc(state.falha.msg) + ' Lista das ' + (state.dadosEm ? hora(state.dadosEm) : '—') + ' só para consulta; ações suspensas.</div>';
-          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + '): ações suspensas até atualizar.</div>';
+          else if (!agir && state.dadosEm) html += '<div class="rpv-warn">Fila desatualizada (' + hora(state.dadosEm) + ', há ' + Math.max(0, agoraS() - state.dadosEm) + ' s): ações suspensas até atualizar.</div>';
           if (state.aviso) html += '<div class="rpv-warn">' + esc(state.aviso) + '</div>';
           if (state.chatsVencidos) html += '<div class="rpv-warn">Chats sem resposta desatualizados: escondidos até a próxima leitura.</div>';
-          if (state.parcial) html += '<div class="rpv-warn">Fila parcial' + (state.motivos && state.motivos.length ? ' (' + esc(state.motivos.join(', ')) + ')' : '') + ': algumas tarefas podem faltar.</div>';
+          var mot = state.motivos || [], motChat = mot.filter(function (m) { return /^chats_/.test(m); }), motTar = mot.filter(function (m) { return !/^chats_/.test(m); });
+          if (state.parcial && motTar.length) html += '<div class="rpv-warn">Fila parcial (' + esc(motTar.join(', ')) + '): algumas tarefas podem faltar.</div>';
+          if (motChat.length) html += '<div class="rpv-warn">Chats: ' + esc(motChat.map(function (m) { return { chats_parcial: 'leitura parcial (pode faltar algum chat)', chats_limite: 'o Kommo pediu pausa', chats_atrasados: 'desatualizados', chats_indisponiveis: 'indisponíveis agora' }[m] || m; }).join('; ')) + '.</div>';
           if (!state.fila.length) {
             html += '<div class="rpv-b">' + (state.futura ? 'Nada vencido agora. Próxima às <b>' + esc(fmtQuando(state.futura.due, now)) + '</b> — o botão abre ela.' : 'Nenhuma tarefa pendente.') + '</div>';
           } else {
