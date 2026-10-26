@@ -216,28 +216,35 @@
       // Referencial ÚNICO da fila = relógio do SERVIDOR (prazos do Kommo, gerado_em, chats_em, falhas, idade).
       // desvio = relógio do PC − servidor, estimado pelo MENOR valor entre as últimas medições (a latência só soma),
       // guardado por usuário e compartilhado entre abas. Os carimbos do servidor ficam BRUTOS (identidade e ordem).
+      function calibrado() { var d = lsGet('desvio', null); return !!d && typeof d.s === 'number'; }
       function desvio() { var d = lsGet('desvio', null); return d && typeof d.s === 'number' ? d.s : 0; }
+      // (Date.now, performance.now) da última medição DESTA aba: se o relógio do PC saltou (acerto manual/NTP), a
+      // diferença entre os dois cresce; aí as amostras antigas do desvio não valem mais.
+      var ultimoPar = null;
+      function perfAgora() { try { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : null; } catch (e) { return null; } }
       function medirDesvio(servidorAgora) {
         if (!servidorAgora) return;
-        var m = Math.floor(Date.now() / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
-        var am = (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto de relógio: recomeça
+        var agoraMs = Date.now(), perf = perfAgora();
+        var m = Math.floor(agoraMs / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
+        var saltou = !!ultimoPar && perf !== null && Math.abs((agoraMs - ultimoPar.t) - (perf - ultimoPar.p)) > 5000;
+        ultimoPar = perf !== null ? { t: agoraMs, p: perf } : null;
+        var am = saltou ? [] : (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto grande: recomeça
         am.push(m); am = am.slice(-10);
         lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
       }
       function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
-      // Carimbos LOCAIS (falha.em; dadosEm do degradado) guardam o desvio com que foram feitos (d / dLocal). Quando o
-      // desvio muda (ex.: primeira calibração), eles passam para o referencial novo: carimbo + d_antigo − d_novo.
-      // Carimbos do servidor (gerado_em, chats_em) são brutos e nunca são convertidos. Snapshot antigo sem marca:
-      // falha e dados do degradado foram feitos com desvio 0.
+      // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
+      // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
+      // ou null (feitos ANTES da 1ª calibração, no relógio do PC). Só os null são convertidos, uma vez, quando a
+      // calibração existir. Carimbos do servidor (gerado_em, chats_em) são brutos. Snapshot antigo sem marca = null.
+      function marca() { return calibrado() ? desvio() : null; }
+      function alinhar(t, d) { return (d === null || d === undefined) && calibrado() ? t - desvio() : t; }
       function normalizar(s) {
-        if (!s) return false;
-        var d = desvio(), mudou = false;
-        if (s.falha) {
-          var fd = typeof s.falha.d === 'number' ? s.falha.d : 0;
-          if (fd !== d || typeof s.falha.d !== 'number') { s.falha.em += fd - d; s.falha.d = d; mudou = true; }
-        }
-        var dl = typeof s.dLocal === 'number' ? s.dLocal : (s.modo === 'degradado' ? 0 : null);
-        if (dl !== null && (dl !== d || typeof s.dLocal !== 'number')) { if (s.dadosEm) s.dadosEm += dl - d; s.dLocal = d; mudou = true; }
+        if (!s || !calibrado()) return false;
+        var mudou = false;
+        if (s.falha && typeof s.falha.d !== 'number') { s.falha.em = alinhar(s.falha.em, null); s.falha.d = desvio(); mudou = true; }
+        var semMarca = s.dLocal === null || (s.dLocal === undefined && s.modo === 'degradado');
+        if (semMarca) { if (s.dadosEm) s.dadosEm = alinhar(s.dadosEm, null); s.dLocal = desvio(); mudou = true; }
         return mudou;
       }
       // depois de medir o desvio: compatibiliza o snapshot (e o estado) e avisa as outras abas (rev nova)
@@ -357,22 +364,23 @@
           if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
           if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
-          var inicioLeitura = agoraS();
+          var inicio = { t: agoraS(), d: marca() };                   // instante e marca juntos, no início
           lerKommo(g, function (e2, lista, parcial) {
             if (!vivo(g)) return;
-            if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
+            var lidoEm = alinhar(inicio.t, inicio.d), marcaLida = inicio.d === null && calibrado() ? desvio() : inicio.d;   // outra aba pode ter calibrado no meio
+            if (!e2 || lista.length) { if (!Fila.leituraMaisNova(lidoEm, state.dadosEm)) { state.carregando = false; render(); return; } }
             if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
             publicar({ itens: lista.map(deKommo), modo: 'degradado',
-                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, inicioLeitura, true);
+                       aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : ''), parcial: parcial }, lidoEm, marcaLida);
           });
         });
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
       // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
-      function publicar(snap, lidoEm, local) {
+      function publicar(snap, lidoEm, marcaLocal) {
         snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
-        if (local) snap.dLocal = desvio();                         // carimbo feito no navegador (degradado)
+        if (marcaLocal !== undefined) snap.dLocal = marcaLocal;    // carimbo feito no navegador (degradado): número ou null
         snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
         lsSet('snap', snap); aplicar(snap);
@@ -382,7 +390,7 @@
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
       function falhou(msg) {
         var s = lsGet('snap', null) || { itens: [], modo: state.modo, aviso: '', dadosEm: 0 };
-        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg, d: desvio() };
+        s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg, d: marca() };
         state.carregando = false;
         lsSet('snap', s); aplicar(s); render();
       }
