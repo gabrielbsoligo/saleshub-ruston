@@ -740,3 +740,39 @@ test('isolamento por perfil: snapshot closer de outra aba NÃO serve a esta aba 
   assert.equal(chamou, 1)                                                  // lidera o PRÓPRIO perfil e lê o servidor
   assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">3<\/span>/)   // fila SDR: 3 tarefas
 })
+
+test('troca de override com leitura PENDENTE: a resposta antiga (closer) não contamina o perfil novo (sdr)', () => {
+  const env = ambiente()
+  const a = Math.floor(Date.now() / 1000)
+  let conf = { endpoint: 'https://srv/fila', usuarios: '11420911' }
+  const w = instanciar(env, [{ ok: true, itens: [] }]); w.get_settings = () => conf
+  const pend = []
+  w.$authorizedAjax = (o) => { const b = JSON.parse(o.data); return { then: (ok, err) => pend.push({ b, ok, err }) } }
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(pend.length, 1); assert.equal(pend[0].b.modo, undefined)                // leitura em "auto"
+  conf = { ...conf, modo: 'sdr' }; w.callbacks.onSave()                                 // troca para sdr antes da resposta
+  assert.equal(pend.length, 2); assert.equal(pend[1].b.modo, 'sdr')                     // nova leitura, já no perfil novo
+  pend[0].ok({ ok: true, modo: 'closer', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)], gerado_em: a })   // chega a antiga
+  assert.equal(env.ctx.localStorage.getItem('rpv_snap.sdr.v2_financeirorustonengenhariacombr_11420911'), null)
+  assert.equal(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'), null)
+  pend[1].ok({ ok: true, modo: 'sdr', itens: [ctC(a, 1, 10), ctC(a, 2, 10), ctC(a, 3, 20)], gerado_em: a })
+  const snap = JSON.parse(env.ctx.localStorage.getItem('rpv_snap.sdr.v2_financeirorustonengenhariacombr_11420911'))
+  assert.equal(snap.modoFila, 'sdr'); assert.equal(snap.perfil, 'sdr.v2')
+  assert.match(env.elems['rpv-root'].innerHTML, /<span class="cnt">3<\/span>/)        // 3 tarefas SDR
+  assert.equal(env.ctx.localStorage.getItem('rpv_lider.auto.v2_financeirorustonengenhariacombr_11420911'), 'null')   // liderança antiga solta
+})
+
+test('troca de override DURANTE o degradado: a leitura pela sessão antiga é descartada', () => {
+  const env = ambiente()
+  const a = Math.floor(Date.now() / 1000)
+  let conf = { endpoint: 'https://srv/fila', usuarios: '11420911' }
+  const w = instanciar(env, [{ erro: 'falha_banco', status: 503 }]); w.get_settings = () => conf
+  const sessao = []
+  env.ctx.__kommo = () => ({ done(fn) { sessao.push(fn); return this }, fail() { return this } })
+  w.callbacks.init(); env.rodarTimers('t')
+  assert.equal(sessao.length, 1)                                                        // degradado pendente
+  conf = { ...conf, modo: 'closer' }; w.callbacks.onSave()
+  sessao[0]({ _embedded: { tasks: [{ id: 1, entity_type: 'leads', entity_id: 10, complete_till: a - 10, text: 'x' }] } }, 'ok', { status: 200 })
+  assert.equal(env.ctx.localStorage.getItem('rpv_snap.closer.v2_financeirorustonengenhariacombr_11420911'), null)
+  assert.equal(env.ctx.localStorage.getItem('rpv_snap.auto.v2_financeirorustonengenhariacombr_11420911'), null)
+})

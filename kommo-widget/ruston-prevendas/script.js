@@ -285,9 +285,10 @@
       // override ou atualizar o widget nunca reaproveita a fila de outro modo/regra
       var SNAP_V = 2;
       function perfil() { return (cfg().modo || 'auto') + '.v' + SNAP_V; }
-      function kSnap() { return 'snap.' + perfil(); }
-      function kLider() { return 'lider.' + perfil(); }
-      function snapValido(s) { return !!s && s.v === SNAP_V && s.perfil === perfil(); }
+      function perfilAtivo() { return state.perfil || perfil(); }
+      function kSnap() { return 'snap.' + perfilAtivo(); }
+      function kLider() { return 'lider.' + perfilAtivo(); }
+      function snapValido(s) { return !!s && s.v === SNAP_V && s.perfil === perfilAtivo(); }
       function lsGet(n, d) { try { var v = localStorage.getItem(key(n)); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
       function lsSet(n, v) { try { localStorage.setItem(key(n), JSON.stringify(v)); } catch (e) {} }
       function vivo(g) { return !state.destruido && g === state.geracao; }
@@ -367,8 +368,25 @@
       function pausar(seg) { lsSet('pausa', Date.now() + Math.min(600, Math.max(5, seg)) * 1000); }
       function pausado() { return Date.now() < (lsGet('pausa', 0) || 0); }
 
+      // troca de perfil (override do modo mudou): invalida as leituras em voo, solta a liderança do perfil antigo e
+      // recomeça SÓ com o estado do perfil novo
+      function trocarPerfil() {
+        var antigo = state.perfil, novo = perfil();
+        if (!antigo || antigo === novo) return false;
+        var l = lsGet('lider.' + antigo, null); if (l && l.aba === ABA) lsSet('lider.' + antigo, null);
+        state.perfil = novo; state.carregando = false; state.rev = ''; state.itens = []; state.fila = []; state.futura = null; state.atual = null;
+        state.dadosEm = 0; state.falha = null; state.modoConfirmado = ''; state.modoFila = 'sdr'; state.notif = []; state.chatsEm = 0; state.motivos = []; state.aviso = '';
+        try { sessionStorage.removeItem(key('atual')); } catch (e) {}
+        carregarSnapshot(); render();
+        return true;
+      }
+
       function ciclo(g, manual) {
-        if (!vivo(g) || state.carregando) return;
+        if (!vivo(g)) return;
+        if (trocarPerfil()) manual = true;
+        if (state.carregando) return;
+        var p = state.perfil;
+        var meu = function () { return vivo(g) && p === state.perfil && p === perfil(); };   // resposta de outro perfil é descartada
         if (pausado()) { if (manual) { state.aviso = 'O Kommo pediu uma pausa (limite de uso). Tento de novo em instantes.'; render(); } return; }
         var lock = lsGet(kLider(), null);
         if (!Fila.devoLiderar(lock, ABA, Date.now())) { carregarSnapshot(); return; }
@@ -376,7 +394,7 @@
         state.carregando = true;
         if (manual) render();
         lerServidor(manual, function (err, r) {
-          if (!vivo(g)) return;
+          if (!meu()) return;
           if (!err) {
             var aviso = '', f = r.frescor_leads;
             if (f && (f.status !== 'done' || f.erro || (f.atraso_s != null && f.atraso_s > ATRASO_MAX_S))) aviso += 'Dados de lead (origem/etapa) atrasados; a ordem pode variar. ';
@@ -384,40 +402,42 @@
             if (r.em_andamento) aviso += 'Atualização em andamento em outra aba. ';
             if (!Fila.leituraMaisNova(r.gerado_em || 0, state.dadosEm)) { state.carregando = false; render(); return; }   // igual/anterior ao estado atual: ignora (mantém falha)
             if (r.retry_after) pausar(r.retry_after);   // o Kommo pediu pausa (ex.: 429 nos chats): a fila veio, mas a próxima leitura espera
-            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0, modoFila: r.modo === 'closer' ? 'closer' : 'sdr' }, r.gerado_em || 0);
+            publicar({ itens: r.itens || [], modo: 'servidor', aviso: aviso.trim(), parcial: !!r.parcial, motivos: r.motivos_parcial || [], chatsEm: r.chats_em || 0, modoFila: r.modo === 'closer' ? 'closer' : 'sdr' }, r.gerado_em || 0, p);
             return;
           }
-          if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).'); return; }
+          if (err.erro === 'kommo_429') { pausar(err.retryAfter || 60); falhou('O Kommo pediu uma pausa (limite de uso).', p); return; }
           if (err.erro === 'ocupado' || err.erro === 'em_andamento') { pausar(err.retryAfter || 3); state.carregando = false; return; }   // transitório: tenta logo, sem degradar
           // servidor indisponível por outro motivo: lê as próprias tarefas pela sessão (autoritativo para o usuário)
           var inicioLeitura = agoraS();
           lerKommo(g, function (e2, lista, parcial) {
-            if (!vivo(g)) return;
+            if (!meu()) return;
             if (!e2 || lista.length) { if (!Fila.leituraMaisNova(inicioLeitura, state.dadosEm)) { state.carregando = false; render(); return; } }
-            if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').'); return; }
+            if (e2 && !lista.length) { falhou('Não consegui atualizar a fila (' + err.erro + ' / ' + e2.status + ').', p); return; }
             // mantém o ÚLTIMO modo confirmado pelo servidor; sem nenhum, diz isso e mostra como SDR
             var mf = state.modoConfirmado === 'closer' || state.modoConfirmado === 'sdr' ? state.modoConfirmado : '';
             publicar({ itens: lista.map(function (t) { return deKommo(t, mf === 'closer'); }), modo: 'degradado', modoFila: mf,
                        aviso: 'Classificação indisponível (' + err.erro + '): ordem só por vencimento.' + (e2 ? ' Leitura parcial (' + e2.status + ').' : '') +
-                              (mf ? '' : ' Modo da fila ainda não confirmado pelo servidor: mostrando como SDR.'), parcial: parcial }, inicioLeitura);
+                              (mf ? '' : ' Modo da fila ainda não confirmado pelo servidor: mostrando como SDR.'), parcial: parcial }, inicioLeitura, p);
           });
         });
       }
 
       function novaRev() { return Date.now().toString(36) + '.' + Math.random().toString(36).slice(2, 7); }
       // sucesso: dadosEm = momento REAL da leitura (gerado_em do servidor; agora no degradado, que lê ao vivo)
-      function publicar(snap, lidoEm) {
+      function publicar(snap, lidoEm, p) {
+        if (p !== state.perfil) return;                            // leitura de outro perfil: descarta
         snap.rev = novaRev(); snap.dadosEm = lidoEm || agoraS();
         snap.falha = Fila.falhaApos(state.falha, snap.dadosEm);   // cache de antes da falha não comprova recuperação
         state.carregando = false;
-        snap.v = SNAP_V; snap.perfil = perfil();
+        snap.v = SNAP_V; snap.perfil = p;
         lsSet(kSnap(), snap); aplicar(snap);
         if (dadosRecentes() && !state.falha) notificar(true); else state.notif = [];
         render();
       }
       // falha: mantém os dados antigos (e a idade real), registra e propaga; ações ficam suspensas
-      function falhou(msg) {
-        var s0 = lsGet(kSnap(), null), s = snapValido(s0) ? s0 : { itens: [], modo: state.modo, aviso: '', dadosEm: 0, modoFila: '', v: SNAP_V, perfil: perfil() };
+      function falhou(msg, p) {
+        if (p !== state.perfil) return;
+        var s0 = lsGet(kSnap(), null), s = snapValido(s0) ? s0 : { itens: [], modo: state.modo, aviso: '', dadosEm: 0, modoFila: '', v: SNAP_V, perfil: p };
         s.rev = novaRev(); s.falha = { em: agoraS(), msg: msg };
         state.carregando = false;
         lsSet(kSnap(), s); aplicar(s); render();
@@ -867,7 +887,7 @@
         state.uid = sys.user_id || (window.AMOCRM && AMOCRM.constant && AMOCRM.constant('user') && AMOCRM.constant('user').id) || null;
         state.sub = sys.subdomain || location.hostname.split('.')[0] || 'acc';
         if (!state.uid || !ativoParaEsteUsuario()) return;   // fora da lista de teste: widget inerte
-        state.booted = true; state.destruido = false; state.geracao++; state.carregando = false; state.rev = '';
+        state.booted = true; state.destruido = false; state.geracao++; state.carregando = false; state.rev = ''; state.perfil = perfil();
         var g = state.geracao, p = self.params || {};
         state.base = String(p.cdn_path || p.path || '').replace(/\/+$/, '');
         try { state.atual = JSON.parse(sessionStorage.getItem(key('atual')) || 'null'); } catch (e) { state.atual = null; }
@@ -889,6 +909,7 @@
         var ultima = location.pathname;
         intervalo(function () {
           if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); }
+          else if (trocarPerfil()) ciclo(g, true);     // override do modo mudou sem onSave
           else if (podarChats()) render();          // chat venceu pelo relógio (sem leitura nova, pausa ou aba seguidora)
         }, 700);
         intervalo(function () { cicloVoz(g); }, 1000);                     // liga/desliga o telefone conforme o setting voz
@@ -914,7 +935,7 @@
         init: function () { try { boot(); } catch (e) { if (window.console) console.error('[ruston-prevendas] init', e); } return true; },
         bind_actions: function () { return true; },
         settings: function () { return true; },
-        onSave: function () { try { cicloVoz(state.geracao); } catch (e) {} return true; },
+        onSave: function () { try { if (trocarPerfil()) ciclo(state.geracao, true); cicloVoz(state.geracao); } catch (e) {} return true; },
         destroy: function () { try { destruir(); } catch (e) {} }
       };
       return this;
