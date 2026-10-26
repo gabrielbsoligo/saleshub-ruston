@@ -331,6 +331,8 @@ export interface RoletaCloser {
   ordem: number;
   base_count: number;
   updated_at: string;
+  /** Canais de lead que o closer atende no rodízio. null = todos (migration_156). */
+  canais?: LeadCanal[] | null;
 }
 
 // Linha retornada por get_roleta_status() — 1ª linha = próximo
@@ -342,7 +344,22 @@ export interface RoletaStatusRow {
   recebidas: number;
   total: number;
   ativo?: boolean;   // roleta SDR: membro disponível on/off (get_roleta_status_sdr)
+  // get_roleta_status_canal (rodízio de closers, migration_156):
+  canais?: LeadCanal[] | null;            // quais canais atende (null = todos)
+  por_canal?: Record<string, number>;     // reuniões do ciclo por canal (inclui as que não pontuam)
+  atende_canal?: boolean;
 }
+
+/** Capacidade do rodízio por canal, lida do banco (migration_156). legado = schema antigo, sem canais. */
+export interface RoletaCapacidade {
+  modo: 'canal' | 'legado' | 'indisponivel';
+  /** roleta_config.canais_sem_ponto efetivo (vazio no legado: tudo pontua). */
+  canaisSemPonto: string[];
+}
+export const ROLETA_CAPACIDADE_LEGADO: RoletaCapacidade = { modo: 'legado', canaisSemPonto: [] };
+/** O closer atende este canal? (canais null/vazio = todos) */
+export const roletaAtendeCanal = (r: { canais?: LeadCanal[] | null }, canal: LeadCanal | string | null | undefined) =>
+  !r.canais || r.canais.length === 0 || !canal || r.canais.includes(canal as LeadCanal);
 
 // Roleta SDR — visão granular (read-only via RPC)
 export type RoletaOrigem = 'roleta' | 'manual' | 'pre_roleta';

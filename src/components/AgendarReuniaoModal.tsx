@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { X, Calendar, Check, Plus, Video, Repeat } from "lucide-react";
 import { DateInput } from "./ui/DateInput";
 import type { Lead } from "../types";
-import { CANAL_LABELS } from "../types";
+import { CANAL_LABELS, roletaAtendeCanal } from "../types";
 import { useAppStore } from "../store";
 
 interface Props {
@@ -17,10 +17,20 @@ interface Props {
 }
 
 export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initialTime, initialCloserId, retorno, onConfirm, onClose }) => {
-  const { members, roleta } = useAppStore();
+  const { members, roleta, roletaCapacidade } = useAppStore();
   const closers = members.filter(m => (m.role === 'closer' || m.role === 'gestor') && m.active);
   const roletaMap = useMemo(() => new Map(roleta.map(r => [r.member_id, r])), [roleta]);
-  const proximo = roleta[0]; // menor contagem = próximo do rodízio
+  // Próximo do rodízio PARA ESTE CANAL: filtra quem atende o canal do lead (roleta_closers.canais;
+  // null = todos). Canal SEM ponto (ex.: recomendação): cursor próprio — quem tem menos reuniões
+  // DESSE canal no ciclo, depois ordem — para não concentrar num só closer; os demais canais
+  // seguem a pontuação global (mesma regra de get_roleta_status_canal(p_canal)).
+  const canalSemPonto = roletaCapacidade.canaisSemPonto.includes(lead.canal);
+  const elegiveis = useMemo(() => {
+    const base = roleta.filter(r => roletaAtendeCanal(r, lead.canal));
+    if (!canalSemPonto) return base;
+    return [...base].sort((a, b) => ((a.por_canal?.[lead.canal] ?? 0) - (b.por_canal?.[lead.canal] ?? 0)) || (a.ordem - b.ordem) || a.name.localeCompare(b.name));
+  }, [roleta, lead.canal, canalSemPonto]);
+  const proximo = roletaCapacidade.modo === 'indisponivel' ? undefined : elegiveis[0];
   const [date, setDate] = useState(initialDate || '');
   const [time, setTime] = useState(initialTime || '');
   const [closerId, setCloserId] = useState(initialCloserId || '');
@@ -71,8 +81,8 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
             <div className="flex items-center gap-2 rounded-lg bg-[var(--color-v4-red)]/10 border border-[var(--color-v4-red)]/30 px-3 py-2">
               <Repeat size={14} className="text-[var(--color-v4-red)] flex-shrink-0" />
               <span className="text-xs text-white">
-                Próximo do rodízio: <strong>{proximo.name}</strong>
-                <span className="text-[var(--color-v4-text-muted)]"> ({proximo.total} reuniõe{proximo.total === 1 ? "" : "s"})</span>
+                Próximo do rodízio ({CANAL_LABELS[lead.canal]}): <strong>{proximo.name}</strong>
+                <span className="text-[var(--color-v4-text-muted)]"> ({canalSemPonto ? `${proximo.por_canal?.[lead.canal] ?? 0} deste canal no ciclo · não pontua` : `${proximo.total} reuniõe${proximo.total === 1 ? "" : "s"}`})</span>
               </span>
             </div>
           )}
@@ -84,10 +94,11 @@ export const AgendarReuniaoModal: React.FC<Props> = ({ lead, initialDate, initia
               {closers.map(c => {
                 const r = roletaMap.get(c.id);
                 const isNext = proximo?.member_id === c.id;
+                const foraDoCanal = r ? !roletaAtendeCanal(r, lead.canal) : false;
                 return (
                   <option key={c.id} value={c.id}>
                     {c.name}{c.google_calendar_connected ? ' 📅' : ''}
-                    {r ? ` · ${r.total}${isNext ? ' ◀ próximo' : ''}` : ''}
+                    {r ? ` · ${r.total}${isNext ? ' ◀ próximo' : ''}${foraDoCanal ? ' (não atende este canal)' : ''}` : ''}
                   </option>
                 );
               })}

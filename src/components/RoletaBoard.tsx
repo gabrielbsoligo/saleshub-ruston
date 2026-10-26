@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Repeat, ChevronDown, ChevronRight, PauseCircle, Power, CheckCircle2, XCircle, CircleDot } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAppStore } from "../store";
-import type { RoletaStatusRow } from "../types";
+import { CANAL_LABELS, type RoletaStatusRow } from "../types";
 import { RoletaPanelSdr } from "./RoletaPanelSdr";
 
 const KOMMO_BASE = "https://financeirorustonengenhariacombr.kommo.com";
@@ -19,13 +19,16 @@ export const RoletaBoard: React.FC<{ tipo: "sdr" | "closer" }> = ({ tipo }) => {
 };
 
 type CloserRow = { member_id: string; name: string; ativo: boolean; ordem: number;
-                   recebidas: number; total: number };
+                   recebidas: number; total: number; por_canal: Record<string, number>; canais: string[] | null };
 type LogRow = { reuniao_id: string | null; closer_id: string | null;
-                evento: string; ciclo_ts: string | null; created_at: string };
+                evento: string; ciclo_ts: string | null; created_at: string; canal?: string | null };
+const rotuloCanal = (c: string | null | undefined) => (c && (CANAL_LABELS as Record<string, string>)[c]) || c || "—";
 
 const RoletaBoardCloser: React.FC = () => {
-  const { currentUser } = useAppStore();
+  const { currentUser, roletaCapacidade } = useAppStore();
   const isGestor = currentUser?.role === "gestor";
+  const comCanal = roletaCapacidade.modo !== "legado";
+  const semPonto = roletaCapacidade.canaisSemPonto;
   const [rows, setRows] = useState<CloserRow[]>([]);
   const [log, setLog] = useState<LogRow[]>([]);
   const [empresas, setEmpresas] = useState<Record<string, string>>({});
@@ -33,9 +36,19 @@ const RoletaBoardCloser: React.FC = () => {
   const [toggling, setToggling] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [{ data: status }, { data: closers }, { data: cfg }] = await Promise.all([
-      supabase.rpc("get_roleta_status"),                                            // ativos: recebidas(líquido)/total/ordem
-      supabase.from("roleta_closers").select("member_id, ativo, ordem, team_members(name)"),
+    // Schema novo (migration_156) ou legado: as colunas canais/canal só existem no novo. O store
+    // já decidiu o modo em fetchRoleta (roletaCapacidade); aqui só segue a mesma decisão.
+    let status: RoletaStatusRow[] | null = null;
+    if (comCanal) {
+      const r = await supabase.rpc("get_roleta_status_canal");
+      if (r.error) { console.error("get_roleta_status_canal:", r.error.message); return; } // mantém a tela anterior
+      status = r.data as RoletaStatusRow[];
+    } else {
+      const r = await supabase.rpc("get_roleta_status");
+      status = (r.data || []) as RoletaStatusRow[];
+    }
+    const [{ data: closers }, { data: cfg }] = await Promise.all([
+      supabase.from("roleta_closers").select(comCanal ? "member_id, ativo, ordem, canais, team_members(name)" : "member_id, ativo, ordem, team_members(name)"),
       supabase.from("roleta_config").select("reset_ts").eq("id", true).maybeSingle(),
     ]);
     const st = (status || []) as RoletaStatusRow[];
@@ -50,6 +63,8 @@ const RoletaBoardCloser: React.FC = () => {
         ordem: c.ordem ?? 999,
         recebidas: s?.recebidas ?? 0,
         total: s?.total ?? 0,
+        por_canal: s?.por_canal ?? {},
+        canais: s?.canais ?? c.canais ?? null,
       };
     });
     // ativos primeiro, na ordem da fila (menor total); OFF no fim
@@ -60,10 +75,10 @@ const RoletaBoardCloser: React.FC = () => {
     const reset = cfg?.reset_ts;
     if (reset) {
       const { data: lg } = await supabase.from("roleta_closer_log")
-        .select("reuniao_id, closer_id, evento, ciclo_ts, created_at")
+        .select(comCanal ? "reuniao_id, closer_id, evento, ciclo_ts, created_at, canal" : "reuniao_id, closer_id, evento, ciclo_ts, created_at")
         .gte("ciclo_ts", reset).neq("evento", "reset")
         .order("created_at", { ascending: false });
-      const rowsLg = (lg || []) as LogRow[];
+      const rowsLg = (lg || []) as unknown as LogRow[];
       setLog(rowsLg);
       const rids = [...new Set(rowsLg.map(l => l.reuniao_id).filter(Boolean))] as string[];
       if (rids.length) {
@@ -73,7 +88,7 @@ const RoletaBoardCloser: React.FC = () => {
         setEmpresas(map);
       } else setEmpresas({});
     }
-  }, []);
+  }, [comCanal]); // o modo (canal × legado) muda depois do mount: load precisa enxergar o atual
 
   useEffect(() => { load(); }, [load]);
 
@@ -165,6 +180,15 @@ const RoletaBoardCloser: React.FC = () => {
                     <span><span className="text-emerald-400">{s.compareceu}</span> compareceu</span>
                   </div>
                   <div className="text-[11px] mt-1">líquido (conta): <span className="text-white font-semibold">{r.recebidas}</span></div>
+                  {/* por canal no ciclo (∅ = canal que não pontua, ex.: recomendação) */}
+                  <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-1 flex flex-wrap gap-x-2">
+                    {Object.entries(r.por_canal as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([c, n]) => (
+                      <span key={c} title={semPonto.includes(c) ? "não pontua" : "pontua"}>
+                        <span className="text-white">{n}</span> {rotuloCanal(c)}{semPonto.includes(c) ? "∅" : ""}
+                      </span>
+                    ))}
+                    {r.canais && r.canais.length > 0 && <span className="opacity-70">· atende: {r.canais.map(rotuloCanal).join(", ")}</span>}
+                  </div>
                 </div>
               );
             })}
@@ -184,6 +208,7 @@ const RoletaBoardCloser: React.FC = () => {
                     <ev.Icon size={12} className={ev.color} />
                     <span className={`${ev.color} uppercase text-[9px] font-bold w-16`}>{ev.label}</span>
                     <span className="text-white">{nameOf(l.closer_id)}</span>
+                    {l.canal && <span className="px-1 rounded bg-[var(--color-v4-surface)] text-[9px] uppercase">{rotuloCanal(l.canal)}</span>}
                     {empresa && <span className="opacity-70 truncate">· {empresa}</span>}
                     <span className="opacity-50 ml-auto whitespace-nowrap">{fmt(l.created_at)}</span>
                   </div>
@@ -194,6 +219,9 @@ const RoletaBoardCloser: React.FC = () => {
           <div className="text-[10px] text-[var(--color-v4-text-muted)] mt-2 opacity-70">
             O balanço conta as reuniões <span className="text-emerald-400">realizadas</span> (marcadas menos <span className="text-red-400">no-show</span>).
             Distribui na hora por marcada; quando dá no-show, sai da conta e o closer volta a receber até emparelhar. Total do pill = realizadas líquidas do ciclo.
+            {comCanal && (semPonto.length
+              ? <>Reuniões de <span className="text-white">{semPonto.map(rotuloCanal).join(", ")}</span> (∅) aparecem por canal, mas não pontuam e são distribuídas à parte; cada closer só é "próximo" nos canais que atende (configurar em Reuniões → Rodízio).</>
+              : <>Todos os canais pontuam; cada closer só é "próximo" nos canais que atende (configurar em Reuniões → Rodízio).</>)}
           </div>
         </div>
       )}

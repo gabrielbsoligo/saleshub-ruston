@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from './lib/supabase';
-import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus, RoletaStatusRow } from './types';
+import type { TeamMember, Lead, Deal, Reuniao, Meta, ComissaoConfig, PerformanceSdr, PerformanceCloser, CustoComercial, DealStatus, Ligacao4com, PostMeetingAutomation, AutomationStatus, RoletaStatusRow, RoletaCapacidade } from './types';
+import { ROLETA_CAPACIDADE_LEGADO } from './types';
 import { isDealFechado } from './types';
 // Kommo integration is handled server-side via Postgres trigger (pg_net)
 import { createCalendarEvent, deleteCalendarEvent, updateCalendarEvent } from './lib/googleCalendar';
@@ -49,10 +50,14 @@ interface AppState {
 
   // Roleta de reuniões (rodízio de closers)
   roleta: RoletaStatusRow[];
+  /** O que o backend sabe fazer (canal × legado) e os canais sem ponto efetivos. */
+  roletaCapacidade: RoletaCapacidade;
   fetchRoleta: () => Promise<void>;
   roletaReset: () => Promise<void>;
   roletaSetAtivo: (memberId: string, ativo: boolean) => Promise<void>;
   updateRoletaOrdem: (memberId: string, ordem: number) => Promise<void>;
+  /** Canais que o closer atende no rodízio ([] = todos). Só gestor (RPC roleta_set_canais). */
+  roletaSetCanais: (memberId: string, canais: string[]) => Promise<void>;
 
   fetchMetas: () => Promise<void>;
   saveMeta: (m: Partial<Meta>) => Promise<void>;
@@ -92,6 +97,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [reunioes, setReunioes] = useState<Reuniao[]>([]);
   const [roleta, setRoleta] = useState<RoletaStatusRow[]>([]);
+  const [roletaCapacidade, setRoletaCapacidade] = useState<RoletaCapacidade>(ROLETA_CAPACIDADE_LEGADO);
   const [metas, setMetas] = useState<Meta[]>([]);
   const [comissoes, setComissoes] = useState<ComissaoConfig[]>([]);
   const [performanceSdr, setPerformanceSdr] = useState<PerformanceSdr[]>([]);
@@ -717,10 +723,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // ===================== ROLETA DE REUNIÕES =====================
   const fetchRoleta = useCallback(async () => {
-    const { data, error } = await supabase.rpc('get_roleta_status');
-    if (error) { console.error('fetchRoleta:', error.message); return; }
-    setRoleta((data || []) as RoletaStatusRow[]);
+    // get_roleta_status_canal = mesma fila/pontuação de get_roleta_status + canais atendidos e
+    // quebra por canal (migration_156). Só cai na RPC antiga se a nova NÃO EXISTE (schema
+    // legado); erro operacional da nova mantém a última fila conhecida (com as restrições de
+    // canal já carregadas) e sinaliza indisponibilidade — nunca "todos elegíveis" por engano.
+    const nova = await supabase.rpc('get_roleta_status_canal');
+    if (!nova.error) {
+      // modo canal só é publicado com o PAR válido (fila + configuração); erro ou ausência da
+      // config = indisponível, preservando o último par consistente (nunca presume recomendação).
+      const cfg = await supabase.from('roleta_config').select('canais_sem_ponto').eq('id', true).maybeSingle();
+      if (cfg.error || !cfg.data || !Array.isArray(cfg.data.canais_sem_ponto)) {
+        console.error('fetchRoleta (config indisponível, mantendo a última fila):', cfg.error?.message ?? 'roleta_config sem canais_sem_ponto');
+        setRoletaCapacidade((c) => ({ ...c, modo: 'indisponivel' }));
+        return;
+      }
+      setRoletaCapacidade({ modo: 'canal', canaisSemPonto: cfg.data.canais_sem_ponto as string[] });
+      setRoleta((nova.data || []) as RoletaStatusRow[]);
+      return;
+    }
+    if (rpcInexistente(nova.error)) {
+      const antiga = await supabase.rpc('get_roleta_status');
+      if (antiga.error) { console.error('fetchRoleta:', antiga.error.message); return; }
+      setRoletaCapacidade(ROLETA_CAPACIDADE_LEGADO);
+      setRoleta((antiga.data || []) as RoletaStatusRow[]);
+      return;
+    }
+    console.error('fetchRoleta (indisponível, mantendo a última fila):', nova.error.message);
+    setRoletaCapacidade((c) => ({ ...c, modo: 'indisponivel' }));
   }, []);
+
+  // PostgREST: função ausente = PGRST202 (schema cache) / 42883 (Postgres); coluna ausente = 42703.
+  function rpcInexistente(e: { code?: string; message?: string }) {
+    return ['PGRST202', '42883', '42703', 'PGRST204'].includes(e.code ?? '') || /Could not find the function/i.test(e.message ?? '');
+  }
+
+  const roletaSetCanais = async (memberId: string, canais: string[]) => {
+    const { error } = await supabase.rpc('roleta_set_canais', { p_member_id: memberId, p_canais: canais });
+    if (error) { toast.error(error.message); return; }
+    fetchRoleta();
+  };
 
   const roletaReset = async () => {
     const { error } = await supabase.rpc('roleta_reset');
@@ -1114,7 +1155,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchLeads, addLead, bulkImportLeads, updateLead, deleteLead,
       fetchDeals, addDeal, updateDeal, moveDeal, deleteDeal, enviarParaRokko,
       fetchReunioes, addReuniao, rescheduleReuniao, updateReuniao,
-      roleta, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem,
+      roleta, roletaCapacidade, fetchRoleta, roletaReset, roletaSetAtivo, updateRoletaOrdem, roletaSetCanais,
       fetchMetas, saveMeta,
       fetchPerformanceSdr, savePerformanceSdr,
       fetchPerformanceCloser, savePerformanceCloser,
