@@ -7,6 +7,14 @@
 //
 // Trigger (POST, autenticado por ?secret= ou Bearer): { "entity":"all"|..., "full":false }
 // Deploy: --no-verify-jwt (auth é o segredo). Secret: KOMMO_SYNC_SECRET.
+//
+// 26/10/2026 (bugs achados pela Forja):
+//  (a) toda gravação (kommo_bulk_* / kommo_sync_set) é conferida: erro NÃO avança o cursor
+//      (last_delta_at/full_page), marca sync_status.status='error' com a mensagem e a entidade
+//      seguinte continua rodando (uma entidade quebrada não para as outras); a resposta vira ok:false.
+//  (b) ação 'tasks_reconcile': tarefas abertas da réplica são conferidas no Kommo por id (lotes de
+//      50); as que o Kommo não devolve (resposta válida) saem da réplica com tombstone em
+//      kommo.tasks_removidas (migration_158). Cron a cada 30 min.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -54,14 +62,31 @@ async function getStatus(sb: any, entity: string) {
   const { data } = await sb.rpc('kommo_sync_get', { p_entity: entity })
   return data?.[0] ?? { full_done: false, full_page: null, last_delta_at: null }
 }
+class GravacaoFalhou extends Error { constructor(public entity: string, msg: string) { super(msg) } }
 async function setStatus(sb: any, entity: string, patch: any) {
-  await sb.rpc('kommo_sync_set', {
+  const { error } = await sb.rpc('kommo_sync_set', {
     p_entity: entity, p_status: patch.status ?? null, p_full_done: patch.full_done ?? null,
     p_full_page: patch.full_page ?? null, p_reset_page: patch.reset_page ?? false,
     p_last_delta_at: patch.last_delta_at ?? null, p_error: patch.error ?? null, p_count: patch.count ?? null,
   })
+  if (error) throw new GravacaoFalhou(entity, `kommo_sync_set(${entity}): ${error.message}`)
 }
-const bulk = (sb: any, name: string, rows: any[]) => (rows.length ? sb.rpc('kommo_bulk_' + name, { p: rows }) : Promise.resolve())
+// grava e CONFERE: erro de gravação lança (quem chamou não avança cursor nem marca done)
+async function bulk(sb: any, name: string, rows: any[]) {
+  if (!rows.length) return 0
+  const { data, error } = await sb.rpc('kommo_bulk_' + name, { p: rows })
+  if (error) throw new GravacaoFalhou(name, `kommo_bulk_${name}: ${error.message}`)
+  return Number(data ?? 0)
+}
+// roda uma entidade isolando a falha: registra em sync_status (status=error) sem mexer no cursor
+async function comFalhaIsolada(sb: any, entity: string, fn: () => Promise<any>) {
+  try { return await fn() } catch (e) {
+    const msg = String((e as Error)?.message ?? e).slice(0, 500)
+    console.error(`kommo-sync [${entity}]`, msg)
+    try { await setStatus(sb, entity, { status: 'error', error: msg }) } catch (e2) { console.error('kommo-sync: não gravou o erro', e2) }
+    return { entity, done: false, error: msg }
+  }
+}
 
 async function syncEntity(sb: any, kget: any, entity: string, base: string, table: string, map: (x: any) => any, full: boolean, afterPage?: (items: any[]) => Promise<void>) {
   const st = await getStatus(sb, entity)
@@ -74,7 +99,7 @@ async function syncEntity(sb: any, kget: any, entity: string, base: string, tabl
       const qs = new URLSearchParams({ 'order[updated_at]': 'asc', limit: '250', page: String(page) }).toString()
       const d = await kget(`${base}?${qs}`); const items = embed(d)
       if (!items.length) { await setStatus(sb, entity, { status: 'done', full_done: true, reset_page: true, last_delta_at: maxUpdated, count }); return { entity, done: true, count } }
-      await bulk(sb, table, items.map(map).filter(Boolean))
+      await bulk(sb, table, items.map(map).filter(Boolean))   // lança se falhar: cursor não avança
       if (afterPage) await afterPage(items)
       for (const it of items) if (it.updated_at > maxUpdated) maxUpdated = it.updated_at
       count += items.length; page++
@@ -151,6 +176,49 @@ async function upsertLeadLinks(sb: any, items: any[]) {
   await bulk(sb, 'lead_contacts', lc); await bulk(sb, 'lead_companies', lk)
 }
 
+// (b) Tarefas abertas da réplica que o Kommo não devolve mais → tombstone + remoção.
+// Semântica conferida na API (26/10): GET /tasks?filter[id][]=a&filter[id][]=b devolve só as que
+// existem (200) ou 204 se nenhuma; GET /tasks/{id} devolve 200 (existe) ou 204 (não existe).
+// Travas: (1) tarefa fora do lote na resposta = filtro ignorado → aborta (nunca marcar ausente);
+// (2) lote que volta VAZIO é conferido id a id (GET /tasks/{id}) antes de marcar ausente;
+// (3) erro de API em qualquer lote deixa o lote para a próxima rodada (nada é gravado dele).
+async function conferirLote(kget: any, lote: number[]): Promise<{ vistas: number[]; ausentes: number[] }> {
+  const qs = lote.map((id) => `filter[id][]=${id}`).join('&') + '&limit=250'
+  const d = await kget(`/tasks?${qs}`)                             // 204 → {} ; erro → lança
+  const lista = d?._embedded?.tasks
+  const envelopeOk = d && typeof d === 'object' && (!('_embedded' in d) || Array.isArray(lista))
+  if (!envelopeOk) throw new Error('/tasks?filter[id]: envelope inesperado')
+  const devolvidas = new Set(((lista ?? []) as any[]).map((t) => Number(t.id)))
+  if ([...devolvidas].some((id) => !lote.includes(id))) throw new Error('/tasks?filter[id]: ids fora do lote (filtro ignorado) — abortado')
+  if (devolvidas.size === 0) {
+    // ninguém voltou: confere uma a uma (200 = existe, 204 = não existe; outro código lança)
+    const vistas: number[] = [], ausentes: number[] = []
+    for (const id of lote) {
+      const r = await kget(`/tasks/${id}`)
+      if (r && typeof r === 'object' && Number(r.id) === id) vistas.push(id)
+      else if (r && typeof r === 'object' && Object.keys(r).length === 0) ausentes.push(id)   // 204
+      else throw new Error(`/tasks/${id}: resposta inesperada`)
+    }
+    return { vistas, ausentes }
+  }
+  return { vistas: lote.filter((id) => devolvidas.has(id)), ausentes: lote.filter((id) => !devolvidas.has(id)) }
+}
+async function reconcileTasks(sb: any, kget: any, limite = 300) {
+  const { data, error } = await sb.rpc('kommo_tasks_para_conferir', { p_limit: limite })
+  if (error) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_para_conferir: ${error.message}`)
+  const ids: number[] = (data ?? []).map((r: any) => Number(r.id)).filter((n: number) => Number.isFinite(n))
+  if (!ids.length) return { entity: 'tasks_reconcile', done: true, conferidas: 0, removidas: 0 }
+  const vistas: number[] = [], ausentes: number[] = []
+  for (let i = 0; i < ids.length; i += 50) {
+    const r = await conferirLote(kget, ids.slice(i, i + 50))
+    vistas.push(...r.vistas); ausentes.push(...r.ausentes)
+  }
+  const { data: n, error: e2 } = await sb.rpc('kommo_tasks_conferidas', { p_vistas: vistas, p_ausentes: ausentes })
+  if (e2) throw new GravacaoFalhou('tasks_reconcile', `kommo_tasks_conferidas: ${e2.message}`)
+  await setStatus(sb, 'tasks_reconcile', { status: 'done', full_done: true, count: ids.length, last_delta_at: Math.floor(Date.now() / 1000) })
+  return { entity: 'tasks_reconcile', done: true, conferidas: ids.length, vistas: vistas.length, removidas: Number(n ?? 0), ausentes_ids: ausentes.slice(0, 50) }
+}
+
 const mapLead = (x: any) => ({ id: x.id, name: x.name, pipeline_id: x.pipeline_id, status_id: x.status_id, responsible_user_id: x.responsible_user_id, price: x.price, custom_fields: x.custom_fields_values ?? null, is_deleted: false, kommo_created_at: tsISO(x.created_at), kommo_updated_at: tsISO(x.updated_at) })
 const mapContact = (x: any) => ({ id: x.id, name: x.name, first_name: x.first_name, last_name: x.last_name, responsible_user_id: x.responsible_user_id, custom_fields: x.custom_fields_values ?? null, is_deleted: false, kommo_created_at: tsISO(x.created_at), kommo_updated_at: tsISO(x.updated_at) })
 const mapCompany = (x: any) => ({ id: x.id, name: x.name, responsible_user_id: x.responsible_user_id, custom_fields: x.custom_fields_values ?? null, is_deleted: false, kommo_created_at: tsISO(x.created_at), kommo_updated_at: tsISO(x.updated_at) })
@@ -174,17 +242,23 @@ Deno.serve(async (req) => {
     const kget = makeClient(token, new RateLimiter())
     const wants = (e: string) => entity === 'all' || entity === e
     const out: any[] = []
-    if (wants('users')) out.push(await syncUsers(sb, kget))
-    if (wants('pipelines')) out.push(await syncPipelines(sb, kget))
-    if (wants('custom_fields')) out.push(await syncCustomFields(sb, kget))
-    if (wants('leads')) out.push(await syncEntity(sb, kget, 'leads', '/leads?with=contacts,companies', 'leads', mapLead, full, (items) => upsertLeadLinks(sb, items)))
-    if (wants('contacts')) out.push(await syncEntity(sb, kget, 'contacts', '/contacts', 'contacts', mapContact, full))
-    if (wants('companies')) out.push(await syncEntity(sb, kget, 'companies', '/companies', 'companies', mapCompany, full))
-    if (wants('tasks')) out.push(await syncEntity(sb, kget, 'tasks', '/tasks', 'tasks', mapTask, full))
-    if (wants('notes')) out.push(await syncEntity(sb, kget, 'notes', '/leads/notes', 'notes', mapNote, full))
-    if (wants('events')) out.push(await syncEvents(sb, kget, full))
-    const pending = out.some((o) => o && o.done === false)
-    return new Response(JSON.stringify({ ok: true, pending, result: out }), { headers: { ...cors, 'Content-Type': 'application/json' } })
+    // 'tasks_reconcile' é ação própria (cron a cada 30 min), fora do 'all' para não pesar o delta de 2 min
+    if (entity === 'tasks_reconcile') {
+      out.push(await comFalhaIsolada(sb, 'tasks_reconcile', () => reconcileTasks(sb, kget, Number(body.limit ?? 300))))
+    } else {
+      if (wants('users')) out.push(await comFalhaIsolada(sb, 'users', () => syncUsers(sb, kget)))
+      if (wants('pipelines')) out.push(await comFalhaIsolada(sb, 'pipelines', () => syncPipelines(sb, kget)))
+      if (wants('custom_fields')) out.push(await comFalhaIsolada(sb, 'custom_fields', () => syncCustomFields(sb, kget)))
+      if (wants('leads')) out.push(await comFalhaIsolada(sb, 'leads', () => syncEntity(sb, kget, 'leads', '/leads?with=contacts,companies', 'leads', mapLead, full, (items) => upsertLeadLinks(sb, items))))
+      if (wants('contacts')) out.push(await comFalhaIsolada(sb, 'contacts', () => syncEntity(sb, kget, 'contacts', '/contacts', 'contacts', mapContact, full)))
+      if (wants('companies')) out.push(await comFalhaIsolada(sb, 'companies', () => syncEntity(sb, kget, 'companies', '/companies', 'companies', mapCompany, full)))
+      if (wants('tasks')) out.push(await comFalhaIsolada(sb, 'tasks', () => syncEntity(sb, kget, 'tasks', '/tasks', 'tasks', mapTask, full)))
+      if (wants('notes')) out.push(await comFalhaIsolada(sb, 'notes', () => syncEntity(sb, kget, 'notes', '/leads/notes', 'notes', mapNote, full)))
+      if (wants('events')) out.push(await comFalhaIsolada(sb, 'events', () => syncEvents(sb, kget, full)))
+    }
+    const pending = out.some((o) => o && o.done === false && !o.error)
+    const erros = out.filter((o) => o && o.error)
+    return new Response(JSON.stringify({ ok: erros.length === 0, pending, erros: erros.length, result: out }), { status: erros.length ? 207 : 200, headers: { ...cors, 'Content-Type': 'application/json' } })
   } catch (e) {
     console.error('kommo-sync error', e)
     return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers: cors })
