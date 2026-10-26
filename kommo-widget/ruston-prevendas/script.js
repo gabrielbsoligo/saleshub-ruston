@@ -648,7 +648,8 @@
             try { pe.peerconnection.addEventListener('iceconnectionstatechange', function () { dbg('ICE conexão', pe.peerconnection.iceConnectionState, ms()); }); } catch (x) {}
             pe.peerconnection.addEventListener('track', function (te) { if (voz.sessao !== s) return; var a = audioEl(); a.srcObject = (te.streams && te.streams[0]) || null; var p = a.play && a.play(); if (p && p.catch) p.catch(function () {}); });
           });
-          s.on('accepted', function () { dbg('aceita (200 OK enviado e confirmado)', ms()); if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
+          s.on('confirmed', function () { dbg('ACK recebido (chamada confirmada)', ms()); });
+          s.on('accepted', function () { dbg('200 OK enviado (aguardando ACK)', ms()); if (voz.sessao !== s) return; voz.tocando = false; voz.emChamada = true; voz.inicio = Date.now(); voz.aviso = ''; render(); });
           var daTentativa = voz.pedida;                                     // só a chamada da tentativa encerra a janela dela
           var fim = function (e) { if (voz.sessao !== s) return; voz.sessao = null; voz.tocando = false; voz.emChamada = false; if (daTentativa) voz.pendenteAte = 0; voz.pedida = false;
                                    voz.aviso = e && e.cause && e.cause !== 'Terminated' && e.cause !== 'Canceled' ? 'Chamada encerrada (' + e.cause + ').' : 'Chamada encerrada.'; render(); };
