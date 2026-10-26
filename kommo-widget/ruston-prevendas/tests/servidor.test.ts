@@ -18,7 +18,7 @@ test('defesa em profundidade: concluída ou de outro dono não vira item', () =>
 
 test('slot da cadência e origem do lead', () => {
   const [i] = montarItens([t(5, { task_type_id: 3732751 })], UID, { 50: { nome: 'X', etapa: 'REUNIÃO MARCADA', origem: 'Leadbroker' } }, { 5: 'T5' })
-  assert.equal(i.momento, 'anti_noshow'); assert.equal(i.acao, 'ligar'); assert.equal(i.grupo, 'G4'); assert.equal(i.lead_nome, 'X'); assert.equal(i.origem_pendente, false)
+  assert.equal(i.momento, 'anti_noshow'); assert.equal(i.acao, 'ligar'); assert.equal(i.grupo, 'G2'); assert.equal(i.lead_nome, 'X'); assert.equal(i.origem_pendente, false)
 })
 
 test('lead sem dados fica com origem_pendente (não "sem origem")', () => {

@@ -358,3 +358,14 @@ Conferir um lote limitado em cima de uma réplica não confiável gerava casos s
 - A falha só é limpa por uma leitura **posterior** a ela (`Fila.falhaApos`): cache de antes da falha não comprova recuperação.
 - Notificação só sai com dados recentes **e** sem falha, no líder e nas seguidoras.
 - Testes cobrem, depois de uma falha: cache 30 s mais velho (dentro de 3 ciclos), cache com o mesmo `gerado_em` e leitura posterior. Em cada caso conferem falha, `dadosEm`, ids e ações.
+
+### Decisões do Gabriel (26/10) aplicadas
+1. **Anti no-show e pré-reunião são o mesmo momento** (slots T0–T6 = anti no-show). O canal vem do campo Origem (opção B).
+2. **Sem corte das 16h:** o outbound entra só pela ordem.
+3. **Leadbroker, Blackbox e Foodbox contam como Inbound (G2).** A opção "Inbound" não foi criada no campo.
+
+Pendências, por decisão do Gabriel:
+- migrar as tarefas abertas para os tipos novos só depois dos testes;
+- mudar a cadência só com o widget pronto.
+
+Para a fatia 3, junto com o click-to-call: a fila do CLOSER organizada pela etapa do funil Closer.

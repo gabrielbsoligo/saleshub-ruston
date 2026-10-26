@@ -19,30 +19,25 @@
   // Fila — regras puras (testadas em tests/fila.test.cjs)
   // ======================================================================
   var Fila = (function () {
-    var NIVEL = { anti_noshow: 1, speed_to_lead: 2, conexao: 3, follow_up: 4, recuperar: 5, pre_reuniao: 6, sem_classificacao: 9 };
-    var GRUPOS_PADRAO = ['G1', 'G2', 'G3', 'G4', 'G5', 'G9'];
+    // decisão 26/10: pré-reunião = anti no-show (um momento só)
+    var NIVEL = { anti_noshow: 1, speed_to_lead: 2, conexao: 3, follow_up: 4, recuperar: 5, sem_classificacao: 9 };
+    var GRUPOS_PADRAO = ['G1', 'G2', 'G3', 'G5', 'G9'];
     var COM_ORIGEM = { 4: 1, 5: 1, 7: 1 };
     var ROTULO = {
       anti_noshow: 'Anti no-show', speed_to_lead: 'Speed to lead', conexao: 'Conexão', follow_up: 'Follow-up',
-      recuperar: 'Recuperar no-show', pre_reuniao: 'Pré-reunião', prospeccao: 'Prospecção', sem_classificacao: 'Outras'
+      recuperar: 'Recuperar no-show', prospeccao: 'Prospecção', sem_classificacao: 'Outras'
     };
-    var ROTULO_GRUPO = { G1: 'Indicação', G2: 'Inbound', G3: 'Base própria', G4: 'Leadbroker', G5: 'Outbound', G9: 'Sem origem' };
+    var ROTULO_GRUPO = { G1: 'Indicação', G2: 'Inbound', G3: 'Base própria', G5: 'Outbound', G9: 'Sem origem' };
 
-    // prospecção: quente (G1–G4) = 7, sem origem (G9) = 7.5 (neutro, sem janela), outbound (G5) = 8
+    // prospecção: quente (G1–G3) = 7, sem origem (G9) = 7.5 (neutro), outbound (G5) = 8 — entra só pela ordem (decisão 26/10: sem corte de horário)
     function nivel(item) {
       if (item.momento === 'prospeccao') return item.grupo === 'G5' ? 8 : (item.grupo === 'G9' ? 7.5 : 7);
       var n = NIVEL[item.momento];
       return n == null ? 9 : n;
     }
 
-    function minutos(hhmm) {
-      var m = String(hhmm || '').match(/^(\d{1,2}):(\d{2})$/);
-      if (!m) return 16 * 60;
-      return Math.min(23, +m[1]) * 60 + Math.min(59, +m[2]);
-    }
-
     /**
-     * itens: [{id, due, momento, grupo, urgente}] · cfg: {antecedencia_min, outbound_apos, grupos}
+     * itens: [{id, due, momento, grupo, urgente}] · cfg: {antecedencia_min, grupos}
      * retorna {fila, futura}
      */
     function ordenar(itens, cfg, agora, minutoDoDia) {
@@ -56,14 +51,7 @@
         if (it.urgente || !it.due || it.due <= limite) elegiveis.push(x); else futuras.push(x);
       });
 
-      // janela do outbound (só nível 8): depois do corte, ou se não houver nada nos níveis 1–7b
-      var depoisDoCorte = minutoDoDia >= minutos(cfg.outbound_apos);
-      var temPrioritaria = elegiveis.some(function (x) { return x.nivel < 8; });
-      var fila = elegiveis.filter(function (x) {
-        if (x.nivel !== 8 || depoisDoCorte || !temPrioritaria) return true;
-        futuras.push(x);
-        return false;
-      });
+      var fila = elegiveis;
 
       fila.sort(function (a, b) {
         if (a.nivel !== b.nivel) return a.nivel - b.nivel;
@@ -127,7 +115,7 @@
     }
 
     return {
-      ordenar: ordenar, nivel: nivel, minutos: minutos, proximoDe: proximoDe, paraNotificar: paraNotificar,
+      ordenar: ordenar, nivel: nivel, proximoDe: proximoDe, paraNotificar: paraNotificar,
       devoLiderar: devoLiderar, classificarLocal: classificarLocal,
       semMarcadas: semMarcadas, leituraMaisNova: leituraMaisNova, falhaApos: falhaApos, ROTULO: ROTULO, ROTULO_GRUPO: ROTULO_GRUPO
     };
@@ -144,7 +132,7 @@
       var NS = 'rpv';
       var DEFAULTS = {
         endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
-        antecedencia_min: 10, outbound_apos: '16:00', grupos: 'G1,G2,G3,G4,G5,G9',
+        antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
         sound: 'Y', lookahead_min: 15, atalho: 'Y'
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
@@ -174,7 +162,6 @@
           position: pos, offset: int(s.offset, DEFAULTS.offset, 0, 400),
           poll: int(s.poll_seconds, DEFAULTS.poll_seconds, 15),
           antecedencia_min: int(s.antecedencia_min, DEFAULTS.antecedencia_min, 0, 240),
-          outbound_apos: /^\d{1,2}:\d{2}$/.test(String(s.outbound_apos || '').trim()) ? String(s.outbound_apos).trim() : DEFAULTS.outbound_apos,
           grupos: String(s.grupos || DEFAULTS.grupos).split(',').map(function (x) { return x.trim().toUpperCase(); }).filter(Boolean),
           sound: String(s.sound || DEFAULTS.sound).toUpperCase() !== 'N',
           lookahead: int(s.lookahead_min, DEFAULTS.lookahead_min, 0, 240),
@@ -347,7 +334,7 @@
         var now = agoraS(), snooze = lsGet('snooze', {}), marcas = lsGet('marcas', {});
         var ok = function (t) { return t && t.entity_id && !(snooze[t.id] && snooze[t.id] > now); };
         var itens = Fila.semMarcadas(state.itens, marcas, Date.now(), MARCA_TTL_MS).filter(ok).map(paraQ);
-        var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, outbound_apos: c.outbound_apos, grupos: c.grupos }, now, minutoDoDia());
+        var c = cfg(), r = Fila.ordenar(itens, { antecedencia_min: c.antecedencia_min, grupos: c.grupos }, now, minutoDoDia());
         state.fila = r.fila; state.futura = r.futura;
         if (state.atual) {
           var alvo = state.atual.id, novo = null;

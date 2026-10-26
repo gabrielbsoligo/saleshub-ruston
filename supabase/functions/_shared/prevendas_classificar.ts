@@ -5,9 +5,9 @@
 
 export type Momento =
   | 'anti_noshow' | 'speed_to_lead' | 'conexao' | 'follow_up' | 'recuperar'
-  | 'pre_reuniao' | 'prospeccao' | 'sem_classificacao'
+  | 'prospeccao' | 'sem_classificacao'
 export type Acao = 'ligar' | 'whatsapp' | 'email' | 'outro'
-export type Grupo = 'G1' | 'G2' | 'G3' | 'G4' | 'G5' | 'G9'
+export type Grupo = 'G1' | 'G2' | 'G3' | 'G5' | 'G9'
 
 export interface Tarefa {
   id: number
@@ -30,12 +30,12 @@ export interface Classificacao {
 // tipos legados da conta (GET /api/v4/account?with=task_types)
 export const TIPO = { FOLLOW_UP: 1, LIGACAO: 3732751, WHATSAPP: 3732759, EMAIL: 3732747, SEM_TAREFA: 3920343, ALERTA: 3928475, CLIENTE_OCULTO: 4299552 }
 
-// slots da cadência de reunião (kommo.plan_reconcile, migration 155)
+// slots da cadência de reunião (kommo.plan_reconcile, migration 155). Decisão 26/10: pré-reunião = anti no-show.
 const SLOTS: Record<string, { momento: Momento; acao: Acao }> = {
-  T0: { momento: 'pre_reuniao', acao: 'outro' },     // cliente oculto (closer)
-  T1: { momento: 'pre_reuniao', acao: 'whatsapp' },  // gerar valor
-  T2: { momento: 'pre_reuniao', acao: 'whatsapp' },
-  T3: { momento: 'pre_reuniao', acao: 'whatsapp' },  // vídeo véspera
+  T0: { momento: 'anti_noshow', acao: 'outro' },     // cliente oculto (closer)
+  T1: { momento: 'anti_noshow', acao: 'whatsapp' },  // gerar valor
+  T2: { momento: 'anti_noshow', acao: 'whatsapp' },
+  T3: { momento: 'anti_noshow', acao: 'whatsapp' },  // vídeo véspera
   T4: { momento: 'anti_noshow', acao: 'whatsapp' },  // closer, manhã da reunião
   T5: { momento: 'anti_noshow', acao: 'ligar' },     // -15 min
   T6: { momento: 'anti_noshow', acao: 'ligar' },     // +5 min
@@ -45,11 +45,11 @@ const SLOTS: Record<string, { momento: Momento; acao: Acao }> = {
 }
 
 // Origem do lead (975168) → grupo. Valor fora do mapa ou vazio = G9 (NUNCA outbound).
+// Decisão 26/10: Leadbroker, Blackbox e Foodbox contam como INBOUND (não há opção "Inbound" no campo).
 export const GRUPO_POR_ORIGEM: Record<string, Grupo> = {
   'recomendacao': 'G1', 'indicacao de cliente': 'G1', 'networking': 'G1', 'evento': 'G1',
-  'inbound': 'G2',
+  'inbound': 'G2', 'leadbroker': 'G2', 'blackbox': 'G2', 'foodbox': 'G2',
   'recovery': 'G3', 'reativacao': 'G3',
-  'leadbroker': 'G4',
   'outbound': 'G5', 'thunderbolt': 'G5', 'usa': 'G5',
 }
 

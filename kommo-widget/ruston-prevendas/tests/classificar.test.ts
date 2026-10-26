@@ -43,14 +43,22 @@ test('NEGATIVO: a etapa do lead NÃO define o momento da tarefa (contrato §2.4)
 
 test('origem → grupo; vazio/desconhecido = G9 (nunca outbound)', () => {
   assert.equal(grupoDaOrigem('Recomendação'), 'G1')
-  assert.equal(grupoDaOrigem('Leadbroker'), 'G4')
+  // decisão 26/10: Leadbroker, Blackbox e Foodbox = Inbound
+  assert.equal(grupoDaOrigem('Leadbroker'), 'G2')
+  assert.equal(grupoDaOrigem('Blackbox'), 'G2')
   assert.equal(grupoDaOrigem('Outbound'), 'G5')
   assert.equal(grupoDaOrigem(''), 'G9')
   assert.equal(grupoDaOrigem(null), 'G9')
-  assert.equal(grupoDaOrigem('Foodbox'), 'G9')
+  assert.equal(grupoDaOrigem('Foodbox'), 'G2')
+  assert.equal(grupoDaOrigem('Thunderbolt'), 'G5')
 })
 
 test('mapaSlots aceita objeto e ignora array vazio', () => {
   const m = mapaSlots([{ cadencia_task_ids: { T5: 4104425, T6: '4104427' } }, { cadencia_task_ids: [] }, { cadencia_task_ids: null }])
   assert.equal(m.get(4104425), 'T5'); assert.equal(m.get(4104427), 'T6'); assert.equal(m.size, 2)
+})
+
+test('decisão 26/10: pré-reunião (T0–T3) é anti no-show', () => {
+  for (const s of ['T0', 'T1', 'T2', 'T3', 'T4', 'T5', 'T6']) assert.equal(classificar(t(1, 1), s, null).momento, 'anti_noshow', s)
+  assert.equal(classificar(t(1, TIPO.WHATSAPP), 'T3', null).acao, 'whatsapp')
 })

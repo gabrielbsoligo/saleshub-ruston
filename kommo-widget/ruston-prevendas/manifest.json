@@ -3,7 +3,7 @@
     "name": "widget.name",
     "description": "widget.description",
     "short_description": "widget.short_description",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "interface_version": 2,
     "init_once": true,
     "locale": [
@@ -51,11 +51,6 @@
     },
     "antecedencia_min": {
       "name": "settings.antecedencia_min",
-      "type": "text",
-      "required": false
-    },
-    "outbound_apos": {
-      "name": "settings.outbound_apos",
       "type": "text",
       "required": false
     },
