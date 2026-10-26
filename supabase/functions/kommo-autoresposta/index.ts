@@ -106,7 +106,9 @@ function repoSupabase(db: Db): Repo {
 
 Deno.serve(async (req) => {
   const url = new URL(req.url)
-  const segredo = req.headers.get('x-autoresposta-secret') ?? url.searchParams.get('s') ?? url.searchParams.get('amp;s')
+  // segredo: header, ?s=, ou segmento de caminho /s/<segredo> (a API de webhooks do Kommo rejeita
+  // destino com query string — "Invalid URL" —, mas aceita caminho)
+  const segredo = req.headers.get('x-autoresposta-secret') ?? url.searchParams.get('s') ?? url.searchParams.get('amp;s') ?? (url.pathname.match(/\/s\/([^/]+)\/?$/)?.[1] ?? null)
   if (!SECRET || segredo !== SECRET) return json({ error: 'segredo inválido' }, 401)
   const db = sb()
   try {

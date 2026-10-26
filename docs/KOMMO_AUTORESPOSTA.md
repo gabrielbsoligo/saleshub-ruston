@@ -86,7 +86,7 @@ opções / 1 - Comercial", "Seja bem-vindo(a) à …", "horário de atendimento"
    (ou `verify_jwt = false` em `supabase/config.toml`). Env: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`;
    opcional `KOMMO_AUTORESPOSTA_CAMPO` (padrão `Triagem Resposta`).
 4. **Migration 159** (colunas da mensagem em `autoresposta_trabalho`).
-5. **Webhook de conta**: `POST /api/v4/webhooks` com `destination` = URL da edge com `?s=<segredo>` e
+5. **Webhook de conta**: `POST /api/v4/webhooks` com `destination` = URL da edge com `/s/<segredo>  (a API de webhooks do Kommo rejeita query string no destino; o header x-autoresposta-secret e ?s= continuam valendo para chamadas manuais)` e
    `settings: ["add_message"]` (conferir com `GET /api/v4/webhooks`). O webhook antigo desativado que
    aponta para outro projeto (id 47386956) não precisa ser mexido.
 6. **Gatilho antigo** "Mensagem recebida em qualquer canal → RESPONDEU": enquanto `modo = observar`,
