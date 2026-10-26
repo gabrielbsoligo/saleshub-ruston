@@ -10,6 +10,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
 import { firePrepCallRoutine } from '../lib/prepCallRoutine';
+import { CasesPanel, CasesRecentes } from './CasesPanel';
 import { MarkdownView } from './ui/MarkdownView';
 import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, PrepBriefingProgressStage, Lead } from '../types';
 import { cn } from './Layout';
@@ -204,6 +205,7 @@ export const PrepCallView: React.FC = () => {
 
       {/* Lista */}
       <div className="flex-1 overflow-y-auto">
+        <CasesRecentes />
         {loading ? (
           <div className="flex justify-center py-12 text-[var(--color-v4-text-muted)]">
             <Loader2 size={24} className="animate-spin" />
@@ -862,6 +864,7 @@ const BriefingDrawer: React.FC<{
           ) : (
             <p className="text-sm text-[var(--color-v4-text-muted)]">Sem conteúdo.</p>
           )}
+          <CasesPanel leadId={b.lead_id} empresa={b.empresa} />
         </div>
       </div>
     </div>
