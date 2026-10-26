@@ -185,3 +185,21 @@ export function interpretar3c(status: number, corpo: unknown): Resultado4com {
   if (status === 0 || status >= 500) return { ok: false, erro: 'provedor_indisponivel', mensagem: msg || 'O 3C não respondeu.', incerto: true }
   return { ok: false, erro: 'provedor_recusou', mensagem: msg || `O 3C recusou a ligação (${status}).` }
 }
+
+export type Preparo3c =
+  | { tipo: 'ok'; c: NonNullable<ReturnType<typeof credencial3c>> }
+  | { tipo: 'limite'; retryAfter: number }
+  | { tipo: 'sem_ramal' }
+  | { tipo: 'indisponivel' }
+/**
+ * PREPARAÇÃO da discagem 3C (ramal do agente), separada do ENVIO: nada aqui é "incerto", porque o /click2call
+ * ainda não foi chamado. 429 vira limite com o Retry-After recebido (1..3600, padrão 60).
+ */
+export async function prepararAgente3c(obter: () => Promise<{ status: number; retryAfter: string | null; u: unknown }>): Promise<Preparo3c> {
+  let r: { status: number; retryAfter: string | null; u: unknown }
+  try { r = await obter() } catch { return { tipo: 'indisponivel' } }
+  if (r.status === 429) return { tipo: 'limite', retryAfter: Math.min(3600, Math.max(1, Number(r.retryAfter) || 60)) }
+  if (r.status < 200 || r.status >= 300) return { tipo: 'indisponivel' }
+  const c = credencial3c(r.u)
+  return c ? { tipo: 'ok', c } : { tipo: 'sem_ramal' }
+}

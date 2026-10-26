@@ -139,9 +139,9 @@
       telefone_invalido: 'Telefone inválido.',
       ja_discando: 'Já há uma ligação sua iniciada há menos de 20 s.',
       limite: 'Muitas tentativas; aguarde um minuto.',
-      provedor_auth: 'A 4com recusou a credencial do servidor.',
-      provedor_limite: 'Limite de ligações da 4com atingido; tente em 1 minuto.',
-      provedor_indisponivel: 'A 4com não respondeu a tempo; confira se a ligação aconteceu antes de tentar de novo.',
+      provedor_auth: 'O provedor de telefonia recusou a credencial do servidor.',
+      provedor_limite: 'Limite de ligações do provedor de telefonia atingido; tente em 1 minuto.',
+      provedor_indisponivel: 'O provedor de telefonia não respondeu a tempo; confira se a ligação aconteceu antes de tentar de novo.',
       nao_configurado: 'Telefone não configurado no servidor.',
       usuario_inativo: 'Usuário inativo no SalesHub.'
     };
@@ -682,7 +682,7 @@
         chamarVoz({ acao: 'discar', entity_type: aqui.etype, entity_id: aqui.eid, telefone: tel }, function (err) {
           if (t !== voz.tentativa || posse !== voz.posse) return;          // resposta de tentativa/posse antiga: ignora
           voz.discando = false;
-          if (err) { voz.pendenteAte = 0; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = Fila.mensagemVoz(err.erro, err.mensagem && err.erro === 'provedor_recusou' ? err.mensagem : ''); }
+          if (err) { voz.pendenteAte = 0; if (voz.sessao && !voz.emChamada) voz.pedida = false; voz.aviso = err.mensagem && /^provedor_/.test(err.erro) ? String(err.mensagem) : Fila.mensagemVoz(err.erro); }   // a mensagem do servidor é a mais precisa (ex.: nenhuma ligação foi feita)
           else if (!voz.sessao) voz.aviso = '';
           render();
         });

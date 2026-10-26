@@ -21,7 +21,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { esperarFicha, Interrupcao } from '../_shared/prevendas_servidor.ts'
 import {
-  credencial3c, decidirEntidade, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao, telefone3c,
+  credencial3c, decidirEntidade, prepararAgente3c, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao, telefone3c,
   telefoneE164, usuarioLiberado,
 } from '../_shared/prevendas_voz.ts'
 
@@ -94,8 +94,8 @@ Deno.serve(async (req) => {
   const registrar = (id: number, resultado: string, detalhe?: string) =>
     sb.rpc('prevendas_voz_registrar', { p_id: id, p_resultado: resultado, p_detalhe: detalhe ?? null })
   // 429 do provedor: bloqueio a partir de AGORA (instante da resposta) pelo Retry-After efetivo; erro é logado
-  const bloquear = async (a: 'credencial' | 'discar', r: Response) => {
-    const ra = Math.min(3600, Math.max(1, Number(r.headers.get('Retry-After')) || 60))
+  const bloquear = async (a: 'credencial' | 'discar', r: Response | number) => {
+    const ra = Math.min(3600, Math.max(1, (typeof r === 'number' ? r : Number(r.headers.get('Retry-After'))) || 60))
     const { error } = await sb.rpc('prevendas_voz_bloquear', { p_user: uid, p_acao: a, p_seg: ra })
     if (error) console.error('[prevendas-voz] bloqueio', error.message)
     return ra
@@ -184,11 +184,23 @@ Deno.serve(async (req) => {
 
     let r: Response | null = null, corpo: unknown = null, ramalUsado = ramal
     if (provedor === '3c') {
+      // PREPARAÇÃO (ramal do agente) — prepararAgente3c, testada: falha aqui NUNCA é "incerto" (o /click2call não foi chamado)
+      const prep = await prepararAgente3c(async () => { const { r, u } = await usuario3c(); return { status: r.status, retryAfter: r.headers.get('Retry-After'), u } })
+      if (prep.tipo === 'limite') {
+        const ra = await bloquear('discar', prep.retryAfter)
+        await registrar(ev, 'limite', `agente 3c 429 (${ra}s)`)
+        return json({ erro: 'provedor_limite', retry_after: ra }, 503, origin)
+      }
+      if (prep.tipo !== 'ok') {
+        await registrar(ev, prep.tipo === 'sem_ramal' ? 'negado' : 'recusado', `agente 3c: ${prep.tipo}`)
+        return prep.tipo === 'sem_ramal'
+          ? json({ erro: 'sem_ramal' }, 403, origin)
+          : json({ erro: 'provedor_indisponivel', mensagem: 'O 3C não respondeu (nenhuma ligação foi feita).' }, 503, origin)
+      }
+      const c = prep.c
+      ramalUsado = c.ramal
+      // ENVIO: daqui em diante, falha de rede = incerto (a ligação pode ter saído)
       try {
-        const { r: ru, u } = await usuario3c()
-        const c = ru.ok ? credencial3c(u) : null
-        if (!c) { await registrar(ev, 'negado', `agente 3c ${ru.status}`); return json({ erro: ru.ok ? 'sem_ramal' : 'provedor_indisponivel' }, ru.ok ? 403 : 503, origin) }
-        ramalUsado = c.ramal
         r = await fetch(`${API3C}/click2call`, {
           method: 'POST', headers: { Authorization: `Bearer ${token3c}`, 'Content-Type': 'application/json', Accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_DISCAR_MS),
           body: JSON.stringify({ extension: c.ramal, phone: telefone3c(destino!) }),
