@@ -1,7 +1,7 @@
 // deno test --allow-read supabase/functions/kommo-autoresposta/motor_test.ts
 // Fluxo completo (webhook → decisão → efeito → varredura) com repositório e Kommo FALSOS, sem rede.
 import { assert, assertEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { LeituraFalhou, Throttled, aplicarEfeito, correlacionar, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
+import { LeituraFalhou, Throttled, aplicarEfeito, contatosDoLead, correlacionar, eventosChat, filtrarDoLead, urlEventosChat, processarTrabalho, receberWebhook, ultimoDisparoAte, varrer, type Deps, type KommoFn, type Linha, type Repo, type Trabalho } from './motor.ts'
 import type { Cfg, Padrao } from './triagem.ts'
 
 const PIPE = 14062116, RESP = 108545256, D1 = 108545280, D2 = 108545284
@@ -32,6 +32,7 @@ function repoFake(cfg: Cfg | null = cfgBase) {
       async atualizarTexto(id: number, texto: string) { const l = linhas.find((x) => x.id === id)!; if (l.estado_efeito !== 'pendente' || l.decidido_em) return false; l.texto = texto; return true },
       async concluirTrabalho(id: number, estado: string, erro: string | null = null) { const t = trabalhos.find((x) => x.id === id)!; t.estado = estado; t.erro = erro; if (estado === 'pendente') t.tentativas++ },
       async trabalhosPendentes(n: number) { return trabalhos.filter((t) => t.estado === 'pendente').slice(0, n) },
+      async contatoDaMensagem(mensagemId: string) { const t = [...trabalhos].reverse().find((x) => x.mensagem_id === mensagemId); return t?.contact_id ?? null },
       async linhasDoLead(leadId: number) { return copia(linhas.filter((l) => l.kommo_lead_id === leadId)) },
       async criarLinhas(novas: Partial<Linha>[]) { for (const n of novas) if (!linhas.some((l) => l.kommo_lead_id === n.kommo_lead_id && l.mensagem_id === n.mensagem_id)) linhas.push(Object.assign({ id: seq++, texto: null, hash: null, decidido_em: null, claim_token: null, efeito_fase: null, tentativas: 0, lease_ate: null, extra: {} }, n) as LinhaFake) },
       async linha(leadId: number, m: string) { return copia(linhas.find((l) => l.kommo_lead_id === leadId && l.mensagem_id === m)!) },
@@ -62,9 +63,9 @@ function kommoFake(o: KommoFakeOpts) {
       if (m === 'GET') throw new LeituraFalhou(etapa, `HTTP ${st}`)
       return { ok: false, status: st, body: null }
     }
-    if (m === 'GET' && /\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: o.leadPipeline ?? PIPE, status_id: o.leadStatus ?? D1, custom_fields_values: [{ field_id: 99, values: [{ value: o.texto ?? '' }] }], _embedded: { tags: (o.tags ?? []).map((n, i) => ({ id: i + 1, name: n })) } } }
-    if (m === 'GET' && p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: (o.ins ?? []).map((i) => ({ id: i.id, created_at: i.ts, value_after: [{ message: { id: i.id } }] })) } } }
-    if (m === 'GET' && p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: (o.outs ?? []).map((t, i) => ({ id: `o${i}`, created_at: t })) } } }
+    if (m === 'GET' && /\/api\/v4\/leads\/\d+(\?with=contacts)?$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: o.leadPipeline ?? PIPE, status_id: o.leadStatus ?? D1, custom_fields_values: [{ field_id: 99, values: [{ value: o.texto ?? '' }] }], _embedded: { tags: (o.tags ?? []).map((n, i) => ({ id: i + 1, name: n })), contacts: [{ id: 77, is_main: true }] } } }
+    if (m === 'GET' && p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: (o.ins ?? []).map((i) => ({ id: i.id, created_at: i.ts, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: i.id } }] })) } } }
+    if (m === 'GET' && p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: (o.outs ?? []).map((t, i) => ({ id: `o${i}`, created_at: t, entity_type: 'lead', entity_id: 1 })) } } }
     if (m === 'GET' && p.includes('custom_fields')) return { ok: true, status: 200, body: { _embedded: { custom_fields: [{ id: 99, name: 'Triagem Resposta' }] } } }
     if (m === 'GET' && p.includes('/notes')) return { ok: true, status: 200, body: { _embedded: { notes: notas.map((t) => ({ params: { text: t } })) } } }
     escritas.push({ m, p, body })
@@ -436,9 +437,9 @@ Deno.test('R5#3 leadPeloContato: lê TODOS os leads; candidato só em etapa de o
 Deno.test('R5#4 evento de /events sem id de mensagem no mesmo instante do webhook é a MESMA mensagem (não cria 2ª linha)', async () => {
   const st = repoFake()
   const k: KommoFn = async (m, p, b, o) => {
-    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
-    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'evento-alias', created_at: T0 - 5, value_after: [{}] }] } } }
-    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    if (/\/api\/v4\/leads\/\d+(\?with=contacts)?$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'evento-alias', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] } } }
     return { ok: true, status: 200, body: {} }
   }
   const r = await receberWebhook({ ...deps(st.repo, k), campoTexto: '' }, 1, { id: 'wh-uuid', ts: T0 - 5, texto: 'Agradecemos sua mensagem' })
@@ -471,9 +472,9 @@ Deno.test('R6#2 evento atrasado sem id (alias) de uma mensagem já registrada n�
   const st = repoFake()
   let fase = 1
   const k: KommoFn = async (m, p, b, o) => {
-    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
-    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: fase === 1 ? [] : [{ id: 'ev-sem-id', created_at: T0 - 5, value_after: [{}] }] } } }
-    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    if (/\/api\/v4\/leads\/\d+(\?with=contacts)?$/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: fase === 1 ? [] : [{ id: 'ev-sem-id', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] } } }
     return { ok: true, status: 200, body: {} }
   }
   const d = { ...deps(st.repo, k), campoTexto: '' }
@@ -488,12 +489,12 @@ Deno.test('R6#3 varredura: alias do próprio evento não bloqueia R3 (mesmo text
   const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
   const escritas: any[] = []
   const k: KommoFn = async (m, p, b, o) => {
-    const mLead = p.match(/\/leads\/(\d+)$/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
+    const mLead = p.match(/\/leads\/(\d+)(\?|$)/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
     const lead = Number(mLead?.[1] ?? mEnt?.[1] ?? 1)
     if (m !== 'GET') escritas.push({ m, p, b })
-    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
-    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: `ev-${lead}`, created_at: T0 - 5, value_after: [{}] }] } } }
-    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    if (/\/api\/v4\/leads\/\d+(\?with=contacts)?$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: lead, is_main: true }] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: `ev-${lead}`, created_at: T0 - 5, entity_type: 'lead', entity_id: lead, value_after: [{}] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10, entity_type: 'lead', entity_id: lead }] } } }
     return { ok: true, status: 200, body: {} }
   }
   const d = { ...deps(st.repo, k), campoTexto: '' }
@@ -523,12 +524,12 @@ Deno.test('R7 evidência R3 (texto longo em 2 outros leads) NÃO vence conversa 
   const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
   const escritas: any[] = []
   const k: KommoFn = async (m, p, b, o) => {
-    const mLead = p.match(/\/leads\/(\d+)$/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
+    const mLead = p.match(/\/leads\/(\d+)(\?|$)/); const mEnt = p.match(/filter\[entity_id\]\[0\]=(\d+)/)
     const lead = Number(mLead?.[1] ?? mEnt?.[1] ?? 1)
     if (m !== 'GET') escritas.push({ m, p, b, lead })
-    if (/\/api\/v4\/leads\/\d+$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [] } } }
+    if (/\/api\/v4\/leads\/\d+(\?with=contacts)?$/.test(p)) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: lead, is_main: true }] } } }
     if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }   // /events atrasado para todos
-    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10 }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o', created_at: T0 - 10, entity_type: 'lead', entity_id: lead }] } } }
     return { ok: true, status: 200, body: {} }
   }
   const d = { ...deps(st.repo, k), campoTexto: '' }
@@ -538,4 +539,121 @@ Deno.test('R7 evidência R3 (texto longo em 2 outros leads) NÃO vence conversa 
   const b = await receberWebhook(d, 1, { id: 'w1b', ts: T0 - 4, texto })           // mesmo texto longo dos outros 2 leads
   assertEquals(b.classificacao, 'humano'); assertEquals(b.estado, 'aplicado')
   assertEquals(escritas.filter((e) => e.b?.status_id === RESP && e.lead === 1).length, 1)
+})
+
+
+Deno.test('R8 eventos de chat vêm pelo CONTATO (filter[entity][0]=contact) e são filtrados pelo lead; outros leads do mesmo contato não contam', async () => {
+  assertEquals(contatosDoLead({ _embedded: { contacts: [{ id: 5 }, { id: 9, is_main: true }] } }), [9, 5])  // principal primeiro, mas TODOS
+  assertEquals(contatosDoLead({ _embedded: { contacts: [{ id: 5 }] } }, 42), [5, 42])                    // contato do webhook entra se não vinculado
+  assertEquals(contatosDoLead({ _embedded: { contacts: [] } }, 42), [42])
+  assertEquals(contatosDoLead({}, null), [])
+  assert(urlEventosChat(77, 'incoming_chat_message', 100).startsWith('/api/v4/events?filter[entity][0]=contact&filter[entity_id][0]=77&filter[type]=incoming_chat_message&filter[created_at][from]=100'))
+  const body = { ok: true, status: 200, body: { _embedded: { events: [{ id: 'a', entity_type: 'lead', entity_id: 1 }, { id: 'b', entity_type: 'lead', entity_id: 2 }, { id: 'c', entity_type: 'talk', entity_id: 1 }] } } }
+  assertEquals(filtrarDoLead(body, 'eventos_in', 1).map((e: any) => e.id), ['a'])
+  // ponta a ponta: a URL pedida usa o contato do lead; eventos de outro lead do contato são ignorados
+  const st = repoFake(); const urls: string[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    if (m === 'GET') urls.push(p)
+    if (/\/api\/v4\/leads\/\d+/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }] } } }
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'e-outro', created_at: T0 - 4, entity_type: 'lead', entity_id: 2, value_after: [{ message: { id: 'm-outro' } }] }] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o-outro', created_at: T0 - 3, entity_type: 'lead', entity_id: 2 }, { id: 'o1', created_at: T0 - 1000, entity_type: 'lead', entity_id: 1 }] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const r = await receberWebhook({ ...deps(st.repo, k), campoTexto: '' }, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })
+  assert(urls.some((u) => u.includes('filter[entity][0]=contact&filter[entity_id][0]=77&filter[type]=incoming_chat_message')))
+  assert(urls.some((u) => u.includes('/api/v4/leads/1?with=contacts')))
+  assertEquals(st.linhas.length, 1)                                               // 'm-outro' (lead 2) não virou linha
+  assertEquals(st.linhas[0].intervalo_s, 995)                                     // último disparo = o do lead 1 (T0-1000), não o do lead 2
+  assertEquals(r.classificacao, 'humano')                                         // 'ok' 995 s depois do disparo: não é rápida
+})
+
+
+Deno.test('R9#1 contato SECUNDÁRIO: webhook e disparo no contato 88 (principal 77) → consulta os dois; intervalo=5, R2 indeterminado, zero PATCH; varredura idem', async () => {
+  const st = repoFake(); const urls: string[] = []; const escritas: any[] = []
+  const k: KommoFn = async (m, p, b, o) => {
+    if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+    if (/\/api\/v4\/leads\/\d+/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }, { id: 88 }] } } }
+    const contato = Number((p.match(/filter\[entity_id\]\[0\]=(\d+)/) ?? [])[1])
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'i88', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'w1' } }] }] : [] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'o88', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] : [] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' }, 88)
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(st.linhas[0].intervalo_s, 5)
+  assertEquals(escritas.filter((e) => e.b?.status_id).length, 0)
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=77&filter[type]=outgoing')) && urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')))
+  // varredura (linha sem contact_id): resolve pelos vinculados do lead → consulta o 88 também; passada a
+  // espera sem 2ª mensagem, R2 resolve humano (1 PATCH) — com o intervalo certo (5 s), não "sem disparo"
+  urls.length = 0
+  await varrer({ ...d, agora: () => T0 + 400 })
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')) && urls.some((u) => u.includes('filter[entity_id][0]=77&filter[type]=outgoing')))
+  assertEquals(st.linhas[0].classificacao, 'humano'); assertEquals(st.linhas[0].intervalo_s, 5); assertEquals(escritas.filter((e) => e.b?.status_id).length, 1)
+})
+
+Deno.test('R9#2 paginação por _links.next: disparo do lead na página 2 (página 1 só com outro lead) é visto; orçamento estourado = LeituraFalhou (trabalho pendente, sem PATCH)', async () => {
+  const pagina = (p: string) => Number((p.match(/[?&]page=(\d+)/) ?? [])[1] ?? 1)
+  const outros = Array.from({ length: 100 }, (_, i) => ({ id: `x${i}`, created_at: T0 - 1 - i, entity_type: 'lead', entity_id: 2 }))
+  const fabrica = (paginasOut: number) => {
+    const st = repoFake(); const escritas: any[] = []; const urls: string[] = []
+    const k: KommoFn = async (m, p, b, o) => {
+      if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+      if (/\/api\/v4\/leads\/\d+/.test(p)) return { ok: true, status: 200, body: { id: 1, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [{ id: 77, is_main: true }] } } }
+      if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }
+      if (p.includes('outgoing_chat_message')) {
+        const pg = pagina(p)
+        if (pg < paginasOut) return { ok: true, status: 200, body: { _embedded: { events: outros }, _links: { next: {} } } }
+        return { ok: true, status: 200, body: { _embedded: { events: [{ id: 'o1', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] } } }
+      }
+      return { ok: true, status: 200, body: {} }
+    }
+    return { st, escritas, urls, d: { ...deps(st.repo, k), campoTexto: '' } }
+  }
+  // disparo na página 2 → intervalo 5 → R2 indeterminado, zero PATCH
+  const a = fabrica(2)
+  const r = await receberWebhook(a.d, 1, { id: 'w1', ts: T0 - 5, texto: 'ok' })
+  assertEquals(r.classificacao, 'indeterminado'); assertEquals(a.st.linhas[0].intervalo_s, 5); assertEquals(a.escritas.filter((e) => e.b?.status_id).length, 0)
+  assertEquals(a.urls.filter((u) => u.includes('outgoing')).map(pagina), [1, 2])
+  // mais páginas que o orçamento → não decide: LeituraFalhou, trabalho pendente, nenhuma linha/PATCH
+  const b = fabrica(10)
+  await assertRejects(() => receberWebhook(b.d, 1, { id: 'w2', ts: T0 - 5, texto: 'ok' }), LeituraFalhou, 'truncado')
+  assertEquals(b.st.trabalhos[0].estado, 'pendente'); assertEquals(b.st.linhas.length, 0); assertEquals(b.escritas.length, 0)
+  // falha intermediária (503 na página 2) também lança → pendente
+  const c = fabrica(2); const kBase = c.d.kommo
+  c.d.kommo = async (m, p, bb, o) => { if (p.includes('outgoing') && pagina(p) === 2) throw new LeituraFalhou('eventos_out', 'HTTP 503'); return kBase(m, p, bb, o) }
+  await assertRejects(() => receberWebhook(c.d, 1, { id: 'w3', ts: T0 - 5, texto: 'ok' }), LeituraFalhou)
+  assertEquals(c.st.trabalhos[0].estado, 'pendente'); assertEquals(c.escritas.length, 0)
+  // função pura: dedup por id entre contatos repetidos
+  const dup = await eventosChat(async () => ({ ok: true, status: 200, body: { _embedded: { events: [{ id: 'e', entity_type: 'lead', entity_id: 1 }] } } }), 1, [77, 77], 'incoming_chat_message', 0)
+  assertEquals(dup.length, 1)
+})
+
+
+Deno.test('R10 varredura recupera o contato do webhook pelo trabalho: contato 88 NÃO vinculado ao lead (contatos=[]), R2 → espera → R3 com intervalo certo = autoresposta, zero PATCH', async () => {
+  const st = repoFake(); const urls: string[] = []; const escritas: any[] = []
+  const texto = 'Olá! Recebemos sua mensagem e em breve um de nossos consultores entrará em contato com você'
+  const k: KommoFn = async (m, p, b, o) => {
+    if (m === 'GET') urls.push(p); else escritas.push({ m, p, b })
+    const mLead = p.match(/\/leads\/(\d+)(\?|$)/); const lead = Number(mLead?.[1] ?? 1)
+    if (mLead) return { ok: true, status: 200, body: { id: lead, pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [] } } }   // nenhum contato vinculado
+    const contato = Number((p.match(/filter\[entity_id\]\[0\]=(\d+)/) ?? [])[1])
+    // histórico do lead 1 vive no contato 88: mensagem ANTIGA (antes do disparo), disparo há 5 s, mensagem atual
+    if (p.includes('incoming_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'i-old', created_at: T0 - 5000, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'm-old' } }] }, { id: 'i1', created_at: T0 - 5, entity_type: 'lead', entity_id: 1, value_after: [{ message: { id: 'w1' } }] }] : [] } } }
+    if (p.includes('outgoing_chat_message')) return { ok: true, status: 200, body: { _embedded: { events: contato === 88 ? [{ id: 'o1', created_at: T0 - 10, entity_type: 'lead', entity_id: 1 }] : [] } } }
+    return { ok: true, status: 200, body: {} }
+  }
+  const d = { ...deps(st.repo, k), campoTexto: '' }
+  const r = await receberWebhook(d, 1, { id: 'w1', ts: T0 - 5, texto }, 88)
+  assertEquals(r.classificacao, 'indeterminado')                                   // rápida + única desde o disparo (a antiga é anterior)
+  assertEquals(st.linhas.find((l) => l.mensagem_id === 'w1')!.intervalo_s, 5)
+  // outros 2 leads com o mesmo texto (R3) — contatos próprios, nada a ver com o 88
+  const k2: KommoFn = async (m, p, b, o) => { const ml = p.match(/\/leads\/(\d+)(\?|$)/); if (ml) return { ok: true, status: 200, body: { id: Number(ml[1]), pipeline_id: PIPE, status_id: D1, custom_fields_values: [], _embedded: { tags: [], contacts: [] } } }; if (p.includes('chat_message')) return { ok: true, status: 200, body: { _embedded: { events: [] } } }; return { ok: true, status: 200, body: {} } }
+  await receberWebhook({ ...d, kommo: k2 }, 2, { id: 'w2', ts: T0 - 5, texto }, 2002); await receberWebhook({ ...d, kommo: k2 }, 3, { id: 'w3', ts: T0 - 5, texto }, 3003)
+  // varredura após a espera: precisa consultar o 88 (recuperado do trabalho) → intervalo 5, R3 → autoresposta, zero PATCH
+  urls.length = 0
+  await varrer({ ...d, agora: () => T0 + 400 })
+  assert(urls.some((u) => u.includes('filter[entity_id][0]=88&filter[type]=outgoing')), 'cron consultou o contato do webhook')
+  const l1 = st.linhas.find((l) => l.mensagem_id === 'w1')!
+  assertEquals(l1.classificacao, 'autoresposta'); assertEquals(l1.intervalo_s, 5)
+  assertEquals(escritas.filter((e) => e.b?.status_id === RESP).length, 0)
 })
