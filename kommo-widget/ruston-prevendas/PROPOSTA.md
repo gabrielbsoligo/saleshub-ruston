@@ -369,3 +369,56 @@ Pendências, por decisão do Gabriel:
 - mudar a cadência só com o widget pronto.
 
 Para a fatia 3, junto com o click-to-call: a fila do CLOSER organizada pela etapa do funil Closer.
+
+## 7. Fila do CLOSER pela etapa do funil Closer (desenho, nada aplicado)
+
+Pedido do Gabriel (26/10, decisão 5): o PRÓXIMO também precisa servir ao closer, com a fila organizada pela **etapa do funil Closer** (11010459), sem criar tipos de tarefa novos.
+
+### 7.1 O que existe hoje (levantamento só leitura na réplica, 26/10)
+| etapa (status_id) | leads abertos | balde da cadência do closer (`kommo.closer_balde`) |
+|---|---|---|
+| Incoming leads (84456015) | 28, sem dono mapeado | sem cadência |
+| feedback reunião (84456019) | 12 (closer 2, gestor 4, SDR 4, sem dono 2) | sem cadência; tarefa "Feedback da Reunião" (ALERTA) |
+| MARCAR CALL PROPOSTA (103523344) | 9 | `MARCAR_CALL` |
+| CALL PROPOSTA AGENDADA (110113248) | 4 | `PROP_AGENDADA` (+ recuperação de no-show R1–R3) |
+| BAIXA PRIORIDADE +30d (102174776) | 48 (closer 23, SDR 24) | `BAIXA` (follow semanal infinito) |
+| MÉDIA PRIORIDADE 11–30d (102174780) | 9 | `MEDIA` |
+| ALTA PRIORIDADE 1–10d (102174784) | 10 | `ALTA` |
+| CONTRATO NA RUA (84456095) | 2 | `CONTRATO` |
+| CONTRATO ASSINADO / ganho / perdido | — | sem cadência |
+
+A cadência do closer está ligada (`cadencia_closer_ativa=true`) e **cria as tarefas com antecedência**, com texto `CLOSER · <BALDE> · <passo>`. Por isso há muitas tarefas por lead:
+- Sandro tem 209 tarefas abertas para 37 leads;
+- um lead da BAIXA chega a ter 22 tarefas abertas, 21 delas vencidas.
+
+Os closers também têm tarefas fora do funil Closer:
+- Pré-vendas: T0 cliente oculto, T4 WhatsApp na manhã da reunião, Retorno.
+- Funis de disparo (BASE, DISPARO 6): cerca de 37 tarefas, quase todas vencidas.
+
+### 7.2 Desenho
+1. **Mesmo widget, mesma edge.** O modo é decidido no SERVIDOR: `team_members.role = 'closer'` do usuário do JWT dá `modo: 'closer'`. Uma configuração `modo` (auto | sdr | closer) existe só para teste: o Gabriel (gestor) força `closer` e testa com os 4 leads dele no funil Closer.
+2. **Fonte igual à do SDR.** A lista VIVA de tarefas do usuário vem do Kommo (autoritativa). Os dados do lead vêm da réplica: o RPC `prevendas_leads` passa a devolver também `status_id`, numa migration pequena que só faz `create or replace` de uma função de leitura. Lead que falta é buscado na API (o lote de 50 já devolve `status_id`/`pipeline_id`); se nada disso funcionar, o item fica `etapa_pendente` e vai para o fim, sem chute.
+3. **A unidade da fila é o LEAD, não a tarefa.** É um card por lead, mostrando a tarefa mais antiga vencida e o aviso "+N vencidas". Sem isso, um lead com 21 follows acumulados ocuparia 21 posições.
+4. **Elegível:** tarefa com prazo ≤ agora + `lookahead_min`. As tarefas futuras que a cadência já criou não aparecem.
+5. **Ordem (configurável em `etapas_closer`, lista de status_id):**
+   - **0. Reunião/call com hora marcada:** slots T0/T4 (via `reunioes.cadencia_task_ids`) e recuperação R1–R3, quando o prazo está dentro da antecedência. Hora marcada passa na frente de tudo, como no anti no-show do SDR.
+   - 1. CONTRATO NA RUA
+   - 2. CALL PROPOSTA AGENDADA
+   - 3. feedback reunião
+   - 4. MARCAR CALL PROPOSTA
+   - 5. ALTA (1–10d)
+   - 6. MÉDIA (11–30d)
+   - 7. BAIXA (+30d)
+   - 8. Lead fora do funil Closer (pré-vendas sem slot, funis de disparo) ou etapa pendente
+   - Fora da fila: Incoming leads, CONTRATO ASSINADO, ganho, perdido.
+   - Dentro do mesmo nível, vence o prazo mais antigo.
+6. **"Concluir e próximo" conclui SÓ a tarefa mostrada**, como o closer faria no Kommo. Não fecha em lote as vencidas acumuladas: isso mexeria no mapa `deals.cadencia_closer_task_ids` da cadência, e o comportamento do `cadencia_closer_plan` diante de tarefa concluída à mão precisa ser conferido antes. Fica como pergunta, sem fazer.
+7. **Ligar:** os closers têm `ramal_4com` e não têm agente 3C, então para eles o botão disca pela 4com, usando o mesmo proxy da §4.
+8. **Nada muda** em tipos, cadência ou configuração do Kommo. Fila e ordem são só leitura e apresentação.
+
+### 7.3 Perguntas para o Gabriel
+1. A ordem da §7.2.5 está certa? Em especial, CONTRATO NA RUA antes de CALL PROPOSTA AGENDADA, e feedback reunião antes de MARCAR CALL.
+2. A BAIXA (follow semanal infinito) entra na fila, por último? Hoje são 171 tarefas, 40 vencidas.
+3. Há leads do funil Closer com dono SDR (Lary 19, Edric 15, a maioria na BAIXA e na ALTA). Esses SDRs seguem com a fila de SDR, onde essas tarefas caem em "sem classificação", ou a parte do funil Closer usa a ordem do closer?
+4. Tarefas de closer nos funis de disparo, quase todas vencidas: entram no fim ou ficam de fora?
+5. Querem um botão para concluir de uma vez os follows acumulados da cadência do closer? Seria uma entrega separada, só depois de conferir a cadência.
