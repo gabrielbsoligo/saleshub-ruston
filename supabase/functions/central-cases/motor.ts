@@ -111,6 +111,11 @@ export function hostPublico(host: string): boolean {
 // ── 2) presença digital a partir de uma busca web ───────────────────────────────
 const SOCIAIS = /(^|\.)(instagram|facebook|linkedin|youtube|tiktok|twitter|x)\.com$/
 const DIRETORIOS = /(^|\.)(google|bing|cnpj\.biz|cnpja|econodata|casadosdados|consultacnpj|cnpj\.info|solutudo|apontador|telelistas|guiamais|reclameaqui|jusbrasil|escavador|glassdoor|indeed|catho|infojobs|olx|mercadolivre|ifood|booking|tripadvisor|yelp|wikipedia|gov\.br|receita|empresascnpj|cadastroempresa|informecadastral|listamais|hotfrog|kekanto|cylex|encontra|foursquare|waze|maps)\./
+/** nome de busca: tokens do nome sem sufixos/genéricos (até 4), senão o nome como veio */
+export function nomeDeBusca(c: { nome: string; razao_social?: string | null }): string {
+  const tk = tokens(c.nome).slice(0, 4)
+  return tk.length ? tk.join(' ') : normalizar(c.nome)
+}
 export function hostDe(url: string): string | null { try { return new URL(url).hostname.toLowerCase().replace(/^www\./, '') } catch { return null } }
 // Identidade: um handle/domínio "casa" com o nome quando contém um token (≥4 letras) do nome, ou
 // quando o nome compactado (sem espaços) contém o handle/domínio compactado (ou vice-versa, ≥6 letras).
@@ -158,10 +163,19 @@ export async function gerarCases(deps: Deps, entrada: { empresa: string; nicho?:
   const tenta = async <T>(fn: () => Promise<T>, falha: (msg: string) => T): Promise<T> => { try { return await fn() } catch (e) { if (e instanceof ErroCritico) throw e; return falha(String((e as Error)?.message ?? e).slice(0, 120)) } }
   const pulso = async () => { if (deps.pulso) await deps.pulso() }   // posse renovada ENTRE candidatos/chamadas lentas (crítico: se lançar, aborta)
   for (const c of cands.slice(0, L.web)) {
+    c.termos_casados = [...new Set(c.termos_casados ?? [])]
     await pulso()
-    const r = await tenta(() => deps.buscaWeb(`"${c.nome}" ${c.cidade ?? ''}`.trim()), (msg) => ({ ok: false, results: [], nota: msg }))
+    // consulta pelo NOME LIMPO (sem LTDA/ME/genéricos, ≤4 palavras) + cidade, sem aspas — a razão social
+    // completa entre aspas quase nunca acha o site; se ainda assim não achar site, 2ª tentativa com "site"
+    const q1 = `${nomeDeBusca(c)} ${c.cidade ?? ''}`.trim()
+    let r = await tenta(() => deps.buscaWeb(q1), (msg) => ({ ok: false, results: [], nota: msg }))
     if (!r.ok) { c.por_que!.push(`busca web indisponível${r.nota ? ` (${r.nota})` : ''}`); continue }
-    const p = extrairPresenca(r.results, c.nome)
+    let p = extrairPresenca(r.results, c.nome)
+    if (!p.site) {
+      await pulso()
+      const r2 = await tenta(() => deps.buscaWeb(`${nomeDeBusca(c)} site oficial`), (msg) => ({ ok: false, results: [], nota: msg }))
+      if (r2.ok) { const p2 = extrairPresenca(r2.results, c.nome); p = { site: p2.site, instagram: p.instagram ?? p2.instagram, instagram_nao_confirmado: p.instagram_nao_confirmado ?? p2.instagram_nao_confirmado } }
+    }
     c.site = p.site; c.instagram = p.instagram; c.instagram_nao_confirmado = p.instagram_nao_confirmado
     // sinais de presença (opcionais; falha vira null, nunca aborta)
     c.site_no_ar = c.site ? await tenta(() => deps.siteNoAr(c.site!), () => null) : null
