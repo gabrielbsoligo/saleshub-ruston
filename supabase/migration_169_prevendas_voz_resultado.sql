@@ -3,7 +3,7 @@
 -- da 4com (final/final_em) e o id da chamada na 4com (cdr_id — futuro calls.provider_call_id, AUDITORIA-LIGACOES F5).
 -- final enquanto processa = {proc: <epoch>, tok: <uuid>} (posse exclusiva; escritas condicionadas ao tok).
 -- A ação 'resultado' (consulta do CDR) entra no limite por usuário de prevendas_voz_reservar.
--- Cron (a cada 2 min, só com pendentes): chama a prevendas-voz com o segredo do cofre 'prevendas_voz_cron_secret'
+-- Cron (a cada 5 min — Disk IO do plano Free —, só com pendentes; consulta barata pelo índice parcial): chama a prevendas-voz com o segredo do cofre 'prevendas_voz_cron_secret'
 -- (o mesmo valor fica no segredo da edge PREVENDAS_VOZ_CRON_SECRET; criados fora deste arquivo, nunca no repositório).
 -- Reverter (depois de voltar a edge prevendas-voz anterior):
 --   select cron.unschedule('prevendas-voz-resultados');
@@ -33,7 +33,7 @@ create index prevendas_voz_eventos_pendentes on public.prevendas_voz_eventos (em
   where acao = 'discar' and resultado = 'ok' and provedor = '4com' and final_em is null;
 
 select cron.unschedule('prevendas-voz-resultados') where exists (select 1 from cron.job where jobname = 'prevendas-voz-resultados');
-select cron.schedule('prevendas-voz-resultados', '*/2 * * * *', $$
+select cron.schedule('prevendas-voz-resultados', '*/5 * * * *', $$
   select net.http_post(
     url     := 'https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/prevendas-voz',
     headers := jsonb_build_object('Content-Type', 'application/json',
