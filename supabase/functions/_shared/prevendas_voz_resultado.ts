@@ -22,6 +22,8 @@ export const SEM_CDR_S = 15 * 60      // sem CDR (com janela coberta) depois dis
 export const GRACA_GRAVACAO_S = 120   // atendida com gravação: a N8N escreve a nota dela primeiro
 export const MARGEM_COBERTURA_S = 300 // o CDR começa logo depois do POST /calls; folga para relógios/empates
 export const DESISTIR_NOTA_S = 3 * 3600 // nota que falha por mais que isso: fecha sem nota (fica no log e no widget)
+export const CDR_INCOMPLETO_S = 6 * 3600 // CDR sem fim/causa por mais que isso: fecha como indeterminado
+export const JANELA_MAX_S = 3600     // janelas fundidas não passam disso (cada uma cabe nas páginas de uma busca)
 export const FUSO_4COM_S = 3 * 3600   // a 4com devolve horário de Brasília rotulado como Z
 export const MAX_PAGINAS_KOMMO = 4
 
@@ -46,25 +48,52 @@ export function paginaCdr(corpo: unknown, limite: number): { itens: any[]; proxi
   return { itens: j.data, proxima: j.data.length > 0 && j.meta?.nextPage != null }
 }
 
+/** epoch s real → horário no formato da 4com (Brasília rotulado Z), para o filtro where.started_at. */
+export const rotulo4com = (s: number) => new Date((s - FUSO_4COM_S) * 1000).toISOString()
+
+/** Janela de busca de cada ligação ([em − MARGEM, em + JANELA_DEPOIS_S]), fundidas quando se sobrepõem. */
+export const JANELA_DEPOIS_S = 600
+export function janelasCdr(emsS: number[]): Array<[number, number]> {
+  const js = emsS.filter(Number.isFinite).map((e) => [e - MARGEM_COBERTURA_S, e + JANELA_DEPOIS_S] as [number, number]).sort((a, b) => a[0] - b[0])
+  const out: Array<[number, number]> = []
+  for (const j of js) { const u = out[out.length - 1]; if (u && j[0] <= u[1] && Math.max(u[1], j[1]) - u[0] <= JANELA_MAX_S) u[1] = Math.max(u[1], j[1]); else out.push([...j]) }
+  return out
+}
+
+export type Cdrs = { lista: any[]; cobertas: Array<[number, number]> }
 /**
- * CDRs da conta, do mais novo para trás, até cobrir `desdeS` (ou acabar a lista / o orçamento de páginas).
- * cobreDesde: todo CDR iniciado a partir daí está na lista (0 = a lista inteira; Infinity = nada coberto).
+ * CDRs por FAIXA DE TEMPO (where started_at between): cada janela das pendentes é lida inteira (paginada) e
+ * independente das outras — uma pendência antiga não depende de paginar o histórico todo a partir de agora, nem
+ * impede as mais novas. Janela lida até o fim = coberta; envelope inesperado, item sem horário ou orçamento de
+ * requisições esgotado = janela NÃO coberta (as ligações dela adiam). Ordem: mais novas primeiro e mais antigas
+ * primeiro, alternadas (nenhum dos lados fica sem orçamento).
  */
-export async function buscarCdrs(obter: (skip: number, limite: number) => Promise<unknown>, desdeS: number, maxPaginas = 8, limite = 100):
-  Promise<{ lista: any[]; cobreDesde: number }> {
-  const lista: any[] = []
-  let cobre = Infinity
-  for (let i = 0; i < maxPaginas; i++) {
-    const pg = paginaCdr(await obter(i * limite, limite), limite)
-    if (!pg) break                                                          // envelope inesperado: cobre só o que já leu
-    let ok = true
-    for (const c of pg.itens) { const t = instante4com(c?.started_at); if (t == null) { ok = false; break } cobre = Math.min(cobre, t) }
-    if (!ok) { cobre = Infinity; break }                                    // item sem horário: não confia na página
-    lista.push(...pg.itens)
-    if (!pg.proxima) { cobre = 0; break }
-    if (cobre < desdeS) break
+export async function buscarCdrs(obter: (de: string, ate: string, skip: number, limite: number) => Promise<unknown>, emsS: number[],
+  maxReq = 30, maxPaginasJanela = 5, limite = 100): Promise<Cdrs> {
+  const js = janelasCdr(emsS), ordem: Array<[number, number]> = []
+  for (let a = 0, b = js.length - 1; a <= b; a++, b--) { ordem.push(js[b]); if (a !== b) ordem.push(js[a]) }
+  const lista: any[] = [], cobertas: Array<[number, number]> = []
+  let req = 0
+  janelas: for (const [ini, fim] of ordem) {
+    const daJanela: any[] = []
+    for (let i = 0; i < maxPaginasJanela; i++) {
+      if (req >= maxReq) break janelas
+      req++
+      const pg = paginaCdr(await obter(rotulo4com(ini), rotulo4com(fim), i * limite, limite), limite)
+      if (!pg || pg.itens.some((c) => instante4com(c?.started_at) == null)) continue janelas   // não confia: não cobre
+      daJanela.push(...pg.itens)
+      if (!pg.proxima) { lista.push(...daJanela); cobertas.push([ini, fim]); continue janelas }
+    }
+    lista.push(...daJanela)                                                  // truncada: serve para achar, não cobre
   }
-  return { lista, cobreDesde: cobre }
+  return { lista, cobertas }
+}
+/** A ligação (em) está numa janela lida inteira? */
+export const coberta = (c: Cdrs, emS: number) => c.cobertas.some(([a, b]) => a <= emS - MARGEM_COBERTURA_S && emS + JANELA_DEPOIS_S <= b)
+
+/** CDR encerrado: fim e causa presentes (registro em andamento/incompleto não conclui). */
+export function cdrEncerrado(c: any): boolean {
+  return instante4com(c?.ended_at) != null && String(c?.hangup_cause ?? '').trim() !== ''
 }
 
 export interface EventoPendente { id: number; kommo_user: number; em: string; entidade: string | null; nota_entidade: string | null; nota_id: number | null; final: any }
@@ -88,6 +117,7 @@ export type Desfecho =
   | { ev: number; feito: false; motivo: string }
 
 const SEM_CDR: FinalLigacao = { rotulo: 'não completou (sem registro na 4com)', duracao: 0, gravacao: null, causa: 'SEM_CDR', inicio: null }
+const INDETERMINADO: FinalLigacao = { rotulo: 'resultado indeterminado (registro incompleto na 4com)', duracao: 0, gravacao: null, causa: 'CDR_INCOMPLETO', inicio: null }
 const arquivo = (url: string) => url.split('?')[0].split('/').pop() || url
 
 /** Notas comuns da entidade atualizadas desde `desdeS` (todas as páginas; incompleta = null). */
@@ -123,17 +153,20 @@ async function contatoDoNumero(io: IoResultado, numero: string, uid: number, pap
 }
 
 /** Processa UMA ligação pendente. Falha no Kommo vira adiamento (posse devolvida); falha de banco propaga (a posse expira). */
-export async function processarLigacao(p: EventoPendente, cdrs: { lista: any[]; cobreDesde: number }, io: IoResultado): Promise<Desfecho> {
+export async function processarLigacao(p: EventoPendente, cdrs: Cdrs, io: IoResultado): Promise<Desfecho> {
   const ev = p.id, uid = Number(p.kommo_user)
   const emS = Math.floor(Date.parse(p.em) / 1000)
   const agora = io.agoraS(), idade = agora - emS
   if (idade < MIN_IDADE_S) return { ev, feito: false, motivo: 'recente' }
   const cdr = acharCdr(cdrs.lista, ev, uid)
   if (!cdr) {
-    if (cdrs.cobreDesde > emS - MARGEM_COBERTURA_S) return { ev, feito: false, motivo: 'cdr_fora_da_cobertura' }
+    if (!coberta(cdrs, emS)) return { ev, feito: false, motivo: 'cdr_fora_da_cobertura' }
     if (idade < SEM_CDR_S) return { ev, feito: false, motivo: 'aguardando_cdr' }
   }
-  const fin: FinalLigacao = cdr ? resultadoCdr(cdr) : SEM_CDR
+  // CDR achado mas ainda sem fim/causa (em andamento ou incompleto): adia; só fecha como indeterminado bem depois
+  const encerrado = !!cdr && cdrEncerrado(cdr)
+  if (cdr && !encerrado && idade < CDR_INCOMPLETO_S) return { ev, feito: false, motivo: 'cdr_incompleto' }
+  const fin: FinalLigacao = !cdr ? SEM_CDR : encerrado ? resultadoCdr(cdr) : INDETERMINADO
   if (cdr && fin.gravacao) {
     const fim = instante4com(cdr.ended_at) ?? instante4com(cdr.started_at)
     if (fim != null && agora - fim < GRACA_GRAVACAO_S) return { ev, feito: false, motivo: 'aguardando_n8n' }
@@ -186,7 +219,7 @@ export async function processarLigacao(p: EventoPendente, cdrs: { lista: any[]; 
 }
 
 /** Processa as pendentes (mais antigas primeiro) até o prazo. */
-export async function processarPendentes(pend: EventoPendente[], cdrs: { lista: any[]; cobreDesde: number }, io: IoResultado, prazoS: number): Promise<Desfecho[]> {
+export async function processarPendentes(pend: EventoPendente[], cdrs: Cdrs, io: IoResultado, prazoS: number): Promise<Desfecho[]> {
   const out: Desfecho[] = []
   for (const p of pend) {
     if (io.agoraS() >= prazoS) break

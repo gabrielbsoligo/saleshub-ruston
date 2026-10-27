@@ -28,7 +28,7 @@ import {
   credencial3c, decidirEntidade, prepararAgente3c, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao,
   telefone3c, telefoneE164, textoNota, usuarioLiberado,
 } from '../_shared/prevendas_voz.ts'
-import { buscarCdrs, MARGEM_COBERTURA_S, processarPendentes, type Desfecho, type IoResultado } from '../_shared/prevendas_voz_resultado.ts'
+import { buscarCdrs, processarPendentes, type Desfecho, type IoResultado } from '../_shared/prevendas_voz_resultado.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -82,22 +82,29 @@ function iguais(a: string, b: string): boolean {
  * mais antiga. Erro da 4com lança 'provedor_limite'/'provedor_indisponivel' (nada é concluído).
  */
 async function resultados(sb: any, uid: number | null, kommo: KommoFn, token4com: string): Promise<Desfecho[]> {
-  let q = sb.from(EVENTOS).select('id,kommo_user,em,entidade,nota_entidade,nota_id,final')
-    .eq('acao', 'discar').eq('resultado', 'ok').eq('provedor', '4com').is('final_em', null)
-    .gte('em', new Date(Date.now() - JANELA_RESULTADO_S * 1000).toISOString())
-  if (uid != null) q = q.eq('kommo_user', uid)
-  const { data: pend, error } = await q.order('em', { ascending: true }).limit(50)
-  if (error) throw new Error('falha_banco')
-  if (!pend?.length) return []
+  // as 25 mais antigas E as 25 mais novas: uma pendência antiga que não se resolve não segura as recentes
+  const lote = async (asc: boolean) => {
+    let q = sb.from(EVENTOS).select('id,kommo_user,em,entidade,nota_entidade,nota_id,final')
+      .eq('acao', 'discar').eq('resultado', 'ok').eq('provedor', '4com').is('final_em', null)
+      .gte('em', new Date(Date.now() - JANELA_RESULTADO_S * 1000).toISOString())
+    if (uid != null) q = q.eq('kommo_user', uid)
+    const { data, error } = await q.order('em', { ascending: asc }).limit(25)
+    if (error) throw new Error('falha_banco')
+    return data ?? []
+  }
+  const vistos = new Set<number>()
+  const antigas = await lote(true), novas = await lote(false), intercaladas: any[] = []
+  for (let i = 0; i < Math.max(antigas.length, novas.length); i++) intercaladas.push(novas[i], antigas[i])   // o prazo do lote alcança os dois lados
+  const pend = intercaladas.filter((p: any) => p && !vistos.has(p.id) && vistos.add(p.id))
+  if (!pend.length) return []
   if (!token4com) throw new Error('provedor_indisponivel')
-  const desde = Math.min(...pend.map((p: any) => Math.floor(Date.parse(p.em) / 1000))) - MARGEM_COBERTURA_S
-  const cdrs = await buscarCdrs(async (skip, limite) => {
-    const fl = encodeURIComponent(JSON.stringify({ order: 'started_at DESC', limit: limite, skip }))
+  const cdrs = await buscarCdrs(async (de, ate, skip, limite) => {
+    const fl = encodeURIComponent(JSON.stringify({ where: { started_at: { between: [de, ate] } }, order: 'started_at DESC', limit: limite, skip }))
     const r = await fetch(`${API4COM}/calls?filter=${fl}`, { headers: { Authorization: token4com }, signal: AbortSignal.timeout(TIMEOUT_MS) })
     if (r.status === 429) throw new Error('provedor_limite')
     if (!r.ok) throw new Error('provedor_indisponivel')
     try { return await r.json() } catch { return null }               // corpo inválido = envelope inesperado (adia)
-  }, desde)
+  }, pend.map((p: any) => Math.floor(Date.parse(p.em) / 1000)))
   const uids = [...new Set(pend.map((p: any) => Number(p.kommo_user)))]
   const { data: ms, error: eM } = await sb.from('team_members').select('kommo_user_id,name,role,ramal_4com').in('kommo_user_id', uids)
   if (eM) throw new Error('falha_banco')

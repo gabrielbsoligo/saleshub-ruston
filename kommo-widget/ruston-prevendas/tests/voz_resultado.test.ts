@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ABANDONO_S, buscarCdrs, GRACA_GRAVACAO_S, LEASE_S, paginaCdr, processarLigacao, SEM_CDR_S, temMarcador,
+  ABANDONO_S, buscarCdrs, CDR_INCOMPLETO_S, coberta, GRACA_GRAVACAO_S, janelasCdr, LEASE_S, paginaCdr, processarLigacao, processarPendentes, SEM_CDR_S, temMarcador,
   type EventoPendente, type IoResultado,
 } from '../../../supabase/functions/_shared/prevendas_voz_resultado.ts'
 
@@ -62,7 +62,7 @@ function mundo(o: { notas?: Array<{ id: number; texto: string }>; contatos?: any
   }
   return { w, io }
 }
-const todos = (lista: any[]) => ({ lista, cobreDesde: 0 })
+const todos = (lista: any[]) => ({ lista, cobertas: [[-Infinity, Infinity]] as Array<[number, number]> })
 
 test('marcador: só o ev exato', () => {
   assert.ok(temMarcador('x\nRef. widget #501', 501))
@@ -124,26 +124,83 @@ test('2b) dono dentro do lease não é tomado; lease vencido (sem abandono) impe
 
 test('3) CDR fora da cobertura ADIA (nunca vira "sem registro"); coberto e com 15 min vira', async () => {
   const { w, io } = mundo({ agora: T0 + SEM_CDR_S + 60, notas: [{ id: 77, texto: 'cab\nRef. widget #501' }] })
-  const r = await processarLigacao(evento(), { lista: [], cobreDesde: T0 + 100 }, io)
+  const r = await processarLigacao(evento(), { lista: [], cobertas: [[T0 + 100, T0 + 5000]] }, io)
   assert.equal((r as any).motivo, 'cdr_fora_da_cobertura'); assert.equal(w.row.final, null)
-  const r2 = await processarLigacao(evento(), { lista: [], cobreDesde: T0 - 1000 }, io)
+  const r2 = await processarLigacao(evento(), { lista: [], cobertas: janelasCdr([T0]) }, io)
   assert.equal(r2.feito, true); assert.match(w.notas[0].texto, /sem registro na 4com/)
   const m = mundo({ agora: T0 + 300 })
   assert.equal((await processarLigacao(evento(), todos([]), m.io) as any).motivo, 'aguardando_cdr')
 })
 
-test('3b) buscarCdrs: pagina até cobrir; envelope {data,meta}; envelope inesperado não cobre', async () => {
-  const pag = (n: number, ini: number) => Array.from({ length: n }, (_, i) => ({ id: `c${ini + i}`, started_at: iso4com(T0 - (ini + i) * 60) }))
-  const chamadas: number[] = []
-  const r = await buscarCdrs(async (skip, lim) => { chamadas.push(skip); return { data: pag(lim, skip), meta: { nextPage: 9 } } }, T0 - 250 * 60, 8, 100)
-  assert.deepEqual(chamadas, [0, 100, 200]); assert.ok(r.cobreDesde <= T0 - 250 * 60); assert.equal(r.lista.length, 300)
-  const fim = await buscarCdrs(async () => ({ data: pag(3, 0), meta: { nextPage: null } }), T0 - 1e6)
-  assert.equal(fim.cobreDesde, 0)
-  const ruim = await buscarCdrs(async () => ({ erro: 'x' }), T0)
-  assert.equal(ruim.cobreDesde, Infinity)
-  const parcial = await buscarCdrs(async (skip) => (skip ? null : { data: pag(100, 0), meta: { nextPage: 2 } }), T0 - 1e6)
-  assert.ok(parcial.cobreDesde > T0 - 1e6)                                                      // truncado: não cobre a antiga
+test('1v) CDR primeiro INCOMPLETO (sem fim/causa) adia; o mesmo CDR encerrado depois conclui', async () => {
+  const { w, io } = mundo({ notas: [{ id: 77, texto: 'cab\nResultado: aguardando\nRef. widget #501' }] })
+  const incompleto = cdrDe({ ended_at: null, hangup_cause: null, duration: 0, record_url: null })
+  const a = await processarLigacao(evento(), todos([incompleto]), io)
+  assert.equal((a as any).motivo, 'cdr_incompleto'); assert.equal(w.patches, 0); assert.equal(w.row.final_em, null)
+  assert.equal((await processarLigacao(evento(), todos([cdrDe({ ended_at: iso4com(T0 + 70), hangup_cause: '' , duration: 0, record_url: null })]), io) as any).motivo, 'cdr_incompleto')
+  const b = await processarLigacao(evento(), todos([cdrDe({ duration: 0, record_url: null, hangup_cause: 'NO_ANSWER' })]), io)
+  assert.equal(b.feito, true); assert.match(w.notas[0].texto, /Resultado: não atendida\n/)
+  // incompleto por tempo demais: fecha como indeterminado (não fica pendente para sempre)
+  const velho = mundo({ agora: T0 + CDR_INCOMPLETO_S + 10, notas: [{ id: 77, texto: 'cab\nRef. widget #501' }] })
+  const c = await processarLigacao(evento(), todos([incompleto]), velho.io)
+  assert.equal(c.feito, true); assert.match(velho.w.notas[0].texto, /indeterminado/)
+})
+
+/** 4com falsa: where started_at between (rótulo Brasília-Z), ordem DESC, skip/limit, meta.nextPage. */
+function api4com(cdrs: any[], cont = { req: 0 }) {
+  return async (de: string, ate: string, skip: number, lim: number) => {
+    cont.req++
+    const f = cdrs.filter((c) => c.started_at >= de && c.started_at <= ate).sort((a, b) => (a.started_at < b.started_at ? 1 : -1))
+    return { data: f.slice(skip, skip + lim), meta: { nextPage: skip + lim < f.length ? 2 : null } }
+  }
+}
+
+test('3b) buscarCdrs por faixa: janela lida inteira cobre; envelope ruim, item sem horário ou orçamento esgotado não cobrem', async () => {
+  const cdrs = Array.from({ length: 250 }, (_, i) => ({ id: `c${i}`, started_at: iso4com(T0 - 300 + i), metadata: {} }))
+  const r = await buscarCdrs(api4com(cdrs), [T0], 30, 5, 100)
+  assert.equal(r.lista.length, 250); assert.ok(coberta(r, T0))
+  const curto = await buscarCdrs(api4com(cdrs), [T0], 30, 2, 100)                                // 2 páginas < 250: truncada
+  assert.ok(!coberta(curto, T0)); assert.equal(curto.lista.length, 200)
+  assert.ok(!coberta(await buscarCdrs(async () => ({ erro: 'x' }), [T0]), T0))
+  assert.ok(!coberta(await buscarCdrs(async () => ({ data: [{ id: 'x' }], meta: {} }), [T0]), T0))
+  assert.ok(!coberta(await buscarCdrs(api4com(cdrs), [T0], 0), T0))
+  assert.deepEqual(janelasCdr([T0, T0 + 100, T0 + 50_000]).length, 2)                          // fundidas só se sobrepõem
   assert.equal(paginaCdr([{}], 100)?.proxima, false)
+})
+
+test('3c) histórico com >800 CDRs e rodadas LIMITADAS: pendências antigas (23 h) E novas progridem', async () => {
+  const AGORA = T0 + 24 * 3600
+  const cdrs: any[] = Array.from({ length: 1200 }, (_, i) => ({ id: `x${i}`, started_at: iso4com(T0 + i * 72), ended_at: iso4com(T0 + i * 72 + 10), hangup_cause: 'NO_ANSWER', duration: 0, metadata: {} }))
+  // 20 pendências espalhadas de 23 h atrás até 5 min atrás, cada uma com o seu CDR encerrado
+  const rows = new Map<number, any>()
+  const ems = Array.from({ length: 20 }, (_, i) => AGORA - 23 * 3600 + Math.floor(i * (23 * 3600 - 300) / 19))
+  ems.forEach((em, i) => {
+    const ev = 1000 + i
+    rows.set(ev, { id: ev, kommo_user: UID, em: iso(em), entidade: 'manual', nota_entidade: null, nota_id: null, final: null, final_em: null })
+    cdrs.push({ id: `p${ev}`, started_at: iso4com(em + 20), ended_at: iso4com(em + 40), hangup_cause: 'USER_BUSY', duration: 0, to: '047997293673', metadata: { widget_ev: ev, kommo_user: UID } })
+  })
+  const io: IoResultado = {
+    agoraS: () => AGORA, token: () => Math.random().toString(36),
+    reivindicar: async (id, ant, tok, proc) => { const r = rows.get(id); if (r.final_em || (ant ? r.final?.tok !== ant : r.final)) return false; r.final = { proc, tok }; return true },
+    confirmar: async (id, tok) => rows.get(id).final?.tok === tok,
+    gravar: async (id, tok, d) => { const r = rows.get(id); if (r.final?.tok !== tok || r.final_em) return false; Object.assign(r, d); return true },
+    liberar: async (id, tok) => { const r = rows.get(id); if (r.final?.tok === tok) r.final = null },
+    kommo: async () => null,                                                                    // sem contato: fecha sem nota
+    membro: () => null,
+  }
+  const pendentes = () => [...rows.values()].filter((r) => !r.final_em).sort((a, b) => a.em.localeCompare(b.em))
+  const rodada = async () => {                                                                   // como a edge: 25+25 por ponta, orçamento de 4 requisições
+    const p = pendentes(), sel = [...new Set([...p.slice(0, 25), ...p.slice(-25)])]
+    const c = await buscarCdrs(api4com(cdrs), sel.map((r) => Math.floor(Date.parse(r.em) / 1000)), 4, 5, 100)
+    return processarPendentes(sel, c, io, AGORA + 60)
+  }
+  const r1 = await rodada()
+  const feitos1 = r1.filter((x) => x.feito).map((x) => x.ev)
+  assert.ok(feitos1.includes(1000) && feitos1.includes(1019))                                   // a mais antiga E a mais nova já na 1ª rodada
+  let n = 1
+  while (pendentes().length && n < 10) { await rodada(); n++ }
+  assert.equal(pendentes().length, 0); assert.ok(n <= 5)                                         // progresso garantido
+  assert.match(rows.get(1000).final.rotulo, /ocupado/); assert.equal(rows.get(1000).cdr_id, 'p1000')
 })
 
 test('4) contato: busca COMPLETA (paginada); um só na 1ª página e outro na 2ª = ambíguo, sem nota', async () => {
