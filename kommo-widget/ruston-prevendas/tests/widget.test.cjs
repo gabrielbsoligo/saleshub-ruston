@@ -1297,3 +1297,56 @@ test('retry pendente → destroy → init → novo em_andamento: agenda o retry 
   w.callbacks.init(); env.rodarTimers('t')
   assert.ok([...env.timers.values()].some((t) => !t.i && t.ms === 7000))
 })
+
+test('0.4.8: ligação 4com termina → o widget pede o RESULTADO (CDR) e mostra no rodapé; pendente tenta de novo', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  let n = 0
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED,
+    telefones: { ok: true, contatos: [] },
+    discar: { ok: true, provedor: '4com', chamada_id: 'm1', ev: 77 },
+    resultado: (b) => (++n === 1 ? { ok: true, resultados: [], pedido: { ev: b.ev, pendente: true } }
+                                 : { ok: true, resultados: [], pedido: { ev: b.ev, rotulo: 'não atendida', duracao: 0, nota: true } }),
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  const digitar = env.ouvintes.find((o) => o[0] === 'input')[1]
+  digitar({ target: { id: 'rpv-manual', value: '47 99729-3673' } }); clicar(env, 'voz-manual')
+  assert.ok(chamadas.some((c) => c.acao === 'discar'))
+  const inv = sessao(true); reg.emit('newRTCSession', inv); inv.session.terminate()          // a chamada acaba
+  const t8 = [...env.timers.values()].find((t) => !t.i && t.ms === 8000); assert.ok(t8, 'agendou a consulta pós-chamada')
+  t8.fn()
+  assert.deepEqual(chamadas.filter((c) => c.acao === 'resultado').map((c) => c.ev), [77])   // 1ª: ainda pendente
+  const t20 = [...env.timers.values()].find((t) => !t.i && t.ms === 20000); assert.ok(t20, 'tentará de novo'); t20.fn()
+  assert.equal(chamadas.filter((c) => c.acao === 'resultado').length, 2)
+  assert.match(env.elems['rpv-root'].innerHTML, /Última ligação: não atendida \(registrada no Kommo\)/)
+})
+
+test('0.4.8: resultado de uma ligação ANTIGA não sobrescreve o da nova (a cadeia mais nova vence)', async () => {
+  const env = ambiente(), reg = {}
+  let perfT = 1000; env.ctx.performance = { now: () => perfT }
+  let ev = 70
+  const { w, chamadas } = comVoz(env, reg, {
+    credencial: CRED, telefones: { ok: true, contatos: [] },
+    discar: () => ({ ok: true, provedor: '4com', chamada_id: 'x', ev: ++ev }),
+    resultado: (b) => ({ ok: true, resultados: [], pedido: { ev: b.ev, rotulo: b.ev === 71 ? 'ocupado' : 'atendida', duracao: 12, nota: true } }),
+  })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  const digitar = env.ouvintes.find((o) => o[0] === 'input')[1]
+  digitar({ target: { id: 'rpv-manual', value: '47 99729-3673' } }); clicar(env, 'voz-manual')       // ev 71
+  const velho = [...env.timers.values()].find((t) => !t.i && t.ms === 90000)
+  perfT += 1500; clicar(env, 'voz-manual')                                                          // ev 72 substitui
+  velho.fn()                                                                                          // a consulta da 71 dispara depois
+  assert.equal(chamadas.filter((c) => c.acao === 'resultado').length, 0)                             // descartada (cadeia velha)
+  const novo = [...env.timers.values()].filter((t) => !t.i && t.ms === 90000).pop(); novo.fn()
+  assert.match(env.elems['rpv-root'].innerHTML, /Última ligação: atendida · 00:12/)
+})
+
+test("resultado da ligação: as consultas do widget vão além dos 15 min do 'sem registro' (o cron cobre aba fechada)", () => {
+  const m = SRC.match(/if \(\+\+voz\.resTent < (\d+)\) agendarResultado\(g, ev, \[([\d, ]+)\]/)
+  assert.ok(m)
+  const esperas = m[2].split(',').map(Number), n = Number(m[1])
+  assert.equal(esperas.length, n - 1)
+  const aposFim = 8000 + esperas.reduce((a, b) => a + b, 0), aposDiscar = 90000 + esperas.reduce((a, b) => a + b, 0)
+  assert.ok(aposFim > 15 * 60_000 && aposDiscar > 15 * 60_000)
+})
