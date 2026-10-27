@@ -1210,3 +1210,12 @@ test('0.4.8: resultado de uma ligação ANTIGA não sobrescreve o da nova (a cad
   const novo = [...env.timers.values()].filter((t) => !t.i && t.ms === 90000).pop(); novo.fn()
   assert.match(env.elems['rpv-root'].innerHTML, /Última ligação: atendida · 00:12/)
 })
+
+test("resultado da ligação: as consultas do widget vão além dos 15 min do 'sem registro' (o cron cobre aba fechada)", () => {
+  const m = SRC.match(/if \(\+\+voz\.resTent < (\d+)\) agendarResultado\(g, ev, \[([\d, ]+)\]/)
+  assert.ok(m)
+  const esperas = m[2].split(',').map(Number), n = Number(m[1])
+  assert.equal(esperas.length, n - 1)
+  const aposFim = 8000 + esperas.reduce((a, b) => a + b, 0), aposDiscar = 90000 + esperas.reduce((a, b) => a + b, 0)
+  assert.ok(aposFim > 15 * 60_000 && aposDiscar > 15 * 60_000)
+})

@@ -168,15 +168,18 @@ Decisão do Gabriel (26/10): opção B, seguir sem pedir à 4com o bloqueio de s
 
 - **Uma nota por ligação.** A nota é criada ao discar, já com o número completo (`+55 47 99729-3673`) e "Resultado: aguardando o fim da ligação…". Quando a chamada termina, essa mesma nota é ATUALIZADA (PATCH) com o resultado: atendida (com a duração), não atendida, ocupado, cancelada antes de atender, número inexistente…
 - **Vínculo com o CDR.** O id que o `POST /calls` da 4com devolve não é o id do CDR. Por isso o widget manda `metadata.widget_ev` (o id do evento de auditoria), e o servidor acha o CDR por `widget_ev` + `kommo_user`.
-- **Ação `resultado` em `prevendas-voz`.** O widget chama essa ação cerca de 8 s depois do fim da chamada, com até 6 tentativas e espera crescente, e mais uma de segurança 90 s depois de discar. O servidor processa TODAS as ligações 4com do usuário das últimas 3 h que ainda estão sem resultado, então as perdidas (aba fechada) são recuperadas na próxima consulta.
-  - Posse por linha (`final.proc`), para nunca criar nota em dobro.
-  - Sem CDR depois de 15 min: "não completou (sem registro na 4com)".
-  - Se a nota falhar, a ligação volta para nova tentativa por até 1 h.
-- **Para não duplicar a nota "LIGAÇÃO … Resumo" da 4com/N8N.** Nossa nota não repete o resumo nem a gravação. A gravação só entra na discagem manual, porque aquela nota é por número do lead.
+- **Ação `resultado` em `prevendas-voz` + cron.** O widget chama a ação ~8 s depois do fim da chamada (7 tentativas com espera crescente, ~17 min) e uma de segurança 90 s depois de discar. Independente da aba, o cron `prevendas-voz-resultados` (pg_cron a cada 2 min, só quando há pendentes; segredo no cofre `prevendas_voz_cron_secret` = env `PREVENDAS_VOZ_CRON_SECRET`) completa as pendentes de todos os usuários das últimas 24 h. Regras em `_shared/prevendas_voz_resultado.ts` (testadas com I/O falso):
+  - pendentes filtradas no BANCO (`final_em is null`, mais antigas primeiro);
+  - posse com TOKEN exclusivo (`final = {proc, tok}`): toda escrita condicionada ao token; lease de 90 s revalidado (no banco) antes de cada efeito no Kommo; abandono só após 150 s;
+  - nota idempotente: marcador `Ref. widget #<ev>`; a entidade da nota é gravada ANTES do POST; sem `nota_id`, a nota é procurada pelo marcador antes de criar (resposta perdida / id não gravado não duplicam);
+  - CDRs paginados (`skip`, envelope `{data, meta}`) até cobrir a ligação mais antiga; fora da cobertura, envelope inesperado ou erro = ADIA; "não completou (sem registro na 4com)" só com cobertura e 15 min;
+  - nota que falha volta para nova tentativa por até 3 h; `cdr_id` guardado (futuro `calls.provider_call_id`).
+- **Para não duplicar a nota "LIGAÇÃO … Resumo" da 4com/N8N.** Nossa nota não repete o resumo. A gravação só entra se nenhuma outra nota da entidade já tiver aquele arquivo; atendida com gravação espera 2 min do fim para a N8N escrever primeiro (se a N8N atrasar mais, o link pode aparecer nas duas — inofensivo).
 - **Onde fica o resultado:**
   - Lead aberto e autorizado: no lead, mesmo que o número digitado não seja dele.
-  - Sem lead: num CONTATO com esse número, se for um só e do usuário (ou se o usuário for gestor).
+  - Sem lead: num CONTATO com esse número, se a busca COMPLETA (paginada) achar exatamente um, do usuário (ou usuário gestor); ambíguo ou busca longa demais = sem nota.
   - Fora desses casos: só na auditoria (`prevendas_voz_eventos.final`) e no rodapé do widget ("Última ligação: …").
 - **3C:** ainda sem CDR. A nota fica só com o cabeçalho.
-- **Migration `supabase/migration_167_prevendas_voz_resultado.sql`:** aditiva. Colunas `provedor`, `nota_entidade`, `nota_id` e `final`; ação `resultado` no check; índice parcial.
-- **Reverter:** zip 0.4.6, redeploy da `prevendas-voz` de `9f65f59` e o SQL de reversão do cabeçalho da 167.
+- **Convergência:** quando a tabela `calls` + `kommo-writer` (AUDITORIA-LIGACOES F5, Engenheiro) existirem, a prevendas-voz só registra a tentativa (`client_ref = widget_ev`) e o writer atualiza ESTA nota (por `nota_id`/marcador); então o cron e a ação `resultado` são desligados.
+- **Migration `supabase/migration_169_prevendas_voz_resultado.sql`:** aditiva. Colunas `provedor`, `nota_entidade`, `nota_id`, `final`, `final_em`, `cdr_id`; ação `resultado` no check; índice parcial das pendentes; job do cron.
+- **Reverter:** zip 0.4.6, redeploy da `prevendas-voz` de `9f65f59` e o SQL de reversão do cabeçalho da 169.

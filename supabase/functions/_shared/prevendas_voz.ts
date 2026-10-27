@@ -244,24 +244,33 @@ const fmtDur = (s: number) => (s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s`
 
 /**
  * Texto da nota da ligação (uma nota por ligação: criada ao discar e ATUALIZADA com o resultado). Número completo
- * (pedido do Gabriel). A gravação/resumo da integração 4com/N8N (nota "LIGAÇÃO … Resumo") não é repetida: a
- * gravação só entra aqui quando o número NÃO é de um contato do lead (ligação manual), caso que aquela nota não cobre.
+ * (pedido do Gabriel). Marcador "Ref. widget #<ev>" na última linha: identifica a nota da ligação (idempotência:
+ * a retomada procura a nota pelo marcador antes de criar). A gravação só entra quando nenhuma outra nota da entidade
+ * (integração 4com/N8N "LIGAÇÃO … Resumo") já a tem — quem decide é prevendas_voz_resultado.ts (gravacaoAqui).
  */
-export function textoNota(p: { provedor: '4com' | '3c'; nome: string; ramal: string; numero: string; manual: boolean; final?: FinalLigacao | null; gravacaoAqui?: boolean }): string {
+export function textoNota(p: { provedor: '4com' | '3c'; nome: string; ramal: string; numero: string; manual: boolean; final?: FinalLigacao | null; gravacaoAqui?: boolean; ev?: number | null }): string {
   const cab = `📞 Ligação ${p.provedor === '3c' ? '3C' : '4com'} pelo widget — ${p.nome} (ramal ${p.ramal}) para ${telefoneLegivel(p.numero)}${p.manual ? ' (discagem manual)' : ''}`
-  if (!p.final) return p.provedor === '4com' ? `${cab}\nResultado: aguardando o fim da ligação…` : cab   // 3C: ainda sem CDR
-  const f = p.final
-  const linhas = [cab, `Resultado: ${f.rotulo}${f.rotulo === 'atendida' ? ` · duração ${fmtDur(f.duracao)}` : ''}`]
-  if (f.gravacao && p.gravacaoAqui) linhas.push(`Gravação: ${f.gravacao}`)
-  return linhas.join('\n')
+  const ref = p.ev ? [`Ref. widget #${p.ev}`] : []
+  if (!p.final) return [cab, ...(p.provedor === '4com' ? ['Resultado: aguardando o fim da ligação…'] : []), ...ref].join('\n')   // 3C: ainda sem CDR
+  return [cab, ...linhasResultado(p.final, !!p.gravacaoAqui), ...ref].join('\n')
 }
 
-/** Atualiza o texto da nota existente: troca a linha "Resultado:" (e o que vier depois) pelo resultado final. */
-export function comResultado(textoAtual: string, f: FinalLigacao, gravacaoAqui: boolean): string {
-  const base = String(textoAtual ?? '').replace(/\r\n/g, '\n')
+function linhasResultado(f: FinalLigacao, gravacaoAqui: boolean): string[] {
+  const l = [`Resultado: ${f.rotulo}${f.rotulo === 'atendida' ? ` · duração ${fmtDur(f.duracao)}` : ''}`]
+  if (f.gravacao && gravacaoAqui) l.push(`Gravação: ${f.gravacao}`)
+  return l
+}
+
+/**
+ * Atualiza o texto da nota existente: troca a linha "Resultado:" (e o que vier depois) pelo resultado final e
+ * mantém/põe o marcador no fim. Idempotente.
+ */
+export function comResultado(textoAtual: string, f: FinalLigacao, gravacaoAqui: boolean, ev?: number | null): string {
+  let base = String(textoAtual ?? '').replace(/\r\n/g, '\n')
+  const m = base.match(/\n?Ref\. widget #(\d+)\s*$/)
+  const evRef = ev ?? (m ? Number(m[1]) : null)
+  if (m) base = base.slice(0, m.index)
   const i = base.indexOf('\nResultado:')
   const cab = (i >= 0 ? base.slice(0, i) : base).trimEnd()
-  const linhas = [cab, `Resultado: ${f.rotulo}${f.rotulo === 'atendida' ? ` · duração ${fmtDur(f.duracao)}` : ''}`]
-  if (f.gravacao && gravacaoAqui) linhas.push(`Gravação: ${f.gravacao}`)
-  return linhas.join('\n')
+  return [cab, ...linhasResultado(f, gravacaoAqui), ...(evRef ? [`Ref. widget #${evRef}`] : [])].join('\n')
 }

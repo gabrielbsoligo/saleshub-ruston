@@ -787,7 +787,8 @@
         }
       }
       // resultado final da ligação (CDR da 4com, pelo servidor; ele também atualiza a nota no Kommo). Uma cadeia de
-      // consultas por ligação (a mais nova vence); 'pendente' tenta de novo com espera crescente, até 6 vezes.
+      // consultas por ligação (a mais nova vence); 'pendente' tenta de novo com espera crescente, até 7 vezes (~17 min,
+      // além dos 15 min do 'sem registro'). Sem aba aberta, o cron do servidor completa a nota do mesmo jeito.
       function agendarResultado(g, ev, ms, reinicia) {
         if (reinicia) voz.resTent = 0;
         var seq = ++voz.resSeq;
@@ -801,7 +802,7 @@
               if (!voz.sessao) { voz.aviso = 'Última ligação: ' + p.rotulo + (p.rotulo === 'atendida' && p.duracao ? ' · ' + mmss(p.duracao * 1000) : '') + (p.nota ? ' (registrada no Kommo)' : ''); render(); }
               return;
             }
-            if (++voz.resTent < 6) agendarResultado(g, ev, [20000, 40000, 60000, 120000, 300000][Math.min(voz.resTent - 1, 4)], false);
+            if (++voz.resTent < 7) agendarResultado(g, ev, [20000, 40000, 60000, 120000, 300000, 420000][Math.min(voz.resTent - 1, 5)], false);
           });
         }, ms);
       }

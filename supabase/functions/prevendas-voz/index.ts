@@ -6,6 +6,8 @@
 //                                                             (atendimento MANUAL no widget) e depois para o telefone
 //   { acao: 'resultado', ev? }                              → resultado final das ligações do usuário (CDR da 4com):
 //                                                             atualiza a nota da ligação (uma nota por ligação)
+//   header X-Cron-Segredo (pg_cron, sem JWT)                → mesma coisa para TODOS os usuários (não depende da aba)
+//   regras do resultado: _shared/prevendas_voz_resultado.ts
 // Segurança (fail-closed em todos os passos):
 //  - JWT HS256 do Kommo (conta, emissor, integração, validade) → team_members ATIVO;
 //  - lista de usuários liberados no SERVIDOR (PREVENDAS_VOZ_USUARIOS; vazia = ninguém);
@@ -23,9 +25,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { verificarJwtKommo } from '../_shared/kommo_jwt.ts'
 import { esperarFicha, Interrupcao } from '../_shared/prevendas_servidor.ts'
 import {
-  acharCdr, comResultado, credencial3c, decidirEntidade, prepararAgente3c, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao,
-  resultadoCdr, telefone3c, telefoneE164, telefonesDosContatos, textoNota, usuarioLiberado, type FinalLigacao,
+  credencial3c, decidirEntidade, prepararAgente3c, decidirProvedor, finalTelefone, ha1, interpretar3c, interpretar4com, motivoAutorizacao,
+  telefone3c, telefoneE164, textoNota, usuarioLiberado,
 } from '../_shared/prevendas_voz.ts'
+import { buscarCdrs, MARGEM_COBERTURA_S, processarPendentes, type Desfecho, type IoResultado } from '../_shared/prevendas_voz_resultado.ts'
 
 const SUB = 'financeirorustonengenhariacombr'
 const KOMMO = `https://${SUB}.kommo.com`
@@ -46,16 +49,96 @@ const json = (body: unknown, status: number, origin: string | null) =>
     status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Pragma: 'no-cache', ...cors(origin) },
   })
 class KommoLimite extends Error { retryAfter: number; constructor(ra: number) { super('kommo_429'); this.retryAfter = ra } }
+const env = (k: string) => Deno.env.get(k) ?? ''
+const JANELA_RESULTADO_S = 24 * 3600, PRAZO_LOTE_S = 60, EVENTOS = 'prevendas_voz_eventos'
+
+type KommoFn = (path: string, init?: RequestInit, prazoFinal?: number) => Promise<any>
+// GET ao Kommo SEMPRE com ficha do orçamento da conta (compartilhado com prevendas-fila); 429 pausa a conta
+// prazoFinal: o padrão vale para a autorização; a nota pós-ligação ganha prazo próprio (a 4com pode demorar 45 s)
+function criarKommo(sb: any, inicio: number): KommoFn {
+  return async (path, init, prazoFinal = inicio + PRAZO_MS) => {
+    await esperarFicha(
+      async () => { const { data, error } = await sb.rpc('prevendas_consumir', { p_n: 1 }); if (error) throw new Error('falha_banco'); return !!data },
+      (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), prazoFinal, ESPERA_FICHA_MS)
+    const r = await fetch(`${KOMMO}${path}`, { ...init, headers: { Authorization: `Bearer ${env('KOMMO_API_TOKEN')}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    if (r.status === 204 || r.status === 404) return null
+    if (r.status === 429) { const ra = Number(r.headers.get('Retry-After')) || 60; await sb.rpc('prevendas_pausar', { p_seg: ra }); throw new KommoLimite(ra) }
+    if (!r.ok) throw new Error(`kommo ${r.status}`)
+    return r.json()
+  }
+}
+
+/** Comparação em tempo constante (segredo do cron). */
+function iguais(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a), y = new TextEncoder().encode(b)
+  let d = x.length ^ y.length
+  for (let i = 0; i < Math.max(x.length, y.length); i++) d |= (x[i] ?? 0) ^ (y[i] ?? 0)
+  return d === 0
+}
+
+/**
+ * Resultado final (CDR da 4com) das ligações pendentes: de UM usuário (ação 'resultado' do widget) ou de todos
+ * (varredura do cron — recuperação que não depende da aba). Mais antigas primeiro; CDRs paginados até cobrir a
+ * mais antiga. Erro da 4com lança 'provedor_limite'/'provedor_indisponivel' (nada é concluído).
+ */
+async function resultados(sb: any, uid: number | null, kommo: KommoFn, token4com: string): Promise<Desfecho[]> {
+  let q = sb.from(EVENTOS).select('id,kommo_user,em,entidade,nota_entidade,nota_id,final')
+    .eq('acao', 'discar').eq('resultado', 'ok').eq('provedor', '4com').is('final_em', null)
+    .gte('em', new Date(Date.now() - JANELA_RESULTADO_S * 1000).toISOString())
+  if (uid != null) q = q.eq('kommo_user', uid)
+  const { data: pend, error } = await q.order('em', { ascending: true }).limit(50)
+  if (error) throw new Error('falha_banco')
+  if (!pend?.length) return []
+  if (!token4com) throw new Error('provedor_indisponivel')
+  const desde = Math.min(...pend.map((p: any) => Math.floor(Date.parse(p.em) / 1000))) - MARGEM_COBERTURA_S
+  const cdrs = await buscarCdrs(async (skip, limite) => {
+    const fl = encodeURIComponent(JSON.stringify({ order: 'started_at DESC', limit: limite, skip }))
+    const r = await fetch(`${API4COM}/calls?filter=${fl}`, { headers: { Authorization: token4com }, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    if (r.status === 429) throw new Error('provedor_limite')
+    if (!r.ok) throw new Error('provedor_indisponivel')
+    try { return await r.json() } catch { return null }               // corpo inválido = envelope inesperado (adia)
+  }, desde)
+  const uids = [...new Set(pend.map((p: any) => Number(p.kommo_user)))]
+  const { data: ms, error: eM } = await sb.from('team_members').select('kommo_user_id,name,role,ramal_4com').in('kommo_user_id', uids)
+  if (eM) throw new Error('falha_banco')
+  const membros = new Map((ms ?? []).map((m: any) => [Number(m.kommo_user_id), m]))
+  const ok = (r: { data: unknown; error: unknown }) => { if (r.error) throw new Error('falha_banco'); return Array.isArray(r.data) && r.data.length > 0 }
+  const io: IoResultado = {
+    agoraS: () => Math.floor(Date.now() / 1000),
+    token: () => crypto.randomUUID(),
+    reivindicar: async (id, ant, tok, proc) => {
+      const u = sb.from(EVENTOS).update({ final: { proc, tok } }).eq('id', id).is('final_em', null)
+      return ok(await (ant ? u.eq('final->>tok', ant) : u.is('final', null)).select('id'))
+    },
+    confirmar: async (id, tok) => ok(await sb.from(EVENTOS).select('id').eq('id', id).eq('final->>tok', tok).is('final_em', null)),
+    gravar: async (id, tok, dados) => ok(await sb.from(EVENTOS).update(dados).eq('id', id).eq('final->>tok', tok).is('final_em', null).select('id')),
+    liberar: async (id, tok) => { const { error: eL } = await sb.from(EVENTOS).update({ final: null }).eq('id', id).eq('final->>tok', tok); if (eL) console.error('[prevendas-voz] liberar', eL.message) },
+    kommo: (path, init) => kommo(path, init, Date.now() + PRAZO_NOTA_MS),
+    membro: (u) => (membros.get(u) as any) ?? null,
+  }
+  return processarPendentes(pend, cdrs, io, io.agoraS() + PRAZO_LOTE_S)
+}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('Origin')
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) })
   if (req.method !== 'POST') return json({ erro: 'metodo' }, 405, origin)
 
-  const env = (k: string) => Deno.env.get(k) ?? ''
   const secret = env('KOMMO_WIDGET_SECRET'), clientId = env('KOMMO_WIDGET_CLIENT_ID'), contaId = env('KOMMO_ACCOUNT_ID')
   const token4com = env('API4COM_TOKEN'), dominio = env('API4COM_DOMAIN'), wss = env('API4COM_WSS'), token3c = env('THREEC_API_TOKEN')
   if (!secret || !clientId || !contaId || !env('KOMMO_API_TOKEN')) return json({ erro: 'nao_configurado' }, 503, origin)
+
+  // varredura do cron (pg_cron → pg_net, segredo do cofre): completa as ligações pendentes de TODOS os usuários
+  const segCron = req.headers.get('X-Cron-Segredo')
+  if (segCron != null) {
+    const seg = env('PREVENDAS_VOZ_CRON_SECRET')
+    if (!seg || !iguais(segCron, seg)) return json({ erro: 'nao_autorizado' }, 401, origin)
+    const sbC = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'))
+    try {
+      const d = await resultados(sbC, null, criarKommo(sbC, Date.now()), token4com)
+      return json({ ok: true, feitos: d.filter((x) => x.feito).length, adiados: d.filter((x) => !x.feito).map((x: any) => `${x.ev}:${x.motivo}`) }, 200, origin)
+    } catch (e) { console.error('[prevendas-voz] varrer', (e as Error).message); return json({ erro: (e as Error).message }, 503, origin) }
+  }
 
   // 1) identidade
   const v = await verificarJwtKommo(req.headers.get('X-Auth-Token') ?? '', { secret, contaId, host: `${SUB}.kommo.com`, clientId })
@@ -103,18 +186,7 @@ Deno.serve(async (req) => {
     return ra
   }
 
-  // GET ao Kommo SEMPRE com ficha do orçamento da conta (compartilhado com prevendas-fila); 429 pausa a conta
-  // prazoFinal: o padrão vale para a autorização; a nota pós-ligação ganha prazo próprio (a 4com pode demorar 45 s)
-  const kommo = async (path: string, init?: RequestInit, prazoFinal = inicio + PRAZO_MS) => {
-    await esperarFicha(
-      async () => { const { data, error } = await sb.rpc('prevendas_consumir', { p_n: 1 }); if (error) throw new Error('falha_banco'); return !!data },
-      (ms) => new Promise((ok) => setTimeout(ok, ms)), () => Date.now(), prazoFinal, ESPERA_FICHA_MS)
-    const r = await fetch(`${KOMMO}${path}`, { ...init, headers: { Authorization: `Bearer ${env('KOMMO_API_TOKEN')}`, 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
-    if (r.status === 204 || r.status === 404) return null
-    if (r.status === 429) { const ra = Number(r.headers.get('Retry-After')) || 60; await sb.rpc('prevendas_pausar', { p_seg: ra }); throw new KommoLimite(ra) }
-    if (!r.ok) throw new Error(`kommo ${r.status}`)
-    return r.json()
-  }
+  const kommo = criarKommo(sb, inicio)
 
   try {
     // ---------------- credencial SIP do próprio ramal ----------------
@@ -149,68 +221,23 @@ Deno.serve(async (req) => {
       const pedido = Number(body?.ev) || 0
       const evR = await reservar('resultado', 60, 600, 0)
       if (!evR) return json({ erro: 'limite', retry_after: 30 }, 429, origin)
-      const agoraS = Math.floor(Date.now() / 1000)
-      const { data: pend, error: eP } = await sb.from('prevendas_voz_eventos').select('id,em,entidade,nota_entidade,nota_id,final')
-        .eq('kommo_user', uid).eq('acao', 'discar').eq('resultado', 'ok').eq('provedor', '4com')
-        .gte('em', new Date(Date.now() - 3 * 3600_000).toISOString()).order('em', { ascending: false }).limit(20)
-      if (eP) throw new Error('falha_banco')
-      // abertas: sem resultado, ou com processamento abandonado há mais de 2 min
-      const abertos = (pend ?? []).filter((p: any) => !p.final || (p.final.proc && agoraS - Number(p.final.proc) > 120))
-      let lista: unknown = null
-      if (abertos.length && token4com) {
-        const fl = encodeURIComponent(JSON.stringify({ order: 'started_at DESC', limit: 100 }))
-        const r = await fetch(`${API4COM}/calls?filter=${fl}`, { headers: { Authorization: token4com }, signal: AbortSignal.timeout(TIMEOUT_MS) })
-        if (r.status === 429) { await registrar(evR, 'limite', '4com 429'); return json({ erro: 'provedor_limite', retry_after: 60 }, 503, origin) }
-        if (!r.ok) { await registrar(evR, 'incerto', `4com ${r.status}`); return json({ erro: 'provedor_indisponivel' }, 503, origin) }
-        lista = await r.json()
+      let feitos: Desfecho[] = []
+      try { feitos = await resultados(sb, uid, kommo, token4com) }
+      catch (e) {
+        const m = (e as Error).message
+        await registrar(evR, m === 'provedor_limite' ? 'limite' : 'incerto', m)
+        if (m === 'provedor_limite' || m === 'provedor_indisponivel') return json({ erro: m, retry_after: 60 }, 503, origin)
+        throw e
       }
-      const feitos: Array<FinalLigacao & { ev: number; onde: string | null; nota: boolean }> = []
-      for (const p of abertos as any[]) {
-        const cdr = acharCdr(lista, p.id, uid)
-        const idadeS = agoraS - Math.floor(Date.parse(p.em) / 1000)
-        if (!cdr && idadeS < 15 * 60) continue                         // a 4com ainda não fechou o CDR: tenta depois
-        // posse do processamento (uma execução por ligação; evita nota em dobro)
-        const q = sb.from('prevendas_voz_eventos').update({ final: { proc: agoraS } }).eq('id', p.id)
-        const { data: posse, error: ePo } = await (p.final ? q.eq('final->>proc', String(p.final.proc)) : q.is('final', null)).select('id')
-        if (ePo) throw new Error('falha_banco')
-        if (!posse?.length) continue
-        const fin: FinalLigacao = cdr ? resultadoCdr(cdr) : { rotulo: 'não completou (sem registro na 4com)', duracao: 0, gravacao: null, causa: 'SEM_CDR', inicio: null }
-        const numero = cdr ? telefoneE164(String(cdr.to ?? '')) : null
-        const manual = String(p.entidade ?? '').startsWith('manual')
-        let onde: string | null = p.nota_entidade ?? null, notaId: number | null = p.nota_id ?? null, nota = false
-        try {
-          // sem lead autorizado (discagem manual sem lead): o CONTATO do número, se for UM só e do usuário (ou gestor)
-          if (!onde && numero) {
-            const j = await kommo(`/api/v4/contacts?query=${encodeURIComponent(numero.slice(-8))}&limit=25`, undefined, Date.now() + PRAZO_NOTA_MS)
-            const doNumero = (j?._embedded?.contacts ?? []).filter((c: any) => telefonesDosContatos([c])[0]?.telefones.some((t) => t.e164 === numero))
-            if (doNumero.length === 1 && motivoAutorizacao({ papel: membro.role ?? null, uid, donoEntidade: doNumero[0].responsible_user_id ?? null, temTarefaPropria: false })) onde = `contacts:${Number(doNumero[0].id)}`
-          }
-          if (onde) {
-            const [et, idS] = onde.split(':'), idE = Number(idS)
-            if ((et === 'leads' || et === 'contacts') && Number.isInteger(idE) && idE > 0) {
-              const atual = notaId ? await kommo(`/api/v4/${et}/${idE}/notes/${notaId}`, undefined, Date.now() + PRAZO_NOTA_MS) : null
-              if (atual?.params?.text) {
-                await kommo(`/api/v4/${et}/notes`, { method: 'PATCH', body: JSON.stringify([{ id: notaId, entity_id: idE, note_type: 'common', params: { text: comResultado(String(atual.params.text), fin, manual) } }]) }, Date.now() + PRAZO_NOTA_MS)
-                nota = true
-              } else if (numero) {                                       // a nota inicial falhou ou não existe: cria a nota completa
-                const j = await kommo(`/api/v4/${et}/notes`, { method: 'POST', body: JSON.stringify([{ entity_id: idE, note_type: 'common',
-                  params: { text: textoNota({ provedor: '4com', nome: membro.name ?? String(uid), ramal, numero, manual, final: fin, gravacaoAqui: manual }) } }]) }, Date.now() + PRAZO_NOTA_MS)
-                notaId = Number(j?._embedded?.notes?.[0]?.id) || null; nota = !!notaId
-              }
-            }
-          }
-        } catch (e) { console.error('[prevendas-voz] resultado nota', (e as Error).message) }
-        // nota que devia sair e falhou (Kommo/orçamento): devolve para nova tentativa enquanto a ligação for recente
-        if (onde && !nota && idadeS < 3600) { await sb.from('prevendas_voz_eventos').update({ final: null }).eq('id', p.id); continue }
-        const { error: eF } = await sb.from('prevendas_voz_eventos').update({ final: { ...fin, nota, onde }, nota_entidade: onde, nota_id: notaId }).eq('id', p.id)
-        if (eF) throw new Error('falha_banco')
-        feitos.push({ ...fin, ev: p.id, onde, nota })
+      await registrar(evR, 'ok', `${feitos.filter((x) => x.feito).length} resultado(s)`)
+      // a ligação pedida: lida do banco depois do processamento (agora ou de antes) ou pendente
+      let desta: unknown = null
+      if (pedido) {
+        const { data: row, error: eR } = await sb.from('prevendas_voz_eventos').select('final,final_em').eq('id', pedido).eq('kommo_user', uid).maybeSingle()
+        if (eR) throw new Error('falha_banco')
+        desta = row?.final_em && row.final?.rotulo ? { ...row.final, ev: pedido } : { ev: pedido, pendente: true }
       }
-      await registrar(evR, 'ok', `${feitos.length} resultado(s)`)
-      // a ligação pedida: resultado (agora ou de antes) ou pendente
-      const antes = (pend ?? []).find((p: any) => p.id === pedido && p.final?.rotulo)
-      const desta = feitos.find((x) => x.ev === pedido) ?? (antes ? { ...antes.final, ev: pedido } : null)
-      return json({ ok: true, resultados: feitos, pedido: pedido ? (desta ?? { ev: pedido, pendente: true }) : null }, 200, origin)
+      return json({ ok: true, resultados: feitos.filter((x) => x.feito).map((x: any) => ({ ...x.final, ev: x.ev })), pedido: desta }, 200, origin)
     }
 
     if (acao !== 'telefones' && acao !== 'discar') return json({ erro: 'acao' }, 400, origin)
@@ -319,14 +346,20 @@ Deno.serve(async (req) => {
     }
     // nota no Kommo (melhor esforço, com prazo PRÓPRIO a partir de agora; a ligação já aconteceu e nunca é repetida)
     // uma nota por ligação: criada agora (número completo) e ATUALIZADA com o resultado do CDR (ação 'resultado')
+    // INTENÇÃO antes do POST (provedor + entidade da nota): se a resposta do POST se perder, ou o id não for gravado,
+    // a retomada procura a nota pelo marcador "Ref. widget #<ev>" nesta entidade antes de criar outra
     let nota = notaOk, notaId: number | null = null
-    if (notaOk) try {
+    {
+      const { error: eI } = await sb.from(EVENTOS).update({ provedor, nota_entidade: notaOk ? `${etype}:${eid}` : null }).eq('id', ev)
+      if (eI) { nota = false; console.error('[prevendas-voz] evento', eI.message) }   // sem intenção gravada, sem nota
+    }
+    if (nota) try {
       const j = await kommo(`/api/v4/${etype}/notes`, { method: 'POST', body: JSON.stringify([{ entity_id: eid, note_type: 'common',
-        params: { text: textoNota({ provedor, nome: membro.name ?? String(uid), ramal: ramalUsado, numero: destino!, manual }) } }]) }, Date.now() + PRAZO_NOTA_MS)
+        params: { text: textoNota({ provedor, nome: membro.name ?? String(uid), ramal: ramalUsado, numero: destino!, manual, ev }) } }]) }, Date.now() + PRAZO_NOTA_MS)
       notaId = Number(j?._embedded?.notes?.[0]?.id) || null
     } catch (e) { nota = false; console.error('[prevendas-voz] nota', (e as Error).message) }
-    {
-      const { error: eN } = await sb.from('prevendas_voz_eventos').update({ provedor, nota_entidade: notaOk ? `${etype}:${eid}` : null, nota_id: notaId }).eq('id', ev)
+    if (notaId) {
+      const { error: eN } = await sb.from(EVENTOS).update({ nota_id: notaId }).eq('id', ev).is('nota_id', null)
       if (eN) console.error('[prevendas-voz] evento', eN.message)
     }
     // auditoria registra a ligação e, se for o caso, a nota pendente (para retomada manual)
