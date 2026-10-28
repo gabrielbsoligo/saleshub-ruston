@@ -80,7 +80,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_team_members_agente_3c_ativo
   ON public.team_members (btrim(agente_3c_id))
   WHERE COALESCE(active, true) AND COALESCE(btrim(agente_3c_id), '') <> '';
 
--- normaliza o espelho uma vez: cada agente de membro ativo aponta para esse membro (único pelo índice acima)
+-- reconcilia o espelho legado com o conjunto canônico (agente normalizado → único membro ativo, único pelo índice
+-- acima): remove o que não pertence a ele (membro inativo/ausente, chave com espaço ou divergente do cadastro) e
+-- faz upsert do canônico — sem isso callquality-ingest/webhook-4com seguiriam atribuindo a quem não deve.
+DELETE FROM public.agente_3c_map m
+ WHERE NOT EXISTS (
+   SELECT 1 FROM public.team_members tm
+    WHERE tm.id = m.member_id AND COALESCE(tm.active, true)
+      AND COALESCE(btrim(tm.agente_3c_id), '') <> '' AND btrim(tm.agente_3c_id) = m.agent_id);
 INSERT INTO public.agente_3c_map (agent_id, member_id)
 SELECT btrim(agente_3c_id), id FROM public.team_members
  WHERE COALESCE(active, true) AND COALESCE(btrim(agente_3c_id), '') <> ''
