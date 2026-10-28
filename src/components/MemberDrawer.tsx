@@ -101,9 +101,8 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
         meta_ligacoes_diaria: form.meta_ligacoes_diaria ?? 100,
         cor_grafico: form.cor_grafico ?? null,
       };
-      await updateMember(member.id, payload);
-      toast.success('Membro atualizado');
-      onClose();
+      // só fecha com a gravação confirmada (o store já mostra o toast de sucesso ou de erro)
+      if (await updateMember(member.id, payload)) onClose();
     } catch (e: any) {
       toast.error(e.message || 'Erro ao salvar');
     } finally {
@@ -115,7 +114,14 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
     if (!isGestor) return;
     const next = !member.active;
     if (!next && !confirm(`Desativar ${member.name}?`)) return;
-    await updateMember(member.id, { active: next });
+    if (next) {
+      const conflito = conflitosAgente(members, member.id, member.agente_3c_id);
+      if (conflito.length) {
+        toast.error(`Não dá para reativar: o agente 3C ${member.agente_3c_id} está em ${conflito.map((m) => m.name).join(', ')}`);
+        return;
+      }
+    }
+    if (!(await updateMember(member.id, { active: next }))) return;
     toast.success(next ? 'Membro reativado' : 'Membro desativado');
     onClose();
   };
@@ -218,48 +224,44 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
               const visto = pend3c.find((p) => p.agent_ref === atual);
               return (
                 <>
-                  {agentes3c.length > 0 ? (
-                    <select
-                      value={atual}
-                      disabled={!isGestor}
-                      onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value }))}
-                      className={inputClass}
-                    >
-                      <option value="">— não vinculado —</option>
-                      {agentes3c.map((a) => {
-                        const dono = conflitosAgente(members, member.id, a.id)[0];
-                        return (
-                          <option key={a.id} value={a.id}>
-                            {a.nome || 'sem nome'} · agente {a.id}{a.ramal ? ` · ramal ${a.ramal}` : ''}{dono ? ` (já em ${dono.name})` : ''}
-                          </option>
-                        );
-                      })}
-                      {atual && !doApi && <option value={atual}>agente {atual} (não encontrado no 3C)</option>}
-                    </select>
-                  ) : (
-                    <>
-                      <input
-                        type="text"
-                        list="agentes-3c-vistos"
-                        value={form.agente_3c_id || ''}
-                        disabled={!isGestor}
-                        placeholder="ex: 242898"
-                        onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value.replace(/\D/g, '') }))}
-                        className={inputClass}
-                      />
-                      <datalist id="agentes-3c-vistos">
-                        {pend3c.map((p) => <option key={p.agent_ref} value={p.agent_ref}>{p.agent_nome ?? ''} (tabulou sem cadastro)</option>)}
-                      </datalist>
-                      {isGestor && agentes3cErro && (
-                        <p className="text-[10px] text-amber-400 mt-1">Lista do 3C indisponível ({agentes3cErro}) — digite o ID ou escolha um agente visto nas tabulações.</p>
-                      )}
-                    </>
+                  {/* sempre digitável; as sugestões vêm da API do 3C E dos agentes vistos tabulando sem cadastro */}
+                  <input
+                    type="text"
+                    list="agentes-3c-opcoes"
+                    value={form.agente_3c_id || ''}
+                    disabled={!isGestor}
+                    placeholder="ex: 242898 — comece a digitar o nome ou o ID"
+                    onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value.replace(/\D/g, '') }))}
+                    className={inputClass}
+                  />
+                  <datalist id="agentes-3c-opcoes">
+                    {agentes3c.map((a) => {
+                      const dono = conflitosAgente(members, member.id, a.id)[0];
+                      return (
+                        <option key={`api-${a.id}`} value={a.id}>
+                          {a.nome || 'sem nome'}{a.ramal ? ` · ramal ${a.ramal}` : ''}{dono ? ` (já em ${dono.name})` : ''}
+                        </option>
+                      );
+                    })}
+                    {pend3c.filter((p) => !agentes3c.some((a) => a.id === p.agent_ref)).map((p) => (
+                      <option key={`visto-${p.agent_ref}`} value={p.agent_ref}>{p.agent_nome ?? 'sem nome'} (tabulou sem cadastro)</option>
+                    ))}
+                  </datalist>
+                  {isGestor && agentes3cErro && (
+                    <p className="text-[10px] text-amber-400 mt-1">
+                      {agentes3c.length ? 'Lista do 3C incompleta' : 'Lista do 3C indisponível'} ({agentes3cErro}) — digite o ID ou escolha um agente visto nas tabulações.
+                    </p>
+                  )}
+                  {atual && (doApi || visto) && !conflito.length && (
+                    <p className="text-[11px] text-emerald-400 mt-1">
+                      {doApi ? `${doApi.nome || 'sem nome'} no 3C${doApi.ramal ? ` (ramal ${doApi.ramal})` : ''}` : `${visto?.agent_nome ?? 'sem nome'} — tabulou ${visto?.ocorrencias}× sem cadastro; salvar resolve`}
+                    </p>
+                  )}
+                  {atual && agentes3c.length > 0 && !agentes3cErro && !doApi && !visto && (
+                    <p className="text-[11px] text-amber-400 mt-1">Agente {atual} não aparece na lista do 3C — confira o ID.</p>
                   )}
                   {conflito.length > 0 && (
                     <p className="text-[11px] text-red-400 mt-1">Agente {atual} já vinculado a {conflito.map((m) => m.name).join(', ')} — um agente só pode estar em um membro ativo.</p>
-                  )}
-                  {!conflito.length && atual && !agentes3c.length && visto && (
-                    <p className="text-[11px] text-emerald-400 mt-1">Agente {atual} ({visto.agent_nome ?? 'sem nome'}) tabulou {visto.ocorrencias}× sem cadastro — salvar resolve.</p>
                   )}
                 </>
               );

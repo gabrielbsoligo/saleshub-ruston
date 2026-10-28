@@ -42,7 +42,8 @@ export async function listarAgentes3C(): Promise<{ agentes: Agente3C[]; erro: st
     });
     const j = await r.json().catch(() => null);
     if (!r.ok || !j?.ok) return { agentes: [], erro: j?.erro || j?.error || `HTTP ${r.status}` };
-    return { agentes: j.agentes ?? [], erro: null };
+    // lista parcial (uma página seguinte falhou): mostra o que veio E avisa — a digitação continua disponível
+    return { agentes: j.agentes ?? [], erro: j.incompleta ? (j.erro || 'lista incompleta') : null };
   } catch (e: any) {
     return { agentes: [], erro: e?.message || 'falha ao listar agentes do 3C' };
   }

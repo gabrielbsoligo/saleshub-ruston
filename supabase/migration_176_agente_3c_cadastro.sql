@@ -11,6 +11,12 @@
 --     (agente_sem_cadastro | agente_duplicado | membro_sem_kommo) e aparece na tela de Equipe até ser resolvida.
 --     O lead segue sendo movido; só o responsável não é trocado. Nada de chutar por nome.
 --   * ligacoes_resolver_agente_3c(...): o que o webhook-3c-calls chama (service_role).
+--   * TRAVA no banco: a policy tm_update deixa o usuário atualizar a PRÓPRIA linha inteira; sem trava, um SDR
+--     vincularia a si um agente sem cadastro / escolheria o kommo_user_id (ou se promoveria a gestor) via PostgREST.
+--     Trigger recusa (42501) mudança de role, agente_3c_id, kommo_user_id e ramal_4com vinda de authenticated/anon
+--     quando quem pede não é gestor. SQL Editor e service_role seguem livres.
+--   * espelho agente_3c_map (137) refeito: aponta para o ÚNICO membro ATIVO com o agente (normalizado), recalcula
+--     quando active muda e salvar um inativo não rouba o vínculo do ativo.
 -- Checagem antes (não pode voltar linha — senão o índice falha; resolva os duplicados na tela de Equipe):
 --   select btrim(agente_3c_id) ag, array_agg(name) from team_members
 --    where coalesce(active, true) and coalesce(btrim(agente_3c_id), '') <> '' group by 1 having count(*) > 1;
@@ -20,10 +26,65 @@
 --   DROP TABLE IF EXISTS public.ligacoes_agente_pendencias;
 --   DROP INDEX IF EXISTS public.ux_team_members_agente_3c_ativo;
 --   DROP FUNCTION IF EXISTS public.resolve_member(text, text, text);   -- só se a 172 ainda não foi aplicada
+--   DROP TRIGGER IF EXISTS team_members_trava_identidades ON public.team_members;
+--   DROP FUNCTION IF EXISTS public.team_members_trava_identidades();
+--   espelho: reaplicar fn_sync_agente_3c_map/trg_sync_agente_3c_map da migration_137.
+
+-- ---- trava: identidades e papel só por gestor (ou SQL Editor/service_role) ------------------------------------
+CREATE OR REPLACE FUNCTION public.team_members_trava_identidades()
+RETURNS trigger
+LANGUAGE plpgsql
+-- SECURITY INVOKER de propósito: current_user precisa ser o papel da requisição (authenticated/anon via PostgREST)
+AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon')
+     AND COALESCE(public.get_user_role(), '') <> 'gestor'
+     AND (NEW.role IS DISTINCT FROM OLD.role
+       OR btrim(COALESCE(NEW.agente_3c_id, '')) IS DISTINCT FROM btrim(COALESCE(OLD.agente_3c_id, ''))
+       OR NEW.kommo_user_id IS DISTINCT FROM OLD.kommo_user_id
+       OR btrim(COALESCE(NEW.ramal_4com, '')) IS DISTINCT FROM btrim(COALESCE(OLD.ramal_4com, ''))) THEN
+    RAISE EXCEPTION 'só gestor altera papel e identidades (3C, Kommo, ramal) de um membro' USING errcode = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS team_members_trava_identidades ON public.team_members;
+CREATE TRIGGER team_members_trava_identidades
+  BEFORE UPDATE OF role, agente_3c_id, kommo_user_id, ramal_4com ON public.team_members
+  FOR EACH ROW EXECUTE FUNCTION public.team_members_trava_identidades();
+
+-- ---- espelho agente_3c_map: o único membro ATIVO com o agente --------------------------------------------------
+CREATE OR REPLACE FUNCTION public.fn_sync_agente_3c_map()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE r text; v_n int; v_id uuid;
+BEGIN
+  DELETE FROM agente_3c_map WHERE member_id = NEW.id;
+  FOR r IN
+    SELECT DISTINCT x FROM unnest(ARRAY[
+      btrim(COALESCE(NEW.agente_3c_id, '')),
+      CASE WHEN TG_OP = 'UPDATE' THEN btrim(COALESCE(OLD.agente_3c_id, '')) ELSE '' END]) x
+    WHERE x <> ''
+  LOOP
+    SELECT count(*), min(id::text)::uuid INTO v_n, v_id FROM team_members
+     WHERE COALESCE(active, true) AND btrim(COALESCE(agente_3c_id, '')) = r;
+    DELETE FROM agente_3c_map WHERE agent_id = r;
+    IF v_n = 1 THEN INSERT INTO agente_3c_map (agent_id, member_id) VALUES (r, v_id); END IF;
+  END LOOP;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_sync_agente_3c_map ON public.team_members;
+CREATE TRIGGER trg_sync_agente_3c_map
+  AFTER INSERT OR UPDATE OF agente_3c_id, active ON public.team_members
+  FOR EACH ROW EXECUTE FUNCTION public.fn_sync_agente_3c_map();
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_team_members_agente_3c_ativo
   ON public.team_members (btrim(agente_3c_id))
   WHERE COALESCE(active, true) AND COALESCE(btrim(agente_3c_id), '') <> '';
+
+-- normaliza o espelho uma vez: cada agente de membro ativo aponta para esse membro (único pelo índice acima)
+INSERT INTO public.agente_3c_map (agent_id, member_id)
+SELECT btrim(agente_3c_id), id FROM public.team_members
+ WHERE COALESCE(active, true) AND COALESCE(btrim(agente_3c_id), '') <> ''
+ON CONFLICT (agent_id) DO UPDATE SET member_id = excluded.member_id;
 
 -- mesma assinatura da 172; NULL quando não há membro ativo ou quando a identidade é duplicada
 CREATE OR REPLACE FUNCTION public.resolve_member(p_provider text, p_tipo text, p_ref text) RETURNS uuid

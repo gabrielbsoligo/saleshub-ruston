@@ -28,7 +28,8 @@ interface AppState {
 
   fetchMembers: () => Promise<void>;
   addMember: (m: Partial<TeamMember>) => Promise<void>;
-  updateMember: (id: string, updates: Partial<TeamMember>) => Promise<void>;
+  /** true só quando a linha foi gravada (erro ou RLS que filtra a linha → false, com toast) */
+  updateMember: (id: string, updates: Partial<TeamMember>) => Promise<boolean>;
 
   fetchLeads: () => Promise<void>;
   addLead: (l: Partial<Lead>) => Promise<Lead | null>;
@@ -204,16 +205,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toast.success('Membro adicionado!');
   };
 
-  const updateMember = async (id: string, updates: Partial<TeamMember>) => {
-    const { error } = await supabase.from('team_members').update(updates).eq('id', id);
+  const updateMember = async (id: string, updates: Partial<TeamMember>): Promise<boolean> => {
+    const { data, error } = await supabase.from('team_members').update(updates).eq('id', id).select('id');
     if (error) {
       toast.error(error.code === '23505' && error.message.includes('agente_3c')
         ? 'Esse agente do 3C já está vinculado a outro membro ativo'
+        : error.code === '42501' ? 'Só gestor altera papel e identidades (3C, Kommo, ramal)'
         : error.message);
-      return;
+      return false;
     }
+    if (!data?.length) { toast.error('Nada foi gravado (sem permissão para editar este membro)'); return false; }
     setMembers(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
     toast.success('Membro atualizado!');
+    return true;
   };
 
   // ===================== LEADS =====================

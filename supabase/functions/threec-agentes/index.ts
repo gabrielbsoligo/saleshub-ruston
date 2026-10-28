@@ -46,20 +46,27 @@ Deno.serve(async (req) => {
   for (const rota of ROTAS) {
     const agentes: Array<{ id: string; nome: string; ramal: string | null }> = []
     let status = 0
-    for (let page = 1; page <= 5; page++) {
+    let incompleta: string | null = null
+    const MAX_PAGINAS = 10
+    for (let page = 1; page <= MAX_PAGINAS; page++) {
       const r = await fetch(`${API3C}${rota}?per_page=200&page=${page}&api_token=${encodeURIComponent(t)}`, {
         headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15_000),
       }).catch(() => null)
-      if (page === 1) status = r?.status ?? 0 // decide pela 1ª página; erro numa página seguinte só encerra a lista
-      if (!r?.ok) break
+      if (page === 1) status = r?.status ?? 0
+      if (!r?.ok) {
+        // falha numa página seguinte: devolve o que veio, mas marcado como INCOMPLETO
+        if (page > 1) incompleta = `página ${page} do 3C falhou (HTTP ${r?.status ?? 'rede'})`
+        break
+      }
       const body = await r.json().catch(() => null)
       const lote = normalizarAgentes(body)
       agentes.push(...lote)
       const ultima = Number(body?.meta?.pagination?.total_pages ?? body?.meta?.last_page ?? body?.last_page ?? 1)
       if (!lote.length || page >= ultima) break
+      if (page === MAX_PAGINAS) incompleta = `mais de ${MAX_PAGINAS} páginas no 3C`
     }
     tentativas.push({ rota, status })
-    if (status === 200) return json({ ok: true, rota, agentes })
+    if (status === 200) return json({ ok: true, rota, agentes, incompleta: !!incompleta, erro: incompleta })
     if (status === 401) return json({ ok: false, erro: 'token do 3C expirado (alguém logou no portal com o admin) — atualize THREEC_API_TOKEN', tentativas })
   }
   return json({ ok: false, erro: '3C não respondeu à listagem de agentes', tentativas })
