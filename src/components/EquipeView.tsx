@@ -4,6 +4,7 @@ import { ROLE_LABELS, type TeamRole, type TeamMember } from "../types";
 import { Plus, Search, Phone, Mail, Calendar } from "lucide-react";
 import { MemberDrawer } from "./MemberDrawer";
 import { colorForMember } from "./HourlyCallsChart";
+import { Agentes3CPendencias } from "./Agentes3CPendencias";
 
 export const EquipeView: React.FC = () => {
   const { members, addMember, currentUser } = useAppStore();
@@ -63,6 +64,8 @@ export const EquipeView: React.FC = () => {
           </button>
         )}
       </div>
+
+      {isGestor && <Agentes3CPendencias />}
 
       {/* Filtros + alertas */}
       <div className="flex flex-wrap gap-3 mb-4 items-center">

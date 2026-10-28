@@ -12,6 +12,7 @@ import { useAppStore } from '../store';
 import { ROLE_LABELS, type TeamMember, type TeamRole } from '../types';
 import { getGoogleAuthUrl } from '../lib/googleCalendar';
 import { CHART_PALETTE, colorForMemberHash } from './HourlyCallsChart';
+import { conflitosAgente, listarAgentes3C, listarPendencias3C, type Agente3C, type Pendencia3C } from '../lib/agente3c';
 
 interface Props {
   member: TeamMember | null;
@@ -25,12 +26,22 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 interface KommoUser { id: number; name: string; email: string; }
 
 export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
-  const { updateMember, currentUser } = useAppStore();
+  const { updateMember, currentUser, members } = useAppStore();
   const isGestor = currentUser?.role === 'gestor';
 
   const [form, setForm] = useState<Partial<TeamMember>>({});
   const [saving, setSaving] = useState(false);
   const [kommoUsers, setKommoUsers] = useState<KommoUser[]>([]);
+  const [agentes3c, setAgentes3c] = useState<Agente3C[]>([]);
+  const [agentes3cErro, setAgentes3cErro] = useState<string | null>(null);
+  const [pend3c, setPend3c] = useState<Pendencia3C[]>([]);
+
+  // Agentes do 3C (API, só gestor) + agentes vistos tabulando sem cadastro — para escolher em vez de digitar
+  useEffect(() => {
+    if (!isGestor) return;
+    listarAgentes3C().then(({ agentes, erro }) => { setAgentes3c(agentes); setAgentes3cErro(erro); });
+    listarPendencias3C().then(setPend3c).catch(() => setPend3c([]));
+  }, [isGestor]);
 
   // Busca os usuários do Kommo para vincular (silencioso: se falhar, cai no input numérico)
   useEffect(() => {
@@ -71,6 +82,11 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
     }
     if (!form.name || !form.email) {
       toast.error('Nome e email são obrigatórios');
+      return;
+    }
+    const conflito = member.active ? conflitosAgente(members, member.id, form.agente_3c_id) : [];
+    if (conflito.length) {
+      toast.error(`O agente 3C ${form.agente_3c_id?.trim()} já está em ${conflito.map((m) => m.name).join(', ')}`);
       return;
     }
     setSaving(true);
@@ -193,16 +209,61 @@ export const MemberDrawer: React.FC<Props> = ({ member, onClose }) => {
 
           <Field
             label="Agente no 3C Plus"
-            hint="ID do AGENTE no 3C (não é o ramal!). É o que o webhook de ligações manda — sem isso a tabulação 'Follow no Kommo' não reatribui o lead pra pessoa. Ex.: Edric=234399, Luana=242898."
+            hint="ID do AGENTE no 3C (não é o ramal — o webhook do 3C só manda o agente). É a ÚNICA fonte do responsável na tabulação 'Follow no Kommo': sem ele (ou sem usuário do Kommo abaixo) o lead é movido mas o responsável não muda, e o aviso aparece na tela de Equipe."
           >
-            <input
-              type="text"
-              value={form.agente_3c_id || ''}
-              disabled={!isGestor}
-              placeholder="ex: 242898"
-              onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value }))}
-              className={inputClass}
-            />
+            {(() => {
+              const atual = (form.agente_3c_id || '').trim();
+              const conflito = member.active ? conflitosAgente(members, member.id, atual) : [];
+              const doApi = agentes3c.find((a) => a.id === atual);
+              const visto = pend3c.find((p) => p.agent_ref === atual);
+              return (
+                <>
+                  {agentes3c.length > 0 ? (
+                    <select
+                      value={atual}
+                      disabled={!isGestor}
+                      onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value }))}
+                      className={inputClass}
+                    >
+                      <option value="">— não vinculado —</option>
+                      {agentes3c.map((a) => {
+                        const dono = conflitosAgente(members, member.id, a.id)[0];
+                        return (
+                          <option key={a.id} value={a.id}>
+                            {a.nome || 'sem nome'} · agente {a.id}{a.ramal ? ` · ramal ${a.ramal}` : ''}{dono ? ` (já em ${dono.name})` : ''}
+                          </option>
+                        );
+                      })}
+                      {atual && !doApi && <option value={atual}>agente {atual} (não encontrado no 3C)</option>}
+                    </select>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        list="agentes-3c-vistos"
+                        value={form.agente_3c_id || ''}
+                        disabled={!isGestor}
+                        placeholder="ex: 242898"
+                        onChange={(e) => setForm((p) => ({ ...p, agente_3c_id: e.target.value.replace(/\D/g, '') }))}
+                        className={inputClass}
+                      />
+                      <datalist id="agentes-3c-vistos">
+                        {pend3c.map((p) => <option key={p.agent_ref} value={p.agent_ref}>{p.agent_nome ?? ''} (tabulou sem cadastro)</option>)}
+                      </datalist>
+                      {isGestor && agentes3cErro && (
+                        <p className="text-[10px] text-amber-400 mt-1">Lista do 3C indisponível ({agentes3cErro}) — digite o ID ou escolha um agente visto nas tabulações.</p>
+                      )}
+                    </>
+                  )}
+                  {conflito.length > 0 && (
+                    <p className="text-[11px] text-red-400 mt-1">Agente {atual} já vinculado a {conflito.map((m) => m.name).join(', ')} — um agente só pode estar em um membro ativo.</p>
+                  )}
+                  {!conflito.length && atual && !agentes3c.length && visto && (
+                    <p className="text-[11px] text-emerald-400 mt-1">Agente {atual} ({visto.agent_nome ?? 'sem nome'}) tabulou {visto.ocorrencias}× sem cadastro — salvar resolve.</p>
+                  )}
+                </>
+              );
+            })()}
           </Field>
 
           <Field label="Usuário no Kommo" hint="Vincula este membro a um usuário do Kommo. Sem isso, leads criados para ele entram no Kommo sem responsável.">

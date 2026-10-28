@@ -206,7 +206,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateMember = async (id: string, updates: Partial<TeamMember>) => {
     const { error } = await supabase.from('team_members').update(updates).eq('id', id);
-    if (error) { toast.error(error.message); return; }
+    if (error) {
+      toast.error(error.code === '23505' && error.message.includes('agente_3c')
+        ? 'Esse agente do 3C já está vinculado a outro membro ativo'
+        : error.message);
+      return;
+    }
     setMembers(prev => prev.map(m => m.id === id ? { ...m, ...updates } : m));
     toast.success('Membro atualizado!');
   };
