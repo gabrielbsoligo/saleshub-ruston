@@ -16,8 +16,9 @@
 //      fallback: busca contato pelos 8 últimos dígitos do telefone.
 //   2. Move por TABULAÇÃO (pedido do Gabriel, 09/08):
 //      - 240055 "Conectei/Follow No Kommo" -> Pre Vendas (14062096) /
-//        Conexão Realizada (108545100) + reatribui SDR pelo mapa 3C->Kommo
-//        (fallback: mantém o responsável atual).
+//        Conexão Realizada (108545100) + reatribui SDR pelo CADASTRO
+//        (team_members.agente_3c_id -> kommo_user_id); agente sem cadastro:
+//        move sem trocar o responsável e registra pendência (migration_176).
 //      - 240056 "Não ligar mais" -> Outbound Disparo (14062116) /
 //        OPT OUT (108545304).
 //      - Qualquer outra tabulação (240054 rediscar, -2/-3/-4/-5 do sistema):
@@ -43,6 +44,7 @@
 // token de querystring faz o papel do path secreto do n8n).
 // =============================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { patchFollow, resolverResponsavel } from './responsavel.ts'
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void }
 
@@ -63,17 +65,10 @@ const DISPARO_OPT_OUT = 108545304   // etapa OPT OUT
 // Guarda
 const CLOSER_PIPELINE = 11010459
 
-// FALLBACK: id do agente no 3C -> usuário no Kommo (mapa fixo herdado do n8n).
-// A fonte principal agora é team_members.agente_3c_id (editável na tela de equipe,
-// migration_137) — usuário novo no 3C só precisa do campo preenchido lá.
-const AGENTE_3C_KOMMO: Record<string, number> = {
-  '234399': 15444836, // Edric
-  '234394': 14559996, // Lary
-  '234396': 15458912, // Bianca
-  '236763': 14941987, // Guilherme (Olimpo)
-  '234873': 11420911, // Gabriel Bianchini Soligo
-  // '235982' Erick — sem id válido no Kommo: cai no fallback (mantém atual)
-}
+// Responsável da tabulação "Follow": SÓ o cadastro do usuário (team_members.agente_3c_id →
+// kommo_user_id, tela de Equipe) via RPC ligacoes_resolver_agente_3c (migration_176). Sem mapa
+// fixo no código. Agente sem cadastro/duplicado/sem usuário Kommo: o lead é movido mesmo assim,
+// o responsável NÃO é trocado e a pendência aparece na tela de Equipe.
 
 // Campos BANT (textarea) do lead no Kommo <-> chaves da extração
 const BANT_FIELDS: Array<[number, string]> = [
@@ -339,28 +334,21 @@ async function processarEvento(ch: any, dry: boolean): Promise<any> {
                && (statusAtual === PV_REUNIAO_MARCADA || statusAtual === PV_NOSHOW)) {
       move = { blocked: true, reason: 'nao_regride_reuniao_marcada' }
     } else {
-      const patch: any = qualId === QUAL_FOLLOW_KOMMO
+      let patch: any = qualId === QUAL_FOLLOW_KOMMO
         ? { pipeline_id: PRE_VENDAS_PIPELINE, status_id: CONEXAO_REALIZADA }
         : { pipeline_id: DISPARO_PIPELINE, status_id: DISPARO_OPT_OUT }
+      let responsavel: any = null
       if (qualId === QUAL_FOLLOW_KOMMO) {
-        // 1º team_members.agente_3c_id (tela de equipe); 2º mapa fixo; 3º mantém atual
-        const agId = String(ch.agent?.id ?? '')
-        let mapped: number | undefined
-        if (agId) {
-          const { data: tm } = await supabase.from('team_members')
-            .select('kommo_user_id').eq('agente_3c_id', agId).eq('active', true).maybeSingle()
-          if (tm?.kommo_user_id) mapped = Number(tm.kommo_user_id)
-        }
-        mapped = mapped ?? AGENTE_3C_KOMMO[agId]
-        patch.responsible_user_id = mapped ?? Number(leadAtual?.responsible_user_id) // fallback: mantém atual
+        responsavel = await resolverResponsavel(supabase, ch, leadId, dry)
+        patch = patchFollow(patch, responsavel) // sem resolução: sem responsible_user_id → o Kommo mantém o atual
       }
       if (dry) {
-        move = { would_patch: patch }
+        move = { would_patch: patch, responsavel }
       } else {
         const mr = await fetch(`${KOMMO_BASE}/api/v4/leads/${leadId}`, {
           method: 'PATCH', headers: KH(), body: JSON.stringify(patch),
         })
-        move = { patch, kommo_status: mr.status }
+        move = { patch, kommo_status: mr.status, responsavel }
         if (!mr.ok) move.kommo_body = await mr.text().catch(() => null)
       }
     }
