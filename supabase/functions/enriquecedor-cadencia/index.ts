@@ -22,7 +22,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { escolherBot } from './vinculo.ts'
-import { resolverVinculos } from './sync.ts'
+import { conferirVinculos, semVinculo } from './sync.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -288,12 +288,10 @@ async function acaoSyncReview() {
   return json(200, { ok: true, templates: resultados })
 }
 
-// ── sync-vinculos: modelo × canal a partir do Kommo ─────────────────────────
-// Só ATUALIZA vínculos existentes (id do modelo, status da Meta no canal, bot
-// existe/ativo) — inclusive para 'ausente'. Nunca cria nem troca bot: o mesmo nome
-// no canal não garante que o bot manda aquele modelo (ex.: bots do P1 mandando a
-// cópia _sem_sdr). Modelo achado no canal sem vínculo sai em "sem_vinculo"
-// (candidato a vincular pelo painel) e segue no legado.
+// ── sync-vinculos: confere os vínculos modelo × canal no Kommo ──────────────
+// Só relê status da Meta do modelo VINCULADO e confere o bot (existe/ativo) — nunca
+// cria vínculo nem troca modelo/bot (ver sync.ts). Cópia aprovada diferente da
+// vinculada sai como "sugestao"; modelo sem vínculo sai em "sem_vinculo".
 async function listarPaginado(path: string, chave: string) {
   const out: any[] = []
   for (let page = 1; page <= 5; page++) {
@@ -316,29 +314,29 @@ async function acaoSyncVinculos(b: Record<string, any>) {
   const remotos = await listarPaginado('/api/v4/chats/templates?with=reviews', 'chat_templates')
   if (!remotos) return json(502, { error: 'falha ao ler os modelos no Kommo' })
   const bots = await listarPaginado('/api/v4/bots', 'items') // null = não deu pra conferir os bots
-  const { data: modelos } = await db.from('enriquecedor_cadencia_templates').select('id, nome').eq('canal', 'whatsapp')
+  const { data: modelos, error: errModelos } = await db.from('enriquecedor_cadencia_templates').select('id, nome').eq('canal', 'whatsapp')
+  if (errModelos) return json(500, { error: errModelos.message })
   const agora = new Date().toISOString()
   const saida: any[] = []
   for (const c of alvo) {
     const sourceId = Number(c.source_id)
-    const { data: atuais } = await db.from('enriquecedor_cadencia_vinculos')
-      .select('template_id, kommo_template_id, kommo_bot_id, review_status').eq('source_id', sourceId)
-    const temVinculo = new Set((atuais ?? []).map((v) => v.template_id))
-    const res = resolverVinculos(modelos ?? [], remotos, sourceId, atuais ?? [], bots)
-    const gravar = res.filter((r) => temVinculo.has(r.template_id))
-    if (!dryRun && gravar.length) {
-      const { error } = await db.from('enriquecedor_cadencia_vinculos').upsert(gravar.map((r) => ({
-        template_id: r.template_id, source_id: sourceId, kommo_template_id: r.kommo_template_id,
-        review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora,
-      })), { onConflict: 'template_id,source_id' })
-      if (error) return json(500, { error: error.message, canal: sourceId })
+    const { data: atuais, error: errAtuais } = await db.from('enriquecedor_cadencia_vinculos')
+      .select('template_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', sourceId)
+    if (errAtuais) return json(500, { error: errAtuais.message, canal: sourceId })
+    const res = conferirVinculos(modelos ?? [], remotos, sourceId, atuais ?? [], bots)
+    if (!dryRun) {
+      for (const r of res) {
+        const { error } = await db.from('enriquecedor_cadencia_vinculos')
+          .update({ review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora })
+          .eq('template_id', r.template_id).eq('source_id', sourceId)
+        if (error) return json(500, { error: error.message, canal: sourceId, modelo: r.nome })
+      }
       await db.from('enriquecedor_cadencia_canais').update({ verificado_em: agora, updated_at: agora }).eq('source_id', sourceId)
     }
     saida.push({
       canal: sourceId, nome: c.nome, ativo: c.ativo,
-      vinculos: gravar.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, mudou: r.mudou })),
-      sem_vinculo: res.filter((r) => !temVinculo.has(r.template_id))
-        .map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status })),
+      vinculos: res.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, sugestao: r.sugestao, mudou: r.mudou })),
+      sem_vinculo: semVinculo(modelos ?? [], remotos, sourceId, atuais ?? []),
     })
   }
   return json(200, { ok: true, dry_run: dryRun, bots_conferidos: bots != null, canais: saida })
@@ -415,12 +413,19 @@ async function contextoDisparo() {
   const token = await tokenIntegracao()
   const cacheUsers = new Map<number, string>()
   // Canal ativo + vínculos modelo×canal (migration_177). Sem canal ativo = só legado.
-  const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('ativo', true).maybeSingle()
+  // Erro de leitura NÃO pode virar "sem canal"/"sem vínculo" (cairia no legado e
+  // liberaria um modelo bloqueado): lança antes de qualquer chamada ao Kommo.
+  const { data: canal, error: errCanal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('ativo', true).maybeSingle()
+  if (errCanal) throw new Error(`leitura do canal ativo falhou: ${errCanal.message}`)
   const canalAtivo = canal?.source_id != null ? Number(canal.source_id) : null
-  const { data: vinculos } = canalAtivo != null
-    ? await db.from('enriquecedor_cadencia_vinculos').select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', canalAtivo)
-    : { data: [] }
-  return { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos: vinculos ?? [] }
+  let vinculos: any[] = []
+  if (canalAtivo != null) {
+    const { data, error } = await db.from('enriquecedor_cadencia_vinculos')
+      .select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', canalAtivo)
+    if (error) throw new Error(`leitura dos vínculos falhou: ${error.message}`)
+    vinculos = data ?? []
+  }
+  return { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos }
 }
 
 // Dispara UM passo pra UM lead: prepara no motor, registra o envio ANTES de
@@ -644,7 +649,8 @@ async function acaoKommoWebhook(body: Record<string, any>) {
   const relevantes = eventos.filter((e) => e.pipeline_id === funil.id && passoDaEtapa.has(e.status_id))
   if (!relevantes.length) return json(200, { ok: true, ignorado: 'fora do funil/etapas da cadência' })
 
-  const ctx = await contextoDisparo()
+  let ctx: any
+  try { ctx = await contextoDisparo() } catch (e) { return json(500, { ok: false, erro: String((e as Error)?.message ?? e) }) }
   if (!ctx.token) return json(200, { ok: false, erro: 'auth integração falhou' })
   const { db } = ctx
   const resultados: any[] = []
