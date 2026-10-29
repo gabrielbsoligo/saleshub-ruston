@@ -56,7 +56,7 @@ REGRAS (obrigatórias):
 2. A Semana 3 usa a variante do modelo de venda do lead (inside_sales, pdv ou ecommerce).${modeloVenda ? ` Modelo informado: ${modeloVenda}.` : ''}
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
-5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal.
+5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
@@ -87,11 +87,24 @@ export function extrairJson(texto) {
 
 // Comparação tolerante: minúsculas, sem acento, sem pontuação, espaços colapsados.
 export function normalizarTexto(t) {
-  return String(t || '')
-    .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+  return normalizarComMapa(t).norm;
+}
+
+// Mesma normalização, guardando para cada caractere normalizado a posição no
+// texto original (para localizar uma citação na transcrição de verdade).
+export function normalizarComMapa(t) {
+  const fonte = String(t || '');
+  let norm = '';
+  const mapa = [];
+  for (let i = 0; i < fonte.length; i++) {
+    const base = fonte[i].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    for (const c of base) {
+      if (/[a-z0-9]/.test(c)) { norm += c; mapa.push(i); }
+      else if (norm && !norm.endsWith(' ')) { norm += ' '; mapa.push(i); }
+    }
+  }
+  if (norm.endsWith(' ')) { norm = norm.slice(0, -1); mapa.pop(); }
+  return { norm, mapa };
 }
 
 export function citacaoNaTranscricao(citacao, transcricaoNorm) {
@@ -99,14 +112,28 @@ export function citacaoNaTranscricao(citacao, transcricaoNorm) {
   return c.length >= 8 && transcricaoNorm.includes(c);
 }
 
+// Trechos [ini, fim) da transcrição ORIGINAL onde a citação aparece (palavras inteiras).
+export function localizarCitacao(citacao, fonteMapa) {
+  const c = normalizarTexto(citacao);
+  const { norm, mapa } = fonteMapa;
+  const spans = [];
+  if (c.length < 8) return spans;
+  for (let k = norm.indexOf(c); k >= 0; k = norm.indexOf(c, k + 1)) {
+    const antes = k === 0 || norm[k - 1] === ' ';
+    const depois = k + c.length === norm.length || norm[k + c.length] === ' ';
+    if (antes && depois) spans.push([mapa[k], mapa[k + c.length - 1] + 1]);
+  }
+  return spans;
+}
+
 const MODELOS = ['inside_sales', 'pdv', 'ecommerce'];
 
 const escaparRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// Expressões monetárias completas de um trecho: "R$ 29.750,00", "29750", "5 mil",
+// Expressões monetárias completas, com posição: "R$ 29.750,00", "29750", "5 mil",
 // "29,75 mil", "5k", "29 mil e 750". Não quebra número maior em pedaços ("750"
 // de "29.750") e ignora quantidades ("12x", "6 meses").
 const RE_DINHEIRO = /(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?(?:\s*(mil|k)\b(?:\s*e\s*(\d{1,3})\b)?)?/gi;
-export function valoresMonetarios(texto) {
+export function expressoesMonetarias(texto) {
   const t = String(texto || '').toLowerCase();
   const out = [];
   for (const m of t.matchAll(RE_DINHEIRO)) {
@@ -115,17 +142,19 @@ export function valoresMonetarios(texto) {
     if (!m[3] && /^\s*(x\b|vezes|parcelas|meses|%)/.test(t.slice(fim))) continue;
     let v = Number(m[1].replace(/\./g, '')) + (m[2] ? Number(m[2].padEnd(2, '0')) / 100 : 0);
     if (m[3]) v = v * 1000 + (m[4] ? Number(m[4]) : 0);
-    out.push(Math.round(v * 100) / 100);
+    out.push({ valor: Math.round(v * 100) / 100, ini: m.index, fim });
   }
   return out;
 }
+export const valoresMonetarios = (texto) => expressoesMonetarias(texto).map((e) => e.valor);
 
-// Papel do valor: execução é mensal/recorrente; estruturação não pode vir de
-// um trecho que fala de valor mensal (a não ser que cite a estruturação).
+// Papel do valor: execução é mensal/recorrente; com social precisa citar social;
+// estruturação não pode vir de trecho mensal (a não ser que cite a estruturação).
 const MENSAL = /(por mes|ao mes|mensal|mensais|mensalidade|recorren|execucao)/;
 const ESTRUTURA = /(estrutura|setup|implementa|projeto|parcela|vezes|\d+x)/;
 export function papelConfere(evidencia, papel) {
   const n = normalizarTexto(evidencia);
+  if (papel === 'social') return MENSAL.test(n) && /social/.test(n);
   if (papel === 'execucao') return MENSAL.test(n);
   return !MENSAL.test(n) || ESTRUTURA.test(n);
 }
@@ -181,23 +210,29 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   const exe = bruto?.preco?.execucao_mensal || {};
   const ev = bruto?.preco?.evidencias && typeof bruto.preco.evidencias === 'object' ? bruto.preco.evidencias : {};
   // Cada campo de preço tem a SUA evidência (trecho literal da transcrição).
-  // O valor só entra se: a evidência está na transcrição, contém a expressão
-  // monetária completa igual ao valor e combina com o papel do campo
-  // (estruturação x execução mensal). Senão: null + pendência. Nunca chuta.
+  // O valor é lido na TRANSCRIÇÃO, não na citação: localiza a citação na fonte e
+  // usa a expressão monetária inteira que está ali (citação cortada em "R$ 29" não
+  // vale 29 se a fonte diz "R$ 29.750,00"). Papel do campo conferido; a mesma
+  // expressão da fonte usada por dois campos = ambígua. Senão: null + pendência.
+  const fonteMapa = normalizarComMapa(transcricao);
+  const exprsFonte = expressoesMonetarias(transcricao);
   const evidenciaDe = (campo) => {
     const t = textoOuNull(ev[campo]);
     return t && citacaoNaTranscricao(t, tNorm) ? t : null;
   };
   const aceitos = [];
+  const naoConfirmado = (rotulo) => pendencias.push(`${rotulo}: a análise sugeriu um valor que não foi confirmado na transcrição — confira`);
   const dinheiro = (campo, valor, papel, rotulo) => {
     if (valor == null) return null;
     const e = evidenciaDe(campo);
-    const ok = e && valoresMonetarios(e).includes(Math.round(valor * 100) / 100) && papelConfere(e, papel);
-    if (!ok) {
-      pendencias.push(`${rotulo}: a análise sugeriu um valor que não foi confirmado na transcrição — confira`);
-      return null;
-    }
-    aceitos.push({ campo, valor, evidencia: normalizarTexto(e), rotulo });
+    if (!e || !papelConfere(e, papel)) { naoConfirmado(rotulo); return null; }
+    const alvo = Math.round(valor * 100) / 100;
+    const spans = localizarCitacao(e, fonteMapa);
+    const exprs = exprsFonte.filter((x) => spans.some(([a, b]) => x.ini < b && x.fim > a));
+    // Toda expressão tocada pela citação conta pelo valor que tem NA FONTE.
+    const casa = exprs.filter((x) => x.valor === alvo);
+    if (!casa.length) { naoConfirmado(rotulo); return null; }
+    aceitos.push({ campo, posicoes: casa.map((x) => x.ini), rotulo });
     return valor;
   };
   const quantidade = (campo, valor, formas, rotulo) => {
@@ -223,25 +258,27 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     },
     execucao_mensal: {
       valor: dinheiro('execucao_valor', numero(exe.valor), 'execucao', 'preço da execução'),
-      valor_com_social: dinheiro('execucao_com_social', numero(exe.valor_com_social), 'execucao', 'preço da execução com social media'),
+      valor_com_social: dinheiro('execucao_com_social', numero(exe.valor_com_social), 'social', 'preço da execução com social media'),
       meses: quantidade('meses', inteiro(exe.meses), formasMeses, 'meses da execução'),
     },
     fonte: 'transcricao',
     citacoes: [],
   };
-  // Mesmo valor e mesma evidência em dois campos = papel ambíguo → nenhum dos dois.
+  // A mesma expressão da fonte sustentando dois campos = papel ambíguo → nenhum.
+  const LUGAR = {
+    valor_total: ['estruturacao', 'valor_total'], valor_parcela: ['estruturacao', 'valor_parcela'],
+    execucao_valor: ['execucao_mensal', 'valor'], execucao_com_social: ['execucao_mensal', 'valor_com_social'],
+  };
+  const ambiguos = new Set();
   for (const a of aceitos) {
-    const dupla = aceitos.filter((b) => b.valor === a.valor && b.evidencia === a.evidencia);
-    if (dupla.length > 1) {
-      for (const b of dupla) {
-        const [grupo, chave] = {
-          valor_total: ['estruturacao', 'valor_total'], valor_parcela: ['estruturacao', 'valor_parcela'],
-          execucao_valor: ['execucao_mensal', 'valor'], execucao_com_social: ['execucao_mensal', 'valor_com_social'],
-        }[b.campo];
-        if (preco[grupo][chave] != null) pendencias.push(`${b.rotulo}: valor ambíguo na transcrição — confira`);
-        preco[grupo][chave] = null;
-      }
+    for (const b of aceitos) {
+      if (a !== b && a.posicoes.some((p) => b.posicoes.includes(p))) { ambiguos.add(a); ambiguos.add(b); }
     }
+  }
+  for (const a of ambiguos) {
+    const [grupo, chave] = LUGAR[a.campo];
+    preco[grupo][chave] = null;
+    pendencias.push(`${a.rotulo}: valor ambíguo na transcrição — confira`);
   }
   preco.citacoes = [...new Set(['valor_total', 'parcelas', 'valor_parcela', 'execucao_valor', 'execucao_com_social', 'meses']
     .map(evidenciaDe).filter(Boolean))];

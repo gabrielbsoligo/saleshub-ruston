@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  citacaoNaTranscricao, extrairJson, montarPrompt, normalizarEscopo, normalizarTexto, valoresMonetarios,
+  citacaoNaTranscricao, extrairJson, localizarCitacao, montarPrompt, normalizarComMapa, normalizarEscopo, normalizarTexto, valoresMonetarios,
 } from '../../supabase/functions/_shared/propostas/analise.mjs';
 import { validarEscopo } from '../../supabase/functions/_shared/propostas/slides.mjs';
 
@@ -153,9 +153,54 @@ test('Vedor F3 R2 #1: valor da execução não valida estruturação nem social 
   b.preco.evidencias.execucao_com_social = 'a execução sai 5 mil por mês';
   const e = normalizarEscopo(b, ctx);
   assert.equal(e.preco.estruturacao.valor_total, null, 'estruturação com trecho mensal');
-  assert.equal(e.preco.execucao_mensal.valor_com_social, null, 'mesmo valor e trecho = ambíguo');
-  assert.equal(e.preco.execucao_mensal.valor, null, 'o par ambíguo cai junto');
+  assert.equal(e.preco.execucao_mensal.valor_com_social, null, 'com social sem falar de social');
+  assert.equal(e.preco.execucao_mensal.valor, 5000, 'a execução falada continua');
+});
+
+const fonteR3 = `Closer: A estruturação fica R$ 29.750,00 em 12 vezes de 2.479,17.
+Lead: E a execução?
+Closer: A execução sai 5 mil por mês. Com social media a execução com social fica 7 mil por mês.
+Closer: Se quiser só tráfego são 5k por mês.`;
+const ctxR3 = { catalogo, empresa: 'Empresa do Deal', transcricao: fonteR3 };
+const brutoR3 = (preco) => ({ ...bruto(), preco });
+
+test('Vedor F3 R3 #1: citação truncada não vira subvalor (o valor é lido na fonte)', () => {
+  const casos = [
+    [{ estruturacao: { valor_total: 29 }, evidencias: { valor_total: 'A estruturação fica R$ 29' } }, 'estruturacao', 'valor_total'],
+    [{ estruturacao: { valor_total: 29750 }, evidencias: { valor_total: 'A estruturação fica R$ 29.750' } }, 'estruturacao', 'valor_total', 29750],
+    [{ estruturacao: { valor_parcela: 2479 }, evidencias: { valor_parcela: 'em 12 vezes de 2.479' } }, 'estruturacao', 'valor_parcela'],
+    [{ execucao_mensal: { valor: 5 }, evidencias: { execucao_valor: 'A execução sai 5' } }, 'execucao_mensal', 'valor'],
+    [{ execucao_mensal: { valor: 5 }, evidencias: { execucao_valor: 'só tráfego são 5' } }, 'execucao_mensal', 'valor'],
+  ];
+  for (const [preco, grupo, campo, esperado = null] of casos) {
+    const e = normalizarEscopo(brutoR3({ estruturacao: {}, execucao_mensal: {}, ...preco }), ctxR3);
+    assert.equal(e.preco[grupo][campo], esperado, JSON.stringify(preco));
+  }
+});
+
+test('Vedor F3 R3 #2: com social exige trecho do pacote com social', () => {
+  const sem = normalizarEscopo(brutoR3({ estruturacao: {}, execucao_mensal: { valor_com_social: 5000 },
+    evidencias: { execucao_com_social: 'A execução sai 5 mil por mês' } }), ctxR3);
+  assert.equal(sem.preco.execucao_mensal.valor_com_social, null);
+  const com = normalizarEscopo(brutoR3({ estruturacao: {}, execucao_mensal: { valor: 5000, valor_com_social: 7000 },
+    evidencias: { execucao_valor: 'A execução sai 5 mil por mês', execucao_com_social: 'a execução com social fica 7 mil por mês' } }), ctxR3);
+  assert.equal(com.preco.execucao_mensal.valor, 5000);
+  assert.equal(com.preco.execucao_mensal.valor_com_social, 7000);
+});
+
+test('Vedor F3 R3 #2: citações sobrepostas sobre a MESMA expressão da fonte = ambíguo', () => {
+  const e = normalizarEscopo(brutoR3({ estruturacao: {}, execucao_mensal: { valor: 7000, valor_com_social: 7000 },
+    evidencias: { execucao_valor: 'Com social media a execução com social fica 7 mil por mês', execucao_com_social: 'a execução com social fica 7 mil' } }), ctxR3);
+  assert.equal(e.preco.execucao_mensal.valor, null);
+  assert.equal(e.preco.execucao_mensal.valor_com_social, null);
   assert.ok(e.pendencias.some((p) => p.includes('ambíguo')));
+});
+
+test('normalizarComMapa gera o mesmo texto que normalizarTexto e mapeia a fonte', () => {
+  const m = normalizarComMapa(fonteR3);
+  assert.equal(m.norm, normalizarTexto(fonteR3));
+  const [[a, b]] = localizarCitacao('A estruturação fica R$ 29.750,00', m);
+  assert.equal(fonteR3.slice(a, b), 'A estruturação fica R$ 29.750,00');
 });
 
 test('preço em texto ou negativo vira null', () => {
