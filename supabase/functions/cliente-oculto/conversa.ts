@@ -211,3 +211,78 @@ export function numeroDoDono(v: unknown): string | null {
   const d = String(v ?? '').split('@')[0].split(':')[0].replace(/\D/g, '')
   return d.length >= 10 && d.length <= 15 ? d : null
 }
+
+// ── ritmo humano: quando a persona responde (atraso de "ler + pensar" e janela de horário comercial) ──
+// Puro e determinístico: o mesmo histórico dá o mesmo horário a cada varredura (a semente vem da sessão + instante
+// da última mensagem da empresa), então não precisa guardar estado. O "digitando..." sai pela Evolution (delay do sendText).
+export interface Ritmo {
+  min_s: number; max_s: number                 // faixa de atraso base (aleatória dentro dela)
+  dias: number[]                               // dias úteis (0=dom … 6=sáb)
+  inicio_min: number; fim_min: number          // janela em minutos do dia (ex.: 480 = 08:00)
+  sabado_fim_min: number | null                // sábado de manhã (inicio..sabado_fim); null = sem sábado
+  fuso: string
+}
+export const RITMO_PADRAO: Ritmo = { min_s: 40, max_s: 240, dias: [1, 2, 3, 4, 5], inicio_min: 8 * 60, fim_min: 18 * 60, sabado_fim_min: null, fuso: 'America/Sao_Paulo' }
+const hhmm = (v: unknown): number | null => { const m = String(v ?? '').match(/^([01]\d|2[0-3]):([0-5]\d)$/); return m ? Number(m[1]) * 60 + Number(m[2]) : null }
+/** lê o ritmo de oculto_config com padrões seguros (valor inválido = padrão) */
+export function ritmoDaConfig(c: any): Ritmo {
+  const min = Number(c?.resposta_min_s), max = Number(c?.resposta_max_s)
+  const okMin = Number.isFinite(min) && min >= 0 && min <= 3600 ? min : RITMO_PADRAO.min_s
+  const okMax = Number.isFinite(max) && max >= okMin && max <= 7200 ? max : Math.max(okMin, RITMO_PADRAO.max_s)
+  const ini = hhmm(c?.janela_inicio) ?? RITMO_PADRAO.inicio_min, fim = hhmm(c?.janela_fim) ?? RITMO_PADRAO.fim_min
+  const janelaOk = fim > ini
+  const sab = hhmm(c?.janela_sabado_fim)
+  return {
+    min_s: okMin, max_s: okMax,
+    dias: RITMO_PADRAO.dias,
+    inicio_min: janelaOk ? ini : RITMO_PADRAO.inicio_min, fim_min: janelaOk ? fim : RITMO_PADRAO.fim_min,
+    sabado_fim_min: sab != null && sab > (janelaOk ? ini : RITMO_PADRAO.inicio_min) ? sab : null,
+    fuso: typeof c?.fuso === 'string' && c.fuso ? c.fuso : RITMO_PADRAO.fuso,
+  }
+}
+/** semente em [0,1) a partir de um texto (FNV-1a) */
+export function semente(s: string): number {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 }
+  return h / 0x100000000
+}
+/** atraso de "ler + pensar" em segundos: base aleatória [min,max] + leitura (1 s a cada 12 caracteres, até +120 s) */
+export function atrasoResposta(charsEntrada: number, seed: number, r: Ritmo): number {
+  const base = r.min_s + seed * (r.max_s - r.min_s)
+  const leitura = Math.min(120, Math.max(0, charsEntrada) / 12)
+  return Math.round(base + leitura)
+}
+/** tempo de "digitando..." mostrado antes do envio (ms): ~5 caracteres/s, entre 2 e 20 s */
+export const digitarMs = (charsSaida: number) => Math.round(Math.min(20, Math.max(2, Math.max(0, charsSaida) / 5)) * 1000)
+// partes locais (dia da semana e minuto do dia) de um instante no fuso
+function local(ts: number, fuso: string): { dow: number; min: number; segDia: number } {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: fuso, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(ts * 1000)).map(x => [x.type, x.value]))
+  const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(String(p.weekday))
+  return { dow, min: Number(p.hour) * 60 + Number(p.minute), segDia: Number(p.hour) * 3600 + Number(p.minute) * 60 + Number(p.second) }
+}
+/** primeiro instante >= ts dentro da janela; fora dela, abertura da próxima janela + folga de 0–15 min (pela semente) */
+export function proximaJanela(ts: number, r: Ritmo, seed = 0): number {
+  for (let d = 0; d < 8; d++) {
+    const t = ts + d * 86400
+    const l = local(t, r.fuso)
+    const fim = r.dias.includes(l.dow) ? r.fim_min : (l.dow === 6 && r.sabado_fim_min != null ? r.sabado_fim_min : null)
+    if (fim == null) continue
+    const inicioDia = t - l.segDia   // meia-noite local desse dia
+    const abre = inicioDia + r.inicio_min * 60, fecha = inicioDia + fim * 60
+    if (d === 0 && ts >= abre && ts < fecha) return ts
+    const alvo = Math.max(abre, d === 0 ? ts : abre) + Math.round(seed * 900)
+    if (alvo < fecha && alvo >= ts) return alvo
+  }
+  return ts   // configuração sem nenhum dia válido: não segura
+}
+/** instante em que a persona pode responder: última mensagem da empresa + atraso, empurrado para a janela */
+export function quandoResponder(sessaoId: string, hist: Msg[], r: Ritmo): number | null {
+  let i = hist.length - 1
+  if (i < 0 || hist[i].direcao !== 'in') return null
+  const ultimaIn = hist[i].ts
+  let chars = 0
+  for (; i >= 0 && hist[i].direcao === 'in'; i--) chars += (hist[i].texto ?? '').length   // todas as mensagens ainda sem resposta
+  const seed = semente(`${sessaoId}:${ultimaIn}`)
+  return proximaJanela(ultimaIn + atrasoResposta(chars, seed, r), r, seed)
+}

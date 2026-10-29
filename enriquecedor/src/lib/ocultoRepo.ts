@@ -10,10 +10,11 @@ export interface OcultoSessao {
   fase?: 'ocioso' | 'enviando' | 'envio_incerto';
   notas: { tempo_resposta: number; qualificacao: number | null; proposta_preco: number | null; followup: number; tom: number | null; final: number | null; incompleta?: boolean } | null;
   parecer: string | null; avaliacao_ia: { pontos_fortes?: string[]; pontos_fracos?: string[] } | null; erro: string | null;
-  criado_em: string; concluida_em: string | null;
+  criado_em: string; concluida_em: string | null; proximo_em?: string | null;
 }
 export interface OcultoMensagem { id: number; sessao_id: string; direcao: 'in' | 'out'; texto: string; em: string }
-export interface OcultoConfig { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number }
+export interface OcultoConfig { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; resposta_min_s?: number | null; resposta_max_s?: number | null; janela_inicio?: string | null; janela_fim?: string | null; janela_sabado_fim?: string | null }
+export interface OcultoRitmo { resposta_min_s: number; resposta_max_s: number; janela_inicio: string; janela_fim: string; janela_sabado_fim: string | null }
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? '';
 const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
@@ -50,6 +51,8 @@ export const ocultoRepo = {
   instancia: (op: 'criar' | 'qr' | 'estado' | 'pairing', extra: Record<string, unknown> = {}) => edge({ acao: 'instancia', op, ...extra }),
   /** interruptor dos envios (só gestor; a edge confere o papel) */
   ligarEnvios: (ativo: boolean) => edge({ acao: 'config', ativo }),
+  /** ritmo humano: faixa de atraso e janela de horário (só gestor) */
+  salvarRitmo: (ritmo: OcultoRitmo) => edge({ acao: 'config', ritmo }),
   assinar(onChange: () => void) {
     const ch = supabase.channel('oculto_live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'oculto_sessoes' }, onChange)

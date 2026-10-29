@@ -51,3 +51,18 @@ export function explicacaoFaixa(cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> |
 
 /** número exibido: só quando a Evolution informou */
 export const numeroExibido = (cfg: Pick<OcultoConfig, 'numero'> | null): string | null => (cfg?.numero ? `+${cfg.numero}` : null);
+
+/** "responde às 14:37": resposta represada com envios prontos e horário agendado no futuro */
+export function respondeAs(s: Pick<OcultoSessao, 'status' | 'ultima_in_em' | 'ultima_out_em' | 'proximo_em'>, cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> | null, agoraMs = Date.now()): string | null {
+  if (!respostaPendente(s) || estadoEnvios(cfg) !== 'pronto' || !s.proximo_em) return null;
+  const t = new Date(s.proximo_em);
+  if (t.getTime() <= agoraMs) return null;
+  const mesmoDia = t.toDateString() === new Date(agoraMs).toDateString();
+  const hora = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+  return mesmoDia ? `responde às ${hora}` : `responde ${t.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })} às ${hora}`;
+}
+/** ritmo atual para o formulário do gestor (padrões quando a coluna ainda não existe) */
+export const ritmoAtual = (c: OcultoConfig | null) => ({
+  resposta_min_s: c?.resposta_min_s ?? 40, resposta_max_s: c?.resposta_max_s ?? 240,
+  janela_inicio: c?.janela_inicio ?? '08:00', janela_fim: c?.janela_fim ?? '18:00', janela_sabado_fim: c?.janela_sabado_fim ?? null,
+});

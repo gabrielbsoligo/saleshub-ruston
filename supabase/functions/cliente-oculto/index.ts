@@ -15,7 +15,7 @@
 // e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PADRAO, aceitarEvento, exigeEnvio, numeroDoDono, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, aceitarEvento, digitarMs, exigeEnvio, numeroDoDono, proximaJanela, quandoResponder, ritmoDaConfig, semente, type Ritmo, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -29,11 +29,12 @@ const iso = (s: number) => new Date(s * 1000).toISOString()
 const seg = (t: string | null) => (t ? Math.floor(new Date(t).getTime() / 1000) : null)
 class PossePerdida extends Error {}
 
-type Cfg = { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; modelo: string }
+type Cfg = { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; modelo: string; ritmo: Ritmo }
 async function config(sb: any): Promise<Cfg> {
   const { data, error } = await sb.from('oculto_config').select('*').eq('id', 1).maybeSingle()
   if (error) throw new Error(`oculto_config: ${error.message}`)
   if (!data) throw new Error('oculto_config ausente (migration_165)')
+  data.ritmo = ritmoDaConfig(data)   // atraso humano e janela de horário (migration_182; padrões se faltar coluna)
   return data as Cfg
 }
 const podeEnviar = (cfg: Cfg) => cfg.ativo && cfg.conectado && !!Deno.env.get('EVOLUTION_URL') && !!Deno.env.get('EVOLUTION_APIKEY')
@@ -88,7 +89,7 @@ async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, rev: number, 
   const { data: antes, error: ea } = await sb.from('oculto_mensagens').select('wa_id').eq('sessao_id', s.id).eq('direcao', 'out')
   if (ea) throw new Error(`oculto_mensagens: ${ea.message}`)
   await gravar(sb, s.id, token, { fase: 'enviando', envio_pendente: { texto, abertura, iniciado_em: new Date().toISOString(), conhecidas: (antes ?? []).map((m: any) => m.wa_id).filter(Boolean) } })
-  const env = await wa.enviarTexto(s.numero_alvo, texto)
+  const env = await wa.enviarTexto(s.numero_alvo, texto, digitarMs(texto.length))
   const cls = classificarEnvio(env)
   const ts = agoraS()
   if (cls === 'ok') {
@@ -181,6 +182,9 @@ async function avancar(sb: any, cfg: Cfg, row: any) {
     const persona = atual.persona && Object.keys(atual.persona).length ? atual.persona : personaPara(s.nicho, s.empresa)
     // envios desligados (ou número caído): adia ANTES de gerar texto — não gasta LLM a cada varredura
     if (exigeEnvio(d.acao) && !podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + ADIA_SEM_ENVIO_S) }); return { id: s.id, pendente: 'envios desligados/sem número' } }
+    // ritmo humano (ANTES do LLM): resposta só depois do atraso de "ler + pensar" e dentro da janela; abertura só na janela
+    const quando = d.acao === 'responder' ? quandoResponder(s.id, hist, cfg.ritmo) : d.acao === 'abrir' ? proximaJanela(agoraS(), cfg.ritmo, semente(s.id)) : null
+    if (quando != null && quando > agoraS()) { await gravar(sb, s.id, token, { proximo_em: iso(quando) }); return { id: s.id, aguardando: 'ritmo humano', responde_em: iso(quando) } }
     if (d.acao === 'abrir') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, [], true)) }
     if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, hist, false)) }
     if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, token, { status: 'aguardando_followup', proximo_em: iso(d.proximo_em) }); return { id: s.id, acao: 'aguardando_followup' } }
@@ -278,11 +282,22 @@ Deno.serve(async (req) => {
     }
     if (acao === 'config') {
       // interruptor dos envios: só gestor; a varredura e cada envio leem oculto_config.ativo na hora
-      if (!membro.gestor) return json({ error: 'só gestor liga/desliga os envios' }, 403)
-      if (typeof body?.ativo !== 'boolean') return json({ error: 'ativo deve ser true/false' }, 400)
-      const r = await sb.from('oculto_config').update({ ativo: body.ativo, atualizado_em: new Date().toISOString() }).eq('id', 1).select('ativo, conectado, numero').single()
+      if (!membro.gestor) return json({ error: 'só gestor altera os envios e o ritmo' }, 403)
+      const patch: Record<string, unknown> = {}
+      if (body?.ativo !== undefined) { if (typeof body.ativo !== 'boolean') return json({ error: 'ativo deve ser true/false' }, 400); patch.ativo = body.ativo }
+      // ritmo humano (opcional): faixa de atraso e janela de horário — validados aqui, lidos com padrões em ritmoDaConfig
+      if (body?.ritmo !== undefined) {
+        const r = body.ritmo ?? {}, hora = (v: unknown) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v))
+        const min = Number(r.resposta_min_s), max = Number(r.resposta_max_s)
+        if (!Number.isInteger(min) || !Number.isInteger(max) || min < 0 || max < min || max > 7200) return json({ error: 'atraso: min e max em segundos inteiros, 0 ≤ min ≤ max ≤ 7200' }, 400)
+        if (!hora(r.janela_inicio) || !hora(r.janela_fim) || String(r.janela_fim) <= String(r.janela_inicio)) return json({ error: 'janela: HH:MM, fim depois do início' }, 400)
+        if (r.janela_sabado_fim != null && r.janela_sabado_fim !== '' && (!hora(r.janela_sabado_fim) || String(r.janela_sabado_fim) <= String(r.janela_inicio))) return json({ error: 'sábado: HH:MM depois do início, ou vazio' }, 400)
+        Object.assign(patch, { resposta_min_s: min, resposta_max_s: max, janela_inicio: r.janela_inicio, janela_fim: r.janela_fim, janela_sabado_fim: r.janela_sabado_fim || null })
+      }
+      if (!Object.keys(patch).length) return json({ error: 'nada para alterar (ativo e/ou ritmo)' }, 400)
+      const r = await sb.from('oculto_config').update({ ...patch, atualizado_em: new Date().toISOString() }).eq('id', 1).select('ativo, conectado, numero, resposta_min_s, resposta_max_s, janela_inicio, janela_fim, janela_sabado_fim').single()
       if (r.error) return json({ error: r.error.message }, 500)
-      console.log('cliente-oculto config', JSON.stringify({ por: membro.id, ativo: body.ativo }))
+      console.log('cliente-oculto config', JSON.stringify({ por: membro.id, ...patch }))
       return json({ ok: true, ...r.data })
     }
     if (acao === 'cancelar') {

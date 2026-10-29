@@ -8,7 +8,7 @@
 export type FetchFn = typeof fetch
 export type Envio = { ok: boolean; id: string | null; status: number; transporte?: boolean; nota?: string }
 export type Evolution = {
-  enviarTexto: (numero: string, texto: string) => Promise<Envio>
+  enviarTexto: (numero: string, texto: string, digitandoMs?: number) => Promise<Envio>
   buscarMensagens: (numero: string, limite?: number) => Promise<{ ok: boolean; mensagens: { id: string | null; fromMe: boolean; texto: string; ts: number }[] }>
   criarInstancia: (webhookUrl: string) => Promise<{ ok: boolean; status: number; qr: string | null; jaExistia?: boolean; nota?: string }>
   registrarWebhook: (webhookUrl: string) => Promise<{ ok: boolean; status: number; nota?: string }>
@@ -31,8 +31,9 @@ export function evolution(baseUrl: string, apikey: string, instancia: string, fe
   }
   const textoDe = (m: any) => String(m?.message?.conversation ?? m?.message?.extendedTextMessage?.text ?? '').trim()
   return {
-    async enviarTexto(numero, texto) {
-      const r = await req('POST', `/message/sendText/${inst}`, { number: numero, text: texto })
+    async enviarTexto(numero, texto, digitandoMs) {
+      // delay (ms): a Evolution mostra "digitando..." por esse tempo antes de entregar
+      const r = await req('POST', `/message/sendText/${inst}`, { number: numero, text: texto, ...(digitandoMs ? { delay: Math.round(digitandoMs) } : {}) })
       if (r.transporte) return { ok: false, id: null, status: 0, transporte: true, nota: r.nota }
       if (r.status < 200 || r.status >= 300) return { ok: false, id: null, status: r.status, nota: JSON.stringify(r.body ?? '').slice(0, 200) }
       return { ok: true, id: r.body?.key?.id ? String(r.body.key.id) : null, status: r.status }
