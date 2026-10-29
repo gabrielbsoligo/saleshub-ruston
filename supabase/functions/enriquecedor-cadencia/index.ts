@@ -8,8 +8,11 @@
 //   {acao:'setup', etapas?:['campos','funil','templates'], apenas?:nomeTemplate, dry_run?}
 //       cria campos custom, funil e templates WABA no Kommo (idempotente)
 //   {acao:'submeter', apenas?}        envia os templates criados pra revisão da Meta
-//   {acao:'sync-review'}              atualiza review_status a partir do Kommo
-//   {acao:'vincular-bot', template, bot_id}  liga um Salesbot da UI a um template
+//   {acao:'sync-review'}              atualiza review_status a partir do Kommo (legado)
+//   {acao:'sync-vinculos', source_id?, dry_run?}
+//       resolve modelo×canal pelo nome (status da Meta POR canal) e confere os bots
+//   {acao:'vincular-bot', template, bot_id, source_id?|responsavel_kommo_id?}
+//       liga um Salesbot da UI a um template; com source_id grava o vínculo do canal
 //   {acao:'disparar', dry_run?, limite?}     um ciclo do carteiro (P1 + P2 48h + P3 96h)
 //   {acao:'status'}                   resumo da fila/envios
 //   ?acao=webhook&s=<secret>          retorno dos Salesbots (quick reply / texto livre)
@@ -18,6 +21,8 @@
 // Opcionais: KOMMO_SUBDOMAIN, ENRIQ_MOTOR_URL, ENRIQ_APP_URL. Deploy --no-verify-jwt.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { escolherBot } from './vinculo.ts'
+import { conferirVinculos, semVinculo } from './sync.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -91,7 +96,8 @@ const ETAPAS_FUNIL = [
   'Opt-out',
 ]
 
-// Ordem posicional das variáveis de cada template ({{1}}..{{n}} → campo custom).
+// Ordem posicional das variáveis dos templates ORIGINAIS ({{1}}..{{n}} → campo custom) —
+// só pro setup (criação no Kommo). No disparo a ordem vem de chaves_vars do banco.
 const VARS_POR_TEMPLATE: Record<string, string[]> = {
   sdna_p1_auditoria_v1: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
   sdna_p1_auditoria_v2: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
@@ -117,16 +123,6 @@ const EXEMPLOS: Record<string, string> = {
 const CAMPO_DA_VAR: Record<string, string> = {
   nome1: 'CAD Nome decisor', sdr: 'CAD SDR', fantasia: 'CAD Fantasia', fraseFalha: 'CAD Frase falha',
   fraseImpacto: 'CAD Frase impacto', rotuloSecundaria: 'CAD Rotulo 2a falha', pontos: 'CAD Pontos diagnostico',
-}
-
-// Bot do Salesbot que dispara o modelo PELO WHATSAPP DO RESPONSÁVEL do card (Lary e
-// Edric têm números oficiais diferentes). Mapa {kommoUserId: botId}; vazio = legado
-// (kommo_bot_id único). Com mapa e sem bot do responsável: NÃO dispara por outro número.
-function botDoResponsavel(tpl: any, uid: number | null): number | null {
-  const mapa = (tpl?.kommo_bots_por_responsavel ?? {}) as Record<string, number>
-  if (!Object.keys(mapa).length) return tpl?.kommo_bot_id ? Number(tpl.kommo_bot_id) : null
-  const b = uid ? mapa[String(uid)] : null
-  return b ? Number(b) : null
 }
 
 async function listarCamposCustom(): Promise<Map<string, { id: number; type: string }>> {
@@ -293,8 +289,74 @@ async function acaoSyncReview() {
   return json(200, { ok: true, templates: resultados })
 }
 
+// ── sync-vinculos: confere os vínculos modelo × canal no Kommo ──────────────
+// Só relê status da Meta do modelo VINCULADO e confere o bot (existe/ativo) — nunca
+// cria vínculo nem troca modelo/bot (ver sync.ts). Cópia aprovada diferente da
+// vinculada sai como "sugestao"; modelo sem vínculo sai em "sem_vinculo".
+async function listarPaginado(path: string, chave: string) {
+  const out: any[] = []
+  for (let page = 1; page <= 5; page++) {
+    const r = await kommo('GET', `${path}${path.includes('?') ? '&' : '?'}limit=250&page=${page}`)
+    if (r.status === 204) break
+    if (!r.ok) return null
+    const items = r.body?._embedded?.[chave] ?? []
+    out.push(...items)
+    if (items.length < 250) break
+  }
+  return out
+}
+
+async function acaoSyncVinculos(b: Record<string, any>) {
+  const db = sb()
+  const dryRun = b.dry_run === true
+  const { data: canais } = await db.from('enriquecedor_cadencia_canais').select('source_id, nome, ativo')
+  const alvo = (canais ?? []).filter((c) => !b.source_id || Number(c.source_id) === Number(b.source_id))
+  if (!alvo.length) return json(422, { error: b.source_id ? `canal ${b.source_id} não cadastrado` : 'nenhum canal cadastrado' })
+  const remotos = await listarPaginado('/api/v4/chats/templates?with=reviews', 'chat_templates')
+  if (!remotos) return json(502, { error: 'falha ao ler os modelos no Kommo' })
+  const bots = await listarPaginado('/api/v4/bots', 'items') // null = não deu pra conferir os bots
+  const { data: modelos, error: errModelos } = await db.from('enriquecedor_cadencia_templates').select('id, nome').eq('canal', 'whatsapp')
+  if (errModelos) return json(500, { error: errModelos.message })
+  const agora = new Date().toISOString()
+  const saida: any[] = []
+  for (const c of alvo) {
+    const sourceId = Number(c.source_id)
+    const { data: atuais, error: errAtuais } = await db.from('enriquecedor_cadencia_vinculos')
+      .select('template_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', sourceId)
+    if (errAtuais) return json(500, { error: errAtuais.message, canal: sourceId })
+    const res = conferirVinculos(modelos ?? [], remotos, sourceId, atuais ?? [], bots)
+    if (!dryRun) {
+      for (const r of res) {
+        const { error } = await db.from('enriquecedor_cadencia_vinculos')
+          .update({ review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora })
+          .eq('template_id', r.template_id).eq('source_id', sourceId)
+        if (error) return json(500, { error: error.message, canal: sourceId, modelo: r.nome })
+      }
+      await db.from('enriquecedor_cadencia_canais').update({ verificado_em: agora, updated_at: agora }).eq('source_id', sourceId)
+    }
+    saida.push({
+      canal: sourceId, nome: c.nome, ativo: c.ativo,
+      vinculos: res.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, sugestao: r.sugestao, mudou: r.mudou })),
+      sem_vinculo: semVinculo(modelos ?? [], remotos, sourceId, atuais ?? []),
+    })
+  }
+  return json(200, { ok: true, dry_run: dryRun, bots_conferidos: bots != null, canais: saida })
+}
+
 async function acaoVincularBot(b: Record<string, any>) {
   if (!b.template || !b.bot_id) return json(400, { error: 'template e bot_id obrigatórios' })
+  // Com source_id: bot do modelo NAQUELE canal (vínculo da migration_177). Não mexe
+  // no status de aprovação — esse vem do Kommo (sync).
+  if (b.source_id) {
+    const db = sb()
+    const { data: tpl } = await db.from('enriquecedor_cadencia_templates').select('id').eq('nome', String(b.template)).maybeSingle()
+    if (!tpl) return json(404, { error: 'template não encontrado' })
+    const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('source_id', Number(b.source_id)).maybeSingle()
+    if (!canal) return json(404, { error: `canal ${b.source_id} não cadastrado em enriquecedor_cadencia_canais` })
+    const { error } = await db.from('enriquecedor_cadencia_vinculos')
+      .upsert({ template_id: tpl.id, source_id: Number(b.source_id), kommo_bot_id: Number(b.bot_id), updated_at: new Date().toISOString() }, { onConflict: 'template_id,source_id' })
+    return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+  }
   // Com responsavel_kommo_id: bot do WhatsApp daquele SDR (mapa por responsável).
   if (b.responsavel_kommo_id) {
     const { data: row } = await sb().from('enriquecedor_cadencia_templates').select('kommo_bots_por_responsavel').eq('nome', String(b.template)).maybeSingle()
@@ -351,14 +413,27 @@ async function contextoDisparo() {
   const funil = await acharFunil()
   const token = await tokenIntegracao()
   const cacheUsers = new Map<number, string>()
-  return { db, tplPorNome, campos, funil, token, cacheUsers }
+  // Canal ativo + vínculos modelo×canal (migration_177). Sem canal ativo = só legado.
+  // Erro de leitura NÃO pode virar "sem canal"/"sem vínculo" (cairia no legado e
+  // liberaria um modelo bloqueado): lança antes de qualquer chamada ao Kommo.
+  const { data: canal, error: errCanal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('ativo', true).maybeSingle()
+  if (errCanal) throw new Error(`leitura do canal ativo falhou: ${errCanal.message}`)
+  const canalAtivo = canal?.source_id != null ? Number(canal.source_id) : null
+  let vinculos: any[] = []
+  if (canalAtivo != null) {
+    const { data, error } = await db.from('enriquecedor_cadencia_vinculos')
+      .select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', canalAtivo)
+    if (error) throw new Error(`leitura dos vínculos falhou: ${error.message}`)
+    vinculos = data ?? []
+  }
+  return { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos }
 }
 
 // Dispara UM passo pra UM lead: prepara no motor, registra o envio ANTES de
 // mexer no Kommo (dedupe do webhook e de retries), grava os campos CAD, move
 // o card (se `mover`) e roda o Salesbot do template.
 async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mover: boolean; dryRun: boolean; envioId?: string; decisor?: any | null }) {
-  const { db, tplPorNome, campos, funil, token, cacheUsers } = ctx
+  const { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos } = ctx
   const finaliza = async (patch: Record<string, unknown>) => {
     if (opts.envioId) await db.from('enriquecedor_cadencia_envios').update(patch).eq('id', opts.envioId)
   }
@@ -385,8 +460,9 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   }
 
   const valores: Record<string, string> = {}
-  const ordem = VARS_POR_TEMPLATE[String(msg.template)] ?? []
-  ordem.forEach((nomeCampo: string, i: number) => { valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
+  const chaves: string[] = Array.isArray(tpl.chaves_vars) && tpl.chaves_vars.length ? tpl.chaves_vars : []
+  const ordem = chaves.length ? chaves.map((k) => CAMPO_DA_VAR[k]) : (VARS_POR_TEMPLATE[String(msg.template)] ?? [])
+  ordem.forEach((nomeCampo: string | undefined, i: number) => { if (nomeCampo) valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
   for (const [k, campo] of Object.entries(CAMPO_DA_VAR)) {
     const v = pac.variaveis?.[k]
     if (v != null && v !== '' && valores[campo] == null) valores[campo] = String(v)
@@ -396,6 +472,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '')
   valores['Enriquecedor URL'] = `${APP_URL}/enriquecedor/#lead=${lead.id}`
 
+  const escolha = escolherBot(tpl, uid, canalAtivo, vinculos, sdrNome)
   const linha: any = {
     lead: lead.razao_social ?? lead.nome_fantasia,
     decisor: opts.decisor?.nome ?? null,
@@ -403,13 +480,16 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     passo,
     template: msg.template,
     variaveis: msg.variaveis,
-    bot_id: botDoResponsavel(tpl, uid),
+    bot_id: escolha.botId,
+    canal: escolha.sourceId,
+    origem_bot: escolha.origem,
     responsavel: uid,
     review: tpl.review_status,
+    bloqueio: escolha.motivo,
   }
   if (opts.dryRun) return linha
 
-  const botId = botDoResponsavel(tpl, uid)
+  const botId = escolha.botId
   // O Salesbot manda o modelo pra TODOS os contatos do card, com os campos do card
   // ({{1}} = decisor principal): com 2+ contatos, os outros recebem "Oi <principal>".
   // Outros decisores ficam na Empresa ligada ao card, não no card.
@@ -418,8 +498,8 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     await finaliza({ status: 'falhou', erro: motivo })
     return { ...linha, pulado: motivo }
   }
-  if (tpl.review_status !== 'aprovado' || !botId) {
-    const motivo = tpl.review_status !== 'aprovado' ? 'template sem aprovação da Meta' : `sem bot deste modelo no WhatsApp do responsável do card (${sdrNome ?? uid ?? 'sem responsável'})`
+  if (escolha.motivo || !botId) {
+    const motivo = escolha.motivo ?? 'sem bot'
     await finaliza({ status: 'falhou', erro: motivo })
     return { ...linha, pulado: motivo }
   }
@@ -460,6 +540,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   const okBot = rb.ok || rb.status === 202
   await db.from('enriquecedor_cadencia_envios').update({
     template_id: tpl.id,
+    source_id: escolha.sourceId,
     falha_codigo: pac.falhaPrimaria?.codigo ?? null,
     sdr_nome: pac.variaveis?.sdr ?? sdrNome, // o SDR que validou a cadência (config) manda sobre o responsável do card
     variaveis_enviadas: msg.variaveis,
@@ -570,7 +651,8 @@ async function acaoKommoWebhook(body: Record<string, any>) {
   const relevantes = eventos.filter((e) => e.pipeline_id === funil.id && passoDaEtapa.has(e.status_id))
   if (!relevantes.length) return json(200, { ok: true, ignorado: 'fora do funil/etapas da cadência' })
 
-  const ctx = await contextoDisparo()
+  let ctx: any
+  try { ctx = await contextoDisparo() } catch (e) { return json(500, { ok: false, erro: String((e as Error)?.message ?? e) }) }
   if (!ctx.token) return json(200, { ok: false, erro: 'auth integração falhou' })
   const { db } = ctx
   const resultados: any[] = []
@@ -792,7 +874,10 @@ async function acaoStatus() {
     porPasso[`p${e.passo}`][e.status] = (porPasso[`p${e.passo}`][e.status] ?? 0) + 1
   }
   const { count: respostas } = await db.from('enriquecedor_cadencia_respostas').select('id', { count: 'exact', head: true })
-  return json(200, { ok: true, aptos_na_fila: aptos, templates: tpls, envios_por_passo: porPasso, respostas })
+  const { data: canais } = await db.from('enriquecedor_cadencia_canais').select('source_id, nome, ativo, vivo, limite_24h, verificado_em')
+  const { data: vinculos } = await db.from('enriquecedor_cadencia_vinculos')
+    .select('source_id, kommo_template_id, kommo_bot_id, review_status, verificado_em, enriquecedor_cadencia_templates(nome)')
+  return json(200, { ok: true, aptos_na_fila: aptos, templates: tpls, canais, vinculos, envios_por_passo: porPasso, respostas })
 }
 
 // ── servidor ─────────────────────────────────────────────────────────────────
@@ -839,6 +924,7 @@ Deno.serve(async (req) => {
     if (acao === 'setup') return await acaoSetup(body)
     if (acao === 'submeter') return await acaoSubmeter(body)
     if (acao === 'sync-review') return await acaoSyncReview()
+    if (acao === 'sync-vinculos') return await acaoSyncVinculos(body)
     if (acao === 'vincular-bot') return await acaoVincularBot(body)
     if (acao === 'disparar') {
       // colhe respostas pendentes ANTES de decidir P2/P3 (gating "sem resposta")
@@ -847,7 +933,7 @@ Deno.serve(async (req) => {
     }
     if (acao === 'coletar-respostas') return await acaoColetarRespostas()
     if (acao === 'status') return await acaoStatus()
-    return json(400, { error: "acao deve ser setup|submeter|sync-review|vincular-bot|disparar|coletar-respostas|status|webhook" })
+    return json(400, { error: "acao deve ser setup|submeter|sync-review|sync-vinculos|vincular-bot|disparar|coletar-respostas|status|webhook" })
   } catch (e) {
     return json(500, { error: String((e as Error)?.message ?? e) })
   }
