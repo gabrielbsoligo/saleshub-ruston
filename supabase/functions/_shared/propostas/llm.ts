@@ -10,7 +10,7 @@ import { redigir } from './redigir.mjs'
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-const CLAUDE_MODEL = Deno.env.get('PROPOSTA_CLAUDE_MODEL') ?? 'claude-sonnet-4-20250514'
+const CLAUDE_MODEL = Deno.env.get('PROPOSTA_CLAUDE_MODEL') ?? 'claude-sonnet-5-5'
 const TIMEOUT_MS = 75_000
 
 const CHAVES = [OPENAI_API_KEY, ANTHROPIC_API_KEY]
@@ -54,7 +54,8 @@ async function viaClaude(prompt: string): Promise<string | null> {
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
-        max_tokens: 4000,
+        // modelos atuais pensam por padrão: o pensamento conta em max_tokens
+        max_tokens: 16000,
         system: SYSTEM,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -64,7 +65,10 @@ async function viaClaude(prompt: string): Promise<string | null> {
       return null
     }
     const d = await r.json()
-    return d.content?.[0]?.text || null
+    // o primeiro bloco pode ser 'thinking' (vazio); a resposta é o bloco 'text'
+    const texto = (d.content || []).find((b: any) => b?.type === 'text')?.text || null
+    if (!texto) console.error(`proposta LLM Claude sem texto: stop_reason=${seguro(d.stop_reason)}`)
+    return texto
   } catch (e) {
     console.error('proposta LLM Claude falhou:', seguro((e as Error).message))
     return null
