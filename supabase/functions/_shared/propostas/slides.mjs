@@ -180,16 +180,86 @@ export function secoesEscopo(escopo) {
   const pe = escopo.plano_execucao;
   if (pe?.incluido && pe.itens?.length) secoes.push({ rotulo: 'Executar', titulo: 'Plano de execução', itens: pe.itens.map((i) => i.texto) });
 
-  // Quebra listas longas em slides "(cont.)"
-  const n = ESTILO.itensPorSlide;
+  // Quebra listas longas em slides "(cont.)" pelo espaço que os cartões ocupam
+  // (itens longos ocupam mais linhas → menos cartões por slide), até itensPorSlide.
   return secoes.flatMap((s) => {
-    if (s.itens.length <= n) return [s];
-    const partes = [];
-    for (let i = 0; i < s.itens.length; i += n) {
-      partes.push({ ...s, titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, itens: s.itens.slice(i, i + n) });
+    const itens = s.itens.map(cortarItem);
+    const paginas = [];
+    let pagina = [];
+    for (const item of itens) {
+      const tentativa = [...pagina, item];
+      if (!pagina.length || cabemNoSlide(tentativa)) pagina = tentativa;
+      else { paginas.push(pagina); pagina = [item]; }
     }
-    return partes;
+    if (pagina.length) paginas.push(pagina);
+    return paginas.map((p, i) => ({ ...s, titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, itens: p }));
   });
+}
+
+// Medidas dos cartões em frações da altura do slide 16:9 (720 x 405 pt): IBM Plex Sans 13pt
+// numa coluna de ~313pt cabe ~42 caracteres por linha; usamos 38 para sobrar. Sem autofit
+// (a API não liga TEXT_AUTOFIT), então a altura do cartão sai do texto mais longo do slide.
+const CARTAO = {
+  caracteresPorLinha: 38,
+  maxLinhas: 6,
+  linhaH: 17 / 405,
+  folgaH: 12 / 405,
+  minH: 36 / 405,
+  maxH: 0.12,
+  topo: 0.35,
+  areaH: 0.52,
+  gap: 0.022,
+};
+
+// Linhas que o texto ocupa com quebra por palavra.
+export function linhasDoTexto(texto, porLinha = CARTAO.caracteresPorLinha) {
+  let linhas = 1;
+  let atual = 0;
+  for (const p of String(texto).split(/\s+/).filter(Boolean)) {
+    for (let resto = p.length; resto > 0;) {
+      const espaco = atual ? 1 : 0;
+      if (atual + espaco + Math.min(resto, porLinha) <= porLinha) {
+        const usa = Math.min(resto, porLinha - atual - espaco);
+        atual += espaco + usa; resto -= usa;
+      } else { linhas += 1; atual = 0; }
+    }
+  }
+  return linhas;
+}
+const conteudoCartao = (i, texto) => `${doisDigitos(i + 1)}   ${texto}`;
+
+// Item maior que o cartão (maxLinhas) é cortado com "…": o closer completa no Slides.
+function cortarItem(texto) {
+  if (linhasDoTexto(conteudoCartao(0, texto)) <= CARTAO.maxLinhas) return texto;
+  let t = texto;
+  while (t.length > 1 && linhasDoTexto(conteudoCartao(0, `${t}…`)) > CARTAO.maxLinhas) t = t.slice(0, -1);
+  return `${t.trimEnd()}…`;
+}
+
+// Altura (fração de H) dos cartões de um slide e quantos cabem por coluna.
+export function medidaCartoes(itens) {
+  const linhas = Math.max(1, ...itens.map((t, i) => linhasDoTexto(conteudoCartao(i, t))));
+  const h = Math.max(CARTAO.minH, CARTAO.folgaH + linhas * CARTAO.linhaH);
+  const porColunaMax = Math.max(1, Math.floor((CARTAO.areaH + CARTAO.gap) / (h + CARTAO.gap)));
+  const porColuna = Math.ceil(itens.length / 2) || 1;
+  // com poucos itens o cartão cresce até maxH (visual), nunca abaixo do que o texto pede
+  const preenche = (CARTAO.areaH - CARTAO.gap * (porColuna - 1)) / porColuna;
+  return { linhas, porColuna, porColunaMax, h: Math.max(h, Math.min(CARTAO.maxH, preenche)) };
+}
+const cabemNoSlide = (itens) => {
+  const m = medidaCartoes(itens);
+  return itens.length <= ESTILO.itensPorSlide && m.porColuna <= m.porColunaMax;
+};
+
+// Título em uma linha: Anton em caixa alta usa ~0,48 em por caractere. Longo → fonte menor
+// (até 18pt); ainda maior → cortado com "…".
+export function tituloAjustado(titulo, larguraPt) {
+  const t = String(titulo).toUpperCase();
+  const cabe = (tam) => Math.floor(larguraPt / (0.48 * tam));
+  for (let tam = ESTILO.tamanhoTitulo; tam >= 18; tam -= 2) {
+    if (t.length <= cabe(tam)) return { texto: t, tamanho: tam };
+  }
+  return { texto: `${t.slice(0, cabe(18) - 1).trimEnd()}…`, tamanho: 18 };
 }
 
 export function textoDoSlide(slide) {
@@ -282,6 +352,7 @@ export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoP
   secoes.forEach((s, k) => {
     const sid = `${prefixo}_s${k}`;
     const rotuloCor = s.tipo === 'bonus' ? ESTILO.amarelo : ESTILO.vermelhoClaro;
+    const titulo = tituloAjustado(s.titulo, (W - 2 * m) / 12700);
     reqs.push(
       { createSlide: { objectId: sid, insertionIndex: indice + k, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
       {
@@ -297,25 +368,25 @@ export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoP
       estiloTexto(`${sid}_r`, { rgb: rotuloCor, fonte: ESTILO.fonteTexto, tamanho: ESTILO.tamanhoRotulo, negrito: true }),
       // título
       forma(`${sid}_t`, sid, 'TEXT_BOX', m, Math.round(H * 0.13), W - 2 * m, Math.round(H * 0.15)),
-      { insertText: { objectId: `${sid}_t`, text: s.titulo.toUpperCase() } },
-      estiloTexto(`${sid}_t`, { rgb: ESTILO.branco, fonte: ESTILO.fonteTitulo, tamanho: ESTILO.tamanhoTitulo }),
+      { insertText: { objectId: `${sid}_t`, text: titulo.texto } },
+      estiloTexto(`${sid}_t`, { rgb: ESTILO.branco, fonte: ESTILO.fonteTitulo, tamanho: titulo.tamanho }),
       // linha de destaque
       forma(`${sid}_l`, sid, 'RECTANGLE', m, Math.round(H * 0.295), Math.round(W * 0.08), Math.round(H * 0.008)),
       preenchimento(`${sid}_l`, ESTILO.vermelho),
     );
     // cartões numerados, 2 colunas
-    const porColuna = Math.ceil(s.itens.length / 2) || 1;
-    const topo = Math.round(H * 0.35);
-    const areaH = Math.round(H * 0.52);
-    const gap = Math.round(H * 0.022);
-    const cardH = Math.min(Math.round(H * 0.12), Math.round((areaH - gap * (porColuna - 1)) / porColuna));
+    // (altura pelo item mais longo; secoesEscopo já garantiu que cabem)
+    const { porColuna, h } = medidaCartoes(s.itens);
+    const topo = Math.round(H * CARTAO.topo);
+    const gap = Math.round(H * CARTAO.gap);
+    const cardH = Math.round(H * h);
     const colW = Math.round((W - 2 * m - Math.round(W * 0.02)) / 2);
     s.itens.forEach((texto, i) => {
       const col = Math.floor(i / porColuna);
       const lin = i % porColuna;
       const cid = `${sid}_c${i}`;
       const num = doisDigitos(i + 1);
-      const conteudo = `${num}   ${texto}`;
+      const conteudo = conteudoCartao(i, texto);
       reqs.push(
         forma(cid, sid, 'ROUND_RECTANGLE', m + col * (colW + Math.round(W * 0.02)), topo + lin * (cardH + gap), colW, cardH),
         preenchimento(cid, ESTILO.cartao),

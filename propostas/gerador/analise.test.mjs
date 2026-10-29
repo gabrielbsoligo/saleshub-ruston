@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  citacaoNaTranscricao, extrairJson, localizarCitacao, montarPrompt, normalizarComMapa, normalizarEscopo, normalizarTexto, valoresMonetarios,
+  citacaoNaTranscricao, datasNoTexto, extrairJson, formatarData, localizarCitacao, montarPrompt, normalizarComMapa, normalizarEscopo, normalizarTexto, valoresMonetarios,
 } from '../../supabase/functions/_shared/propostas/analise.mjs';
 import { validarEscopo } from '../../supabase/functions/_shared/propostas/slides.mjs';
 
@@ -337,4 +337,42 @@ test('validade: data errada, cortada, sem mês ou sem falar de validade → null
   }
   const semPalavra = val('05/11/2026', 'o evento é dia 05/11/2026', 'Closer: o evento é dia 05/11/2026.');
   assert.equal(semPalavra.preco.validade, null);
+});
+
+test('Vedor (validade) #1: data de outro assunto, substring e fração não viram validade', () => {
+  for (const [v, ev] of [
+    ['05/11', 'a gente entrega a landing page até 05/11'],                   // prazo de entrega ("até" solto)
+    ['05/11', 'mandei o material no dia 05/11'],                              // "material" contém "ate"
+    ['10/11', 'próxima reunião fica dia 10/11 pra gente fechar os detalhes'], // fechar sem falar de preço
+    ['01/02', 'fica garantido 1/2 do valor na entrada'],                      // fração
+    ['05/11', 'o prazo de entrega é 05/11'],                                  // prazo de entrega
+    ['05/11', 'vale a pena começar dia 05/11'],                               // "vale a pena"
+  ]) {
+    const e = val(v, ev, `Closer: ${ev}.`);
+    assert.equal(e.preco.validade, null, ev);
+    assert.ok(e.pendencias.some((p) => p.startsWith('validade da proposta')), ev);
+  }
+  // a evidência do LLM fala de condição, mas a oração da FONTE em volta da data é de entrega
+  const t = 'Closer: essa condição é ótima, a entrega da landing page é 05/11.';
+  assert.equal(val('05/11', 'essa condição é ótima, a entrega da landing page é 05/11', t).preco.validade, null);
+});
+
+test('Vedor (validade) #1(iv): aceita com fechar + preço e registra de onde a data saiu', () => {
+  const t = 'Closer: consigo segurar esse valor se a gente fechar até 05/11.';
+  const e = val('05/11', 'consigo segurar esse valor se a gente fechar até 05/11', t);
+  assert.equal(e.preco.validade, '05/11');
+  assert.ok(e.pendencias.some((p) => p.startsWith('validade 05/11 lida em: "') && p.includes('fechar até 05/11') && p.endsWith('— confira')));
+  assert.ok(!e.pendencias.some((p) => p.startsWith('validade da proposta')));
+});
+
+test('Vedor (validade) #4: data só parcialmente dentro da citação não conta', () => {
+  const e = val('05/11', 'Essa condição vale até 05/1', 'Closer: Essa condição vale até 05/11.');
+  assert.equal(e.preco.validade, null);
+});
+
+test('datas: fração e "n/n do" não são datas; "5/11" sem ano e "1/2/2027" são', () => {
+  assert.equal(datasNoTexto('fica 1/2 na entrada').length, 0);
+  assert.equal(datasNoTexto('fica 10/12 do valor').length, 0);
+  assert.deepEqual(datasNoTexto('vale até 5/11').map(formatarData), ['05/11']);
+  assert.deepEqual(datasNoTexto('vale até 1/2/2027').map(formatarData), ['01/02/2027']);
 });

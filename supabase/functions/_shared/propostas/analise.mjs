@@ -58,6 +58,7 @@ REGRAS (obrigatórias):
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
 5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
 5b. VALIDADE: a data até quando a proposta/condição vale, combinada na reunião ("validade" no formato dd/mm/aaaa ou dd/mm, com a evidência literal). Sem data falada: null.
+5c. TAMANHO: "texto" de cada item com no máximo 90 caracteres; "titulo" de cada semana com no máximo 45 caracteres.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
@@ -206,13 +207,17 @@ export function contemTermo(textoNorm, termo) {
 // Datas com posição no texto original: "05/11", "5/11/2026", "5 de novembro",
 // "dia 5 de novembro de 2026". Dia sem mês ("dia 5", "sexta") não conta: ambíguo.
 const MESES = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-const RE_DATA = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?\b|\b(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{4}))?\b/gi;
+const RE_DATA = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?\b(?!\s+d[oae]s?\b)|\b(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{4}))?\b/gi;
 export function datasNoTexto(texto) {
   const t = String(texto || '');
   const out = [];
   for (const m of t.matchAll(RE_DATA)) {
     let dia; let mes; let ano = null;
-    if (m[1]) { dia = Number(m[1]); mes = Number(m[2]); ano = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : null; }
+    if (m[1]) {
+      // sem ano, "1/2" é fração, não data: exige dia ou mês com 2 dígitos ("5/11", "05/1")
+      if (!m[3] && m[1].length < 2 && m[2].length < 2) continue;
+      dia = Number(m[1]); mes = Number(m[2]); ano = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : null;
+    }
     else { dia = Number(m[4]); mes = MESES.indexOf(normalizarTexto(m[5])) + 1; ano = m[6] ? Number(m[6]) : null; }
     if (dia < 1 || dia > 31 || mes < 1 || mes > 12) continue;
     out.push({ dia, mes, ano, ini: m.index, fim: m.index + m[0].length });
@@ -220,7 +225,17 @@ export function datasNoTexto(texto) {
   return out;
 }
 export const formatarData = (d) => `${String(d.dia).padStart(2, '0')}/${String(d.mes).padStart(2, '0')}${d.ano ? `/${d.ano}` : ''}`;
-const VALIDADE = /(valid|vale|ate|prazo|condicao|fechar|fechamento|assinar|garant)/;
+// Palavra inteira (texto normalizado): "material" não é "ate", e "até" sozinho não basta.
+// Prazo/garantia/fechar/assinar/segurar também falam de entrega e reunião: só valem se a
+// oração também fala de proposta/preço. "Vale a pena" não é validade.
+const VALIDADE = /\b(valid[ao]s?|validade|vale|valem|valendo|condicao|condicoes)\b/;
+const VALIDADE_FRACA = /\b(prazo|garantid[ao]s?|garanto|garantimos|fechar|fecha|fechamento|assinar|assina|assinatura|segurar|seguro|seguramos)\b/;
+const ASSUNTO_PRECO = /\b(proposta|condicao|condicoes|valor|valores|preco|precos|desconto|investimento)\b/;
+export function falaDeValidade(oracaoNorm) {
+  const t = oracaoNorm.replace(/\bvalem? a pena\b/g, ' ');
+  return VALIDADE.test(t) || (VALIDADE_FRACA.test(t) && ASSUNTO_PRECO.test(t));
+}
+const ORACAO = /[.!?;:,](?=\s)|\n/g;
 
 export const formasParcelas = (p) => [`${p}x`, `${p} x`, `${p} vezes`, `${p} parcelas`];
 export const formasMeses = (m) => [`${m} meses`];
@@ -339,12 +354,20 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       const alvo = datasNoTexto(v)[0];
       const e = evidenciaDe('validade');
       const spans = e ? localizarCitacao(e, fonteMapa) : [];
-      const naFonte = datasNoTexto(transcricao).filter((d) => spans.some(([a, b]) => d.ini < b && d.fim > a));
-      const casa = alvo && e && VALIDADE.test(normalizarTexto(e))
-        ? naFonte.find((d) => d.dia === alvo.dia && d.mes === alvo.mes && (!alvo.ano || !d.ano || alvo.ano === d.ano))
+      // A data inteira dentro do trecho localizado, e a ORAÇÃO da fonte em volta dela
+      // (não só o trecho escolhido pelo LLM) tem de falar de validade.
+      const naFonte = datasNoTexto(transcricao).filter((d) => spans.some(([a, b]) => d.ini >= a && d.fim <= b));
+      const oracaoDe = (d) => trechoAoRedor(transcricao, d.ini, d.fim, ORACAO).trim();
+      const casa = alvo && e && falaDeValidade(normalizarTexto(e))
+        ? naFonte.find((d) => d.dia === alvo.dia && d.mes === alvo.mes && (!alvo.ano || !d.ano || alvo.ano === d.ano)
+          && falaDeValidade(normalizarTexto(oracaoDe(d))))
         : null;
-      if (casa) preco.validade = formatarData(casa);
-      else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
+      if (casa) {
+        preco.validade = formatarData(casa);
+        // mesmo aceita, o closer confere de onde a data saiu
+        const trecho = oracaoDe(casa);
+        pendencias.push(`validade ${formatarData(casa)} lida em: "${trecho.length > 140 ? `${trecho.slice(0, 140)}…` : trecho}" — confira`);
+      } else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
     }
   }
   // A mesma expressão da fonte sustentando dois campos = papel ambíguo → nenhum.

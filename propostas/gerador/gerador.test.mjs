@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   acharIndicePreco, formatarBRL, formatarCurto, idsExistentes, montarValores, planejarPreparar, requestsSlidesEscopo, slidesDePreco, textoDoSlide,
   secoesEscopo, validarEscopo, verificarTemplate, LITERAIS_DECK, PLACEHOLDERS_TEMPLATE, ESTILO,
+  linhasDoTexto, medidaCartoes, tituloAjustado,
 } from '../../supabase/functions/_shared/propostas/slides.mjs';
 import { gerarProposta, planejar, prepararTemplate } from '../../supabase/functions/_shared/propostas/gerar.mjs';
 import { criarCliente, MIME } from '../../supabase/functions/_shared/propostas/google.mjs';
@@ -150,6 +151,69 @@ test('lista longa quebra em slides (cont.) e ids são únicos e válidos', () =>
   const ids = reqs.flatMap((r) => [r.createSlide?.objectId, r.createShape?.objectId]).filter(Boolean);
   assert.equal(new Set(ids).size, ids.length);
   assert.ok(ids.every((id) => /^[a-zA-Z0-9_][a-zA-Z0-9_\-:]{4,49}$/.test(id)));
+});
+
+// Cartões: o texto (estimado em linhas) cabe na altura do cartão, e os cartões cabem na área.
+const PT = 12700;
+const PAGINA_16x9 = { width: { magnitude: 9144000, unit: 'EMU' }, height: { magnitude: 5143500, unit: 'EMU' } };
+function conferirCartoes(secoes) {
+  const pageSize = PAGINA_16x9;
+  const H = pageSize.height.magnitude;
+  const reqs = requestsSlidesEscopo(secoes, { indice: 0, pageSize, prefixo: 'gpcab' });
+  for (const s of secoes) {
+    const { linhas } = medidaCartoes(s.itens);
+    assert.ok(s.itens.length <= ESTILO.itensPorSlide);
+    const cartoes = reqs.filter((r) => r.createShape?.shapeType === 'ROUND_RECTANGLE'
+      && r.createShape.elementProperties.pageObjectId === `gpcab_s${secoes.indexOf(s)}`);
+    for (const c of cartoes) {
+      const { height } = c.createShape.elementProperties.size;
+      const y = c.createShape.elementProperties.transform.translateY;
+      // 13pt com entrelinha ~16pt + margens internas ~7pt
+      assert.ok(height.magnitude / PT >= linhas * 16 + 7, `${s.titulo}: ${linhas} linhas em ${height.magnitude / PT}pt`);
+      assert.ok(y + height.magnitude <= H * 0.88, `${s.titulo}: cartão passa da área`);
+    }
+  }
+}
+
+test('Vedor (visual) #2: 8 itens longos não cabem num slide; vão para (cont.) e cada texto cabe no cartão', () => {
+  const e = exemplo();
+  const longo = 'Auditoria completa da conta de Google Ads (estrutura, palavras-chave, termos de pesquisa, lances)';
+  e.escopo.semanas[0].itens = Array.from({ length: 8 }, () => ({ texto: longo, origem: 'closer' }));
+  const secoes = secoesEscopo(e).filter((s) => s.titulo.startsWith(e.escopo.semanas[0].titulo));
+  assert.ok(secoes.length >= 2, 'quebrou em mais de um slide');
+  assert.equal(secoes.reduce((n, s) => n + s.itens.length, 0), 8);
+  conferirCartoes(secoes);
+});
+
+test('Vedor (visual) #2: itens curtos seguem 8 por slide; 1 item e item enorme também cabem', () => {
+  const e = exemplo();
+  e.escopo.semanas[0].itens = Array.from({ length: 8 }, (_, i) => ({ texto: `Item curto ${i}`, origem: 'closer' }));
+  e.escopo.semanas[1].itens = [{ texto: 'x '.repeat(400).trim(), origem: 'closer' }];
+  const secoes = secoesEscopo(e);
+  const s0 = secoes.filter((s) => s.titulo.startsWith(e.escopo.semanas[0].titulo));
+  assert.equal(s0.length, 1);
+  const enorme = secoes.find((s) => s.titulo === e.escopo.semanas[1].titulo);
+  assert.ok(enorme.itens[0].endsWith('…'));
+  conferirCartoes(secoes);
+});
+
+test('linhasDoTexto quebra por palavra', () => {
+  assert.equal(linhasDoTexto('abc', 10), 1);
+  assert.equal(linhasDoTexto('abcde fghij', 10), 2);
+  assert.equal(linhasDoTexto('a'.repeat(25), 10), 3);
+});
+
+test('Vedor (visual) #3: título longo reduz a fonte e, no limite, é cortado em 1 linha', () => {
+  const larg = 640;
+  assert.deepEqual(tituloAjustado('Semana 1 — Descoberta', larg), { texto: 'SEMANA 1 — DESCOBERTA', tamanho: 30 });
+  const medio = tituloAjustado('O que ouvimos da Indústria de Embalagens Plásticas do Nordeste', larg);
+  assert.ok(medio.tamanho < 30 && medio.tamanho >= 18 && !medio.texto.endsWith('…'));
+  const enorme = tituloAjustado('x'.repeat(200), larg);
+  assert.equal(enorme.tamanho, 18);
+  assert.ok(enorme.texto.endsWith('…') && enorme.texto.length <= Math.floor(larg / (0.48 * 18)));
+  const reqs = requestsSlidesEscopo([{ rotulo: 'R', titulo: 'y'.repeat(120), itens: ['a'] }], { indice: 0, pageSize: PAGINA_16x9, prefixo: 'gptit' });
+  const estilo = reqs.find((r) => r.updateTextStyle?.objectId === 'gptit_s0_t');
+  assert.ok(estilo.updateTextStyle.style.fontSize.magnitude < 30);
 });
 
 test('Vedor #6: prefixo muda a cada geração e colisão com o template é recusada', () => {
