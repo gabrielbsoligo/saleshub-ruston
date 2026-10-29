@@ -22,7 +22,7 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } })
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const admin = () => createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { auth: { persistSession: false, autoRefreshToken: false } })
-const ADIA_SEM_ENVIO_S = 300   // < ciclo do cron (*/10): a sessão adiada entra no próximo tick
+const ADIA_SEM_ENVIO_S = 300   // envios desligados: reavalia em 5 min (o cron roda a cada minuto; evita martelar a sessão)
 const ORCAMENTO_TEMPO_MS = 45_000   // varredura para de pegar sessões depois disso (o cron de 1 min continua)
 const LEASE_S = 180, ORCAMENTO_VARRER = 15, ABERTAS = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando']
 const agoraS = () => Math.floor(Date.now() / 1000)
