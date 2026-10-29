@@ -42,8 +42,14 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
     },
 
     apresentacao(id) {
-      return json(`${SLIDES}/presentations/${id}?fields=pageSize,slides(objectId,pageElements(shape(text(textElements(textRun(content))))))`,
+      const texto = 'text(textElements(textRun(content)))';
+      const fields = `pageSize,slides(objectId,pageElements(objectId,shape(${texto}),table(tableRows(tableCells(${texto})))))`;
+      return json(`${SLIDES}/presentations/${id}?fields=${encodeURIComponent(fields)}`,
         { method: 'GET' }, 'slides.presentations.get');
+    },
+
+    apagar(fileId) {
+      return fetchImpl(`${DRIVE}/files/${fileId}?supportsAllDrives=true`, { method: 'DELETE', headers: auth });
     },
 
     batchUpdate(id, requests) {
@@ -51,8 +57,10 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
         { method: 'POST', body: JSON.stringify({ requests }) }, 'slides.batchUpdate');
     },
 
+    // sendNotificationEmail só é aceito para user/group (anyone/domain dá 403).
     compartilhar(fileId, permissao) {
-      return json(`${DRIVE}/files/${fileId}/permissions?supportsAllDrives=true&sendNotificationEmail=false`,
+      const notif = ['user', 'group'].includes(permissao.type) ? '&sendNotificationEmail=false' : '';
+      return json(`${DRIVE}/files/${fileId}/permissions?supportsAllDrives=true${notif}`,
         { method: 'POST', body: JSON.stringify(permissao) }, 'drive.permissions.create');
     },
 

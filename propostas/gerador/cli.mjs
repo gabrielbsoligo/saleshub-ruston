@@ -38,8 +38,9 @@ if (!values.template) sair('--template é obrigatório');
 if (comando === 'preparar') {
   const cliente = criarCliente(process.env.GOOGLE_ACCESS_TOKEN);
   const res = await prepararTemplate(cliente, values.template);
-  for (const r of res) console.log(`${r.trocas ? 'ok ' : 'ZERO'} ${r.trocas}x  ${r.literal}`);
-  if (res.some((r) => !r.trocas)) console.log('Atenção: literal sem troca — confira o deck e o mapa LITERAIS_DECK.');
+  console.log(`slides de preço: ${res.slidesDePreco}`);
+  for (const r of res.trocas) console.log(`${r.trocas ? 'ok ' : 'ZERO'} ${r.trocas}x  ${r.literal}`);
+  if (res.trocas.some((r) => !r.trocas)) console.log('Atenção: literal sem troca — confira o deck e o mapa LITERAIS_DECK.');
 } else if (comando === 'gerar') {
   if (!values.escopo) sair('--escopo é obrigatório');
   if (!['reader', 'writer', 'nenhum'].includes(values.link)) sair('--link deve ser reader, writer ou nenhum');
@@ -49,7 +50,7 @@ if (comando === 'preparar') {
   if (values['dry-run']) {
     // Simula um deck de 3 slides com o slide de investimento na posição 2.
     const fake = { slides: [{}, {}, { pageElements: [{ shape: { text: { textElements: [{ textRun: { content: 'Qual é o investimento?' } }] } } }] }] };
-    const p = planejar(escopo, fake);
+    const p = planejar(escopo, fake, { conferirTemplate: false });
     console.log(JSON.stringify({ nome: nomeProposta(escopo), indice: p.indice, secoes: p.secoes, valores: p.valores, pendencias: p.pendencias, requests: p.requests.length }, null, 2));
   } else {
     const cliente = criarCliente(process.env.GOOGLE_ACCESS_TOKEN);
