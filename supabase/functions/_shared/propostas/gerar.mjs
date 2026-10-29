@@ -86,16 +86,30 @@ export async function garantirAcesso(cliente, fileId, regra) {
 }
 
 // dominio: leitura para quem é do domínio (decisão do Gabriel, 29/10: nunca 'qualquer pessoa com o link').
-// pastaId ausente → raiz do Meu Drive de quem gera (não herda a pasta do template).
-// Tudo depois da cópia (preencher, compartilhar, conferir acesso) é compensado:
-// em qualquer falha a cópia é apagada; se nem isso der, o erro diz o id.
+// Sequência segura:
+//   1. pasta de destino (se houver) validada ANTES da cópia: só pode ter acessos permitidos;
+//   2. cópia na raiz de quem gera, sem visibilidade padrão, e deixada PRIVADA (só o dono)
+//      antes de receber escopo/preço;
+//   3. preenche → compartilha (domínio leitor + closer) → confere a ACL;
+//   4. só então move para a pasta validada e confere de novo.
+// Tudo depois da cópia é compensado: em qualquer falha a cópia é apagada; se nem
+// isso der, o erro diz o id.
 export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], dominio = null, exportar = [], hoje }) {
   const erros = validarEscopo(escopo);
   if (erros.length) falhar('escopo inválido', erros);
+  const regra = { dominio, editores };
 
-  const copia = await cliente.copiar(templateId, nomeProposta(escopo, hoje), pastaId || 'root');
+  if (pastaId) {
+    const { permissions = [] } = await cliente.permissoes(pastaId);
+    const ruins = permissions.filter((p) => !permissaoPermitida(p, regra));
+    if (ruins.length) falhar('pasta de destino com acesso incompatível (nada foi copiado)', ruins.map((p) => `${p.type}:${p.role}`));
+  }
+
+  const copia = await cliente.copiar(templateId, nomeProposta(escopo, hoje), 'root');
   let plano;
   try {
+    await garantirAcesso(cliente, copia.id, { dominio: null, editores: [] });
+
     const apresentacao = await cliente.apresentacao(copia.id);
     plano = planejar(escopo, apresentacao);
     const r = await cliente.batchUpdate(copia.id, plano.requests);
@@ -106,7 +120,13 @@ export async function gerarProposta(cliente, { templateId, escopo, pastaId, edit
     for (const email of editores) {
       await cliente.compartilhar(copia.id, { type: 'user', role: 'writer', emailAddress: email });
     }
-    await garantirAcesso(cliente, copia.id, { dominio, editores });
+    await garantirAcesso(cliente, copia.id, regra);
+
+    if (pastaId) {
+      const { parents = [] } = await cliente.pais(copia.id);
+      await cliente.mover(copia.id, pastaId, parents);
+      await garantirAcesso(cliente, copia.id, regra);
+    }
   } catch (e) {
     try {
       await cliente.apagar(copia.id);

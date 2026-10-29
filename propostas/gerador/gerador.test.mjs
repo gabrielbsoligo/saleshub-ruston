@@ -192,11 +192,12 @@ test('mapa de literais: nenhum contém outro e todos os placeholders são distin
 });
 
 // ---- fluxo completo com fetch falso ----
-function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, apagarStatus = 204, aclInicial = [], falhaEditor = null } = {}) {
+function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, apagarStatus = 204, aclInicial = [], falhaEditor = null, aclPasta = [] } = {}) {
   const chamadas = [];
   // ACL simulada da cópia: dono + o que veio herdado/padrão do destino.
   let acl = [{ id: 'own', type: 'user', role: 'owner', emailAddress: 'gerador@v4company.com' }, ...aclInicial.map((p) => ({ ...p }))];
   let seq = 0;
+  const aclNoBatch = [];
   const resp = (status, corpo, bin) => ({
     ok: status < 400, status,
     json: async () => corpo,
@@ -207,7 +208,14 @@ function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, a
     chamadas.push({ url, metodo: init.method || 'GET', body, auth: init.headers?.Authorization });
     if (url.includes('/copy')) return resp(200, { id: 'NOVO123', webViewLink: 'https://docs.google.com/presentation/d/NOVO123/edit', exportLinks: { [MIME.pdf]: 'https://docs.google.com/export/pdf' } });
     if (url.includes('/presentations/') && !url.includes(':batchUpdate')) return resp(200, deck);
+    if (url.includes(':batchUpdate')) aclNoBatch.push(acl.map((p) => `${p.type}:${p.role}`));
     if (url.includes(':batchUpdate')) return resp(200, { replies: body.requests.map((r) => (r.replaceAllText ? { replaceAllText: { occurrencesChanged: trocas } } : {})) });
+    if (url.includes('/files/PASTA') && url.includes('/permissions')) return resp(200, { permissions: aclPasta });
+    if (url.includes('fields=parents') && (init.method || 'GET') === 'GET') return resp(200, { parents: ['ROOTID'] });
+    if (init.method === 'PATCH' && url.includes('addParents=')) {
+      for (const p of aclPasta) acl.push({ ...p, permissionDetails: [{ inherited: true }] });
+      return resp(200, { id: 'NOVO123', parents: ['PASTA'] });
+    }
     if (url.includes('/permissions')) {
       const m = init.method || 'GET';
       if (m === 'GET') return resp(200, { permissions: acl.map((p) => ({ ...p })) });
@@ -230,7 +238,7 @@ function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, a
     if (init.method === 'DELETE') return resp(apagarStatus, apagarStatus < 400 ? {} : { error: { message: 'forbidden' } });
     return resp(404, {});
   };
-  return { impl, chamadas, acl: () => acl };
+  return { impl, chamadas, acl: () => acl, aclNoBatch };
 }
 
 test('gerarProposta: copia, preenche, compartilha com o domínio V4 + editor e exporta', async () => {
@@ -296,10 +304,34 @@ test('Vedor F3 #2: cópia vai para a raiz (não herda a pasta do template) e ACL
 
 test('Vedor F3 #2: acesso herdado incompatível → recusa e apaga a cópia', async () => {
   const f = fetchFalso({ aclInicial: [{ id: 'her', type: 'anyone', role: 'reader', permissionDetails: [{ inherited: true }] }] });
-  const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), dominio: 'v4company.com', pastaId: 'PASTA_PUBLICA' })
+  const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), dominio: 'v4company.com' })
     .catch((e) => e);
   assert.match(err.message, /acesso herdado incompatível/);
   assert.equal(err.limpeza.apagada, true);
+  assert.ok(!f.chamadas.some((c) => c.url.includes(':batchUpdate')), 'não escreveu escopo/preço numa cópia exposta');
+});
+
+test('Vedor F3 R2 #2: cópia é privada ANTES de receber escopo/preço (padrão do domínio removido)', async () => {
+  const f = fetchFalso({ aclInicial: [{ id: 'padrao', type: 'domain', role: 'reader', domain: 'v4company.com' }, { id: 'pub', type: 'anyone', role: 'reader' }] });
+  await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), editores: ['closer@v4company.com'], dominio: 'v4company.com' });
+  assert.ok(f.chamadas[0].url.includes('ignoreDefaultVisibility=true'));
+  assert.deepEqual(f.aclNoBatch, [['user:owner']]);
+});
+
+test('Vedor F3 R2 #2: pasta de destino pública é recusada antes de copiar', async () => {
+  const f = fetchFalso({ aclPasta: [{ id: 'x', type: 'anyone', role: 'reader' }] });
+  await assert.rejects(gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), dominio: 'v4company.com', pastaId: 'PASTA' }), /pasta de destino/);
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/copy')));
+});
+
+test('Vedor F3 R2 #2: pasta válida → move só no fim e confere de novo', async () => {
+  const f = fetchFalso({ aclPasta: [{ id: 'own', type: 'user', role: 'owner', emailAddress: 'gerador@v4company.com' }, { id: 'd', type: 'domain', role: 'reader', domain: 'v4company.com' }] });
+  await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), dominio: 'v4company.com', pastaId: 'PASTA' });
+  const idxBatch = f.chamadas.findIndex((c) => c.url.includes(':batchUpdate'));
+  const idxMove = f.chamadas.findIndex((c) => c.metodo === 'PATCH');
+  assert.ok(idxMove > idxBatch);
+  assert.ok(f.chamadas[idxMove].url.includes('addParents=PASTA') && f.chamadas[idxMove].url.includes('removeParents=ROOTID'));
+  assert.deepEqual(f.chamadas.find((c) => c.url.includes('/copy')).body.parents, ['root']);
 });
 
 test('Vedor F3 #5: falha ao dar acesso ao editor → cópia apagada (dentro da compensação)', async () => {

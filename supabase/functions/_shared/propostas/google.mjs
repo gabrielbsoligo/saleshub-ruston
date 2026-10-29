@@ -42,7 +42,8 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
   return {
     copiar(fileId, nome, pastaId) {
       const body = { name: nome, ...(pastaId ? { parents: [pastaId] } : {}) };
-      return json(`${DRIVE}/files/${fileId}/copy?supportsAllDrives=true&fields=id,name,webViewLink,exportLinks`,
+      // ignoreDefaultVisibility: não aplica o compartilhamento padrão do domínio na cópia.
+      return json(`${DRIVE}/files/${fileId}/copy?supportsAllDrives=true&ignoreDefaultVisibility=true&fields=id,name,webViewLink,exportLinks`,
         { method: 'POST', body: JSON.stringify(body) }, 'drive.files.copy');
     },
 
@@ -73,6 +74,16 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
     permissoes(fileId) {
       return json(`${DRIVE}/files/${fileId}/permissions?supportsAllDrives=true&fields=${encodeURIComponent('permissions(id,type,role,domain,emailAddress,permissionDetails(inherited))')}`,
         { method: 'GET' }, 'drive.permissions.list');
+    },
+
+    pais(fileId) {
+      return json(`${DRIVE}/files/${fileId}?supportsAllDrives=true&fields=parents`, { method: 'GET' }, 'drive.files.get');
+    },
+
+    mover(fileId, paraPasta, dePastas) {
+      const q = `addParents=${encodeURIComponent(paraPasta)}&removeParents=${encodeURIComponent(dePastas.join(','))}`;
+      return json(`${DRIVE}/files/${fileId}?supportsAllDrives=true&${q}&fields=id,parents`,
+        { method: 'PATCH', body: '{}' }, 'drive.files.update');
     },
 
     async removerPermissao(fileId, permissaoId) {
