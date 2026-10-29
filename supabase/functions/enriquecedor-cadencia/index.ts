@@ -96,7 +96,8 @@ const ETAPAS_FUNIL = [
   'Opt-out',
 ]
 
-// Ordem posicional das variáveis de cada template ({{1}}..{{n}} → campo custom).
+// Ordem posicional das variáveis dos templates ORIGINAIS ({{1}}..{{n}} → campo custom) —
+// só pro setup (criação no Kommo). No disparo a ordem vem de chaves_vars do banco.
 const VARS_POR_TEMPLATE: Record<string, string[]> = {
   sdna_p1_auditoria_v1: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
   sdna_p1_auditoria_v2: ['CAD Nome decisor', 'CAD SDR', 'CAD Fantasia', 'CAD Frase falha', 'CAD Frase impacto'],
@@ -459,8 +460,9 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   }
 
   const valores: Record<string, string> = {}
-  const ordem = VARS_POR_TEMPLATE[String(msg.template)] ?? []
-  ordem.forEach((nomeCampo: string, i: number) => { valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
+  const chaves: string[] = Array.isArray(tpl.chaves_vars) && tpl.chaves_vars.length ? tpl.chaves_vars : []
+  const ordem = chaves.length ? chaves.map((k) => CAMPO_DA_VAR[k]) : (VARS_POR_TEMPLATE[String(msg.template)] ?? [])
+  ordem.forEach((nomeCampo: string | undefined, i: number) => { if (nomeCampo) valores[nomeCampo] = String(msg.variaveis[i] ?? '') })
   for (const [k, campo] of Object.entries(CAMPO_DA_VAR)) {
     const v = pac.variaveis?.[k]
     if (v != null && v !== '' && valores[campo] == null) valores[campo] = String(v)
