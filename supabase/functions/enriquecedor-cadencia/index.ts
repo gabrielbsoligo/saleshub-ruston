@@ -9,7 +9,8 @@
 //       cria campos custom, funil e templates WABA no Kommo (idempotente)
 //   {acao:'submeter', apenas?}        envia os templates criados pra revisão da Meta
 //   {acao:'sync-review'}              atualiza review_status a partir do Kommo
-//   {acao:'vincular-bot', template, bot_id}  liga um Salesbot da UI a um template
+//   {acao:'vincular-bot', template, bot_id, source_id?|responsavel_kommo_id?}
+//       liga um Salesbot da UI a um template; com source_id grava o vínculo do canal
 //   {acao:'disparar', dry_run?, limite?}     um ciclo do carteiro (P1 + P2 48h + P3 96h)
 //   {acao:'status'}                   resumo da fila/envios
 //   ?acao=webhook&s=<secret>          retorno dos Salesbots (quick reply / texto livre)
@@ -18,6 +19,7 @@
 // Opcionais: KOMMO_SUBDOMAIN, ENRIQ_MOTOR_URL, ENRIQ_APP_URL. Deploy --no-verify-jwt.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { escolherBot } from './vinculo.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -117,16 +119,6 @@ const EXEMPLOS: Record<string, string> = {
 const CAMPO_DA_VAR: Record<string, string> = {
   nome1: 'CAD Nome decisor', sdr: 'CAD SDR', fantasia: 'CAD Fantasia', fraseFalha: 'CAD Frase falha',
   fraseImpacto: 'CAD Frase impacto', rotuloSecundaria: 'CAD Rotulo 2a falha', pontos: 'CAD Pontos diagnostico',
-}
-
-// Bot do Salesbot que dispara o modelo PELO WHATSAPP DO RESPONSÁVEL do card (Lary e
-// Edric têm números oficiais diferentes). Mapa {kommoUserId: botId}; vazio = legado
-// (kommo_bot_id único). Com mapa e sem bot do responsável: NÃO dispara por outro número.
-function botDoResponsavel(tpl: any, uid: number | null): number | null {
-  const mapa = (tpl?.kommo_bots_por_responsavel ?? {}) as Record<string, number>
-  if (!Object.keys(mapa).length) return tpl?.kommo_bot_id ? Number(tpl.kommo_bot_id) : null
-  const b = uid ? mapa[String(uid)] : null
-  return b ? Number(b) : null
 }
 
 async function listarCamposCustom(): Promise<Map<string, { id: number; type: string }>> {
@@ -295,6 +287,18 @@ async function acaoSyncReview() {
 
 async function acaoVincularBot(b: Record<string, any>) {
   if (!b.template || !b.bot_id) return json(400, { error: 'template e bot_id obrigatórios' })
+  // Com source_id: bot do modelo NAQUELE canal (vínculo da migration_177). Não mexe
+  // no status de aprovação — esse vem do Kommo (sync).
+  if (b.source_id) {
+    const db = sb()
+    const { data: tpl } = await db.from('enriquecedor_cadencia_templates').select('id').eq('nome', String(b.template)).maybeSingle()
+    if (!tpl) return json(404, { error: 'template não encontrado' })
+    const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('source_id', Number(b.source_id)).maybeSingle()
+    if (!canal) return json(404, { error: `canal ${b.source_id} não cadastrado em enriquecedor_cadencia_canais` })
+    const { error } = await db.from('enriquecedor_cadencia_vinculos')
+      .upsert({ template_id: tpl.id, source_id: Number(b.source_id), kommo_bot_id: Number(b.bot_id), updated_at: new Date().toISOString() }, { onConflict: 'template_id,source_id' })
+    return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+  }
   // Com responsavel_kommo_id: bot do WhatsApp daquele SDR (mapa por responsável).
   if (b.responsavel_kommo_id) {
     const { data: row } = await sb().from('enriquecedor_cadencia_templates').select('kommo_bots_por_responsavel').eq('nome', String(b.template)).maybeSingle()
@@ -351,14 +355,20 @@ async function contextoDisparo() {
   const funil = await acharFunil()
   const token = await tokenIntegracao()
   const cacheUsers = new Map<number, string>()
-  return { db, tplPorNome, campos, funil, token, cacheUsers }
+  // Canal ativo + vínculos modelo×canal (migration_177). Sem canal ativo = só legado.
+  const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('ativo', true).maybeSingle()
+  const canalAtivo = canal?.source_id != null ? Number(canal.source_id) : null
+  const { data: vinculos } = canalAtivo != null
+    ? await db.from('enriquecedor_cadencia_vinculos').select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status').eq('source_id', canalAtivo)
+    : { data: [] }
+  return { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos: vinculos ?? [] }
 }
 
 // Dispara UM passo pra UM lead: prepara no motor, registra o envio ANTES de
 // mexer no Kommo (dedupe do webhook e de retries), grava os campos CAD, move
 // o card (se `mover`) e roda o Salesbot do template.
 async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mover: boolean; dryRun: boolean; envioId?: string; decisor?: any | null }) {
-  const { db, tplPorNome, campos, funil, token, cacheUsers } = ctx
+  const { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos } = ctx
   const finaliza = async (patch: Record<string, unknown>) => {
     if (opts.envioId) await db.from('enriquecedor_cadencia_envios').update(patch).eq('id', opts.envioId)
   }
@@ -396,6 +406,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   valores['CAD Falha primaria'] = String(pac.falhaPrimaria?.codigo ?? '')
   valores['Enriquecedor URL'] = `${APP_URL}/enriquecedor/#lead=${lead.id}`
 
+  const escolha = escolherBot(tpl, uid, canalAtivo, vinculos, sdrNome)
   const linha: any = {
     lead: lead.razao_social ?? lead.nome_fantasia,
     decisor: opts.decisor?.nome ?? null,
@@ -403,13 +414,16 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     passo,
     template: msg.template,
     variaveis: msg.variaveis,
-    bot_id: botDoResponsavel(tpl, uid),
+    bot_id: escolha.botId,
+    canal: escolha.sourceId,
+    origem_bot: escolha.origem,
     responsavel: uid,
     review: tpl.review_status,
+    bloqueio: escolha.motivo,
   }
   if (opts.dryRun) return linha
 
-  const botId = botDoResponsavel(tpl, uid)
+  const botId = escolha.botId
   // O Salesbot manda o modelo pra TODOS os contatos do card, com os campos do card
   // ({{1}} = decisor principal): com 2+ contatos, os outros recebem "Oi <principal>".
   // Outros decisores ficam na Empresa ligada ao card, não no card.
@@ -418,8 +432,8 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
     await finaliza({ status: 'falhou', erro: motivo })
     return { ...linha, pulado: motivo }
   }
-  if (tpl.review_status !== 'aprovado' || !botId) {
-    const motivo = tpl.review_status !== 'aprovado' ? 'template sem aprovação da Meta' : `sem bot deste modelo no WhatsApp do responsável do card (${sdrNome ?? uid ?? 'sem responsável'})`
+  if (escolha.motivo || !botId) {
+    const motivo = escolha.motivo ?? 'sem bot'
     await finaliza({ status: 'falhou', erro: motivo })
     return { ...linha, pulado: motivo }
   }
@@ -460,6 +474,7 @@ async function dispararLeadPasso(ctx: any, lead: any, passo: number, opts: { mov
   const okBot = rb.ok || rb.status === 202
   await db.from('enriquecedor_cadencia_envios').update({
     template_id: tpl.id,
+    source_id: escolha.sourceId,
     falha_codigo: pac.falhaPrimaria?.codigo ?? null,
     sdr_nome: pac.variaveis?.sdr ?? sdrNome, // o SDR que validou a cadência (config) manda sobre o responsável do card
     variaveis_enviadas: msg.variaveis,
@@ -792,7 +807,10 @@ async function acaoStatus() {
     porPasso[`p${e.passo}`][e.status] = (porPasso[`p${e.passo}`][e.status] ?? 0) + 1
   }
   const { count: respostas } = await db.from('enriquecedor_cadencia_respostas').select('id', { count: 'exact', head: true })
-  return json(200, { ok: true, aptos_na_fila: aptos, templates: tpls, envios_por_passo: porPasso, respostas })
+  const { data: canais } = await db.from('enriquecedor_cadencia_canais').select('source_id, nome, ativo, vivo, limite_24h, verificado_em')
+  const { data: vinculos } = await db.from('enriquecedor_cadencia_vinculos')
+    .select('source_id, kommo_template_id, kommo_bot_id, review_status, verificado_em, enriquecedor_cadencia_templates(nome)')
+  return json(200, { ok: true, aptos_na_fila: aptos, templates: tpls, canais, vinculos, envios_por_passo: porPasso, respostas })
 }
 
 // ── servidor ─────────────────────────────────────────────────────────────────
