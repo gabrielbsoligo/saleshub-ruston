@@ -28,7 +28,7 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
 1. Secrets da edge: `EVOLUTION_URL`, `EVOLUTION_APIKEY` (do Railway), `ANTHROPIC_API_KEY` (já existe).
 2. Na aba: **Criar instância** (registra o webhook `<edge>/cliente-oculto/s/<segredo>` com
    `MESSAGES_UPSERT`/`CONNECTION_UPDATE`) → **QR code** → ler no WhatsApp do número anônimo → **Ver estado**.
-3. `UPDATE oculto_config SET ativo = true WHERE id = 1;` — as sondagens `pendente` saem no próximo `varrer`.
+3. **Interruptor na tela** (só gestor): botão **Ligar envios** / **Desligar envios** na faixa do número (edge `acao:'config'`, grava `oculto_config.ativo`; pede confirmação ao ligar, com o que vai sair). As sondagens `pendente` e as respostas represadas saem no próximo `varrer` (até 10 min). `ativo` nasce `false` (migration_165) de propósito.
    Sem isso, nada é enviado (as sondagens ficam na fila).
 4. Conferir no primeiro webhook real o nome do evento (`messages.upsert` vs `MESSAGES_UPSERT`: os dois são aceitos)
    e o formato do número no `remoteJid`.
@@ -37,6 +37,8 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
 - **Posse por sessão**: `oculto_claim` (lease 3 min + token) em todo avanço; escritas `WHERE claim_token = token`;
   `oculto_renovar` falha se a sessão foi cancelada ou mudou de dono → **cancelar invalida qualquer envio em curso**.
 - **Config revalidada antes de CADA envio** (já com o texto do LLM): `ativo && conectado` desligado = adia, não envia.
+- **Envios desligados**: a varredura adia abertura/resposta em 300 s ANTES de chamar o LLM (sem custo); avaliação e follow-up seguem. O cron `oculto-varrer` fica SEMPRE ligado — o único interruptor é `ativo`.
+- Rótulos da tela dizem o motivo de `pendente` (sem número / envios desligados / próximo ciclo) e marcam "resposta presa".
 - **Envio**: intenção gravada antes do POST (`fase='enviando'`, `envio_pendente`); aceito → `oculto_envio_registrar`
   (mensagem + turnos + estado, atômico); 4xx → `erro` (não reenvia); timeout/rede/5xx → `fase='envio_incerto'` e a
   varredura **reconcilia** (eco do webhook ou `findMessages`) — encontrado = registra; não encontrado = `erro`
