@@ -744,7 +744,9 @@ Deno.serve(async (req) => {
 
     if (action === 'process_pending') {
       const stats = await processPending(supabase)
-      dispararPropostasPendentes()
+      // Só o cron (service_role) encadeia a fila de propostas; chamador comum não.
+      const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+      if (bearer && bearer === SUPABASE_SERVICE_ROLE_KEY) dispararPropostasPendentes()
       return json({ ok: true, ...stats })
     }
 

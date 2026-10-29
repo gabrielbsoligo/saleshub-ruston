@@ -6,10 +6,15 @@
 // tokens de saída (o escopo é maior que o resumo da call) e com timeout.
 // =============================================================
 
+import { redigir } from './redigir.mjs'
+
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CLAUDE_MODEL = Deno.env.get('PROPOSTA_CLAUDE_MODEL') ?? 'claude-sonnet-4-20250514'
 const TIMEOUT_MS = 75_000
+
+const CHAVES = [OPENAI_API_KEY, ANTHROPIC_API_KEY]
+const seguro = (t: unknown) => redigir(String(t ?? '').slice(0, 300), CHAVES)
 
 const SYSTEM = 'Você é um closer sênior da V4 Company que monta escopos de proposta. Responda APENAS com um JSON válido, em português do Brasil.'
 
@@ -29,13 +34,13 @@ async function viaOpenAI(prompt: string): Promise<string | null> {
       }),
     })
     if (!r.ok) {
-      console.error(`proposta LLM OpenAI ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+      console.error(`proposta LLM OpenAI ${r.status}: ${seguro(await r.text().catch(() => ''))}`)
       return null
     }
     const d = await r.json()
     return d.choices?.[0]?.message?.content || null
   } catch (e) {
-    console.error('proposta LLM OpenAI falhou:', (e as Error).message)
+    console.error('proposta LLM OpenAI falhou:', seguro((e as Error).message))
     return null
   }
 }
@@ -55,13 +60,13 @@ async function viaClaude(prompt: string): Promise<string | null> {
       }),
     })
     if (!r.ok) {
-      console.error(`proposta LLM Claude ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`)
+      console.error(`proposta LLM Claude ${r.status}: ${seguro(await r.text().catch(() => ''))}`)
       return null
     }
     const d = await r.json()
     return d.content?.[0]?.text || null
   } catch (e) {
-    console.error('proposta LLM Claude falhou:', (e as Error).message)
+    console.error('proposta LLM Claude falhou:', seguro((e as Error).message))
     return null
   }
 }

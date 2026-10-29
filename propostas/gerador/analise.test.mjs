@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  citacaoNaTranscricao, extrairJson, montarPrompt, normalizarEscopo, normalizarTexto,
+  citacaoNaTranscricao, contemTermo, extrairJson, formasDinheiro, montarPrompt, normalizarEscopo, normalizarTexto,
 } from '../../supabase/functions/_shared/propostas/analise.mjs';
 import { validarEscopo } from '../../supabase/functions/_shared/propostas/slides.mjs';
 
@@ -86,7 +86,38 @@ test('preço: entra só com citação conferida', () => {
   b.preco.citacoes = ['o preço é 99 mil reais'];
   const chute = normalizarEscopo(b, ctx);
   assert.equal(chute.preco.estruturacao.valor_total, null);
-  assert.ok(chute.pendencias.some((p) => p.includes('preço sugerido')));
+  assert.ok(chute.pendencias.some((p) => p.includes('preço da estruturação')));
+});
+
+test('Vedor F3 #1: citação real de outro assunto não libera números inventados', () => {
+  const b = bruto();
+  b.preco.citacoes = ['Hoje quem vende sou eu'];
+  b.preco.estruturacao = { valor_total: 999999, parcelas: 12, valor_parcela: 88888, condicao: 'à vista com desconto' };
+  b.preco.execucao_mensal = { valor: 77777, valor_com_social: null, meses: 6 };
+  const e = normalizarEscopo(b, ctx);
+  assert.deepEqual(e.preco.estruturacao, { valor_total: null, parcelas: null, valor_parcela: null, condicao: null });
+  assert.deepEqual(e.preco.execucao_mensal, { valor: null, valor_com_social: null, meses: null });
+  for (const r of ['preço da estruturação', 'parcelas', 'valor da parcela', 'condição', 'preço da execução', 'meses']) {
+    assert.ok(e.pendencias.some((p) => p.startsWith(r)), r);
+  }
+});
+
+test('Vedor F3 #1: cada campo é conferido sozinho (um certo, outro inventado)', () => {
+  const b = bruto();
+  b.preco.estruturacao.valor_total = 29750;  // dito
+  b.preco.execucao_mensal.valor = 6000;      // não dito (foi 5 mil)
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.preco.estruturacao.valor_total, 29750);
+  assert.equal(e.preco.execucao_mensal.valor, null);
+  assert.ok(e.pendencias.some((p) => p.startsWith('preço da execução')));
+});
+
+test('formas de dinheiro: termo inteiro (5 mil não casa em 15 mil)', () => {
+  const t = normalizarTexto('são 15 mil por mês');
+  assert.ok(!formasDinheiro(5000).some((f) => contemTermo(t, f)));
+  assert.ok(formasDinheiro(15000).some((f) => contemTermo(t, f)));
+  assert.ok(formasDinheiro(29750).some((f) => contemTermo(normalizarTexto('R$ 29.750,00'), f)));
+  assert.ok(formasDinheiro(2479.17).some((f) => contemTermo(normalizarTexto('12x de 2.479,17'), f)));
 });
 
 test('preço em texto ou negativo vira null', () => {

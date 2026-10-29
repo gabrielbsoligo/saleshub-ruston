@@ -101,6 +101,31 @@ export function citacaoNaTranscricao(citacao, transcricaoNorm) {
 
 const MODELOS = ['inside_sales', 'pdv', 'ecommerce'];
 
+const escaparRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// termo inteiro dentro de texto já normalizado (sem casar "5 mil" dentro de "15 mil")
+export function contemTermo(textoNorm, termo) {
+  return new RegExp(`(^| )${escaparRe(termo)}( |$)`).test(textoNorm);
+}
+
+// Formas faladas/escritas de um valor em reais, já normalizadas (ver normalizarTexto).
+export function formasDinheiro(v) {
+  const i = Math.trunc(v);
+  const c = Math.round((v - i) * 100);
+  const milhar = normalizarTexto(i.toLocaleString('pt-BR'));
+  const bases = [...new Set([milhar, String(i)])];
+  const formas = c > 0
+    ? bases.map((b) => `${b} ${String(c).padStart(2, '0')}`)
+    : [...bases, ...bases.map((b) => `${b} 00`)];
+  if (c === 0 && i >= 1000) {
+    const k = i / 1000;
+    formas.push(`${normalizarTexto(k.toLocaleString('pt-BR'))} mil`, `${normalizarTexto(k.toLocaleString('pt-BR'))}k`);
+    if (i % 1000) formas.push(`${Math.trunc(k)} mil e ${i % 1000}`);
+  }
+  return formas;
+}
+export const formasParcelas = (p) => [`${p}x`, `${p} x`, `${p} vezes`, `${p} parcelas`];
+export const formasMeses = (m) => [`${m} meses`];
+
 function numero(v) {
   if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
   return null;
@@ -142,13 +167,39 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   const enfasesValidas = new Set(catalogo.enfases.map((e) => e.id));
   const est = bruto?.preco?.estruturacao || {};
   const exe = bruto?.preco?.execucao_mensal || {};
+  // Cada valor de preço precisa aparecer nas citações de preço que de fato estão
+  // na transcrição. O que não se confirma vira null + pendência (nunca é chutado).
   const citacoesPreco = (Array.isArray(bruto?.preco?.citacoes) ? bruto.preco.citacoes : [])
-    .filter((c) => typeof c === 'string' && c.trim());
-  const precoConferido = citacoesPreco.some((c) => citacaoNaTranscricao(c, tNorm));
-  const temPreco = [est.valor_total, est.valor_parcela, exe.valor, exe.valor_com_social].some((v) => numero(v) != null);
-  // Preço sem citação conferida não entra (o LLM pode ter "chutado"): vira pendência.
-  const usarPreco = temPreco && precoConferido;
-  if (temPreco && !precoConferido) pendencias.push('preço sugerido pela análise sem citação conferida na transcrição — confirme o valor');
+    .filter((c) => typeof c === 'string' && citacaoNaTranscricao(c, tNorm));
+  const evidencia = citacoesPreco.map(normalizarTexto).join(' | ');
+  const conferido = (valor, formas, rotulo) => {
+    if (valor == null) return null;
+    if (formas(valor).some((f) => contemTermo(evidencia, f))) return valor;
+    pendencias.push(`${rotulo}: a análise sugeriu um valor que não foi confirmado na transcrição — confira`);
+    return null;
+  };
+  const textoConferido = (t, rotulo) => {
+    const v = textoOuNull(t);
+    if (v == null) return null;
+    if (citacaoNaTranscricao(v, tNorm)) return v;
+    pendencias.push(`${rotulo}: não confirmado na transcrição — confira`);
+    return null;
+  };
+  const preco = {
+    estruturacao: {
+      valor_total: conferido(numero(est.valor_total), formasDinheiro, 'preço da estruturação'),
+      parcelas: conferido(inteiro(est.parcelas), formasParcelas, 'parcelas'),
+      valor_parcela: conferido(numero(est.valor_parcela), formasDinheiro, 'valor da parcela'),
+      condicao: textoConferido(est.condicao, 'condição de pagamento'),
+    },
+    execucao_mensal: {
+      valor: conferido(numero(exe.valor), formasDinheiro, 'preço da execução'),
+      valor_com_social: conferido(numero(exe.valor_com_social), formasDinheiro, 'preço da execução com social media'),
+      meses: conferido(inteiro(exe.meses), formasMeses, 'meses da execução'),
+    },
+    fonte: 'transcricao',
+    citacoes: citacoesPreco,
+  };
 
   const pe = bruto?.plano_execucao || {};
   const escopo = {
@@ -168,24 +219,10 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     },
     plano_execucao: {
       incluido: pe.incluido !== false,
-      faixa_midia: textoOuNull(pe.faixa_midia),
+      faixa_midia: textoConferido(pe.faixa_midia, 'faixa de mídia'),
       itens: lista(pe.itens, 'plano de execução'),
     },
-    preco: {
-      estruturacao: {
-        valor_total: usarPreco ? numero(est.valor_total) : null,
-        parcelas: usarPreco ? inteiro(est.parcelas) : null,
-        valor_parcela: usarPreco ? numero(est.valor_parcela) : null,
-        condicao: usarPreco ? textoOuNull(est.condicao) : null,
-      },
-      execucao_mensal: {
-        valor: usarPreco ? numero(exe.valor) : null,
-        valor_com_social: usarPreco ? numero(exe.valor_com_social) : null,
-        meses: usarPreco ? inteiro(exe.meses) : null,
-      },
-      fonte: 'transcricao',
-      citacoes: usarPreco ? citacoesPreco.filter((c) => citacaoNaTranscricao(c, tNorm)) : [],
-    },
+    preco,
     pendencias: [...new Set(pendencias)],
   };
   return escopo;

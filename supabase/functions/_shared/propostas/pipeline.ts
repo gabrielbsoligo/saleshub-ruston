@@ -11,6 +11,7 @@ import { gerarProposta, prepararTemplate } from './gerar.mjs'
 import { extrairJson, montarPrompt, normalizarEscopo } from './analise.mjs'
 import { validarEscopo } from './slides.mjs'
 import { chamarLLM } from './llm.ts'
+import { redigir } from './redigir.mjs'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
@@ -53,9 +54,19 @@ async function transcricaoDaReuniao(sb: any, reuniaoId: string): Promise<string>
   return (auto?.[0]?.transcript_text || '').trim()
 }
 
-// Reunião informada; senão a mais recente realizada do deal com transcrição.
+// A reunião só serve se for do deal (mesmo deal, a reunião de origem do deal ou do mesmo lead).
+export async function reuniaoDoDeal(sb: any, deal: any, reuniaoId: string): Promise<boolean> {
+  const { data: r } = await sb.from('reunioes').select('id, deal_id, lead_id').eq('id', reuniaoId).maybeSingle()
+  if (!r) return false
+  return r.deal_id === deal.id || r.id === deal.reuniao_id || (!!deal.lead_id && r.lead_id === deal.lead_id)
+}
+
+// Reunião informada (validada contra o deal); senão a mais recente do deal com transcrição.
 export async function carregarTranscricao(sb: any, deal: any, reuniaoId: string | null) {
-  if (reuniaoId) return { reuniao_id: reuniaoId, texto: await transcricaoDaReuniao(sb, reuniaoId) }
+  if (reuniaoId) {
+    if (!(await reuniaoDoDeal(sb, deal, reuniaoId))) throw new Error('a reunião informada não é deste deal')
+    return { reuniao_id: reuniaoId, texto: await transcricaoDaReuniao(sb, reuniaoId) }
+  }
   const filtros = [`deal_id.eq.${deal.id}`]
   if (deal.reuniao_id) filtros.push(`id.eq.${deal.reuniao_id}`)
   if (deal.lead_id) filtros.push(`lead_id.eq.${deal.lead_id}`)
@@ -103,6 +114,7 @@ export async function processarProposta(sb: any, id: string) {
     const { data: deal } = await sb.from('deals').select('id, empresa, closer_id, lead_id, reuniao_id').eq('id', p.deal_id).single()
     if (!deal) throw new Error('deal não encontrado')
 
+    if (p.reuniao_id && !(await reuniaoDoDeal(sb, deal, p.reuniao_id))) throw new Error('a reunião informada não é deste deal')
     let reuniaoId = p.reuniao_id
     let texto = (p.transcricao_manual || '').trim()
     if (texto.length < MIN_TRANSCRICAO_CHARS) {
@@ -137,8 +149,10 @@ export async function processarProposta(sb: any, id: string) {
         })
         usado = mid
         break
-      } catch (e) {
-        // Permissão/escopo (401/403/404 do template) → tenta a próxima conta; o resto é erro real.
+      } catch (e: any) {
+        // Cópia criada e não apagada: parar (não criar outra com a reserva).
+        if (e?.limpeza && e.limpeza.apagada === false) throw e
+        // Permissão/escopo (401/403/404) com cópia inexistente ou já apagada → próxima conta.
         if (e instanceof ErroGoogle && [401, 403, 404].includes(e.status)) { falhas.push(`${emailDe(mid) || mid}: ${e.message}`); continue }
         throw e
       }
@@ -155,7 +169,7 @@ export async function processarProposta(sb: any, id: string) {
     })
     return { id, status: 'revisao', url: resultado.url, pendencias: resultado.pendencias }
   } catch (e) {
-    const msg = (e as Error).message || 'erro desconhecido'
+    const msg = redigir((e as Error).message || 'erro desconhecido')
     await atualizar(sb, id, { status: 'erro', erro: msg.slice(0, 2000) }).catch(() => {})
     return { id, status: 'erro', erro: msg }
   }

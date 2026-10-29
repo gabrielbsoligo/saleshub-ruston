@@ -8,6 +8,7 @@ import {
 } from '../../supabase/functions/_shared/propostas/slides.mjs';
 import { gerarProposta, planejar, prepararTemplate } from '../../supabase/functions/_shared/propostas/gerar.mjs';
 import { criarCliente, MIME } from '../../supabase/functions/_shared/propostas/google.mjs';
+import { redigir } from '../../supabase/functions/_shared/propostas/redigir.mjs';
 
 const exemplo = () => JSON.parse(readFileSync(new URL('../exemplos/escopo-exemplo-inside-sales-linkedin.json', import.meta.url), 'utf8'));
 const catalogo = JSON.parse(readFileSync(new URL('../../supabase/functions/_shared/propostas/catalogo-v0.json', import.meta.url), 'utf8'));
@@ -191,8 +192,11 @@ test('mapa de literais: nenhum contém outro e todos os placeholders são distin
 });
 
 // ---- fluxo completo com fetch falso ----
-function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, apagarStatus = 204 } = {}) {
+function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, apagarStatus = 204, aclInicial = [], falhaEditor = null } = {}) {
   const chamadas = [];
+  // ACL simulada da cópia: dono + o que veio herdado/padrão do destino.
+  let acl = [{ id: 'own', type: 'user', role: 'owner', emailAddress: 'gerador@v4company.com' }, ...aclInicial.map((p) => ({ ...p }))];
+  let seq = 0;
   const resp = (status, corpo, bin) => ({
     ok: status < 400, status,
     json: async () => corpo,
@@ -204,13 +208,29 @@ function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, a
     if (url.includes('/copy')) return resp(200, { id: 'NOVO123', webViewLink: 'https://docs.google.com/presentation/d/NOVO123/edit', exportLinks: { [MIME.pdf]: 'https://docs.google.com/export/pdf' } });
     if (url.includes('/presentations/') && !url.includes(':batchUpdate')) return resp(200, deck);
     if (url.includes(':batchUpdate')) return resp(200, { replies: body.requests.map((r) => (r.replaceAllText ? { replaceAllText: { occurrencesChanged: trocas } } : {})) });
-    if (url.includes('/permissions')) return resp(200, { id: 'p' });
+    if (url.includes('/permissions')) {
+      const m = init.method || 'GET';
+      if (m === 'GET') return resp(200, { permissions: acl.map((p) => ({ ...p })) });
+      if (m === 'POST') {
+        if (falhaEditor && body.type === 'user') return resp(falhaEditor, { error: { message: 'editor recusado' } });
+        const nova = { id: `p${++seq}`, ...body };
+        acl.push(nova);
+        return resp(200, { id: nova.id });
+      }
+      if (m === 'DELETE') {
+        const id = url.split('/permissions/')[1].split('?')[0];
+        const alvo = acl.find((p) => p.id === id);
+        if (alvo?.permissionDetails?.some((d) => d.inherited)) return resp(403, { error: { message: 'herdada' } });
+        acl = acl.filter((p) => p.id !== id);
+        return resp(204, {});
+      }
+    }
     if (url.includes('/export?')) return exportGrande ? resp(403, { error: { errors: [{ reason: 'exportSizeLimitExceeded' }], message: 'too large' } }) : resp(200, {}, 'PDF');
     if (url === 'https://docs.google.com/export/pdf') return resp(200, {}, 'PDF-GRANDE');
     if (init.method === 'DELETE') return resp(apagarStatus, apagarStatus < 400 ? {} : { error: { message: 'forbidden' } });
     return resp(404, {});
   };
-  return { impl, chamadas };
+  return { impl, chamadas, acl: () => acl };
 }
 
 test('gerarProposta: copia, preenche, compartilha com o domínio V4 + editor e exporta', async () => {
@@ -221,7 +241,7 @@ test('gerarProposta: copia, preenche, compartilha com o domínio V4 + editor e e
   assert.equal(r.id, 'NOVO123');
   assert.equal(r.slidesInseridos, 5);
   assert.equal(f.chamadas[0].body.name, 'Proposta V4 — Empresa Exemplo (fictícia) — 2026-10-29');
-  const perms = f.chamadas.filter((c) => c.url.includes('/permissions'));
+  const perms = f.chamadas.filter((c) => c.url.includes('/permissions') && c.metodo === 'POST');
   assert.deepEqual(perms.map((c) => c.body), [{ type: 'domain', role: 'reader', domain: 'v4company.com', allowFileDiscovery: false }, { type: 'user', role: 'writer', emailAddress: 'closer@v4company.com' }]);
   // Vedor #1: sendNotificationEmail só para user/group
   assert.ok(!perms[0].url.includes('sendNotificationEmail'));
@@ -235,7 +255,7 @@ test('gerarProposta: copia, preenche, compartilha com o domínio V4 + editor e e
 test('Vedor #2: template original → cópia apagada, nada compartilhado', async () => {
   const f = fetchFalso({ deck: deckOriginal() });
   await assert.rejects(gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo() }), /template incompatível/);
-  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions') && c.metodo === 'POST'));
   assert.ok(!f.chamadas.some((c) => c.url.includes(':batchUpdate')));
   assert.ok(f.chamadas.some((c) => c.metodo === 'DELETE' && c.url.includes('NOVO123')));
 });
@@ -243,7 +263,7 @@ test('Vedor #2: template original → cópia apagada, nada compartilhado', async
 test('Vedor #2: zero trocas no batchUpdate → cópia apagada, nada compartilhado', async () => {
   const f = fetchFalso({ trocas: 0 });
   await assert.rejects(gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo() }), /sem troca/);
-  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions') && c.metodo === 'POST'));
   assert.ok(f.chamadas.some((c) => c.metodo === 'DELETE'));
 });
 
@@ -254,13 +274,54 @@ test('R2 #2: falha ao apagar a cópia preserva o erro original e informa o id', 
   assert.match(err.message, /NOVO123 NÃO foi apagada/);
   assert.deepEqual({ ...err.limpeza, erro: undefined }, { copiaId: 'NOVO123', apagada: false, erro: undefined });
   assert.ok(!err.message.includes('segredo-nao-pode-vazar'));
-  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions') && c.metodo === 'POST'));
 });
 
 test('R2 #2: remoção bem-sucedida fica registrada no erro', async () => {
   const f = fetchFalso({ deck: deckOriginal() });
   const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo() }).catch((e) => e);
   assert.deepEqual(err.limpeza, { copiaId: 'NOVO123', apagada: true });
+});
+
+test('Vedor F3 #2: cópia vai para a raiz (não herda a pasta do template) e ACL final é só dono + domínio leitor + closer', async () => {
+  const f = fetchFalso({ aclInicial: [
+    { id: 'pub', type: 'anyone', role: 'reader' },
+    { id: 'domw', type: 'domain', role: 'writer', domain: 'v4company.com' },
+  ] });
+  await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), editores: ['closer@v4company.com'], dominio: 'v4company.com' });
+  assert.deepEqual(f.chamadas[0].body.parents, ['root']);
+  const final = f.acl().map((p) => `${p.type}:${p.role}`).sort();
+  assert.deepEqual(final, ['domain:reader', 'user:owner', 'user:writer']);
+});
+
+test('Vedor F3 #2: acesso herdado incompatível → recusa e apaga a cópia', async () => {
+  const f = fetchFalso({ aclInicial: [{ id: 'her', type: 'anyone', role: 'reader', permissionDetails: [{ inherited: true }] }] });
+  const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), dominio: 'v4company.com', pastaId: 'PASTA_PUBLICA' })
+    .catch((e) => e);
+  assert.match(err.message, /acesso herdado incompatível/);
+  assert.equal(err.limpeza.apagada, true);
+});
+
+test('Vedor F3 #5: falha ao dar acesso ao editor → cópia apagada (dentro da compensação)', async () => {
+  const f = fetchFalso({ falhaEditor: 403 });
+  const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), editores: ['closer@v4company.com'], dominio: 'v4company.com' })
+    .catch((e) => e);
+  assert.match(err.message, /editor recusado/);
+  assert.deepEqual(err.limpeza, { copiaId: 'NOVO123', apagada: true });
+  assert.ok(f.chamadas.some((c) => c.metodo === 'DELETE' && c.url.endsWith('/files/NOVO123?supportsAllDrives=true')));
+});
+
+test('Vedor F3 #7: erro do Google não carrega o token', async () => {
+  const fetchEco = async () => ({ ok: false, status: 401, json: async () => ({ error: { message: 'Invalid Credentials: Bearer tok-secreto-123456 ya29.abcdefghijkl' } }) });
+  const err = await criarCliente('tok-secreto-123456', fetchEco).apresentacao('X').catch((e) => e);
+  assert.ok(!err.message.includes('tok-secreto-123456'));
+  assert.ok(!err.message.includes('ya29.abcdefghijkl'));
+  assert.match(err.message, /HTTP 401/);
+});
+
+test('redigir: chaves conhecidas e formatos comuns', () => {
+  const t = redigir('key sk-proj-ABCDEFGH123 e sk-ant-api03-XYZ12345678 jwt eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZSJ9.sig e api_key=abcdefgh1234 e segredo-local-xyz', ['segredo-local-xyz']);
+  for (const v of ['sk-proj-ABCDEFGH123', 'sk-ant-api03-XYZ12345678', 'eyJhbGciOiJIUzI1NiJ9', 'abcdefgh1234', 'segredo-local-xyz']) assert.ok(!t.includes(v), v);
 });
 
 test('prepararTemplate: lê o deck e restringe as trocas aos slides de preço', async () => {
@@ -281,7 +342,7 @@ test('export acima de 10 MB cai para exportLinks', async () => {
   const f = fetchFalso({ exportGrande: true });
   const r = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), exportar: ['pdf'] });
   assert.equal(new TextDecoder().decode(r.arquivos.pdf), 'PDF-GRANDE');
-  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions') && c.metodo === 'POST'));
 });
 
 test('escopo inválido não cria cópia', async () => {

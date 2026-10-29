@@ -7,6 +7,7 @@
 // Deploy: supabase functions deploy proposta-escopo --no-verify-jwt
 // =============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { redigir } from '../_shared/propostas/redigir.mjs'
 import { analisarTranscricao, MIN_TRANSCRICAO_CHARS } from '../_shared/propostas/pipeline.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -43,7 +44,7 @@ Deno.serve(async (req) => {
     const r = await analisarTranscricao(transcricao, empresa.trim(), modelo_venda)
     return json({ ok: true, ...r })
   } catch (e) {
-    console.error('proposta-escopo:', (e as Error).message)
-    return json({ error: (e as Error).message }, 500)
+    console.error('proposta-escopo:', redigir((e as Error).message))
+    return json({ error: redigir((e as Error).message) }, 500)
   }
 })

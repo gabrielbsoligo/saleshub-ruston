@@ -15,7 +15,8 @@
 // Deploy: supabase functions deploy proposta-gerar --no-verify-jwt
 // =============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { destravar, prepararTemplateComMembro, processarProposta } from '../_shared/propostas/pipeline.ts'
+import { redigir } from '../_shared/propostas/redigir.mjs'
+import { destravar, prepararTemplateComMembro, processarProposta, reuniaoDoDeal } from '../_shared/propostas/pipeline.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -71,6 +72,10 @@ Deno.serve(async (req) => {
       const { deal_id, reuniao_id = null, transcricao_texto = null } = body
       if (!deal_id) return json({ error: 'deal_id obrigatório' }, 400)
       if (!(await podeNoDeal(sb, membro, deal_id))) return json({ error: 'só o closer do deal ou gestor' }, 403)
+      if (reuniao_id) {
+        const { data: deal } = await sb.from('deals').select('id, lead_id, reuniao_id').eq('id', deal_id).single()
+        if (!(await reuniaoDoDeal(sb, deal, reuniao_id))) return json({ error: 'a reunião informada não é deste deal' }, 400)
+      }
       const { data: em, error: eAtiva } = await sb.from('propostas').select('id')
         .eq('deal_id', deal_id).in('status', ['pendente', 'analisando', 'gerando']).limit(1)
       if (eAtiva) throw eAtiva
@@ -103,7 +108,7 @@ Deno.serve(async (req) => {
 
     return json({ error: 'ação desconhecida' }, 400)
   } catch (e) {
-    console.error('proposta-gerar:', (e as Error).message)
-    return json({ error: (e as Error).message }, 500)
+    console.error('proposta-gerar:', redigir((e as Error).message))
+    return json({ error: redigir((e as Error).message) }, 500)
   }
 })

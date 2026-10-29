@@ -57,12 +57,43 @@ function conferirTrocas(requests, replies) {
   return faltando;
 }
 
+// Acesso permitido no arquivo final (decisão do Gabriel, 29/10): o dono, os
+// editores pedidos (closer) e leitura para o domínio. Nada de "qualquer pessoa
+// com o link", domínio com edição ou acesso herdado de pasta.
+export function permissaoPermitida(p, { dominio, editores }) {
+  if (p.role === 'owner') return true;
+  const eds = editores.map((e) => e.toLowerCase());
+  if (p.type === 'user' && p.role === 'writer' && eds.includes(String(p.emailAddress || '').toLowerCase())) return true;
+  if (dominio && p.type === 'domain' && p.role === 'reader' && p.domain === dominio) return true;
+  return false;
+}
+
+const herdada = (p) => (p.permissionDetails || []).some((d) => d.inherited);
+
+// Remove o que não é permitido; acesso herdado não dá para remover → recusa.
+export async function garantirAcesso(cliente, fileId, regra) {
+  const { permissions = [] } = await cliente.permissoes(fileId);
+  const herdadas = permissions.filter((p) => !permissaoPermitida(p, regra) && herdada(p));
+  if (herdadas.length) {
+    falhar('acesso herdado incompatível no destino (use uma pasta privada)', herdadas.map((p) => `${p.type}:${p.role}`));
+  }
+  for (const p of permissions) {
+    if (!permissaoPermitida(p, regra)) await cliente.removerPermissao(fileId, p.id);
+  }
+  const { permissions: finais = [] } = await cliente.permissoes(fileId);
+  const sobrando = finais.filter((p) => !permissaoPermitida(p, regra));
+  if (sobrando.length) falhar('acesso incompatível após ajuste', sobrando.map((p) => `${p.type}:${p.role}`));
+}
+
 // dominio: leitura para quem é do domínio (decisão do Gabriel, 29/10: nunca 'qualquer pessoa com o link').
+// pastaId ausente → raiz do Meu Drive de quem gera (não herda a pasta do template).
+// Tudo depois da cópia (preencher, compartilhar, conferir acesso) é compensado:
+// em qualquer falha a cópia é apagada; se nem isso der, o erro diz o id.
 export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], dominio = null, exportar = [], hoje }) {
   const erros = validarEscopo(escopo);
   if (erros.length) falhar('escopo inválido', erros);
 
-  const copia = await cliente.copiar(templateId, nomeProposta(escopo, hoje), pastaId);
+  const copia = await cliente.copiar(templateId, nomeProposta(escopo, hoje), pastaId || 'root');
   let plano;
   try {
     const apresentacao = await cliente.apresentacao(copia.id);
@@ -70,22 +101,21 @@ export async function gerarProposta(cliente, { templateId, escopo, pastaId, edit
     const r = await cliente.batchUpdate(copia.id, plano.requests);
     const faltando = conferirTrocas(plano.requests, r.replies);
     if (faltando.length) falhar('placeholders sem troca (proposta não compartilhada)', faltando);
+
+    if (dominio) await cliente.compartilhar(copia.id, { type: 'domain', role: 'reader', domain: dominio, allowFileDiscovery: false });
+    for (const email of editores) {
+      await cliente.compartilhar(copia.id, { type: 'user', role: 'writer', emailAddress: email });
+    }
+    await garantirAcesso(cliente, copia.id, { dominio, editores });
   } catch (e) {
-    // Cópia inválida não fica parada no Drive nem é compartilhada. Se a remoção
-    // falhar, o erro original segue junto com o id da cópia (não compartilhada).
     try {
       await cliente.apagar(copia.id);
       e.limpeza = { copiaId: copia.id, apagada: true };
     } catch (eDel) {
       e.limpeza = { copiaId: copia.id, apagada: false, erro: eDel.message };
-      e.message += `\n(atenção: a cópia ${copia.id} NÃO foi apagada — ${eDel.message}; ela não foi compartilhada, apague à mão)`;
+      e.message += `\n(atenção: a cópia ${copia.id} NÃO foi apagada — ${eDel.message}; confira o acesso e apague à mão)`;
     }
     throw e;
-  }
-
-  if (dominio) await cliente.compartilhar(copia.id, { type: 'domain', role: 'reader', domain: dominio, allowFileDiscovery: false });
-  for (const email of editores) {
-    await cliente.compartilhar(copia.id, { type: 'user', role: 'writer', emailAddress: email });
   }
 
   const arquivos = {};

@@ -74,30 +74,41 @@ DROP POLICY IF EXISTS propostas_config_update ON public.propostas_config;
 CREATE POLICY propostas_config_update ON public.propostas_config
   FOR UPDATE USING (get_user_role() = 'gestor') WITH CHECK (get_user_role() = 'gestor');
 
--- Pela UI, o closer só muda status para enviada/descartada e marca visto;
--- o resto é da edge (service_role não tem auth.uid()).
+-- Pela UI (usuário logado) só mudam: status (revisao→enviada; revisao/erro/enviada→
+-- descartada) e visto_em (uma vez). Allowlist: qualquer outra coluna diferente é
+-- recusada. enviada_em/enviada_por/visto_em são calculados aqui, não aceitos do cliente.
+-- service_role (edge) não tem auth.uid() e passa.
 CREATE OR REPLACE FUNCTION public.propostas_guarda_update()
 RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  livres text[] := ARRAY['status', 'visto_em', 'enviada_em', 'enviada_por', 'updated_at'];
 BEGIN
   NEW.updated_at := now();
-  IF auth.uid() IS NULL THEN RETURN NEW; END IF;  -- service_role / edge
-  IF NEW.deal_id IS DISTINCT FROM OLD.deal_id
-     OR NEW.escopo IS DISTINCT FROM OLD.escopo
-     OR NEW.url IS DISTINCT FROM OLD.url
-     OR NEW.presentation_id IS DISTINCT FROM OLD.presentation_id
-     OR NEW.origem IS DISTINCT FROM OLD.origem THEN
-    RAISE EXCEPTION 'propostas: campo só editável pela edge';
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+
+  IF (to_jsonb(NEW) - livres) IS DISTINCT FROM (to_jsonb(OLD) - livres) THEN
+    RAISE EXCEPTION 'propostas: pela UI só é possível marcar enviada/descartada ou visto';
   END IF;
+
   IF NEW.status IS DISTINCT FROM OLD.status THEN
     IF NOT ((NEW.status = 'enviada' AND OLD.status = 'revisao')
             OR (NEW.status = 'descartada' AND OLD.status IN ('revisao', 'erro', 'enviada'))) THEN
       RAISE EXCEPTION 'propostas: transição % -> % não permitida pela UI', OLD.status, NEW.status;
     END IF;
-    IF NEW.status = 'enviada' THEN
-      NEW.enviada_em := now();
-      NEW.enviada_por := get_member_id();
-    END IF;
   END IF;
+
+  IF NEW.status = 'enviada' AND OLD.status IS DISTINCT FROM 'enviada' THEN
+    NEW.enviada_em := now();
+    NEW.enviada_por := get_member_id();
+  ELSE
+    NEW.enviada_em := OLD.enviada_em;
+    NEW.enviada_por := OLD.enviada_por;
+  END IF;
+
+  NEW.visto_em := CASE
+    WHEN OLD.visto_em IS NULL AND NEW.visto_em IS NOT NULL THEN now()
+    ELSE OLD.visto_em
+  END;
   RETURN NEW;
 END $$;
 
