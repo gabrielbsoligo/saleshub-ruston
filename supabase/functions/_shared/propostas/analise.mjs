@@ -151,15 +151,18 @@ export const valoresMonetarios = (texto) => expressoesMonetarias(texto).map((e) 
 // Pacote ao qual a FONTE prende um valor: 'com' (com social media), 'sem'
 // (explicitamente sem), 'neutro' (não fala de social) ou 'ambiguo'.
 // Olha a oração do valor (até vírgula/ponto); se ela não fala de social, a frase.
-// Negação vence a palavra solta: "sem social", "não inclui social" = 'sem'.
+// Conservador: 'com' só com inclusão explícita e NENHUMA negação/exclusão no
+// trecho (não dá para resolver o escopo da negação com segurança: "não vem com
+// social", "sem o pacote com social"). 'sem' só com negação colada a social e
+// nenhuma inclusão. Todo o resto que fala de social = 'ambiguo'.
 const SOCIAL_NEG = /\b(sem|nao inclui|nao incluindo|nao incluso|exceto|tirando|fora o|fora a)\s+(o |a )?social\b/;
 const SOCIAL_POS = /\b(com|incluindo|inclui|incluso|mais|somando|junto com)\s+(o |a )?social\b|\bsocial (media )?(incluso|incluido|junto)\b/;
+const NEGACAO = /\b(nao|sem|nem|exceto|excluindo|excluido|tirando|retirando|fora|menos|salvo|nunca)\b/;
 function polaridadeSocial(trechoNorm) {
   if (!/social/.test(trechoNorm)) return 'neutro';
-  const neg = SOCIAL_NEG.test(trechoNorm);
-  const pos = SOCIAL_POS.test(trechoNorm.replace(SOCIAL_NEG, ' '));
-  if (pos && !neg) return 'com';
-  if (neg && !pos) return 'sem';
+  const pos = SOCIAL_POS.test(trechoNorm.replace(new RegExp(SOCIAL_NEG.source, 'g'), ' '));
+  if (pos && !NEGACAO.test(trechoNorm)) return 'com';
+  if (!pos && SOCIAL_NEG.test(trechoNorm)) return 'sem';
   return 'ambiguo';
 }
 function trechoAoRedor(fonte, ini, fim, separadores) {
@@ -173,9 +176,12 @@ function trechoAoRedor(fonte, ini, fim, separadores) {
 }
 export function pacoteDaExpressao(fonte, expr) {
   const oracao = normalizarTexto(trechoAoRedor(fonte, expr.ini, expr.fim, /[.!?;:,](?=\s)|\n/g));
+  const frase = normalizarTexto(trechoAoRedor(fonte, expr.ini, expr.fim, /[.!?;](?=\s)|\n/g));
   const p = polaridadeSocial(oracao);
+  // 'com' exige frase inteira sem negação/exclusão (o escopo da negação não é resolvido).
+  if (p === 'com') return NEGACAO.test(frase) ? 'ambiguo' : 'com';
   if (p !== 'neutro') return p;
-  return polaridadeSocial(normalizarTexto(trechoAoRedor(fonte, expr.ini, expr.fim, /[.!?;](?=\s)|\n/g)));
+  return polaridadeSocial(frase);
 }
 
 // Papel do valor: execução é mensal/recorrente; com social precisa citar social;

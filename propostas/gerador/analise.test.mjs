@@ -289,3 +289,26 @@ test('Vedor F3 R4 #1: pacote ambíguo na fonte → nenhum dos dois', () => {
   assert.equal(amb.valor, null);
   assert.equal(amb.valor_com_social, null);
 });
+
+test('Vedor F3 R5 #1: negação/exclusão no trecho nunca dá "com social"', async () => {
+  const { pacoteDaExpressao, expressoesMonetarias } = await import('../../supabase/functions/_shared/propostas/analise.mjs');
+  const pac = (f) => expressoesMonetarias(f).map((x) => pacoteDaExpressao(f, x));
+  for (const f of [
+    'A execução não vem com social e custa 5 mil por mês.',
+    'A execução não é com social, sai 5 mil por mês.',
+    'O plano sem o pacote com social sai 5 mil por mês.',
+    'Fora o social, que fica com o cliente, a execução com social de conteúdo sai 5 mil por mês.',
+  ]) {
+    assert.ok(!pac(f).includes('com'), f);
+    const e = normalizarEscopo({ ...bruto(), preco: { estruturacao: {}, execucao_mensal: { valor_com_social: 5000 },
+      evidencias: { execucao_com_social: f.replace(/\.$/, '') } } }, { catalogo, empresa: 'X', transcricao: `Closer: ${f}` });
+    assert.equal(e.preco.execucao_mensal.valor_com_social, null, f);
+    assert.ok(e.pendencias.some((p) => p.startsWith('preço da execução com social')), f);
+  }
+  // positivos e pacotes distintos continuam
+  assert.deepEqual(pac('Com social, a execução fica 7 mil por mês.'), ['com']);
+  // mesma frase com negação: o lado 'com' fica ambíguo (conservador); o 'sem' segue
+  assert.deepEqual(pac('Sem social fica 5 mil, com social 7 mil por mês.'), ['sem', 'ambiguo']);
+  assert.deepEqual(pac('A execução não inclui social: 6 mil por mês.'), ['sem']);
+  assert.deepEqual(pac('A execução sai 5 mil por mês.'), ['neutro']);
+});
