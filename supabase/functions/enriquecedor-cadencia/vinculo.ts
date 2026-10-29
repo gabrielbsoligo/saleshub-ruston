@@ -6,7 +6,8 @@
 //
 // Regras:
 // - Há canal ativo e o modelo tem vínculo nele → o vínculo manda. Modelo não aprovado
-//   NAQUELE canal, sem bot, ou bot com erro no último sync, NÃO dispara (nada de cair no legado: a configuração
+//   NAQUELE canal, sem bot, bot com erro no último sync ou bot ainda não confirmado
+//   por uma pessoa (vínculo copiado na troca de número), NÃO dispara (nada de cair no legado: a configuração
 //   explícita ganha — é o que pega o "aprovado" falso de canal apagado).
 // - Sem canal ativo, ou modelo sem vínculo no canal ativo → legado (colunas antigas
 //   review_status + kommo_bots_por_responsavel/kommo_bot_id), até o painel ser validado.
@@ -29,6 +30,8 @@ export type Vinculo = {
   review_status?: string | null
   /** problema do bot achado no último sync (sumiu/desativado) */
   erro?: string | null
+  /** quando uma pessoa confirmou que o bot manda este modelo neste canal; null = a confirmar */
+  bot_verificado_em?: string | null
 }
 
 export type Escolha = {
@@ -67,6 +70,7 @@ export function escolherBot(
     }
     if (!botId) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id} sem bot vinculado no canal ${canalAtivo}` }
     if (v.erro) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id} no canal ${canalAtivo}: ${v.erro}` }
+    if (!v.bot_verificado_em) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id}: bot ${botId} ainda não confirmado no canal ${canalAtivo}` }
     return { ...base, motivo: null }
   }
   const botId = botDoResponsavel(tpl, uid)
@@ -74,4 +78,28 @@ export function escolherBot(
   if (tpl.review_status !== 'aprovado') return { ...base, motivo: 'template sem aprovação da Meta' }
   if (!botId) return { ...base, motivo: `sem bot deste modelo no WhatsApp do responsável do card (${quem ?? uid ?? 'sem responsável'})` }
   return { ...base, motivo: null }
+}
+
+export const AGUARDANDO_CONFERENCIA = 'aguardando conferência no Kommo'
+
+/**
+ * O que gravar quando uma pessoa vincula/confirma no painel (b = {bot_id?, kommo_template_id?}).
+ * - bot_id presente = a pessoa afirma que ESTE bot manda o modelo vinculado neste canal →
+ *   bot_verificado_em = agora (null se tirou o bot);
+ * - modelo do Kommo trocado SEM bot_id → a confirmação anterior não vale mais (null);
+ * - sempre grava bloqueado (erro AGUARDANDO_CONFERENCIA): só o sync bem-sucedido libera.
+ */
+export function patchVincular(modeloAtual: string | null, b: { bot_id?: unknown; kommo_template_id?: unknown }, agora: string) {
+  const patch: Record<string, unknown> = { updated_at: agora, erro: AGUARDANDO_CONFERENCIA }
+  const novoModelo = b.kommo_template_id !== undefined ? (b.kommo_template_id ? String(b.kommo_template_id) : null) : undefined
+  if (novoModelo !== undefined && novoModelo !== modeloAtual) {
+    patch.kommo_template_id = novoModelo
+    patch.review_status = 'nao_verificado'
+    patch.bot_verificado_em = null
+  }
+  if (b.bot_id !== undefined) {
+    patch.kommo_bot_id = b.bot_id ? Number(b.bot_id) : null
+    patch.bot_verificado_em = b.bot_id ? agora : null
+  }
+  return patch
 }

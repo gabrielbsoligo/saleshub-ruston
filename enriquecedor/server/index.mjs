@@ -3588,7 +3588,7 @@ async function prepararCadencia({ leadId, token, sdrNome, persistir = true, conf
   // Canal ativo + vínculos modelo×canal (migration_177): o que pode sair HOJE pelo número ativo.
   const canalAtivo = (await sbSelect(token, 'enriquecedor_cadencia_canais', 'ativo=eq.true&select=source_id'))?.[0]?.source_id ?? null;
   const vinculos = canalAtivo != null
-    ? (await sbSelect(token, 'enriquecedor_cadencia_vinculos', `source_id=eq.${canalAtivo}&select=template_id,source_id,review_status,kommo_bot_id,erro`)) ?? []
+    ? (await sbSelect(token, 'enriquecedor_cadencia_vinculos', `source_id=eq.${canalAtivo}&select=template_id,source_id,review_status,kommo_bot_id,erro,bot_verificado_em`)) ?? []
     : [];
   const dispDe = new Map(templates.map((t) => [t.nome, disponibilidade(t, canalAtivo, vinculos)]));
   const disponivel = (t) => !!t && !!dispDe.get(t.nome)?.disponivel;

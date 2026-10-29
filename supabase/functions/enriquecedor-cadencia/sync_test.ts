@@ -63,3 +63,66 @@ Deno.test('semVinculo lista candidatos com a cópia do canal; vínculo de modelo
   ])
   assertEquals(conferirVinculos([], REMOTOS, NOVO, [v()], BOTS), [])
 })
+
+Deno.test('planoTroca: mesmo bot, cópia aprovada de mesmo nome no destino; sem cópia = ausente; já vinculado marcado', async () => {
+  const { planoTroca } = await import('./sync.ts')
+  const ms = [M1, { id: 't2', nome: 'sdna_p3_breakup_v1' }, { id: 't3', nome: 'em_revisao' }]
+  const remotos = [...REMOTOS, rem(7, 'em_revisao', [NOVO, 'review'])]
+  const origem = [v({ template_id: 't1', kommo_bot_id: 81791 }), v({ template_id: 't2', kommo_bot_id: 81789 }), v({ template_id: 't3', kommo_bot_id: null }), v({ template_id: 'sumiu' })]
+  assertEquals(planoTroca(ms, remotos, origem, NOVO, [v({ template_id: 't2' })]), [
+    { template_id: 't1', nome: 'sdna_p1_auditoria_v1', kommo_bot_id: 81791, kommo_template_id: '66785', review_status: 'aprovado', ja_vinculado: false },
+    { template_id: 't2', nome: 'sdna_p3_breakup_v1', kommo_bot_id: 81789, kommo_template_id: null, review_status: 'ausente', ja_vinculado: true },
+    { template_id: 't3', nome: 'em_revisao', kommo_bot_id: null, kommo_template_id: null, review_status: 'em_revisao', ja_vinculado: false },
+  ])
+})
+
+Deno.test('erro "aguardando conferência" só sai com a lista de bots lida (sync bem-sucedido)', () => {
+  const pendente = v({ erro: 'aguardando conferência no Kommo' })
+  assertEquals(conferirVinculos([M1], REMOTOS, NOVO, [pendente], null)[0].erro, 'aguardando conferência no Kommo')
+  assertEquals(conferirVinculos([M1], REMOTOS, NOVO, [pendente], BOTS)[0].erro, null)
+})
+
+// Banco falso: guarda a linha e aplica update só se TODOS os filtros eq/is baterem.
+function dbFalso(linha: Record<string, unknown>) {
+  return {
+    linha,
+    from: (_t: string) => ({
+      update: (p: Record<string, unknown>) => {
+        const filtros: [string, unknown][] = []
+        const q: any = {
+          eq: (c: string, v: unknown) => { filtros.push([c, v]); return q },
+          is: (c: string, v: unknown) => { filtros.push([c, v]); return q },
+          select: async () => {
+            const bate = filtros.every(([c, v]) => (linha[c] ?? null) === v)
+            if (bate) Object.assign(linha, p)
+            return { data: bate ? [{ template_id: linha.template_id }] : [], error: null }
+          },
+        }
+        return q
+      },
+    }),
+  }
+}
+
+Deno.test('corrida: revinculação durante o sync — o resultado antigo NÃO é gravado', async () => {
+  const { aplicarConferencia } = await import('./sync.ts')
+  const lido = v({ kommo_bot_id: 111, updated_at: 'T1' })
+  const res = conferirVinculos([M1], REMOTOS, NOVO, [lido], [{ id: 111 }])
+  assertEquals(res[0].erro, null)
+  // enquanto o Kommo era lido, um gestor revinculou: bot 777, bloqueado aguardando conferência
+  const linha = { template_id: 't1', source_id: NOVO, kommo_bot_id: 777, erro: 'aguardando conferência no Kommo', review_status: 'nao_verificado', updated_at: 'T2' }
+  const db = dbFalso(linha)
+  const r = await aplicarConferencia(db, NOVO, res, [lido], 'T3')
+  assertEquals(r, { erro: null, alterados: ['sdna_p1_auditoria_v1'] })
+  assertEquals([linha.erro, linha.review_status, linha.updated_at], ['aguardando conferência no Kommo', 'nao_verificado', 'T2'])
+})
+
+Deno.test('sem corrida: grava a conferência e muda a versão', async () => {
+  const { aplicarConferencia } = await import('./sync.ts')
+  const lido = v({ erro: 'aguardando conferência no Kommo', updated_at: 'T1' })
+  const res = conferirVinculos([M1], REMOTOS, NOVO, [lido], BOTS)
+  const linha: Record<string, unknown> = { template_id: 't1', source_id: NOVO, erro: 'aguardando conferência no Kommo', updated_at: 'T1' }
+  const r = await aplicarConferencia(dbFalso(linha), NOVO, res, [lido], 'T3')
+  assertEquals(r.alterados, [])
+  assertEquals([linha.erro, linha.review_status, linha.updated_at], [null, 'aprovado', 'T3'])
+})

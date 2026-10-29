@@ -61,7 +61,7 @@ import { computeScore, decisorLevel } from '../lib/leadScore';
 import { siteGrade, loadTimeInfo } from '../lib/siteScore';
 import { computeDores, whatsappAudit } from '../lib/dores';
 import { useAuth } from '../lib/auth';
-import { FALHA_LABEL, LIMITES, configEfetiva, destinatarios, limparConfig, nome1De, nomeExibicao, pendenciasValidacao, prepararCadencia, previaLocal, semEscolhaNoF2, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
+import { FALHA_LABEL, LIMITES, configEfetiva, destinatarios, limparConfig, modeloUsavel, nome1De, nomeExibicao, pendenciasValidacao, prepararCadencia, previaLocal, semEscolhaNoF2, usaSecundaria, variaveisDe, type PacoteCadencia } from '../lib/cadencia';
 import type { CadenciaConfig } from '../types';
 import { QUALITY_COLORS, QUALITY_LABELS, STATUS_LABELS } from '../lib/labels';
 import { checkEmail, checkPhone, formatCnpj } from '../lib/validation';
@@ -3016,17 +3016,23 @@ function CadenciaSection({
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled">4 · Variante do template (texto aprovado pela Meta)</p>
                 <div className="grid gap-2 md:grid-cols-3">
                   {([1, 2, 3] as const).map((passo) => {
-                    const ops = templates.filter((t) => t.passo === passo && (passo !== 2 || t.nome !== 'sdna_p2_segunda_falha_v1' || !!vars?.f2));
+                    // Todos do passo aparecem; os que não podem sair agora (sem bot/aprovação no número
+                    // ativo, ou de 2ª falha sem 2ª falha) ficam desabilitados com o motivo.
+                    const ops = templates.filter((t) => t.passo === passo);
+                    const bloqueio = (t: typeof ops[number]) => !modeloUsavel(t) ? (t.motivoIndisponivel ?? 'indisponível') : (passo === 2 && !vars?.f2 && usaSecundaria(t)) ? 'pede 2ª falha' : null;
                     const atual = previa?.[`p${passo}`]?.template ?? cfg.templates?.[`p${passo}`] ?? '';
                     return (
                       <div key={passo}>
                         <span className="mb-1 block text-[11px] text-v4-text-muted">Passo {passo}</span>
                         <select disabled={!editando} value={atual} onChange={(e) => set({ templates: { ...(cfg.templates ?? {}), [`p${passo}`]: e.target.value } })} className={inputCls}>
-                          {ops.map((t) => (
-                            <option key={t.nome} value={t.nome}>
-                              {t.nome.replace(/^sdna_p\d_/, '').replace(/_/g, ' ')} · Meta: {t.review ?? t.statusMeta}{t.temBot ? '' : ' · sem bot'}
-                            </option>
-                          ))}
+                          {ops.map((t) => {
+                            const b = bloqueio(t);
+                            return (
+                              <option key={t.nome} value={t.nome} disabled={!!b}>
+                                {t.nome.replace(/^sdna_p\d_/, '').replace(/_/g, ' ')}{t.padrao ? ' · padrão' : ''}{b ? ` · ${b}` : ''}
+                              </option>
+                            );
+                          })}
                         </select>
                       </div>
                     );

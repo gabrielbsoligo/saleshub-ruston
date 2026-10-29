@@ -38,7 +38,10 @@ export interface TemplateOpcao {
   statusMeta: string;
   review: string | null;
   temBot: boolean;
-  /** ordem das variáveis ({{1}}..{{n}}) por chave — modelos novos; os antigos usam a lista fixa */
+  /** pode sair pelo número ativo agora (vínculo aprovado com bot, ou legado) — ver server/cadenciaModelos.mjs */
+  disponivel?: boolean;
+  motivoIndisponivel?: string | null;
+  /** ordem das variáveis ({{1}}..{{n}}) por chave (nome1, sdr, fantasia, fraseFalha, fraseImpacto, rotuloSecundaria, pontos) */
   chavesVars?: string[] | null;
   /** cidades em que o modelo é o padrão do passo 1 (ex.: São José dos Campos) */
   cidades?: string[] | null;
@@ -187,27 +190,30 @@ export function variaveisDe(lead: Lead, people: DecisionMaker[], cfg: CadenciaCo
   return { nome1, sdr, fantasia, fraseFalha, fraseImpacto, rotuloSecundaria, pontos, decisor, f1, f2 };
 }
 
+/** Modelo com ordem de variáveis e disponível no número ativo (motor antigo sem o campo = disponível). */
+export const modeloUsavel = (t: TemplateOpcao) => !!t.chavesVars?.length && t.disponivel !== false;
+/** Modelo do passo 2 que cita a 2ª falha. */
+export const usaSecundaria = (t: TemplateOpcao) => (t.chavesVars ?? []).includes('rotuloSecundaria');
+
 /** Prévia local das 3 mensagens a partir dos templates das opções (sem ida ao motor). */
 export function previaLocal(lead: Lead, people: DecisionMaker[], cfg: CadenciaConfig, opcoes: PacoteCadencia['opcoes'] | undefined, decisorId?: string | null) {
   const v = variaveisDe(lead, people, cfg, opcoes, decisorId);
-  const tpls = opcoes?.templates ?? [];
+  // Só modelos que podem sair pelo número ativo; o passo 2 "de 2ª falha" (usa
+  // rotuloSecundaria) só com 2ª falha. Sem escolha válida do SDR, o 1º que serve —
+  // a escolha final (padrão/cidade/rotação) é do motor (server/cadenciaModelos.mjs).
+  const tpls = (opcoes?.templates ?? []).filter(modeloUsavel);
+  const serve = (x: TemplateOpcao, passo: number) => x.passo === passo && (passo !== 2 || !!v.f2 || !usaSecundaria(x));
   const t = (passo: 1 | 2 | 3) => {
     const nome = cfg.templates?.[`p${passo}`];
-    return tpls.find((x) => x.nome === nome && x.passo === passo) ?? tpls.find((x) => x.passo === passo) ?? null;
+    return tpls.find((x) => x.nome === nome && serve(x, passo)) ?? tpls.find((x) => serve(x, passo)) ?? null;
   };
-  const t1 = t(1);
-  let t2 = t(2);
-  // Passo 2 "segunda falha" só faz sentido com segunda falha; sem ela cai no "aprofunda".
-  if (t2?.nome === 'sdna_p2_segunda_falha_v1' && !v.f2) t2 = tpls.find((x) => x.nome === 'sdna_p2_aprofunda_v1') ?? t2;
-  const t3 = t(3);
-  const vars2 = t2?.nome === 'sdna_p2_segunda_falha_v1' ? [v.nome1, v.fantasia, v.rotuloSecundaria ?? ''] : [v.nome1, v.fantasia];
   const valores: Record<string, string> = { nome1: v.nome1, sdr: v.sdr, fantasia: v.fantasia, fraseFalha: v.fraseFalha, fraseImpacto: v.fraseImpacto, rotuloSecundaria: v.rotuloSecundaria ?? '', pontos: v.pontos };
-  const mk = (tp: TemplateOpcao | null, legado: string[]): PacoteMsg | null => {
+  const mk = (tp: TemplateOpcao | null): PacoteMsg | null => {
     if (!tp) return null;
-    const vars = tp.chavesVars?.length ? tp.chavesVars.map((k) => valores[k] ?? '') : legado;
+    const vars = (tp.chavesVars ?? []).map((k) => valores[k] ?? '');
     return { template: tp.nome, statusMeta: tp.statusMeta, variaveis: vars, botoes: tp.botoes, corpoPreview: montarCorpo(tp.corpo, vars) };
   };
-  return { variaveis: v, p1: mk(t1, [v.nome1, v.sdr, v.fantasia, v.fraseFalha, v.fraseImpacto]), p2: mk(t2, vars2), p3: mk(t3, [v.nome1, v.fantasia]) };
+  return { variaveis: v, p1: mk(t(1)), p2: mk(t(2)), p3: mk(t(3)) };
 }
 
 /** Pendências que impedem validar (o SDR precisa resolver antes de mandar pro "Pronto p/ importar"). */
@@ -226,7 +232,7 @@ export function pendenciasValidacao(lead: Lead, people: DecisionMaker[], cfg: Ca
   if ((cfg.fraseImpacto ?? '').length > LIMITES.fraseImpacto) out.push(`frase do impacto passa de ${LIMITES.fraseImpacto} caracteres`);
   const pv = previaLocal(lead, people, cfg, pac?.opcoes);
   for (const [k, m] of [['1', pv.p1], ['2', pv.p2], ['3', pv.p3]] as const) {
-    if (!m) out.push(`sem template ativo pro passo ${k}`);
+    if (!m) out.push(`nenhum modelo disponível no número ativo pro passo ${k}`);
     else if (m.corpoPreview.length > LIMITES.corpo) out.push(`mensagem ${k} passa de ${LIMITES.corpo} caracteres`);
   }
   return out;
