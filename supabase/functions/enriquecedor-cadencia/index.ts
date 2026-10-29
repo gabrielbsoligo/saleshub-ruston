@@ -26,7 +26,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { escolherBot, patchVincular } from './vinculo.ts'
-import { conferirVinculos, planoTroca, semVinculo } from './sync.ts'
+import { aplicarConferencia, conferirVinculos, planoTroca, semVinculo } from './sync.ts'
 import { importarCorpo, volume24h } from './importar.ts'
 
 const cors = {
@@ -327,21 +327,20 @@ async function acaoSyncVinculos(b: Record<string, any>) {
   for (const c of alvo) {
     const sourceId = Number(c.source_id)
     const { data: atuais, error: errAtuais } = await db.from('enriquecedor_cadencia_vinculos')
-      .select('template_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', sourceId)
+      .select('template_id, kommo_template_id, kommo_bot_id, review_status, erro, updated_at').eq('source_id', sourceId)
     if (errAtuais) return json(500, { error: errAtuais.message, canal: sourceId })
     const res = conferirVinculos(modelos ?? [], remotos, sourceId, atuais ?? [], bots)
+    let alterados: string[] = []
     if (!dryRun) {
-      for (const r of res) {
-        const { error } = await db.from('enriquecedor_cadencia_vinculos')
-          .update({ review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora })
-          .eq('template_id', r.template_id).eq('source_id', sourceId)
-        if (error) return json(500, { error: error.message, canal: sourceId, modelo: r.nome })
-      }
+      const ap = await aplicarConferencia(db as any, sourceId, res, atuais ?? [], agora)
+      if (ap.erro) return json(500, { error: ap.erro, canal: sourceId })
+      alterados = ap.alterados
       await db.from('enriquecedor_cadencia_canais').update({ verificado_em: agora, updated_at: agora }).eq('source_id', sourceId)
     }
     saida.push({
       canal: sourceId, nome: c.nome, ativo: c.ativo,
-      vinculos: res.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, sugestao: r.sugestao, mudou: r.mudou })),
+      vinculos: res.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, sugestao: r.sugestao, mudou: r.mudou, alterado_durante: alterados.includes(r.nome) })),
+      alterados_durante: alterados,
       sem_vinculo: semVinculo(modelos ?? [], remotos, sourceId, atuais ?? []),
     })
   }
@@ -350,18 +349,8 @@ async function acaoSyncVinculos(b: Record<string, any>) {
 
 async function acaoVincularBot(b: Record<string, any>) {
   if (!b.template || !b.bot_id) return json(400, { error: 'template e bot_id obrigatórios' })
-  // Com source_id: bot do modelo NAQUELE canal (vínculo da migration_177). Não mexe
-  // no status de aprovação — esse vem do Kommo (sync).
-  if (b.source_id) {
-    const db = sb()
-    const { data: tpl } = await db.from('enriquecedor_cadencia_templates').select('id').eq('nome', String(b.template)).maybeSingle()
-    if (!tpl) return json(404, { error: 'template não encontrado' })
-    const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('source_id', Number(b.source_id)).maybeSingle()
-    if (!canal) return json(404, { error: `canal ${b.source_id} não cadastrado em enriquecedor_cadencia_canais` })
-    const { error } = await db.from('enriquecedor_cadencia_vinculos')
-      .upsert({ template_id: tpl.id, source_id: Number(b.source_id), kommo_bot_id: Number(b.bot_id), updated_at: new Date().toISOString() }, { onConflict: 'template_id,source_id' })
-    return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
-  }
+  // Com source_id: mesmas regras do painel (patchVincular: grava bloqueado e confere).
+  if (b.source_id) return await acaoVincular({ template: b.template, source_id: b.source_id, bot_id: b.bot_id })
   // Com responsavel_kommo_id: bot do WhatsApp daquele SDR (mapa por responsável).
   if (b.responsavel_kommo_id) {
     const { data: row } = await sb().from('enriquecedor_cadencia_templates').select('kommo_bots_por_responsavel').eq('nome', String(b.template)).maybeSingle()

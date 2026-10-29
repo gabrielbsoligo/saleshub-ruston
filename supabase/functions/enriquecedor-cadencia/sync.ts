@@ -19,6 +19,8 @@ export type ModeloRemoto = { id: number | string; name?: string; _embedded?: { r
 export type BotRemoto = { id: number | string; name?: string; settings?: { active?: boolean } }
 export type VinculoAtual = {
   template_id: string
+  /** versão lida (o sync só grava se a linha ainda estiver nesta versão) */
+  updated_at?: string | null
   kommo_template_id?: string | null
   kommo_bot_id?: number | string | null
   review_status?: string | null
@@ -129,4 +131,31 @@ export function planoTroca(
       ja_vinculado: jaNoDestino.has(v.template_id),
     }
   })
+}
+
+// Grava a conferência SÓ se o vínculo ainda é o que foi lido (mesmo updated_at — toda
+// escrita no vínculo muda updated_at). Se alguém revinculou no meio (outro gestor, o
+// cron diário), o resultado antigo é descartado: aquela linha fica como está (o
+// vincular grava bloqueado) e sai em `alterados` pra conferir de novo.
+export type DbAtualiza = {
+  from: (t: string) => {
+    update: (p: Record<string, unknown>) => {
+      eq: (c: string, v: unknown) => any
+    }
+  }
+}
+export async function aplicarConferencia(db: DbAtualiza, sourceId: number, res: Resolucao[], lidos: VinculoAtual[], agora: string) {
+  const versao = new Map(lidos.map((v) => [v.template_id, v.updated_at ?? null]))
+  const alterados: string[] = []
+  for (const r of res) {
+    const lida = versao.get(r.template_id)
+    let q = db.from('enriquecedor_cadencia_vinculos')
+      .update({ review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora })
+      .eq('template_id', r.template_id).eq('source_id', sourceId)
+    q = lida ? q.eq('updated_at', lida) : q.is('updated_at', null)
+    const { data, error } = await q.select('template_id')
+    if (error) return { erro: `${r.nome}: ${error.message}`, alterados }
+    if (!data?.length) alterados.push(r.nome)
+  }
+  return { erro: null as string | null, alterados }
 }
