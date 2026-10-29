@@ -1,8 +1,8 @@
 // =============================================================
 // Gerador de Propostas — cliente mínimo das APIs Drive e Slides
 // =============================================================
-// REST puro com fetch (sem googleapis), para o mesmo código servir
-// depois numa Edge Function (Deno). `fetchImpl` é injetável nos testes.
+// REST puro com fetch (sem googleapis): o mesmo código roda no Node (CLI,
+// testes) e nas Edge Functions (Deno). `fetchImpl` é injetável nos testes.
 // O token chega pronto (OAuth do usuário); nunca é logado.
 // =============================================================
 
@@ -71,13 +71,13 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
       const mime = MIME[formato];
       if (!mime) throw new Error(`formato de exportação desconhecido: ${formato}`);
       const r = await fetchImpl(`${DRIVE}/files/${fileId}/export?mimeType=${encodeURIComponent(mime)}`, { headers: auth });
-      if (r.ok) return Buffer.from(await r.arrayBuffer());
+      if (r.ok) return new Uint8Array(await r.arrayBuffer());
       const corpo = await r.json().catch(() => ({}));
       const erro = new ErroGoogle(r.status, corpo, 'drive.files.export');
       if (erro.motivo !== 'exportSizeLimitExceeded' || !exportLinks?.[mime]) throw erro;
       const r2 = await fetchImpl(exportLinks[mime], { headers: auth });
       if (!r2.ok) throw new ErroGoogle(r2.status, {}, 'exportLinks');
-      return Buffer.from(await r2.arrayBuffer());
+      return new Uint8Array(await r2.arrayBuffer());
     },
   };
 }

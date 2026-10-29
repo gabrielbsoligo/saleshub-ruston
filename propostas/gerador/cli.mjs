@@ -5,7 +5,7 @@
 // Uso:
 //   node propostas/gerador/cli.mjs preparar --template <ID_DA_COPIA_DE_TESTE>
 //   node propostas/gerador/cli.mjs gerar --template <ID> --escopo <arquivo.json>
-//        [--pasta <ID>] [--editor <email>]... [--link reader|writer|nenhum]
+//        [--pasta <ID>] [--editor <email>]... [--dominio v4company.com | --sem-dominio]
 //        [--exportar pdf,pptx] [--saida <dir>] [--dry-run]
 //
 // Token: GOOGLE_ACCESS_TOKEN no ambiente (escopos presentations + drive.file
@@ -14,8 +14,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { criarCliente } from './google.mjs';
-import { gerarProposta, nomeProposta, planejar, prepararTemplate } from './gerar.mjs';
+import { criarCliente } from '../../supabase/functions/_shared/propostas/google.mjs';
+import { gerarProposta, nomeProposta, planejar, prepararTemplate } from '../../supabase/functions/_shared/propostas/gerar.mjs';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -24,7 +24,8 @@ const { positionals, values } = parseArgs({
     escopo: { type: 'string' },
     pasta: { type: 'string' },
     editor: { type: 'string', multiple: true, default: [] },
-    link: { type: 'string', default: 'reader' },
+    dominio: { type: 'string', default: 'v4company.com' },
+    'sem-dominio': { type: 'boolean', default: false },
     exportar: { type: 'string', default: '' },
     saida: { type: 'string', default: '.' },
     'dry-run': { type: 'boolean', default: false },
@@ -43,7 +44,6 @@ if (comando === 'preparar') {
   if (res.trocas.some((r) => !r.trocas)) console.log('Atenção: literal sem troca — confira o deck e o mapa LITERAIS_DECK.');
 } else if (comando === 'gerar') {
   if (!values.escopo) sair('--escopo é obrigatório');
-  if (!['reader', 'writer', 'nenhum'].includes(values.link)) sair('--link deve ser reader, writer ou nenhum');
   const escopo = JSON.parse(readFileSync(values.escopo, 'utf8'));
   const exportar = values.exportar.split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -56,7 +56,7 @@ if (comando === 'preparar') {
     const cliente = criarCliente(process.env.GOOGLE_ACCESS_TOKEN);
     const r = await gerarProposta(cliente, {
       templateId: values.template, escopo, pastaId: values.pasta,
-      editores: values.editor, link: values.link, exportar,
+      editores: values.editor, dominio: values['sem-dominio'] ? null : values.dominio, exportar,
     });
     mkdirSync(values.saida, { recursive: true });
     for (const [fmt, buf] of Object.entries(r.arquivos)) {

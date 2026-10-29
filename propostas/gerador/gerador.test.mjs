@@ -5,12 +5,12 @@ import { readFileSync } from 'node:fs';
 import {
   acharIndicePreco, formatarBRL, formatarCurto, montarValores, planejarPreparar, requestsSlidesEscopo,
   secoesEscopo, validarEscopo, verificarTemplate, LITERAIS_DECK, PLACEHOLDERS_TEMPLATE, ESTILO,
-} from './slides.mjs';
-import { gerarProposta, planejar, prepararTemplate } from './gerar.mjs';
-import { criarCliente, MIME } from './google.mjs';
+} from '../../supabase/functions/_shared/propostas/slides.mjs';
+import { gerarProposta, planejar, prepararTemplate } from '../../supabase/functions/_shared/propostas/gerar.mjs';
+import { criarCliente, MIME } from '../../supabase/functions/_shared/propostas/google.mjs';
 
 const exemplo = () => JSON.parse(readFileSync(new URL('../exemplos/escopo-exemplo-inside-sales-linkedin.json', import.meta.url), 'utf8'));
-const catalogo = JSON.parse(readFileSync(new URL('../catalogo-v0.json', import.meta.url), 'utf8'));
+const catalogo = JSON.parse(readFileSync(new URL('../../supabase/functions/_shared/propostas/catalogo-v0.json', import.meta.url), 'utf8'));
 
 const caixaTexto = (objectId, content) => ({ objectId, shape: { text: { textElements: [{ textRun: { content } }] } } });
 const slide = (objectId, ...textos) => ({ objectId, pageElements: textos.map((t, i) => caixaTexto(`${objectId}_e${i}`, t)) });
@@ -213,20 +213,21 @@ function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, a
   return { impl, chamadas };
 }
 
-test('gerarProposta: copia, preenche, compartilha por link + editor e exporta', async () => {
+test('gerarProposta: copia, preenche, compartilha com o domínio V4 + editor e exporta', async () => {
   const f = fetchFalso();
   const r = await gerarProposta(criarCliente('tok', f.impl), {
-    templateId: 'TPL', escopo: exemplo(), editores: ['closer@v4company.com'], exportar: ['pdf'], hoje: new Date('2026-10-29T12:00:00Z'),
+    templateId: 'TPL', escopo: exemplo(), editores: ['closer@v4company.com'], dominio: 'v4company.com', exportar: ['pdf'], hoje: new Date('2026-10-29T12:00:00Z'),
   });
   assert.equal(r.id, 'NOVO123');
   assert.equal(r.slidesInseridos, 5);
   assert.equal(f.chamadas[0].body.name, 'Proposta V4 — Empresa Exemplo (fictícia) — 2026-10-29');
   const perms = f.chamadas.filter((c) => c.url.includes('/permissions'));
-  assert.deepEqual(perms.map((c) => c.body), [{ type: 'anyone', role: 'reader' }, { type: 'user', role: 'writer', emailAddress: 'closer@v4company.com' }]);
+  assert.deepEqual(perms.map((c) => c.body), [{ type: 'domain', role: 'reader', domain: 'v4company.com', allowFileDiscovery: false }, { type: 'user', role: 'writer', emailAddress: 'closer@v4company.com' }]);
   // Vedor #1: sendNotificationEmail só para user/group
   assert.ok(!perms[0].url.includes('sendNotificationEmail'));
   assert.ok(perms[1].url.includes('sendNotificationEmail=false'));
-  assert.equal(r.arquivos.pdf.toString(), 'PDF');
+  assert.ok(!perms.some((c) => c.body.type === 'anyone'));
+  assert.equal(new TextDecoder().decode(r.arquivos.pdf), 'PDF');
   assert.ok(f.chamadas.every((c) => c.auth === 'Bearer tok'));
   assert.ok(!f.chamadas.some((c) => c.url.includes('TPL') && !c.url.includes('/copy')));
 });
@@ -278,8 +279,8 @@ test('prepararTemplate recusa deck incompatível sem alterar nada', async () => 
 
 test('export acima de 10 MB cai para exportLinks', async () => {
   const f = fetchFalso({ exportGrande: true });
-  const r = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), link: 'nenhum', exportar: ['pdf'] });
-  assert.equal(r.arquivos.pdf.toString(), 'PDF-GRANDE');
+  const r = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo(), exportar: ['pdf'] });
+  assert.equal(new TextDecoder().decode(r.arquivos.pdf), 'PDF-GRANDE');
   assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
 });
 

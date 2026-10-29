@@ -744,6 +744,7 @@ Deno.serve(async (req) => {
 
     if (action === 'process_pending') {
       const stats = await processPending(supabase)
+      dispararPropostasPendentes()
       return json({ ok: true, ...stats })
     }
 
@@ -773,6 +774,19 @@ Deno.serve(async (req) => {
     return json({ error: e.message }, 500)
   }
 })
+
+// Gerador de propostas: aproveita este tick (cron que já existe) para a edge
+// proposta-gerar processar a fila 'auto'. Ela mesma confere propostas_config.auto_ativo.
+// Em segundo plano: a geração leva dezenas de segundos e não segura o tick.
+function dispararPropostasPendentes() {
+  const p = fetch(`${SUPABASE_URL}/functions/v1/proposta-gerar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+    body: JSON.stringify({ action: 'processar_pendentes' }),
+  }).then((r) => r.body?.cancel()).catch((e) => console.error('disparo proposta-gerar falhou:', e?.message))
+  // @ts-ignore EdgeRuntime existe no runtime do Supabase
+  if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(p)
+}
 
 function json(body: any, status = 200): Response {
   return new Response(JSON.stringify(body), {

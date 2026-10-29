@@ -4,7 +4,7 @@
 // gerarProposta: copia o template → confere que é um template preparado →
 // insere slides de escopo antes do slide de investimento → preenche
 // {{placeholders}} de preço → confere as trocas → só então compartilha
-// (link + editor) e exporta PDF/PPTX opcionalmente.
+// (leitura para o domínio V4 + closer como editor) e exporta PDF/PPTX opcionalmente.
 // prepararTemplate: transforma uma CÓPIA do deck original em template
 // (literais de preço → placeholders, só nos slides de preço).
 // Nunca rode no deck original.
@@ -57,7 +57,8 @@ function conferirTrocas(requests, replies) {
   return faltando;
 }
 
-export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], link = 'reader', exportar = [], hoje }) {
+// dominio: leitura para quem é do domínio (decisão do Gabriel, 29/10: nunca 'qualquer pessoa com o link').
+export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], dominio = null, exportar = [], hoje }) {
   const erros = validarEscopo(escopo);
   if (erros.length) falhar('escopo inválido', erros);
 
@@ -82,7 +83,7 @@ export async function gerarProposta(cliente, { templateId, escopo, pastaId, edit
     throw e;
   }
 
-  if (link && link !== 'nenhum') await cliente.compartilhar(copia.id, { type: 'anyone', role: link });
+  if (dominio) await cliente.compartilhar(copia.id, { type: 'domain', role: 'reader', domain: dominio, allowFileDiscovery: false });
   for (const email of editores) {
     await cliente.compartilhar(copia.id, { type: 'user', role: 'writer', emailAddress: email });
   }
