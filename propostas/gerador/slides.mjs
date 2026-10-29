@@ -293,10 +293,14 @@ export function validarEscopo(e) {
     ['escopo.overdeliveries', e?.escopo?.overdeliveries],
     ['plano_execucao.itens', e?.plano_execucao?.itens],
   ];
+  const preenchido = (v) => typeof v === 'string' && v.trim().length > 0;
   for (const [onde, itens] of colecoes) {
+    if (itens != null && !Array.isArray(itens)) { erros.push(`${onde} deve ser lista`); continue; }
     for (const i of itens || []) {
-      if (!i?.texto || typeof i.texto !== 'string') erros.push(`item sem texto em ${onde}`);
-      else if (i.origem === 'ia' && !i.citacao) erros.push(`item da IA sem citação em ${onde}: ${i.texto}`);
+      if (!preenchido(i?.texto)) { erros.push(`item sem texto em ${onde}`); continue; }
+      if (!['catalogo', 'ia', 'closer'].includes(i.origem)) erros.push(`origem inválida em ${onde}: ${i.texto}`);
+      if (i.citacao != null && typeof i.citacao !== 'string') erros.push(`citação deve ser texto ou null em ${onde}: ${i.texto}`);
+      else if (i.origem === 'ia' && !preenchido(i.citacao)) erros.push(`item da IA sem citação em ${onde}: ${i.texto}`);
     }
   }
   return erros;

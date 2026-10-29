@@ -83,17 +83,26 @@ test('Vedor #3: preço/parcelas com tipo ou faixa inválida são barrados', () =
   }
 });
 
-test('Vedor #4: item da IA sem citação é barrado em todas as coleções', () => {
-  const semCitacao = { texto: 'inventado', origem: 'ia', citacao: null };
-  const caminhos = [
-    (e) => e.escopo.semanas[0].itens.push(semCitacao),
-    (e) => e.contexto.dores.push(semCitacao),
-    (e) => e.escopo.overdeliveries.push(semCitacao),
-    (e) => e.plano_execucao.itens.push(semCitacao),
+test('Vedor #4 / R2 #1: item da IA sem citação válida é barrado em todas as coleções', () => {
+  const colecoes = [
+    (e) => e.escopo.semanas[0].itens,
+    (e) => e.contexto.dores,
+    (e) => e.escopo.overdeliveries,
+    (e) => e.plano_execucao.itens,
   ];
-  for (const add of caminhos) {
-    const e = exemplo(); add(e);
-    assert.ok(validarEscopo(e).some((m) => m.includes('sem citação')), `passou: ${add}`);
+  const citacoesRuins = [null, undefined, '', '   ', {}, [], 42];
+  for (const col of colecoes) {
+    for (const citacao of citacoesRuins) {
+      const e = exemplo();
+      col(e).push({ texto: 'inventado', origem: 'ia', citacao });
+      assert.ok(validarEscopo(e).length > 0, `passou: ${col} com citação ${JSON.stringify(citacao)}`);
+    }
+    const e = exemplo();
+    col(e).push({ texto: '  ', origem: 'closer', citacao: null });
+    assert.ok(validarEscopo(e).some((m) => m.includes('sem texto')));
+    const e2 = exemplo();
+    col(e2).push({ texto: 'x', origem: 'robô', citacao: null });
+    assert.ok(validarEscopo(e2).some((m) => m.includes('origem inválida')));
   }
   assert.deepEqual(validarEscopo(exemplo()), []);
 });
@@ -182,7 +191,7 @@ test('mapa de literais: nenhum contém outro e todos os placeholders são distin
 });
 
 // ---- fluxo completo com fetch falso ----
-function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1 } = {}) {
+function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1, apagarStatus = 204 } = {}) {
   const chamadas = [];
   const resp = (status, corpo, bin) => ({
     ok: status < 400, status,
@@ -198,7 +207,7 @@ function fetchFalso({ exportGrande = false, deck = deckTemplate(), trocas = 1 } 
     if (url.includes('/permissions')) return resp(200, { id: 'p' });
     if (url.includes('/export?')) return exportGrande ? resp(403, { error: { errors: [{ reason: 'exportSizeLimitExceeded' }], message: 'too large' } }) : resp(200, {}, 'PDF');
     if (url === 'https://docs.google.com/export/pdf') return resp(200, {}, 'PDF-GRANDE');
-    if (init.method === 'DELETE') return resp(204, {});
+    if (init.method === 'DELETE') return resp(apagarStatus, apagarStatus < 400 ? {} : { error: { message: 'forbidden' } });
     return resp(404, {});
   };
   return { impl, chamadas };
@@ -235,6 +244,22 @@ test('Vedor #2: zero trocas no batchUpdate → cópia apagada, nada compartilhad
   await assert.rejects(gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo() }), /sem troca/);
   assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
   assert.ok(f.chamadas.some((c) => c.metodo === 'DELETE'));
+});
+
+test('R2 #2: falha ao apagar a cópia preserva o erro original e informa o id', async () => {
+  const f = fetchFalso({ deck: deckOriginal(), apagarStatus: 403 });
+  const err = await gerarProposta(criarCliente('segredo-nao-pode-vazar', f.impl), { templateId: 'TPL', escopo: exemplo() }).catch((e) => e);
+  assert.match(err.message, /template incompatível/);
+  assert.match(err.message, /NOVO123 NÃO foi apagada/);
+  assert.deepEqual({ ...err.limpeza, erro: undefined }, { copiaId: 'NOVO123', apagada: false, erro: undefined });
+  assert.ok(!err.message.includes('segredo-nao-pode-vazar'));
+  assert.ok(!f.chamadas.some((c) => c.url.includes('/permissions')));
+});
+
+test('R2 #2: remoção bem-sucedida fica registrada no erro', async () => {
+  const f = fetchFalso({ deck: deckOriginal() });
+  const err = await gerarProposta(criarCliente('tok', f.impl), { templateId: 'TPL', escopo: exemplo() }).catch((e) => e);
+  assert.deepEqual(err.limpeza, { copiaId: 'NOVO123', apagada: true });
 });
 
 test('prepararTemplate: lê o deck e restringe as trocas aos slides de preço', async () => {

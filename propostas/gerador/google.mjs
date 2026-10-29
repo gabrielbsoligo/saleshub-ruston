@@ -48,8 +48,9 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
         { method: 'GET' }, 'slides.presentations.get');
     },
 
-    apagar(fileId) {
-      return fetchImpl(`${DRIVE}/files/${fileId}?supportsAllDrives=true`, { method: 'DELETE', headers: auth });
+    async apagar(fileId) {
+      const r = await fetchImpl(`${DRIVE}/files/${fileId}?supportsAllDrives=true`, { method: 'DELETE', headers: auth });
+      if (!r.ok) throw new ErroGoogle(r.status, await r.json().catch(() => ({})), 'drive.files.delete');
     },
 
     batchUpdate(id, requests) {

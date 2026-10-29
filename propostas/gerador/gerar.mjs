@@ -70,8 +70,15 @@ export async function gerarProposta(cliente, { templateId, escopo, pastaId, edit
     const faltando = conferirTrocas(plano.requests, r.replies);
     if (faltando.length) falhar('placeholders sem troca (proposta não compartilhada)', faltando);
   } catch (e) {
-    // Cópia inválida não fica parada no Drive nem é compartilhada.
-    await cliente.apagar(copia.id).catch(() => {});
+    // Cópia inválida não fica parada no Drive nem é compartilhada. Se a remoção
+    // falhar, o erro original segue junto com o id da cópia (não compartilhada).
+    try {
+      await cliente.apagar(copia.id);
+      e.limpeza = { copiaId: copia.id, apagada: true };
+    } catch (eDel) {
+      e.limpeza = { copiaId: copia.id, apagada: false, erro: eDel.message };
+      e.message += `\n(atenção: a cópia ${copia.id} NÃO foi apagada — ${eDel.message}; ela não foi compartilhada, apague à mão)`;
+    }
     throw e;
   }
 
