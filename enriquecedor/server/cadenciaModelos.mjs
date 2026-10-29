@@ -1,7 +1,7 @@
 // Escolha do modelo de cada passo da cadência SDNA — sem nome de modelo no código.
 //
 // Tudo vem da tabela enriquecedor_cadencia_templates (+ vínculos por canal, migration_177):
-// - disponível = pode sair pelo canal ativo: vínculo aprovado com bot e sem erro; sem
+// - disponível = pode sair pelo canal ativo: vínculo aprovado com bot confirmado e sem erro; sem
 //   vínculo, o legado (review_status aprovado + algum bot na linha) — o mesmo critério
 //   do carteiro (supabase/functions/enriquecedor-cadencia/vinculo.ts).
 // - variáveis na ordem de chaves_vars (nome1, sdr, fantasia, fraseFalha, fraseImpacto,
@@ -31,6 +31,7 @@ export function disponibilidade(t, canalAtivo, vinculos) {
     if (v.review_status !== 'aprovado') return { disponivel: false, motivo: `sem aprovação da Meta no canal ${canalAtivo} (${v.review_status ?? 'nao_verificado'})`, origem: 'vinculo' };
     if (!v.kommo_bot_id) return { disponivel: false, motivo: `sem bot no canal ${canalAtivo}`, origem: 'vinculo' };
     if (v.erro) return { disponivel: false, motivo: v.erro, origem: 'vinculo' };
+    if (!v.bot_verificado_em) return { disponivel: false, motivo: `bot ainda não confirmado no canal ${canalAtivo}`, origem: 'vinculo' };
     return { disponivel: true, motivo: null, origem: 'vinculo' };
   }
   const temBot = !!t.kommo_bot_id || Object.keys(t.kommo_bots_por_responsavel ?? {}).length > 0;

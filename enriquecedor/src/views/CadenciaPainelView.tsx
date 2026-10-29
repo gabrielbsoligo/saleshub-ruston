@@ -5,9 +5,9 @@
 // Quem decide: gestor (os demais só veem). Nada aqui mexe no Kommo.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { CheckCircle2, CircleAlert, Download, Link2, Loader2, Phone, RefreshCw, Send, Unlink } from 'lucide-react';
+import { ArrowRightLeft, CheckCircle2, CircleAlert, Download, Link2, Loader2, Phone, RefreshCw, Send, ShieldCheck, Unlink } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { cadenciaPainel, estadoModelo, type CanalCadencia, type ModeloCadencia, type PainelCadencia, type ResultadoSync, type Sinal } from '../lib/cadenciaPainel';
+import { cadenciaPainel, estadoModelo, type CanalCadencia, type LinhaTroca, type ModeloCadencia, type PainelCadencia, type ResultadoSync, type Sinal } from '../lib/cadenciaPainel';
 
 const SINAL_COR: Record<Sinal, string> = { verde: 'bg-emerald-500', amarelo: 'bg-amber-400', vermelho: 'bg-red-500', cinza: 'bg-slate-500' };
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -49,6 +49,10 @@ export function CadenciaPainelView() {
   }, [sync, canalAtivo]);
   const semVinculo = useMemo(() => new Map((sync?.canais.find((c) => c.canal === canalAtivo)?.sem_vinculo ?? []).map((x) => [x.nome, x])), [sync, canalAtivo]);
 
+  // Alerta: modelo ATIVO que não sai pelo número em uso (vínculo caiu, bot a confirmar, etc.).
+  const problemas = (dados?.modelos ?? []).filter((m) => m.ativo).map((m) => ({ m, e: estadoModelo(m, canalAtivo, dados!.vinculos) })).filter((x) => x.e.sinal === 'vermelho');
+  const passosSemModelo = [1, 2, 3].filter((p) => !(dados?.modelos ?? []).some((m) => m.passo === p && m.ativo && ['verde', 'amarelo'].includes(estadoModelo(m, canalAtivo, dados!.vinculos).sinal)));
+
   if (carregando) return <div className="flex h-full items-center justify-center text-v4-text-muted"><Loader2 className="animate-spin" size={18} /></div>;
 
   return (
@@ -70,7 +74,17 @@ export function CadenciaPainelView() {
 
       {!gestor && <p className="rounded-lg border border-v4-border p-2 text-xs text-v4-text-muted">Só gestor altera. Você está vendo o estado atual.</p>}
 
+      {(problemas.length > 0 || passosSemModelo.length > 0) && (
+        <div className="rounded-xl border border-red-700 bg-red-950/40 p-3 text-sm text-red-200">
+          <div className="flex items-center gap-2 font-medium"><CircleAlert size={15} /> Atenção na cadência</div>
+          {passosSemModelo.length > 0 && <p className="mt-1">Nenhum modelo sai pelo número em uso no(s) passo(s) {passosSemModelo.join(', ')} — esses envios vão falhar.</p>}
+          {problemas.map(({ m, e }) => <p key={m.id} className="mt-1 text-xs">· {curto(m.nome)} (passo {m.passo}): {e.texto}</p>)}
+        </div>
+      )}
+
       <Canais dados={dados} gestor={gestor} ocupado={ocupado} agir={agir} />
+
+      {gestor && (dados?.canais.length ?? 0) > 1 && <TrocaNumero dados={dados!} ocupado={ocupado} agir={agir} />}
 
       {[1, 2, 3].map((passo) => (
         <div key={passo} className="rounded-xl border border-v4-border">
@@ -175,6 +189,12 @@ function LinhaModelo({ m, dados, canalAtivo, gestor, ocupado, agir, sugestao, ca
         <div className="flex items-center gap-1">
           <input className={`${inputCls} w-24`} placeholder="id do bot" value={bot} onChange={(e) => setBot(e.target.value.replace(/\D/g, ''))} />
           <button className={btnCls} disabled={!!ocupado || bot === String(est.vinculo?.kommo_bot_id ?? '')} onClick={() => vincular({ bot_id: bot ? Number(bot) : null, ...(est.vinculo ? {} : { kommo_template_id: candidato }) }, 'bot vinculado')} title="Confirme no Kommo que este bot manda este modelo por este número"><Link2 size={12} /></button>
+          {est.vinculo?.kommo_bot_id && !est.vinculo.bot_verificado_em && (
+            <button className={`${btnCls} flex items-center gap-1 text-amber-300`} disabled={!!ocupado} title="Confirme no Kommo que este bot manda este modelo por este número"
+              onClick={() => { if (confirm(`Você conferiu no Kommo que o bot ${est.vinculo!.kommo_bot_id} manda "${m.nome}" pelo canal ${canalAtivo}?`)) vincular({ bot_id: est.vinculo!.kommo_bot_id }, 'bot confirmado'); }}>
+              <ShieldCheck size={12} /> Confirmar bot
+            </button>
+          )}
           {est.vinculo && <button className={btnCls} disabled={!!ocupado} onClick={() => { if (confirm('Tirar o vínculo? O modelo volta ao bot antigo.')) agir(k, () => cadenciaPainel.desvincular(m.nome, canalAtivo), 'vínculo removido'); }} title="Tirar vínculo"><Unlink size={12} /></button>}
         </div>
       )}
@@ -183,6 +203,44 @@ function LinhaModelo({ m, dados, canalAtivo, gestor, ocupado, agir, sugestao, ca
           <button className={btnCls} disabled={!!ocupado} onClick={() => agir(k, () => cadenciaPainel.modelo({ nome: m.nome, ativo: !m.ativo }))}>{m.ativo ? 'Desativar' : 'Ativar'}</button>
           <button className={btnCls} disabled={!!ocupado} onClick={() => agir(k, () => cadenciaPainel.modelo({ nome: m.nome, padrao: !m.padrao }))}>{m.padrao ? 'Tirar padrão' : 'Tornar padrão'}</button>
           {m.passo === 1 && <button className={btnCls} disabled={!!ocupado} onClick={() => { const c = prompt('Cidades em que é o padrão (separe por vírgula; vazio = geral)', (m.cidades ?? []).join(', ')); if (c != null) agir(k, () => cadenciaPainel.modelo({ nome: m.nome, cidades: c.split(',').map((x) => x.trim()).filter(Boolean) })); }}>Cidades</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Troca de número: copia os vínculos do número em uso pro novo (mesmo bot + cópia de mesmo
+// nome aprovada lá), tudo "a confirmar". Depois: confirmar cada bot e "Usar este número".
+function TrocaNumero({ dados, ocupado, agir }: { dados: PainelCadencia; ocupado: string | null; agir: Agir }) {
+  const ativo = dados.canais.find((c) => c.ativo) ?? null;
+  const outros = dados.canais.filter((c) => !c.ativo);
+  const [para, setPara] = useState<number | null>(outros[0]?.source_id ?? null);
+  const [plano, setPlano] = useState<LinhaTroca[] | null>(null);
+  if (!ativo || !outros.length) return null;
+  const ver = (aplicar: boolean) => para != null && agir(`troca-${aplicar}`, async () => {
+    const r = await cadenciaPainel.trocaNumero(ativo.source_id, para, aplicar);
+    setPlano(r.plano);
+  }, aplicar ? 'vínculos copiados — confirme cada bot e depois use o número' : undefined);
+  return (
+    <div className="rounded-xl border border-v4-border p-3">
+      <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-v4-text-disabled"><ArrowRightLeft size={13} /> Trocar de número</p>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-v4-text-muted">
+        <span>de {ativo.nome ?? ativo.source_id} para</span>
+        <select className={inputCls} value={para ?? ''} onChange={(e) => { setPara(Number(e.target.value)); setPlano(null); }}>
+          {outros.map((c) => <option key={c.source_id} value={c.source_id}>{c.nome ?? 'sem nome'} ({c.source_id})</option>)}
+        </select>
+        <button className={btnCls} disabled={!!ocupado || para == null} onClick={() => ver(false)}>Ver o que muda</button>
+        {plano && <button className={btnCls} disabled={!!ocupado} onClick={() => { if (confirm('Copiar os vínculos para o número novo? Eles entram a confirmar: nada sai por lá até você confirmar cada bot e usar o número.')) ver(true); }}>Copiar vínculos</button>}
+      </div>
+      {plano && (
+        <div className="mt-2 space-y-0.5 text-[11px]">
+          {plano.map((l) => (
+            <div key={l.template_id} className={l.kommo_template_id ? 'text-v4-text-muted' : 'text-red-300'}>
+              · {curto(l.nome)}: bot {l.kommo_bot_id ?? '—'} · {l.kommo_template_id ? `modelo ${l.kommo_template_id} aprovado lá` : `sem cópia aprovada lá (${l.review_status.replace('_', ' ')})`}{l.ja_vinculado ? ' · já vinculado (não muda)' : ''}
+            </div>
+          ))}
+          {!plano.length && <div className="text-v4-text-muted">O número em uso não tem vínculos para copiar.</div>}
+          <div className="pt-1 text-v4-text-disabled">Nos modelos sem cópia aprovada: copie e aprove no Kommo antes; o hub não submete à Meta.</div>
         </div>
       )}
     </div>

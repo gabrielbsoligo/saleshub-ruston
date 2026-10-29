@@ -20,6 +20,7 @@ export interface PainelCadencia {
   /** conversas (cards distintos) nas últimas 24 h por source_id; 'sem_canal' = envios antigos sem canal gravado */
   volume24h: Record<string, number>;
 }
+export interface LinhaTroca { template_id: string; nome: string; kommo_bot_id: number | null; kommo_template_id: string | null; review_status: string; ja_vinculado: boolean }
 export interface ResultadoSync {
   canais: { canal: number; vinculos: { nome: string; kommo_template_id: string | null; review: string; erro: string | null; sugestao: string | null; mudou: boolean }[]; sem_vinculo: { nome: string; kommo_template_id: string | null; review: string }[] }[];
   bots_conferidos: boolean;
@@ -45,6 +46,7 @@ export const cadenciaPainel = {
   desvincular: (template: string, source_id: number) => edge({ acao: 'desvincular', template, source_id }),
   canal: (p: Partial<CanalCadencia> & { source_id: number }) => edge({ acao: 'canal', ...p }),
   modelo: (p: { nome: string; ativo?: boolean; padrao?: boolean; cidades?: string[] }) => edge({ acao: 'modelo', ...p }),
+  trocaNumero: (de: number, para: number, aplicar: boolean) => edge<{ plano: LinhaTroca[]; aplicado: boolean }>({ acao: 'preparar-troca', de, para, aplicar }),
   importar: (nome: string, passo: number) => edge<{ modelo: { corpo: string; chaves_vars: string[] }; kommo_template_id: string }>({ acao: 'importar-modelo', nome, passo }),
 };
 
@@ -63,6 +65,7 @@ export function estadoModelo(m: ModeloCadencia, canalAtivo: number | null, vincu
     if (v.review_status !== 'aprovado') return { sinal: 'vermelho', texto: `Meta: ${v.review_status.replace('_', ' ')} neste número`, vinculo: v };
     if (!v.kommo_bot_id) return { sinal: 'vermelho', texto: 'sem bot neste número', vinculo: v };
     if (v.erro) return { sinal: 'vermelho', texto: v.erro, vinculo: v };
+    if (!v.bot_verificado_em) return { sinal: 'vermelho', texto: `bot ${v.kommo_bot_id} a confirmar neste número`, vinculo: v };
     return { sinal: m.ativo ? 'verde' : 'cinza', texto: m.ativo ? 'pronto neste número' : 'pronto, mas inativo', vinculo: v };
   }
   const temBot = !!m.kommo_bot_id || Object.keys(m.kommo_bots_por_responsavel ?? {}).length > 0;

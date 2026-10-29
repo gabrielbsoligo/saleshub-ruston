@@ -63,3 +63,15 @@ Deno.test('semVinculo lista candidatos com a cópia do canal; vínculo de modelo
   ])
   assertEquals(conferirVinculos([], REMOTOS, NOVO, [v()], BOTS), [])
 })
+
+Deno.test('planoTroca: mesmo bot, cópia aprovada de mesmo nome no destino; sem cópia = ausente; já vinculado marcado', async () => {
+  const { planoTroca } = await import('./sync.ts')
+  const ms = [M1, { id: 't2', nome: 'sdna_p3_breakup_v1' }, { id: 't3', nome: 'em_revisao' }]
+  const remotos = [...REMOTOS, rem(7, 'em_revisao', [NOVO, 'review'])]
+  const origem = [v({ template_id: 't1', kommo_bot_id: 81791 }), v({ template_id: 't2', kommo_bot_id: 81789 }), v({ template_id: 't3', kommo_bot_id: null }), v({ template_id: 'sumiu' })]
+  assertEquals(planoTroca(ms, remotos, origem, NOVO, [v({ template_id: 't2' })]), [
+    { template_id: 't1', nome: 'sdna_p1_auditoria_v1', kommo_bot_id: 81791, kommo_template_id: '66785', review_status: 'aprovado', ja_vinculado: false },
+    { template_id: 't2', nome: 'sdna_p3_breakup_v1', kommo_bot_id: 81789, kommo_template_id: null, review_status: 'ausente', ja_vinculado: true },
+    { template_id: 't3', nome: 'em_revisao', kommo_bot_id: null, kommo_template_id: null, review_status: 'em_revisao', ja_vinculado: false },
+  ])
+})

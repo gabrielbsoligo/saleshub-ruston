@@ -52,11 +52,12 @@ test('indisponível sai da escolha; passo 2 sem modelo de 2ª falha cai no outro
 
 test('disponibilidade: vínculo do canal manda; sem vínculo, legado; sem chaves_vars nunca', () => {
   const t = TPLS[0];
-  const v = (p = {}) => ({ template_id: 'a1', source_id: CANAL, review_status: 'aprovado', kommo_bot_id: 9, erro: null, ...p });
+  const v = (p = {}) => ({ template_id: 'a1', source_id: CANAL, review_status: 'aprovado', kommo_bot_id: 9, erro: null, bot_verificado_em: '2026-10-29T12:00:00Z', ...p });
   assert.deepEqual(disponibilidade(t, CANAL, [v()]), { disponivel: true, motivo: null, origem: 'vinculo' });
   assert.equal(disponibilidade(t, CANAL, [v({ review_status: 'ausente' })]).disponivel, false);
   assert.equal(disponibilidade(t, CANAL, [v({ kommo_bot_id: null })]).motivo, 'sem bot no canal 70787');
   assert.equal(disponibilidade(t, CANAL, [v({ erro: 'bot 9 está desativado no Kommo' })]).disponivel, false);
+  assert.equal(disponibilidade(t, CANAL, [v({ bot_verificado_em: null })]).motivo, 'bot ainda não confirmado no canal 70787');
   assert.equal(disponibilidade(t, CANAL, [v({ source_id: 1 })]).origem, 'legado');
   assert.equal(disponibilidade(t, null, [v({ review_status: 'ausente' })]).disponivel, true);
   assert.equal(disponibilidade({ ...t, review_status: 'em_revisao' }, null, []).disponivel, false);

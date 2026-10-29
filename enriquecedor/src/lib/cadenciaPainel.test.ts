@@ -10,7 +10,7 @@ const m = (p: Partial<ModeloCadencia> = {}): ModeloCadencia => ({
 });
 const v = (p: Partial<VinculoCadencia> = {}): VinculoCadencia => ({
   template_id: 't1', source_id: 70787, kommo_template_id: '66791', kommo_bot_id: 81797,
-  review_status: 'aprovado', verificado_em: null, bot_verificado_em: null, erro: null, ...p,
+  review_status: 'aprovado', verificado_em: null, bot_verificado_em: '2026-10-29T12:00:00Z', erro: null, ...p,
 });
 
 describe('estadoModelo', () => {
@@ -22,6 +22,7 @@ describe('estadoModelo', () => {
     expect(estadoModelo(m(), 70787, [v({ review_status: 'ausente' })])).toMatchObject({ sinal: 'vermelho', texto: 'Meta: ausente neste número' });
     expect(estadoModelo(m(), 70787, [v({ kommo_bot_id: null })]).texto).toBe('sem bot neste número');
     expect(estadoModelo(m(), 70787, [v({ erro: 'bot 1 está desativado no Kommo' })]).texto).toBe('bot 1 está desativado no Kommo');
+    expect(estadoModelo(m(), 70787, [v({ bot_verificado_em: null })]).texto).toBe('bot 81797 a confirmar neste número');
   });
   it('sem vínculo no canal ativo: legado = amarelo; sem bot legado = vermelho', () => {
     expect(estadoModelo(m(), 70787, [v({ source_id: 1 })]).sinal).toBe('amarelo');

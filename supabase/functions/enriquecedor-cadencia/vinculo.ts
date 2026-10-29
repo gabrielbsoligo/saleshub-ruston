@@ -6,7 +6,8 @@
 //
 // Regras:
 // - Há canal ativo e o modelo tem vínculo nele → o vínculo manda. Modelo não aprovado
-//   NAQUELE canal, sem bot, ou bot com erro no último sync, NÃO dispara (nada de cair no legado: a configuração
+//   NAQUELE canal, sem bot, bot com erro no último sync ou bot ainda não confirmado
+//   por uma pessoa (vínculo copiado na troca de número), NÃO dispara (nada de cair no legado: a configuração
 //   explícita ganha — é o que pega o "aprovado" falso de canal apagado).
 // - Sem canal ativo, ou modelo sem vínculo no canal ativo → legado (colunas antigas
 //   review_status + kommo_bots_por_responsavel/kommo_bot_id), até o painel ser validado.
@@ -29,6 +30,8 @@ export type Vinculo = {
   review_status?: string | null
   /** problema do bot achado no último sync (sumiu/desativado) */
   erro?: string | null
+  /** quando uma pessoa confirmou que o bot manda este modelo neste canal; null = a confirmar */
+  bot_verificado_em?: string | null
 }
 
 export type Escolha = {
@@ -67,6 +70,7 @@ export function escolherBot(
     }
     if (!botId) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id} sem bot vinculado no canal ${canalAtivo}` }
     if (v.erro) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id} no canal ${canalAtivo}: ${v.erro}` }
+    if (!v.bot_verificado_em) return { ...base, motivo: `modelo ${tpl.nome ?? tpl.id}: bot ${botId} ainda não confirmado no canal ${canalAtivo}` }
     return { ...base, motivo: null }
   }
   const botId = botDoResponsavel(tpl, uid)

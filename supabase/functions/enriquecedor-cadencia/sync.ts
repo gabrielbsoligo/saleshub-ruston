@@ -98,3 +98,35 @@ export function semVinculo(modelos: ModeloHub[], remotos: ModeloRemoto[], source
     return { nome: m.nome, kommo_template_id: melhor?.id ?? null, review: melhor?.status ?? 'ausente' }
   })
 }
+
+export type LinhaTroca = { template_id: string; nome: string; kommo_bot_id: number | null; kommo_template_id: string | null; review_status: string; ja_vinculado: boolean }
+
+/**
+ * Troca de número: para cada vínculo do canal de ORIGEM, o que ficaria no DESTINO —
+ * o mesmo bot (na troca os bots são editados pro número novo, mantendo o id) e a cópia
+ * de mesmo nome no destino (só se aprovada; senão fica sem modelo e 'ausente'/status).
+ * Tudo entra A CONFIRMAR (bot_verificado_em nulo): ninguém dispara até uma pessoa
+ * conferir cada bot. Vínculo que já existe no destino não é tocado.
+ */
+export function planoTroca(
+  modelos: ModeloHub[],
+  remotos: ModeloRemoto[],
+  origem: VinculoAtual[],
+  destinoId: number,
+  destinoAtuais: VinculoAtual[],
+): LinhaTroca[] {
+  const modeloPor = new Map(modelos.map((m) => [m.id, m]))
+  const jaNoDestino = new Set(destinoAtuais.map((v) => v.template_id))
+  return origem.filter((v) => modeloPor.has(v.template_id)).map((v) => {
+    const m = modeloPor.get(v.template_id)!
+    const melhor = melhorNoCanal(remotos, m.nome, destinoId)
+    return {
+      template_id: v.template_id,
+      nome: m.nome,
+      kommo_bot_id: v.kommo_bot_id ? Number(v.kommo_bot_id) : null,
+      kommo_template_id: melhor?.status === 'aprovado' ? melhor.id : null,
+      review_status: melhor?.status ?? 'ausente',
+      ja_vinculado: jaNoDestino.has(v.template_id),
+    }
+  })
+}

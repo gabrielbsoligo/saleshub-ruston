@@ -17,6 +17,8 @@
 //   {acao:'status'}                   resumo da fila/envios
 //   Painel "Modelos & Canal" (JWT da sessão do SalesHub; ler = membro ativo,
 //   alterar = gestor): painel | sync-vinculos | vincular | desvincular | canal | modelo | importar-modelo
+//   | preparar-troca {de, para, aplicar?} (copia os vínculos pro número novo, A CONFIRMAR)
+//   O cron chama sync-vinculos 1x/dia (?s=) — migration_180.
 //   ?acao=webhook&s=<secret>          retorno dos Salesbots (quick reply / texto livre)
 //
 // Secrets: ENRIQ_KOMMO_SECRET, KOMMO_API_TOKEN, ENRIQ_INTEG_EMAIL, ENRIQ_INTEG_SENHA.
@@ -24,7 +26,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { escolherBot } from './vinculo.ts'
-import { conferirVinculos, semVinculo } from './sync.ts'
+import { conferirVinculos, planoTroca, semVinculo } from './sync.ts'
 import { importarCorpo, volume24h } from './importar.ts'
 
 const cors = {
@@ -425,7 +427,7 @@ async function contextoDisparo() {
   let vinculos: any[] = []
   if (canalAtivo != null) {
     const { data, error } = await db.from('enriquecedor_cadencia_vinculos')
-      .select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', canalAtivo)
+      .select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro, bot_verificado_em').eq('source_id', canalAtivo)
     if (error) throw new Error(`leitura dos vínculos falhou: ${error.message}`)
     vinculos = data ?? []
   }
@@ -1006,6 +1008,41 @@ async function acaoImportarModelo(b: Record<string, any>) {
   return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null, modelo: imp.modelo, kommo_template_id: String(r.id) })
 }
 
+// Troca de número: copia os vínculos do canal `de` pro `para` com o MESMO bot (na troca os
+// bots são editados pro número novo e mantêm o id) e a cópia de mesmo nome aprovada no
+// destino. Tudo entra a confirmar (bot_verificado_em nulo) — nada sai até uma pessoa
+// conferir cada bot no painel. Sem `aplicar`, só devolve o plano.
+async function acaoPrepararTroca(b: Record<string, any>) {
+  const de = Number(b.de), para = Number(b.para)
+  if (!de || !para || de === para) return json(400, { error: 'informe dois canais diferentes (de, para)' })
+  const db = sb()
+  const { data: canais, error: errC } = await db.from('enriquecedor_cadencia_canais').select('source_id').in('source_id', [de, para])
+  if (errC) return json(500, { error: errC.message })
+  if ((canais ?? []).length !== 2) return json(404, { error: 'os dois canais precisam estar cadastrados' })
+  const remotos = await listarPaginado('/api/v4/chats/templates?with=reviews', 'chat_templates')
+  if (!remotos) return json(502, { error: 'falha ao ler os modelos no Kommo' })
+  const [modelos, origem, destino] = await Promise.all([
+    db.from('enriquecedor_cadencia_templates').select('id, nome').eq('canal', 'whatsapp'),
+    db.from('enriquecedor_cadencia_vinculos').select('template_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', de),
+    db.from('enriquecedor_cadencia_vinculos').select('template_id').eq('source_id', para),
+  ])
+  const erro = modelos.error ?? origem.error ?? destino.error
+  if (erro) return json(500, { error: erro.message })
+  const plano = planoTroca(modelos.data ?? [], remotos, origem.data ?? [], para, destino.data ?? [])
+  if (b.aplicar === true) {
+    const agora = new Date().toISOString()
+    const novos = plano.filter((l) => !l.ja_vinculado).map((l) => ({
+      template_id: l.template_id, source_id: para, kommo_template_id: l.kommo_template_id, kommo_bot_id: l.kommo_bot_id,
+      review_status: l.review_status, verificado_em: agora, bot_verificado_em: null, updated_at: agora,
+    }))
+    if (novos.length) {
+      const { error: e } = await db.from('enriquecedor_cadencia_vinculos').upsert(novos, { onConflict: 'template_id,source_id', ignoreDuplicates: true })
+      if (e) return json(500, { error: e.message })
+    }
+  }
+  return json(200, { ok: true, aplicado: b.aplicar === true, plano })
+}
+
 const ACOES_PAINEL: Record<string, { gestor: boolean; fn: (b: Record<string, any>) => Promise<Response> }> = {
   'painel': { gestor: false, fn: () => acaoPainel() },
   'sync-vinculos': { gestor: true, fn: (b) => acaoSyncVinculos(b) },
@@ -1014,6 +1051,7 @@ const ACOES_PAINEL: Record<string, { gestor: boolean; fn: (b: Record<string, any
   'canal': { gestor: true, fn: (b) => acaoCanal(b) },
   'modelo': { gestor: true, fn: (b) => acaoModelo(b) },
   'importar-modelo': { gestor: true, fn: (b) => acaoImportarModelo(b) },
+  'preparar-troca': { gestor: true, fn: (b) => acaoPrepararTroca(b) },
 }
 
 // ── servidor ─────────────────────────────────────────────────────────────────
@@ -1053,10 +1091,10 @@ Deno.serve(async (req) => {
   }
   // O cron do Postgres chama disparar/coletar-respostas com o segredo do webhook
   // no ?s= (Vault enriq_webhook_secret) — sem expor o segredo do widget/ops.
-  const viaCron = viaQuery && (acao === 'disparar' || acao === 'coletar-respostas' || acao === 'status')
+  const viaCron = viaQuery && (acao === 'disparar' || acao === 'coletar-respostas' || acao === 'status' || acao === 'sync-vinculos')
   // Painel: sem segredo, pela sessão do SalesHub (o segredo continua valendo pra ops).
   const painel = ACOES_PAINEL[acao]
-  if (painel && !viaHeader) {
+  if (painel && !viaHeader && !viaCron) {
     const membro = await membroDoJwt(req)
     if (!membro) return json(401, { error: 'faça login no SalesHub' })
     if (painel.gestor && !membro.gestor) return json(403, { error: 'só gestor altera modelos e canais' })
