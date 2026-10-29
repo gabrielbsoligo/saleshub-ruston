@@ -8,7 +8,9 @@
 //   {acao:'setup', etapas?:['campos','funil','templates'], apenas?:nomeTemplate, dry_run?}
 //       cria campos custom, funil e templates WABA no Kommo (idempotente)
 //   {acao:'submeter', apenas?}        envia os templates criados pra revisão da Meta
-//   {acao:'sync-review'}              atualiza review_status a partir do Kommo
+//   {acao:'sync-review'}              atualiza review_status a partir do Kommo (legado)
+//   {acao:'sync-vinculos', source_id?, dry_run?}
+//       resolve modelo×canal pelo nome (status da Meta POR canal) e confere os bots
 //   {acao:'vincular-bot', template, bot_id, source_id?|responsavel_kommo_id?}
 //       liga um Salesbot da UI a um template; com source_id grava o vínculo do canal
 //   {acao:'disparar', dry_run?, limite?}     um ciclo do carteiro (P1 + P2 48h + P3 96h)
@@ -20,6 +22,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { escolherBot } from './vinculo.ts'
+import { resolverVinculos } from './sync.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -285,6 +288,62 @@ async function acaoSyncReview() {
   return json(200, { ok: true, templates: resultados })
 }
 
+// ── sync-vinculos: modelo × canal a partir do Kommo ─────────────────────────
+// Só ATUALIZA vínculos existentes (id do modelo, status da Meta no canal, bot
+// existe/ativo) — inclusive para 'ausente'. Nunca cria nem troca bot: o mesmo nome
+// no canal não garante que o bot manda aquele modelo (ex.: bots do P1 mandando a
+// cópia _sem_sdr). Modelo achado no canal sem vínculo sai em "sem_vinculo"
+// (candidato a vincular pelo painel) e segue no legado.
+async function listarPaginado(path: string, chave: string) {
+  const out: any[] = []
+  for (let page = 1; page <= 5; page++) {
+    const r = await kommo('GET', `${path}${path.includes('?') ? '&' : '?'}limit=250&page=${page}`)
+    if (r.status === 204) break
+    if (!r.ok) return null
+    const items = r.body?._embedded?.[chave] ?? []
+    out.push(...items)
+    if (items.length < 250) break
+  }
+  return out
+}
+
+async function acaoSyncVinculos(b: Record<string, any>) {
+  const db = sb()
+  const dryRun = b.dry_run === true
+  const { data: canais } = await db.from('enriquecedor_cadencia_canais').select('source_id, nome, ativo')
+  const alvo = (canais ?? []).filter((c) => !b.source_id || Number(c.source_id) === Number(b.source_id))
+  if (!alvo.length) return json(422, { error: b.source_id ? `canal ${b.source_id} não cadastrado` : 'nenhum canal cadastrado' })
+  const remotos = await listarPaginado('/api/v4/chats/templates?with=reviews', 'chat_templates')
+  if (!remotos) return json(502, { error: 'falha ao ler os modelos no Kommo' })
+  const bots = await listarPaginado('/api/v4/bots', 'items') // null = não deu pra conferir os bots
+  const { data: modelos } = await db.from('enriquecedor_cadencia_templates').select('id, nome').eq('canal', 'whatsapp')
+  const agora = new Date().toISOString()
+  const saida: any[] = []
+  for (const c of alvo) {
+    const sourceId = Number(c.source_id)
+    const { data: atuais } = await db.from('enriquecedor_cadencia_vinculos')
+      .select('template_id, kommo_template_id, kommo_bot_id, review_status').eq('source_id', sourceId)
+    const temVinculo = new Set((atuais ?? []).map((v) => v.template_id))
+    const res = resolverVinculos(modelos ?? [], remotos, sourceId, atuais ?? [], bots)
+    const gravar = res.filter((r) => temVinculo.has(r.template_id))
+    if (!dryRun && gravar.length) {
+      const { error } = await db.from('enriquecedor_cadencia_vinculos').upsert(gravar.map((r) => ({
+        template_id: r.template_id, source_id: sourceId, kommo_template_id: r.kommo_template_id,
+        review_status: r.review_status, erro: r.erro, verificado_em: agora, updated_at: agora,
+      })), { onConflict: 'template_id,source_id' })
+      if (error) return json(500, { error: error.message, canal: sourceId })
+      await db.from('enriquecedor_cadencia_canais').update({ verificado_em: agora, updated_at: agora }).eq('source_id', sourceId)
+    }
+    saida.push({
+      canal: sourceId, nome: c.nome, ativo: c.ativo,
+      vinculos: gravar.map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status, erro: r.erro, mudou: r.mudou })),
+      sem_vinculo: res.filter((r) => !temVinculo.has(r.template_id))
+        .map((r) => ({ nome: r.nome, kommo_template_id: r.kommo_template_id, review: r.review_status })),
+    })
+  }
+  return json(200, { ok: true, dry_run: dryRun, bots_conferidos: bots != null, canais: saida })
+}
+
 async function acaoVincularBot(b: Record<string, any>) {
   if (!b.template || !b.bot_id) return json(400, { error: 'template e bot_id obrigatórios' })
   // Com source_id: bot do modelo NAQUELE canal (vínculo da migration_177). Não mexe
@@ -359,7 +418,7 @@ async function contextoDisparo() {
   const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('ativo', true).maybeSingle()
   const canalAtivo = canal?.source_id != null ? Number(canal.source_id) : null
   const { data: vinculos } = canalAtivo != null
-    ? await db.from('enriquecedor_cadencia_vinculos').select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status').eq('source_id', canalAtivo)
+    ? await db.from('enriquecedor_cadencia_vinculos').select('template_id, source_id, kommo_template_id, kommo_bot_id, review_status, erro').eq('source_id', canalAtivo)
     : { data: [] }
   return { db, tplPorNome, campos, funil, token, cacheUsers, canalAtivo, vinculos: vinculos ?? [] }
 }
@@ -857,6 +916,7 @@ Deno.serve(async (req) => {
     if (acao === 'setup') return await acaoSetup(body)
     if (acao === 'submeter') return await acaoSubmeter(body)
     if (acao === 'sync-review') return await acaoSyncReview()
+    if (acao === 'sync-vinculos') return await acaoSyncVinculos(body)
     if (acao === 'vincular-bot') return await acaoVincularBot(body)
     if (acao === 'disparar') {
       // colhe respostas pendentes ANTES de decidir P2/P3 (gating "sem resposta")
@@ -865,7 +925,7 @@ Deno.serve(async (req) => {
     }
     if (acao === 'coletar-respostas') return await acaoColetarRespostas()
     if (acao === 'status') return await acaoStatus()
-    return json(400, { error: "acao deve ser setup|submeter|sync-review|vincular-bot|disparar|coletar-respostas|status|webhook" })
+    return json(400, { error: "acao deve ser setup|submeter|sync-review|sync-vinculos|vincular-bot|disparar|coletar-respostas|status|webhook" })
   } catch (e) {
     return json(500, { error: String((e as Error)?.message ?? e) })
   }

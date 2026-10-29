@@ -50,3 +50,8 @@ Deno.test('legado preserva os motivos antigos', () => {
 Deno.test('source_id vindo do banco como string casa com canal numérico', () => {
   assertEquals(escolherBot(tpl, LARY, NOVO, [vinc({ source_id: '70787', kommo_bot_id: '81791' })]).botId, 81791)
 })
+
+Deno.test('bot com erro no último sync (sumiu/desativado) bloqueia', () => {
+  const e = escolherBot(tpl, LARY, NOVO, [vinc({ erro: 'bot 81791 não existe mais no Kommo' })])
+  assertEquals(e.motivo, 'modelo sdna_p1_auditoria_v1 no canal 70787: bot 81791 não existe mais no Kommo')
+})
