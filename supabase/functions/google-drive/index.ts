@@ -12,7 +12,7 @@
 // estreita. Mais robusto que assumir "V4 Company + {empresa}".
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { ehChaveDeServico } from '../_shared/propostas/servico.ts'
+import { ehChaveDeServico as verificarServico } from '../_shared/propostas/servico.mjs'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
@@ -21,6 +21,9 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '
 
 const TRANSCRIPT_TIMEOUT_MS = 2 * 60 * 60 * 1000 // 2h até desistir
 const MIN_TRANSCRICAO_CHARS = 200 // abaixo disso: sem fala suficiente -> "sem transcrição válida"
+
+const ehChaveDeServico = (b: string) =>
+  verificarServico(b, { url: Deno.env.get('SUPABASE_URL') ?? '', chaveEnv: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '' })
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
