@@ -231,8 +231,12 @@ export const formatarData = (d) => `${String(d.dia).padStart(2, '0')}/${String(d
 const VALIDADE = /\b(valid[ao]s?|validade|vale|valem|valendo|condicao|condicoes)\b/;
 const VALIDADE_FRACA = /\b(prazo|garantid[ao]s?|garanto|garantimos|fechar|fecha|fechamento|assinar|assina|assinatura|segurar|seguro|seguramos)\b/;
 const ASSUNTO_PRECO = /\b(proposta|condicao|condicoes|valor|valores|preco|precos|desconto|investimento)\b/;
+// Data de entrega/início/reunião na mesma oração: só conta com "válido/validade" explícito.
+const ENTREGA = /\b(entrega|entregar|entregamos|comecar|comeca|comecamos|inicio|iniciar|kickoff|onboarding|reuniao|lancamento)\b/;
+const VALIDADE_EXPLICITA = /\b(valid[ao]s?|validade)\b/;
 export function falaDeValidade(oracaoNorm) {
   const t = oracaoNorm.replace(/\bvalem? a pena\b/g, ' ');
+  if (ENTREGA.test(t) && !VALIDADE_EXPLICITA.test(t)) return false;
   return VALIDADE.test(t) || (VALIDADE_FRACA.test(t) && ASSUNTO_PRECO.test(t));
 }
 const ORACAO = /[.!?;:,](?=\s)|\n/g;

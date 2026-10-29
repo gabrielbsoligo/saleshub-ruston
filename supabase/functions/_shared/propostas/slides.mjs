@@ -192,7 +192,10 @@ export function secoesEscopo(escopo) {
       else { paginas.push(pagina); pagina = [item]; }
     }
     if (pagina.length) paginas.push(pagina);
-    return paginas.map((p, i) => ({ ...s, titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, itens: p }));
+    // tituloBase/sufixo: no slide o corte do título é feito no base, e o " (cont.)" vem depois
+    return paginas.map((p, i) => ({
+      ...s, titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, tituloBase: s.titulo, sufixo: i === 0 ? '' : ' (cont.)', itens: p,
+    }));
   });
 }
 
@@ -203,7 +206,7 @@ const CARTAO = {
   caracteresPorLinha: 38,
   maxLinhas: 6,
   linhaH: 17 / 405,
-  folgaH: 12 / 405,
+  folgaH: 16 / 405,
   minH: 36 / 405,
   maxH: 0.12,
   topo: 0.35,
@@ -252,14 +255,17 @@ const cabemNoSlide = (itens) => {
 };
 
 // Título em uma linha: Anton em caixa alta usa ~0,48 em por caractere. Longo → fonte menor
-// (até 18pt); ainda maior → cortado com "…".
-export function tituloAjustado(titulo, larguraPt) {
-  const t = String(titulo).toUpperCase();
+// (até 18pt); ainda maior → o título-base é cortado com "…" e o sufixo (" (CONT.)") vem
+// depois do corte, para os slides de continuação não perderem a marca.
+export function tituloAjustado(titulo, larguraPt, sufixo = '') {
+  const base = String(titulo).toUpperCase();
+  const fim = String(sufixo).toUpperCase();
+  const t = `${base}${fim}`;
   const cabe = (tam) => Math.floor(larguraPt / (0.48 * tam));
   for (let tam = ESTILO.tamanhoTitulo; tam >= 18; tam -= 2) {
     if (t.length <= cabe(tam)) return { texto: t, tamanho: tam };
   }
-  return { texto: `${t.slice(0, cabe(18) - 1).trimEnd()}…`, tamanho: 18 };
+  return { texto: `${base.slice(0, Math.max(1, cabe(18) - 1 - fim.length)).trimEnd()}…${fim}`, tamanho: 18 };
 }
 
 export function textoDoSlide(slide) {
@@ -352,7 +358,7 @@ export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoP
   secoes.forEach((s, k) => {
     const sid = `${prefixo}_s${k}`;
     const rotuloCor = s.tipo === 'bonus' ? ESTILO.amarelo : ESTILO.vermelhoClaro;
-    const titulo = tituloAjustado(s.titulo, (W - 2 * m) / 12700);
+    const titulo = tituloAjustado(s.tituloBase ?? s.titulo, (W - 2 * m) / 12700, s.tituloBase != null ? s.sufixo : '');
     reqs.push(
       { createSlide: { objectId: sid, insertionIndex: indice + k, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
       {

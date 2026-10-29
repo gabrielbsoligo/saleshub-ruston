@@ -487,3 +487,17 @@ test('texto e objectIds dentro de grupos (elementGroup) são lidos', () => {
   assert.ok(textoDoSlide(d.slides[0]).includes('R$ 5.809,76'));
   for (const id of ['sx', 'grp1', 'filho1', 'grp2', 'neto1']) assert.ok(idsExistentes(d).has(id), id);
 });
+
+test('Vedor (visual) obs. 1: título longo cortado mantém " (CONT.)" e os slides não ficam iguais', () => {
+  const e = exemplo();
+  e.escopo.semanas[0].titulo = `Semana 1 — ${'Descoberta e pesquisa de mercado '.repeat(4).trim()}`;
+  e.escopo.semanas[0].itens = Array.from({ length: 12 }, (_, i) => ({ texto: `Item ${i}`, origem: 'closer' }));
+  const secoes = secoesEscopo(e).filter((s) => s.tituloBase === e.escopo.semanas[0].titulo);
+  assert.equal(secoes.length, 2);
+  const reqs = requestsSlidesEscopo(secoes, { indice: 0, pageSize: PAGINA_16x9, prefixo: 'gpcnt' });
+  const titulos = [0, 1].map((k) => reqs.find((r) => r.insertText?.objectId === `gpcnt_s${k}_t`).insertText.text);
+  assert.ok(titulos[0].endsWith('…'));
+  assert.ok(titulos[1].endsWith('… (CONT.)'), titulos[1]);
+  assert.notEqual(titulos[0], titulos[1]);
+  assert.ok(titulos[1].length <= Math.floor(((PAGINA_16x9.width.magnitude * 0.89) / 12700) / (0.48 * 18)));
+});

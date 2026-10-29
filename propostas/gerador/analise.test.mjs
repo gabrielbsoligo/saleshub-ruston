@@ -376,3 +376,16 @@ test('datas: fração e "n/n do" não são datas; "5/11" sem ano e "1/2/2027" s�
   assert.deepEqual(datasNoTexto('vale até 5/11').map(formatarData), ['05/11']);
   assert.deepEqual(datasNoTexto('vale até 1/2/2027').map(formatarData), ['01/02/2027']);
 });
+
+test('Vedor (validade) obs. 2: entrega/início na mesma oração sem "válido" explícito → null', () => {
+  for (const [v, ev] of [
+    ['05/11', 'a estruturação vale 29.750 e a gente entrega até 05/11'],
+    ['05/11', 'a condição é começar dia 05/11'],
+    ['10/11', 'o prazo de entrega do valor da landing é 10/11'],
+  ]) {
+    const e = val(v, ev, `Closer: ${ev}.`);
+    assert.equal(e.preco.validade, null, ev);
+  }
+  assert.equal(val('05/11/2026', 'condição vale até 05/11/2026', 'Closer: essa condição vale até 05/11/2026.').preco.validade, '05/11/2026');
+  assert.equal(val('07/11', 'válida até 7 de novembro', 'Closer: a proposta fica válida até 7 de novembro.').preco.validade, '07/11');
+});
