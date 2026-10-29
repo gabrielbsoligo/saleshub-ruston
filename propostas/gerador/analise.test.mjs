@@ -312,3 +312,29 @@ test('Vedor F3 R5 #1: negação/exclusão no trecho nunca dá "com social"', asy
   assert.deepEqual(pac('A execução não inclui social: 6 mil por mês.'), ['sem']);
   assert.deepEqual(pac('A execução sai 5 mil por mês.'), ['neutro']);
 });
+
+const fonteVal = `Closer: A estruturação fica R$ 29.750,00 em 12 vezes.
+Closer: Essa condição vale até 05/11/2026, depois volta para a tabela.
+Lead: Posso te dar retorno na sexta? Closer: Pode, a proposta fica válida até 7 de novembro.`;
+const val = (validade, evid, t = fonteVal) => normalizarEscopo({ ...bruto(), preco: { estruturacao: {}, execucao_mensal: {}, validade, evidencias: { validade: evid } } },
+  { catalogo, empresa: 'X', transcricao: t });
+
+test('validade: data lida na fonte, com evidência de validade', () => {
+  assert.equal(val('05/11/2026', 'Essa condição vale até 05/11/2026').preco.validade, '05/11/2026');
+  assert.equal(val('07/11', 'a proposta fica válida até 7 de novembro').preco.validade, '07/11');
+});
+
+test('validade: data errada, cortada, sem mês ou sem falar de validade → null + pendência', () => {
+  for (const [v, ev, t] of [
+    ['06/11/2026', 'Essa condição vale até 05/11/2026'],      // data diferente
+    ['05/11/2026', 'Essa condição vale até 05/1'],            // cortada (a fonte diz 05/11)
+    ['05/11', 'Posso te dar retorno na sexta'],               // sem data na fonte
+    ['29/11', 'A estruturação fica R$ 29.750,00 em 12 vezes'], // número que não é data
+  ]) {
+    const e = val(v, ev, t);
+    assert.equal(e.preco.validade, null, `${v} | ${ev}`);
+    assert.ok(e.pendencias.some((p) => p.startsWith('validade da proposta')), `${v} | ${ev}`);
+  }
+  const semPalavra = val('05/11/2026', 'o evento é dia 05/11/2026', 'Closer: o evento é dia 05/11/2026.');
+  assert.equal(semPalavra.preco.validade, null);
+});

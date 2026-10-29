@@ -56,6 +56,30 @@ test('montarValores calcula parcela e marca pendências visíveis', () => {
   assert.equal(valores.preco_execucao, 'R$ 5.000');
   assert.match(valores.preco_execucao_com_social, /^\[PREENCHER: /);
   assert.deepEqual(pendencias, ['preço da execução com social media']);
+  assert.equal(valores.condicao_preco, 'Condição exclusiva junto com a execução · Válido até 05/11/2026');
+});
+
+test('validade: ausente vira [PREENCHER] + pendência; sem condição fica só a validade', () => {
+  const e = exemplo(); e.preco.validade = null; e.preco.estruturacao.condicao = null;
+  const { valores, pendencias } = montarValores(e);
+  assert.equal(valores.condicao_preco, 'Válido até [PREENCHER: validade da proposta]');
+  assert.ok(pendencias.includes('validade da proposta'));
+  const e2 = exemplo(); e2.preco.estruturacao.condicao = null;
+  assert.equal(montarValores(e2).valores.condicao_preco, 'Válido até 05/11/2026');
+});
+
+test('visual: rótulo, título Anton, linha, cartões numerados por item e rodapé com o cliente', () => {
+  const secoes = secoesEscopo(exemplo());
+  const reqs = requestsSlidesEscopo(secoes, { indice: 0, pageSize: deckOriginal().pageSize, prefixo: 'gpvis', cliente: 'Empresa X' });
+  const cartoes = reqs.filter((r) => r.createShape?.shapeType === 'ROUND_RECTANGLE').length;
+  assert.equal(cartoes, secoes.reduce((n, s) => n + s.itens.length, 0));
+  const fontes = new Set(reqs.filter((r) => r.updateTextStyle).map((r) => r.updateTextStyle.style.fontFamily));
+  assert.deepEqual([...fontes].sort(), ['Anton', 'IBM Plex Sans']);
+  assert.ok(reqs.some((r) => r.insertText?.text === 'V4 COMPANY  ·  EMPRESA X'));
+  assert.ok(reqs.some((r) => r.insertText?.text === 'BÔNUS PARA VOCÊ'));
+  assert.ok(reqs.some((r) => r.insertText?.text?.startsWith('01   ')));
+  // número do cartão em destaque (faixa fixa só sobre "01")
+  assert.ok(reqs.some((r) => r.updateTextStyle?.textRange?.type === 'FIXED_RANGE' && r.updateTextStyle.textRange.endIndex === 2));
 });
 
 test('sem preço na transcrição: nada inventado, tudo vira pendência', () => {

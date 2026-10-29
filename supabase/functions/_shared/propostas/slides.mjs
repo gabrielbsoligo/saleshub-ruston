@@ -34,14 +34,24 @@ export const MARCADORES_SLIDES_PRECO = [MARCADOR_SLIDE_PRECO, 'Produtos da Propo
 // Placeholders que um template preparado tem de ter (saem de LITERAIS_DECK).
 export const PLACEHOLDERS_TEMPLATE = [...new Set(LITERAIS_DECK.flatMap(([, para]) => para.match(/\{\{\w+\}\}/g)))];
 
-// Visual dos slides de escopo (a validar contra o deck oficial)
+// Visual dos slides de escopo, inspirado nas páginas V4 (ee-2026, sales-deck 2025,
+// executar/profissionais): fundo vinho #280000, vermelho #E50914/#FB2E0A,
+// amarelo #FFD60A, títulos Anton (no lugar da Morganite), texto IBM Plex Sans.
+const hex = (h) => ({ red: parseInt(h.slice(1, 3), 16) / 255, green: parseInt(h.slice(3, 5), 16) / 255, blue: parseInt(h.slice(5, 7), 16) / 255 });
 export const ESTILO = {
-  fundo: { red: 0.05, green: 0.05, blue: 0.05 },
-  titulo: { red: 0.89, green: 0.02, blue: 0.07 },
-  texto: { red: 1, green: 1, blue: 1 },
-  fonte: 'Montserrat',
-  tamanhoTitulo: 28,
-  tamanhoTexto: 16,
+  fundo: hex('#280000'),
+  cartao: hex('#3D0A05'),
+  vermelho: hex('#E50914'),
+  vermelhoClaro: hex('#FB2E0A'),
+  amarelo: hex('#FFD60A'),
+  branco: hex('#FFFFFF'),
+  cinza: hex('#B8A6A3'),
+  fonteTitulo: 'Anton',
+  fonteTexto: 'IBM Plex Sans',
+  tamanhoRotulo: 11,
+  tamanhoTitulo: 30,
+  tamanhoTexto: 13,
+  tamanhoRodape: 9,
   itensPorSlide: 8,
 };
 
@@ -81,7 +91,9 @@ export function montarValores(escopo) {
     preco_estruturacao_curto: total != null ? formatarCurto(total) : PREENCHER('preço'),
     parcelas: parcelas ? String(parcelas) : faltou('número de parcelas'),
     valor_parcela: parcela != null ? num2.format(parcela) : faltou('valor da parcela'),
-    condicao_preco: est.condicao || '',
+    // Deck: "Condição exclusiva junto com a execução, Val. até 24/08" → condição (se houver)
+    // + validade combinada na reunião (o 24/08 do deck não vale).
+    condicao_preco: [est.condicao, `Válido até ${escopo.preco?.validade || faltou('validade da proposta')}`].filter(Boolean).join(' · '),
     faixa_midia: escopo.plano_execucao?.faixa_midia || faltou('faixa de mídia'),
     preco_execucao: exe.valor != null ? formatarBRL(exe.valor) : faltou('preço da execução mensal'),
     preco_execucao_com_social: exe.valor_com_social != null ? formatarBRL(exe.valor_com_social) : faltou('preço da execução com social media'),
@@ -142,18 +154,18 @@ export function idsExistentes(apresentacao) {
   return ids;
 }
 
-// Seções de texto que viram slides: uma por semana, overdeliveries e plano de execução.
+// Seções de texto que viram slides: dores, uma por semana, overdeliveries e plano de execução.
 export function secoesEscopo(escopo) {
   const secoes = [];
   const dores = escopo.contexto?.dores || [];
-  if (dores.length) secoes.push({ titulo: `O que ouvimos da ${escopo.cliente.empresa}`, itens: dores.map((d) => d.texto) });
+  if (dores.length) secoes.push({ rotulo: 'Diagnóstico', titulo: `O que ouvimos da ${escopo.cliente.empresa}`, itens: dores.map((d) => d.texto) });
   for (const s of escopo.escopo.semanas) {
-    if (s.itens.length) secoes.push({ titulo: s.titulo, itens: s.itens.map((i) => i.texto) });
+    if (s.itens.length) secoes.push({ rotulo: 'Estruturação Estratégica', titulo: s.titulo, itens: s.itens.map((i) => i.texto) });
   }
   const od = escopo.escopo.overdeliveries || [];
-  if (od.length) secoes.push({ titulo: 'Overdeliveries', itens: od.map((i) => i.texto) });
+  if (od.length) secoes.push({ rotulo: 'Bônus para você', tipo: 'bonus', titulo: 'Overdeliveries', itens: od.map((i) => i.texto) });
   const pe = escopo.plano_execucao;
-  if (pe?.incluido && pe.itens?.length) secoes.push({ titulo: 'Plano de execução', itens: pe.itens.map((i) => i.texto) });
+  if (pe?.incluido && pe.itens?.length) secoes.push({ rotulo: 'Executar', titulo: 'Plano de execução', itens: pe.itens.map((i) => i.texto) });
 
   // Quebra listas longas em slides "(cont.)"
   const n = ESTILO.itensPorSlide;
@@ -161,7 +173,7 @@ export function secoesEscopo(escopo) {
     if (s.itens.length <= n) return [s];
     const partes = [];
     for (let i = 0; i < s.itens.length; i += n) {
-      partes.push({ titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, itens: s.itens.slice(i, i + n) });
+      partes.push({ ...s, titulo: i === 0 ? s.titulo : `${s.titulo} (cont.)`, itens: s.itens.slice(i, i + n) });
     }
     return partes;
   });
@@ -188,12 +200,13 @@ export function acharIndicePreco(apresentacao) {
 }
 
 const emu = (n) => ({ magnitude: n, unit: 'EMU' });
+const cor = (rgb) => ({ opaqueColor: { rgbColor: rgb } });
 
-function caixa(objectId, pageObjectId, x, y, w, h) {
+function forma(objectId, pageObjectId, tipo, x, y, w, h) {
   return {
     createShape: {
       objectId,
-      shapeType: 'TEXT_BOX',
+      shapeType: tipo,
       elementProperties: {
         pageObjectId,
         size: { width: emu(w), height: emu(h) },
@@ -203,18 +216,32 @@ function caixa(objectId, pageObjectId, x, y, w, h) {
   };
 }
 
-function estiloTexto(objectId, cor, tamanho, negrito) {
+function estiloTexto(objectId, { rgb, fonte, tamanho, negrito = false, faixa = { type: 'ALL' } }) {
   return {
     updateTextStyle: {
       objectId,
-      textRange: { type: 'ALL' },
+      textRange: faixa,
       style: {
-        foregroundColor: { opaqueColor: { rgbColor: cor } },
-        fontFamily: ESTILO.fonte,
+        foregroundColor: cor(rgb),
+        fontFamily: fonte,
         fontSize: { magnitude: tamanho, unit: 'PT' },
         bold: negrito,
       },
       fields: 'foregroundColor,fontFamily,fontSize,bold',
+    },
+  };
+}
+
+function preenchimento(objectId, rgb) {
+  return {
+    updateShapeProperties: {
+      objectId,
+      shapeProperties: {
+        shapeBackgroundFill: { solidFill: { color: { rgbColor: rgb } } },
+        outline: { propertyState: 'NOT_RENDERED' },
+        contentAlignment: 'MIDDLE',
+      },
+      fields: 'shapeBackgroundFill.solidFill.color,outline.propertyState,contentAlignment',
     },
   };
 }
@@ -224,32 +251,67 @@ export function novoPrefixo() {
   return `gp${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// pageSize vem de presentations.get (o deck pode não ser 16:9 padrão).
-export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoPrefixo() }) {
+const doisDigitos = (n) => String(n).padStart(2, '0');
+
+// Slide de escopo no visual das páginas V4 (EE 2026): fundo vinho, rótulo
+// vermelho, título Anton em caixa alta, linha de destaque, itens em cartões
+// numerados (2 colunas) e rodapé. pageSize vem de presentations.get.
+export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoPrefixo(), cliente = '' }) {
   const W = pageSize?.width?.magnitude ?? 9144000;
   const H = pageSize?.height?.magnitude ?? 5143500;
-  const m = Math.round(W * 0.06);
+  const m = Math.round(W * 0.055);
   const reqs = [];
   secoes.forEach((s, k) => {
-    const slideId = `${prefixo}_s${k}`;
-    const tId = `${slideId}_t`;
-    const bId = `${slideId}_b`;
+    const sid = `${prefixo}_s${k}`;
+    const rotuloCor = s.tipo === 'bonus' ? ESTILO.amarelo : ESTILO.vermelhoClaro;
     reqs.push(
-      { createSlide: { objectId: slideId, insertionIndex: indice + k, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
+      { createSlide: { objectId: sid, insertionIndex: indice + k, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
       {
         updatePageProperties: {
-          objectId: slideId,
+          objectId: sid,
           pageProperties: { pageBackgroundFill: { solidFill: { color: { rgbColor: ESTILO.fundo } } } },
           fields: 'pageBackgroundFill.solidFill.color',
         },
       },
-      caixa(tId, slideId, m, m, W - 2 * m, Math.round(H * 0.16)),
-      { insertText: { objectId: tId, text: s.titulo } },
-      estiloTexto(tId, ESTILO.titulo, ESTILO.tamanhoTitulo, true),
-      caixa(bId, slideId, m, Math.round(H * 0.26), W - 2 * m, Math.round(H * 0.66)),
-      { insertText: { objectId: bId, text: s.itens.join('\n') } },
-      estiloTexto(bId, ESTILO.texto, ESTILO.tamanhoTexto, false),
-      { createParagraphBullets: { objectId: bId, textRange: { type: 'ALL' }, bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE' } },
+      // rótulo
+      forma(`${sid}_r`, sid, 'TEXT_BOX', m, Math.round(H * 0.07), W - 2 * m, Math.round(H * 0.07)),
+      { insertText: { objectId: `${sid}_r`, text: s.rotulo.toUpperCase() } },
+      estiloTexto(`${sid}_r`, { rgb: rotuloCor, fonte: ESTILO.fonteTexto, tamanho: ESTILO.tamanhoRotulo, negrito: true }),
+      // título
+      forma(`${sid}_t`, sid, 'TEXT_BOX', m, Math.round(H * 0.13), W - 2 * m, Math.round(H * 0.15)),
+      { insertText: { objectId: `${sid}_t`, text: s.titulo.toUpperCase() } },
+      estiloTexto(`${sid}_t`, { rgb: ESTILO.branco, fonte: ESTILO.fonteTitulo, tamanho: ESTILO.tamanhoTitulo }),
+      // linha de destaque
+      forma(`${sid}_l`, sid, 'RECTANGLE', m, Math.round(H * 0.295), Math.round(W * 0.08), Math.round(H * 0.008)),
+      preenchimento(`${sid}_l`, ESTILO.vermelho),
+    );
+    // cartões numerados, 2 colunas
+    const porColuna = Math.ceil(s.itens.length / 2) || 1;
+    const topo = Math.round(H * 0.35);
+    const areaH = Math.round(H * 0.52);
+    const gap = Math.round(H * 0.022);
+    const cardH = Math.min(Math.round(H * 0.12), Math.round((areaH - gap * (porColuna - 1)) / porColuna));
+    const colW = Math.round((W - 2 * m - Math.round(W * 0.02)) / 2);
+    s.itens.forEach((texto, i) => {
+      const col = Math.floor(i / porColuna);
+      const lin = i % porColuna;
+      const cid = `${sid}_c${i}`;
+      const num = doisDigitos(i + 1);
+      const conteudo = `${num}   ${texto}`;
+      reqs.push(
+        forma(cid, sid, 'ROUND_RECTANGLE', m + col * (colW + Math.round(W * 0.02)), topo + lin * (cardH + gap), colW, cardH),
+        preenchimento(cid, ESTILO.cartao),
+        { insertText: { objectId: cid, text: conteudo } },
+        estiloTexto(cid, { rgb: ESTILO.branco, fonte: ESTILO.fonteTexto, tamanho: ESTILO.tamanhoTexto }),
+        estiloTexto(cid, { rgb: ESTILO.amarelo, fonte: ESTILO.fonteTexto, tamanho: ESTILO.tamanhoTexto, negrito: true,
+          faixa: { type: 'FIXED_RANGE', startIndex: 0, endIndex: num.length } }),
+      );
+    });
+    // rodapé
+    reqs.push(
+      forma(`${sid}_f`, sid, 'TEXT_BOX', m, Math.round(H * 0.91), W - 2 * m, Math.round(H * 0.06)),
+      { insertText: { objectId: `${sid}_f`, text: cliente ? `V4 COMPANY  ·  ${cliente.toUpperCase()}` : 'V4 COMPANY' } },
+      estiloTexto(`${sid}_f`, { rgb: ESTILO.cinza, fonte: ESTILO.fonteTexto, tamanho: ESTILO.tamanhoRodape, negrito: true }),
     );
   });
   return reqs;
@@ -284,6 +346,7 @@ export function validarEscopo(e) {
   valor(exe.valor_com_social, 'preco.execucao_mensal.valor_com_social');
   inteiro(exe.meses, 'preco.execucao_mensal.meses');
   texto(e?.plano_execucao?.faixa_midia, 'plano_execucao.faixa_midia');
+  texto(e?.preco?.validade, 'preco.validade');
 
   // Todo item que vira slide: texto obrigatório; da IA, só com citação da transcrição.
   const colecoes = [

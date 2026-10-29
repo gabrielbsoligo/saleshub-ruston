@@ -102,6 +102,7 @@
             "meses": { "type": ["integer", "null"], "minimum": 1 }
           }
         },
+        "validade": { "type": ["string", "null"], "description": "Data até quando a proposta vale, combinada na reunião (dd/mm ou dd/mm/aaaa). Null = [PREENCHER] + pendência." },
         "fonte": { "enum": ["transcricao", "closer"] },
         "citacoes": { "type": "array", "items": { "type": "string" } }
       }

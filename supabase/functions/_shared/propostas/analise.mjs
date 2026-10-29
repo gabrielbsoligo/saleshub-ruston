@@ -57,6 +57,7 @@ REGRAS (obrigatórias):
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
 5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
+5b. VALIDADE: a data até quando a proposta/condição vale, combinada na reunião ("validade" no formato dd/mm/aaaa ou dd/mm, com a evidência literal). Sem data falada: null.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
@@ -66,7 +67,7 @@ FORMATO:
  "contexto":{"dores":[{"texto":"","origem":"ia","citacao":""}]},
  "escopo":{"enfases":["id"],"semanas":[{"id":"s1","titulo":"Semana 1 — ...","itens":[{"catalogo_id":"id|null","texto":"","origem":"catalogo|ia","citacao":null}]}],"overdeliveries":[]},
  "plano_execucao":{"incluido":true,"faixa_midia":null,"itens":[]},
- "preco":{"estruturacao":{"valor_total":null,"parcelas":null,"valor_parcela":null,"condicao":null},"execucao_mensal":{"valor":null,"valor_com_social":null,"meses":null},"fonte":"transcricao","evidencias":{"valor_total":null,"parcelas":null,"valor_parcela":null,"execucao_valor":null,"execucao_com_social":null,"meses":null}},
+ "preco":{"estruturacao":{"valor_total":null,"parcelas":null,"valor_parcela":null,"condicao":null},"execucao_mensal":{"valor":null,"valor_com_social":null,"meses":null},"fonte":"transcricao","validade":null,"evidencias":{"valor_total":null,"parcelas":null,"valor_parcela":null,"execucao_valor":null,"execucao_com_social":null,"meses":null,"validade":null}},
  "pendencias":[]}
 
 CATÁLOGO (versão ${catalogo.versao}):
@@ -200,6 +201,27 @@ export function contemTermo(textoNorm, termo) {
   return new RegExp(`(^| )${escaparRe(termo)}( |$)`).test(textoNorm);
 }
 
+// (datas)
+
+// Datas com posição no texto original: "05/11", "5/11/2026", "5 de novembro",
+// "dia 5 de novembro de 2026". Dia sem mês ("dia 5", "sexta") não conta: ambíguo.
+const MESES = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const RE_DATA = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2}|\d{4}))?\b|\b(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[cç]o|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{4}))?\b/gi;
+export function datasNoTexto(texto) {
+  const t = String(texto || '');
+  const out = [];
+  for (const m of t.matchAll(RE_DATA)) {
+    let dia; let mes; let ano = null;
+    if (m[1]) { dia = Number(m[1]); mes = Number(m[2]); ano = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : null; }
+    else { dia = Number(m[4]); mes = MESES.indexOf(normalizarTexto(m[5])) + 1; ano = m[6] ? Number(m[6]) : null; }
+    if (dia < 1 || dia > 31 || mes < 1 || mes > 12) continue;
+    out.push({ dia, mes, ano, ini: m.index, fim: m.index + m[0].length });
+  }
+  return out;
+}
+export const formatarData = (d) => `${String(d.dia).padStart(2, '0')}/${String(d.mes).padStart(2, '0')}${d.ano ? `/${d.ano}` : ''}`;
+const VALIDADE = /(valid|vale|ate|prazo|condicao|fechar|fechamento|assinar|garant)/;
+
 export const formasParcelas = (p) => [`${p}x`, `${p} x`, `${p} vezes`, `${p} parcelas`];
 export const formasMeses = (m) => [`${m} meses`];
 
@@ -304,9 +326,27 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       valor_com_social: dinheiro('execucao_com_social', numero(exe.valor_com_social), 'social', 'preço da execução com social media'),
       meses: quantidade('meses', inteiro(exe.meses), formasMeses, 'meses da execução'),
     },
+    validade: null,
     fonte: 'transcricao',
     citacoes: [],
   };
+  // Validade (decisão do Gabriel, 29/10): a data combinada na reunião, com a SUA
+  // evidência; a data é lida na fonte (dia + mês explícitos) e o trecho precisa
+  // falar de validade/prazo. Sem isso: null → [PREENCHER] + pendência.
+  {
+    const v = textoOuNull(bruto?.preco?.validade);
+    if (v) {
+      const alvo = datasNoTexto(v)[0];
+      const e = evidenciaDe('validade');
+      const spans = e ? localizarCitacao(e, fonteMapa) : [];
+      const naFonte = datasNoTexto(transcricao).filter((d) => spans.some(([a, b]) => d.ini < b && d.fim > a));
+      const casa = alvo && e && VALIDADE.test(normalizarTexto(e))
+        ? naFonte.find((d) => d.dia === alvo.dia && d.mes === alvo.mes && (!alvo.ano || !d.ano || alvo.ano === d.ano))
+        : null;
+      if (casa) preco.validade = formatarData(casa);
+      else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
+    }
+  }
   // A mesma expressão da fonte sustentando dois campos = papel ambíguo → nenhum.
   const LUGAR = {
     valor_total: ['estruturacao', 'valor_total'], valor_parcela: ['estruturacao', 'valor_parcela'],
@@ -323,7 +363,7 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     preco[grupo][chave] = null;
     pendencias.push(`${a.rotulo}: valor ambíguo na transcrição — confira`);
   }
-  preco.citacoes = [...new Set(['valor_total', 'parcelas', 'valor_parcela', 'execucao_valor', 'execucao_com_social', 'meses']
+  preco.citacoes = [...new Set(['valor_total', 'parcelas', 'valor_parcela', 'execucao_valor', 'execucao_com_social', 'meses', 'validade']
     .map(evidenciaDe).filter(Boolean))];
 
   const pe = bruto?.plano_execucao || {};

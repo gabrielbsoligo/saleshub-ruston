@@ -37,7 +37,7 @@ export function planejar(escopo, apresentacao, { conferirTemplate = true, prefix
   const secoes = secoesEscopo(escopo);
   const { valores, pendencias } = montarValores(escopo);
   const requests = [
-    ...requestsSlidesEscopo(secoes, { indice, pageSize: apresentacao.pageSize, prefixo }),
+    ...requestsSlidesEscopo(secoes, { indice, pageSize: apresentacao.pageSize, prefixo, cliente: escopo.cliente.empresa }),
     ...requestsPreencher(valores),
   ];
   const novos = requests.flatMap((r) => [r.createSlide?.objectId, r.createShape?.objectId]).filter(Boolean);
