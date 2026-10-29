@@ -191,9 +191,15 @@ test('Vedor F3 R3 #2: com social exige trecho do pacote com social', () => {
 test('Vedor F3 R3 #2: citações sobrepostas sobre a MESMA expressão da fonte = ambíguo', () => {
   const e = normalizarEscopo(brutoR3({ estruturacao: {}, execucao_mensal: { valor: 7000, valor_com_social: 7000 },
     evidencias: { execucao_valor: 'Com social media a execução com social fica 7 mil por mês', execucao_com_social: 'a execução com social fica 7 mil' } }), ctxR3);
+  // o valor-base não pode vir da frase do pacote com social (R4); o com social fica
   assert.equal(e.preco.execucao_mensal.valor, null);
-  assert.equal(e.preco.execucao_mensal.valor_com_social, null);
-  assert.ok(e.pendencias.some((p) => p.includes('ambíguo')));
+  assert.equal(e.preco.execucao_mensal.valor_com_social, 7000);
+  // reutilização da mesma expressão da fonte por dois campos = ambíguo
+  const r = normalizarEscopo(brutoR3({ estruturacao: { valor_total: 29750, valor_parcela: 29750 }, execucao_mensal: {},
+    evidencias: { valor_total: 'A estruturação fica R$ 29.750,00', valor_parcela: 'fica R$ 29.750,00 em 12 vezes' } }), ctxR3);
+  assert.equal(r.preco.estruturacao.valor_total, null);
+  assert.equal(r.preco.estruturacao.valor_parcela, null);
+  assert.ok(r.pendencias.some((p) => p.includes('ambíguo')));
 });
 
 test('normalizarComMapa gera o mesmo texto que normalizarTexto e mapeia a fonte', () => {
@@ -248,4 +254,38 @@ test('prompt traz regras, ids do catálogo, empresa e transcrição', () => {
     assert.ok(p.includes(trecho), trecho);
   }
   assert.ok(!p.includes('56000') && !p.includes('36120'), 'preço de referência não vai ao LLM');
+});
+
+const fonteR4 = `Closer: Sem social, a execução fica 5 mil por mês. Com social, a execução fica 7 mil por mês.
+Closer: Outra opção: a execução não inclui social e sai 6 mil por mês.`;
+const ctxR4 = { catalogo, empresa: 'Empresa do Deal', transcricao: fonteR4 };
+const exec = (execucao_mensal, evidencias) => normalizarEscopo({ ...bruto(), preco: { estruturacao: {}, execucao_mensal, evidencias } }, ctxR4).preco.execucao_mensal;
+
+test('Vedor F3 R4 #1: "sem social" não vale para o pacote com social', () => {
+  assert.equal(exec({ valor_com_social: 5000 }, { execucao_com_social: 'Sem social, a execução fica 5 mil por mês' }).valor_com_social, null);
+  assert.equal(exec({ valor_com_social: 6000 }, { execucao_com_social: 'a execução não inclui social e sai 6 mil por mês' }).valor_com_social, null);
+});
+
+test('Vedor F3 R4 #1: pacotes invertidos são recusados; os certos entram', () => {
+  const inv = exec({ valor: 7000, valor_com_social: 5000 }, {
+    execucao_valor: 'Com social, a execução fica 7 mil por mês',
+    execucao_com_social: 'Sem social, a execução fica 5 mil por mês',
+  });
+  assert.equal(inv.valor, null);
+  assert.equal(inv.valor_com_social, null);
+  const ok = exec({ valor: 5000, valor_com_social: 7000 }, {
+    execucao_valor: 'Sem social, a execução fica 5 mil por mês',
+    execucao_com_social: 'Com social, a execução fica 7 mil por mês',
+  });
+  assert.equal(ok.valor, 5000);
+  assert.equal(ok.valor_com_social, 7000);
+  assert.equal(exec({ valor: 6000 }, { execucao_valor: 'a execução não inclui social e sai 6 mil por mês' }).valor, 6000);
+});
+
+test('Vedor F3 R4 #1: pacote ambíguo na fonte → nenhum dos dois', () => {
+  const amb = normalizarEscopo({ ...bruto(), preco: { estruturacao: {}, execucao_mensal: { valor: 7000, valor_com_social: 7000 },
+    evidencias: { execucao_valor: 'Social media: 7 mil por mês', execucao_com_social: 'Social media: 7 mil por mês' } } },
+    { ...ctxR4, transcricao: 'Closer: Social media: 7 mil por mês.' }).preco.execucao_mensal;
+  assert.equal(amb.valor, null);
+  assert.equal(amb.valor_com_social, null);
 });

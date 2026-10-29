@@ -148,6 +148,36 @@ export function expressoesMonetarias(texto) {
 }
 export const valoresMonetarios = (texto) => expressoesMonetarias(texto).map((e) => e.valor);
 
+// Pacote ao qual a FONTE prende um valor: 'com' (com social media), 'sem'
+// (explicitamente sem), 'neutro' (não fala de social) ou 'ambiguo'.
+// Olha a oração do valor (até vírgula/ponto); se ela não fala de social, a frase.
+// Negação vence a palavra solta: "sem social", "não inclui social" = 'sem'.
+const SOCIAL_NEG = /\b(sem|nao inclui|nao incluindo|nao incluso|exceto|tirando|fora o|fora a)\s+(o |a )?social\b/;
+const SOCIAL_POS = /\b(com|incluindo|inclui|incluso|mais|somando|junto com)\s+(o |a )?social\b|\bsocial (media )?(incluso|incluido|junto)\b/;
+function polaridadeSocial(trechoNorm) {
+  if (!/social/.test(trechoNorm)) return 'neutro';
+  const neg = SOCIAL_NEG.test(trechoNorm);
+  const pos = SOCIAL_POS.test(trechoNorm.replace(SOCIAL_NEG, ' '));
+  if (pos && !neg) return 'com';
+  if (neg && !pos) return 'sem';
+  return 'ambiguo';
+}
+function trechoAoRedor(fonte, ini, fim, separadores) {
+  let a = 0;
+  let b = fonte.length;
+  for (const m of fonte.matchAll(separadores)) {
+    if (m.index < ini) a = m.index + m[0].length;
+    else if (m.index >= fim) { b = m.index; break; }
+  }
+  return fonte.slice(a, b);
+}
+export function pacoteDaExpressao(fonte, expr) {
+  const oracao = normalizarTexto(trechoAoRedor(fonte, expr.ini, expr.fim, /[.!?;:,](?=\s)|\n/g));
+  const p = polaridadeSocial(oracao);
+  if (p !== 'neutro') return p;
+  return polaridadeSocial(normalizarTexto(trechoAoRedor(fonte, expr.ini, expr.fim, /[.!?;](?=\s)|\n/g)));
+}
+
 // Papel do valor: execução é mensal/recorrente; com social precisa citar social;
 // estruturação não pode vir de trecho mensal (a não ser que cite a estruturação).
 const MENSAL = /(por mes|ao mes|mensal|mensais|mensalidade|recorren|execucao)/;
@@ -229,8 +259,15 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     const alvo = Math.round(valor * 100) / 100;
     const spans = localizarCitacao(e, fonteMapa);
     const exprs = exprsFonte.filter((x) => spans.some(([a, b]) => x.ini < b && x.fim > a));
-    // Toda expressão tocada pela citação conta pelo valor que tem NA FONTE.
-    const casa = exprs.filter((x) => x.valor === alvo);
+    // Toda expressão tocada pela citação conta pelo valor que tem NA FONTE, e
+    // pelo pacote que a fonte afirma para ela (com social x sem/neutro).
+    const pacoteOk = (x) => {
+      const pk = pacoteDaExpressao(transcricao, x);
+      if (papel === 'social') return pk === 'com';
+      if (papel === 'execucao') return pk === 'sem' || pk === 'neutro';
+      return pk !== 'ambiguo' && pk !== 'com';
+    };
+    const casa = exprs.filter((x) => x.valor === alvo && pacoteOk(x));
     if (!casa.length) { naoConfirmado(rotulo); return null; }
     aceitos.push({ campo, posicoes: casa.map((x) => x.ini), rotulo });
     return valor;
