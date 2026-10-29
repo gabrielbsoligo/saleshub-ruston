@@ -14,8 +14,20 @@ const FIXOS: Record<Exclude<OcultoSessao['status'], 'pendente'>, string> = {
   avaliando: 'avaliando (IA)', concluida: 'concluída', erro: 'erro', cancelada: 'cancelada',
 };
 
-export function rotuloStatus(status: OcultoSessao['status'], cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> | null): string {
-  if (status !== 'pendente') return FIXOS[status];
+/** a empresa escreveu depois da última fala da persona: há resposta da persona a enviar */
+export function respostaPendente(s: Pick<OcultoSessao, 'status' | 'ultima_in_em' | 'ultima_out_em'>): boolean {
+  if (s.status !== 'enviada' && s.status !== 'conversando') return false;
+  if (!s.ultima_in_em) return false;
+  return !s.ultima_out_em || new Date(s.ultima_in_em).getTime() > new Date(s.ultima_out_em).getTime();
+}
+
+/** o que sai quando os envios forem ligados: aberturas na fila + respostas da persona represadas */
+export function oQueSaiAoLigar(sessoes: Pick<OcultoSessao, 'status' | 'ultima_in_em' | 'ultima_out_em'>[]): { aberturas: number; respostas: number } {
+  return { aberturas: sessoes.filter(s => s.status === 'pendente').length, respostas: sessoes.filter(respostaPendente).length };
+}
+
+export function rotuloStatus(status: OcultoSessao['status'], cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> | null, comRespostaPendente = false): string {
+  if (status !== 'pendente') return comRespostaPendente && estadoEnvios(cfg) !== 'pronto' ? `${FIXOS[status]} (resposta presa: ${estadoEnvios(cfg) === 'desligado' ? 'envios desligados' : 'sem número'})` : FIXOS[status];
   return { sem_numero: 'na fila (sem número)', desligado: 'na fila (envios desligados)', pronto: 'na fila (sai no próximo ciclo)' }[estadoEnvios(cfg)];
 }
 

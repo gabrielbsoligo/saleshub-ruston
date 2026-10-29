@@ -7,7 +7,7 @@ import { Loader2, MessageSquare, Play, Power, QrCode, RefreshCw, Search, StopCir
 import type { Lead } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ocultoRepo, type OcultoConfig, type OcultoMensagem, type OcultoSessao } from '../lib/ocultoRepo';
-import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, rotuloStatus } from '../lib/ocultoRotulos';
+import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respostaPendente, rotuloStatus } from '../lib/ocultoRotulos';
 import { useAuth } from '../lib/auth';
 
 const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', avaliando: 'bg-indigo-900 text-indigo-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
@@ -49,7 +49,7 @@ export function ClienteOcultoView() {
         </div>
       </div>
 
-      <NumeroPanel config={config} onChange={carregar} naFila={sessoes.filter(s => s.status === 'pendente').length} />
+      <NumeroPanel config={config} onChange={carregar} aoLigar={oQueSaiAoLigar(sessoes)} />
 
       <div className="grid grid-cols-3 gap-3 text-sm">
         <Stat label="Em andamento" value={String(resumo.abertas)} />
@@ -68,7 +68,7 @@ export function ClienteOcultoView() {
                   <div className="truncate text-[11px] text-v4-text-muted">{s.nicho ?? '—'} · {s.numero_alvo} · {fmt(s.criado_em)}</div>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{rotuloStatus(s.status, config)}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{rotuloStatus(s.status, config, respostaPendente(s))}</span>
                   {s.notas && <span className="text-xs font-semibold text-v4-text">{s.notas.final == null ? 'incompleta' : `${s.notas.final.toFixed(1)}/10`}</span>}
                 </div>
               </button>
@@ -101,7 +101,7 @@ type Op = 'qr' | 'estado' | 'pairing' | 'criar';
  *    retomados quando a fila libera (nunca "esquecidos"); a GERAÇÃO só serve para descartar efeitos de UI de
  *    respostas de um modo/ciclo anterior (parar/conectar/trocar de modo/desmontar).
  */
-function NumeroPanel({ config, onChange, naFila }: { config: OcultoConfig | null; onChange: () => void; naFila: number }) {
+function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | null; onChange: () => void; aoLigar: { aberturas: number; respostas: number } }) {
   const { profile } = useAuth();
   const gestor = profile?.role === 'admin';   // gestor do SalesHub = admin aqui (auth.tsx)
   const [mudando, setMudando] = useState(false);
@@ -201,7 +201,7 @@ function NumeroPanel({ config, onChange, naFila }: { config: OcultoConfig | null
   const estadoEnv = estadoEnvios(config);
   const alternar = async () => {
     const ligar = !config?.ativo;
-    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${naFila ? `\n${naFila} sondagem(ns) na fila sairão em até 10 min.` : ''}`)) return;
+    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${aoLigar.aberturas || aoLigar.respostas ? `\nSaem em até 10 min: ${aoLigar.aberturas} abertura(s) na fila e ${aoLigar.respostas} resposta(s) represada(s) de conversas em andamento.` : ''}`)) return;
     setMudando(true);
     try { await ocultoRepo.ligarEnvios(ligar); toast.success(ligar ? 'Envios LIGADOS' : 'Envios DESLIGADOS'); onChange(); }
     catch (e: any) { toast.error(e?.message || 'falhou'); }

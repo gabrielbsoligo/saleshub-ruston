@@ -22,6 +22,7 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } })
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const admin = () => createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { auth: { persistSession: false, autoRefreshToken: false } })
+const ADIA_SEM_ENVIO_S = 300   // < ciclo do cron (*/10): a sessão adiada entra no próximo tick
 const LEASE_S = 180, ORCAMENTO_VARRER = 15, ABERTAS = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando']
 const agoraS = () => Math.floor(Date.now() / 1000)
 const iso = (s: number) => new Date(s * 1000).toISOString()
@@ -82,7 +83,7 @@ async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, rev: number, 
   await renovar(sb, s.id, token)
   const cfg = await config(sb)
   const wa = evo(cfg)
-  if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 600) }); return { adiado: 'envios desligados/número desconectado' } }
+  if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + ADIA_SEM_ENVIO_S) }); return { adiado: 'envios desligados/número desconectado' } }
   // intenção persistida ANTES do POST — com as saídas JÁ conhecidas (wa_id) para a reconciliação não confundir
   const { data: antes, error: ea } = await sb.from('oculto_mensagens').select('wa_id').eq('sessao_id', s.id).eq('direcao', 'out')
   if (ea) throw new Error(`oculto_mensagens: ${ea.message}`)
@@ -179,7 +180,7 @@ async function avancar(sb: any, cfg: Cfg, row: any) {
     const d = decidir(s, hist, agoraS())
     const persona = atual.persona && Object.keys(atual.persona).length ? atual.persona : personaPara(s.nicho, s.empresa)
     // envios desligados (ou número caído): adia ANTES de gerar texto — não gasta LLM a cada varredura
-    if (exigeEnvio(d.acao) && !podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 600) }); return { id: s.id, pendente: 'envios desligados/sem número' } }
+    if (exigeEnvio(d.acao) && !podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + ADIA_SEM_ENVIO_S) }); return { id: s.id, pendente: 'envios desligados/sem número' } }
     if (d.acao === 'abrir') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, [], true)) }
     if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, hist, false)) }
     if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, token, { status: 'aguardando_followup', proximo_em: iso(d.proximo_em) }); return { id: s.id, acao: 'aguardando_followup' } }
