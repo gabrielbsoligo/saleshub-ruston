@@ -12,6 +12,7 @@
 // estreita. Mais robusto que assumir "V4 Company + {empresa}".
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { ehChaveDeServico as verificarServico } from '../_shared/propostas/servico.mjs'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
@@ -20,6 +21,9 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '
 
 const TRANSCRIPT_TIMEOUT_MS = 2 * 60 * 60 * 1000 // 2h até desistir
 const MIN_TRANSCRICAO_CHARS = 200 // abaixo disso: sem fala suficiente -> "sem transcrição válida"
+
+const ehChaveDeServico = (b: string) =>
+  verificarServico(b, { url: Deno.env.get('SUPABASE_URL') ?? '', chaveEnv: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '' })
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -744,6 +748,9 @@ Deno.serve(async (req) => {
 
     if (action === 'process_pending') {
       const stats = await processPending(supabase)
+      // Só o cron (service_role) encadeia a fila de propostas; chamador comum não.
+      const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+      if (await ehChaveDeServico(bearer)) dispararPropostasPendentes(bearer)
       return json({ ok: true, ...stats })
     }
 
@@ -773,6 +780,19 @@ Deno.serve(async (req) => {
     return json({ error: e.message }, 500)
   }
 })
+
+// Gerador de propostas: aproveita este tick (cron que já existe) para a edge
+// proposta-gerar processar a fila 'auto'. Ela mesma confere propostas_config.auto_ativo.
+// Em segundo plano: a geração leva dezenas de segundos e não segura o tick.
+function dispararPropostasPendentes(chaveServico: string) {
+  const p = fetch(`${SUPABASE_URL}/functions/v1/proposta-gerar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chaveServico}` },
+    body: JSON.stringify({ action: 'processar_pendentes' }),
+  }).then((r) => r.body?.cancel()).catch((e) => console.error('disparo proposta-gerar falhou:', e?.message))
+  // @ts-ignore EdgeRuntime existe no runtime do Supabase
+  if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(p)
+}
 
 function json(body: any, status = 200): Response {
   return new Response(JSON.stringify(body), {

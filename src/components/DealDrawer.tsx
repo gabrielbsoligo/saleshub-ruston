@@ -9,6 +9,7 @@ import { ComprovanteUpload } from "./ui/ComprovanteUpload";
 import { MissingFieldsPopup } from "./ui/MissingFieldsPopup";
 import { DealReunioesTab } from "./deal/DealReunioesTab";
 import { DealArquivosTab } from "./deal/DealArquivosTab";
+import { DealPropostaTab, usePropostasNaoVistas } from "./deal/DealPropostaTab";
 import { validateGanho } from "../lib/ganhoValidation";
 import { supabase } from "../lib/supabase";
 import { useRecomendacoesDraft } from "../hooks/useRecomendacoesDraft";
@@ -21,7 +22,8 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
   // entao lista TODOS os membros ativos, ordenados por nome.
   const sdrs = [...members].filter(m => m.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
 
-  const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'reunioes' | 'arquivos' | 'ganho'>('geral');
+  const [tab, setTab] = useState<'geral' | 'produtos' | 'recomendacoes' | 'reunioes' | 'proposta' | 'arquivos' | 'ganho'>('geral');
+  const propostasNaoVistas = usePropostasNaoVistas(deal?.id);
   const [rokkoEnviando, setRokkoEnviando] = useState(false);
   const [rokkoEnviadoEm, setRokkoEnviadoEm] = useState<string | null>(null);
   const [missingFields, setMissingFields] = useState<string[] | null>(null);
@@ -177,6 +179,9 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
               Recomendações {(recomendacoes.length + recomendacoesExistentes.length) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[10px]">{recomendacoes.length + recomendacoesExistentes.length}</span>}
             </button>
             {deal && <button onClick={() => setTab('reunioes')} className={tabClass('reunioes')}>Reuniões</button>}
+            {deal && <button onClick={() => setTab('proposta')} className={tabClass('proposta')}>
+              Proposta {propostasNaoVistas > 0 && tab !== 'proposta' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px]">revisar</span>}
+            </button>}
             {deal && <button onClick={() => setTab('arquivos')} className={tabClass('arquivos')}>Arquivos</button>}
             <button onClick={() => setTab('ganho')} className={tabClass('ganho')}>Fechamento</button>
           </div>
@@ -380,6 +385,9 @@ export const DealDrawer: React.FC<{ deal: Deal | null; onClose: () => void }> = 
 
           {/* ======== TAB: REUNIOES ======== */}
           {tab === 'reunioes' && deal && <DealReunioesTab deal={{ ...deal, ...form, id: deal.id } as any} />}
+
+          {/* ======== TAB: PROPOSTA (gerador no Google Slides) ======== */}
+          {tab === 'proposta' && deal && <DealPropostaTab deal={{ ...deal, ...form, id: deal.id } as any} />}
 
           {/* ======== TAB: ARQUIVOS & FERRAMENTAS ======== */}
           {tab === 'arquivos' && deal && <DealArquivosTab deal={{ ...deal, ...form, id: deal.id } as any} />}

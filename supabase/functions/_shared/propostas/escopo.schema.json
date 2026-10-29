@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proposta-escopo/v0",
+  "title": "Escopo da proposta (saída da análise da transcrição, editada pelo closer)",
+  "type": "object",
+  "required": ["schema_version", "cliente", "escopo", "preco"],
+  "additionalProperties": false,
+  "$defs": {
+    "citacao": {
+      "type": ["string", "null"],
+      "description": "Trecho literal da transcrição que justifica o item (null se veio do catálogo padrão ou do closer)."
+    },
+    "item": {
+      "type": "object",
+      "required": ["texto", "origem"],
+      "additionalProperties": false,
+      "properties": {
+        "catalogo_id": { "type": ["string", "null"] },
+        "texto": { "type": "string", "minLength": 1 },
+        "origem": { "enum": ["catalogo", "ia", "closer"] },
+        "citacao": { "$ref": "#/$defs/citacao" }
+      }
+    },
+    "valor": { "type": ["number", "null"], "minimum": 0 }
+  },
+  "properties": {
+    "schema_version": { "const": "proposta-escopo/v0" },
+    "catalogo_versao": { "type": "string" },
+    "cliente": {
+      "type": "object",
+      "required": ["empresa", "modelo_venda"],
+      "additionalProperties": false,
+      "properties": {
+        "empresa": { "type": "string", "minLength": 1 },
+        "contato": { "type": ["string", "null"] },
+        "segmento": { "type": ["string", "null"] },
+        "modelo_venda": { "enum": ["inside_sales", "pdv", "ecommerce"] }
+      }
+    },
+    "contexto": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dores": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+        "objetivos": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+      }
+    },
+    "escopo": {
+      "type": "object",
+      "required": ["semanas"],
+      "additionalProperties": false,
+      "properties": {
+        "enfases": { "type": "array", "items": { "type": "string" } },
+        "semanas": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "titulo", "itens"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" },
+              "titulo": { "type": "string" },
+              "itens": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+            }
+          }
+        },
+        "overdeliveries": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+      }
+    },
+    "plano_execucao": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "incluido": { "type": "boolean" },
+        "faixa_midia": { "type": ["string", "null"] },
+        "itens": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+      }
+    },
+    "preco": {
+      "type": "object",
+      "description": "Preço falado pelo closer na reunião. Null = não encontrado na transcrição (vira pendência e placeholder visível).",
+      "required": ["estruturacao", "fonte"],
+      "additionalProperties": false,
+      "properties": {
+        "estruturacao": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "valor_total": { "$ref": "#/$defs/valor" },
+            "parcelas": { "type": ["integer", "null"], "minimum": 1 },
+            "valor_parcela": { "$ref": "#/$defs/valor" },
+            "condicao": { "type": ["string", "null"], "description": "Ex.: 'Condição exclusiva junto com a execução, válida até 05/11'" }
+          }
+        },
+        "execucao_mensal": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "valor": { "$ref": "#/$defs/valor" },
+            "valor_com_social": { "$ref": "#/$defs/valor" },
+            "meses": { "type": ["integer", "null"], "minimum": 1 }
+          }
+        },
+        "validade": { "type": ["string", "null"], "description": "Data até quando a proposta vale, combinada na reunião (dd/mm ou dd/mm/aaaa). Null = [PREENCHER] + pendência." },
+        "fonte": { "enum": ["transcricao", "closer"] },
+        "citacoes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "pendencias": {
+      "type": "array",
+      "description": "O que a análise não conseguiu extrair e o closer precisa completar antes do envio.",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "schema_version": "proposta-escopo/v0",
+  "catalogo_versao": "v0",
+  "cliente": {
+    "empresa": "Empresa Exemplo (fictícia)",
+    "contato": "Contato Fictício",
+    "segmento": "Indústria B2B",
+    "modelo_venda": "inside_sales"
+  },
+  "contexto": {
+    "dores": [
+      {
+        "texto": "Prospecção depende do dono e de indicação",
+        "origem": "ia",
+        "citacao": "hoje quem vende sou eu, é tudo indicação"
+      },
+      {
+        "texto": "Sem processo comercial nem CRM",
+        "origem": "ia",
+        "citacao": "a gente controla tudo na planilha"
+      }
+    ]
+  },
+  "escopo": {
+    "enfases": [
+      "linkedin_b2b"
+    ],
+    "semanas": [
+      {
+        "id": "s1",
+        "titulo": "Semana 1 — Descoberta e Pesquisa de Mercado",
+        "itens": [
+          {
+            "catalogo_id": "s1_concorrentes_swot",
+            "texto": "Análise de concorrentes e SWOT",
+            "origem": "catalogo",
+            "citacao": null
+          },
+          {
+            "catalogo_id": "s1_persona_icp",
+            "texto": "Persona e ICP",
+            "origem": "catalogo",
+            "citacao": null
+          },
+          {
+            "catalogo_id": "li_icp_contas",
+            "texto": "Lista de contas-alvo e cargos decisores (ICP no LinkedIn)",
+            "origem": "catalogo",
+            "citacao": null
+          }
+        ]
+      },
+      {
+        "id": "s3",
+        "titulo": "Semana 3 — Estrutura da Operação (Inside Sales)",
+        "itens": [
+          {
+            "catalogo_id": "s3is_diag_comercial",
+            "texto": "Diagnóstico comercial e das etapas do funil",
+            "origem": "catalogo",
+            "citacao": null
+          },
+          {
+            "catalogo_id": "s3is_pipeline",
+            "texto": "Pipeline com réguas e script consultivo",
+            "origem": "catalogo",
+            "citacao": null
+          },
+          {
+            "catalogo_id": "li_cadencia_social_selling",
+            "texto": "Cadência de social selling e prospecção no LinkedIn integrada ao CRM",
+            "origem": "catalogo",
+            "citacao": null
+          }
+        ]
+      }
+    ],
+    "overdeliveries": [
+      {
+        "catalogo_id": "od_treinamento_time",
+        "texto": "Treinamento do time comercial no novo processo",
+        "origem": "closer",
+        "citacao": null
+      }
+    ]
+  },
+  "plano_execucao": {
+    "incluido": true,
+    "faixa_midia": "0 a 20k Mídia",
+    "itens": [
+      {
+        "catalogo_id": "ex_gestor_conta",
+        "texto": "Gestor de Conta + Reunião Semanal",
+        "origem": "catalogo",
+        "citacao": null
+      }
+    ]
+  },
+  "preco": {
+    "estruturacao": {
+      "valor_total": 29750,
+      "parcelas": 12,
+      "valor_parcela": null,
+      "condicao": "Condição exclusiva junto com a execução"
+    },
+    "execucao_mensal": {
+      "valor": 5000,
+      "valor_com_social": null,
+      "meses": 6
+    },
+    "fonte": "transcricao",
+    "citacoes": [
+      "fica 29.750 em 12 vezes",
+      "e a execução sai 5 mil por mês"
+    ],
+    "validade": "05/11/2026"
+  },
+  "pendencias": []
+}
