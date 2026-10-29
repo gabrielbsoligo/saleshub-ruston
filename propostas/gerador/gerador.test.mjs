@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  acharIndicePreco, formatarBRL, formatarCurto, montarValores, planejarPreparar, requestsSlidesEscopo,
+  acharIndicePreco, formatarBRL, formatarCurto, idsExistentes, montarValores, planejarPreparar, requestsSlidesEscopo, slidesDePreco, textoDoSlide,
   secoesEscopo, validarEscopo, verificarTemplate, LITERAIS_DECK, PLACEHOLDERS_TEMPLATE, ESTILO,
 } from '../../supabase/functions/_shared/propostas/slides.mjs';
 import { gerarProposta, planejar, prepararTemplate } from '../../supabase/functions/_shared/propostas/gerar.mjs';
@@ -44,8 +44,8 @@ test('formatação BRL igual à do deck', () => {
   assert.equal(formatarBRL(56000), 'R$ 56.000');
   assert.equal(formatarBRL(5809.76), 'R$ 5.809,76');
   assert.equal(formatarCurto(56000), '56 mil');
-  assert.equal(formatarCurto(29750), '29,75 mil');
-  assert.equal(formatarCurto(12500), '12,5 mil');
+  assert.equal(formatarCurto(29750), '29.750'); // cabe na caixa como '56 MIL'
+  assert.equal(formatarCurto(12500), '12.500');
 });
 
 test('montarValores calcula parcela e marca pendências visíveis', () => {
@@ -54,18 +54,19 @@ test('montarValores calcula parcela e marca pendências visíveis', () => {
   assert.equal(valores.parcelas, '12');
   assert.equal(valores.valor_parcela, '2.479,17');
   assert.equal(valores.preco_execucao, 'R$ 5.000');
-  assert.match(valores.preco_execucao_com_social, /^\[PREENCHER: /);
+  assert.equal(valores.preco_execucao_com_social, '[PREENCHER]');
   assert.deepEqual(pendencias, ['preço da execução com social media']);
-  assert.equal(valores.condicao_preco, 'Condição exclusiva junto com a execução · Válido até 05/11/2026');
+  // formato do deck ('…, Val. até 24/08'), só dia/mês para caber na caixa
+  assert.equal(valores.condicao_preco, 'Condição exclusiva junto com a execução, Val. até 05/11');
 });
 
 test('validade: ausente vira [PREENCHER] + pendência; sem condição fica só a validade', () => {
   const e = exemplo(); e.preco.validade = null; e.preco.estruturacao.condicao = null;
   const { valores, pendencias } = montarValores(e);
-  assert.equal(valores.condicao_preco, 'Válido até [PREENCHER: validade da proposta]');
+  assert.equal(valores.condicao_preco, 'Válido até [PREENCHER]');
   assert.ok(pendencias.includes('validade da proposta'));
   const e2 = exemplo(); e2.preco.estruturacao.condicao = null;
-  assert.equal(montarValores(e2).valores.condicao_preco, 'Válido até 05/11/2026');
+  assert.equal(montarValores(e2).valores.condicao_preco, 'Válido até 05/11');
 });
 
 test('visual: rótulo, título Anton, linha, cartões numerados por item e rodapé com o cliente', () => {
@@ -410,4 +411,15 @@ test('escopo inválido não cria cópia', async () => {
 
 test('sem token: erro claro, sem chamada', () => {
   assert.throws(() => criarCliente(''), /GOOGLE_ACCESS_TOKEN/);
+});
+
+test('texto e objectIds dentro de grupos (elementGroup) são lidos', () => {
+  const grupo = { objectId: 'grp1', elementGroup: { children: [
+    caixaTexto('filho1', 'Produtos da Proposta'),
+    { objectId: 'grp2', elementGroup: { children: [caixaTexto('neto1', 'R$ 5.809,76')] } },
+  ] } };
+  const d = { slides: [{ objectId: 'sx', pageElements: [grupo] }] };
+  assert.equal(slidesDePreco(d).length, 1);
+  assert.ok(textoDoSlide(d.slides[0]).includes('R$ 5.809,76'));
+  for (const id of ['sx', 'grp1', 'filho1', 'grp2', 'neto1']) assert.ok(idsExistentes(d).has(id), id);
 });

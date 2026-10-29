@@ -48,8 +48,10 @@ export function criarCliente(token, fetchImpl = globalThis.fetch) {
     },
 
     apresentacao(id) {
+      // Elementos podem estar dentro de grupos (até 3 níveis aqui).
       const texto = 'text(textElements(textRun(content)))';
-      const fields = `pageSize,slides(objectId,pageElements(objectId,shape(${texto}),table(tableRows(tableCells(${texto})))))`;
+      const el = (filhos) => `objectId,shape(${texto}),table(tableRows(tableCells(${texto})))${filhos ? `,elementGroup(children(${filhos}))` : ''}`;
+      const fields = `pageSize,slides(objectId,pageElements(${el(el(el('')))}))`;
       return json(`${SLIDES}/presentations/${id}?fields=${encodeURIComponent(fields)}`,
         { method: 'GET' }, 'slides.presentations.get');
     },

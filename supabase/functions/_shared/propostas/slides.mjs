@@ -64,13 +64,18 @@ export function formatarBRL(v) {
   return brl.format(v).replace(/ /g, ' ').replace(/,00$/, '');
 }
 
+// Total em destaque no slide "Soma total" (o deck usa "56 MIL", fonte grande):
+// milhar redondo → "56 mil"; quebrado → "29.750" (mesmo tamanho; "29,75 mil" quebra a linha).
 export function formatarCurto(v) {
   if (v >= 1000 && v % 1000 === 0) return `${v / 1000} mil`;
-  if (v >= 1000) return `${num2.format(v / 1000).replace(/,?0+$/, '')} mil`;
-  return num2.format(v);
+  return formatarBRL(v).replace(/^R\$\s*/, '');
 }
 
-const PREENCHER = (o_que) => `[PREENCHER: ${o_que}]`;
+// Validade no slide no formato do deck ("Val. até 24/08"): só dia/mês, para caber.
+const diaMes = (data) => String(data).split('/').slice(0, 2).join('/');
+
+// No slide o buraco é curto (caixas pequenas); o que falta vai detalhado em `pendencias`.
+const PREENCHER = () => '[PREENCHER]';
 
 // Placeholder → texto. Valor ausente vira marcador visível e entra em `pendencias`
 // (o closer não consegue enviar sem ver o buraco).
@@ -92,8 +97,10 @@ export function montarValores(escopo) {
     parcelas: parcelas ? String(parcelas) : faltou('número de parcelas'),
     valor_parcela: parcela != null ? num2.format(parcela) : faltou('valor da parcela'),
     // Deck: "Condição exclusiva junto com a execução, Val. até 24/08" → condição (se houver)
-    // + validade combinada na reunião (o 24/08 do deck não vale).
-    condicao_preco: [est.condicao, `Válido até ${escopo.preco?.validade || faltou('validade da proposta')}`].filter(Boolean).join(' · '),
+    // + validade combinada na reunião (o 24/08 do deck não vale), no mesmo formato curto.
+    condicao_preco: est.condicao
+      ? `${est.condicao}, Val. até ${escopo.preco?.validade ? diaMes(escopo.preco.validade) : faltou('validade da proposta')}`
+      : `Válido até ${escopo.preco?.validade ? diaMes(escopo.preco.validade) : faltou('validade da proposta')}`,
     faixa_midia: escopo.plano_execucao?.faixa_midia || faltou('faixa de mídia'),
     preco_execucao: exe.valor != null ? formatarBRL(exe.valor) : faltou('preço da execução mensal'),
     preco_execucao_com_social: exe.valor_com_social != null ? formatarBRL(exe.valor_com_social) : faltou('preço da execução com social media'),
@@ -147,9 +154,15 @@ export function verificarTemplate(apresentacao) {
 
 export function idsExistentes(apresentacao) {
   const ids = new Set();
+  const visitar = (els) => {
+    for (const el of els || []) {
+      if (el.objectId) ids.add(el.objectId);
+      visitar(el.elementGroup?.children);
+    }
+  };
   for (const s of apresentacao.slides || []) {
     if (s.objectId) ids.add(s.objectId);
-    for (const el of s.pageElements || []) if (el.objectId) ids.add(el.objectId);
+    visitar(s.pageElements);
   }
   return ids;
 }
@@ -185,11 +198,16 @@ export function textoDoSlide(slide) {
     for (const te of text?.textElements || []) if (te.textRun?.content) out.push(te.textRun.content);
   };
   // Separa elementos/células com \n para não colar textos vizinhos ("56.000" + "56 mil").
-  for (const el of slide.pageElements || []) {
-    coletar(el.shape?.text);
-    out.push('\n');
-    for (const row of el.table?.tableRows || []) for (const cell of row.tableCells || []) { coletar(cell.text); out.push('\n'); }
-  }
+  // Entra nos grupos (elementGroup.children), que o deck usa no slide de execução.
+  const visitar = (els) => {
+    for (const el of els || []) {
+      coletar(el.shape?.text);
+      out.push('\n');
+      for (const row of el.table?.tableRows || []) for (const cell of row.tableCells || []) { coletar(cell.text); out.push('\n'); }
+      visitar(el.elementGroup?.children);
+    }
+  };
+  visitar(slide.pageElements);
   return out.join('');
 }
 
