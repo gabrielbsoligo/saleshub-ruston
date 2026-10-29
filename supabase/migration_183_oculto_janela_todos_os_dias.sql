@@ -19,4 +19,5 @@ ALTER TABLE public.oculto_config DROP CONSTRAINT IF EXISTS oculto_config_janela_
 ALTER TABLE public.oculto_config ADD CONSTRAINT oculto_config_janela_ordem CHECK (janela_fim > janela_inicio);
 ALTER TABLE public.oculto_config DROP COLUMN IF EXISTS janela_sabado_fim;
 
-UPDATE public.oculto_config SET janela_inicio = '07:00', janela_fim = '22:00', janela_dias = '0,1,2,3,4,5,6', atualizado_em = now() WHERE id = 1;
+-- só troca os padrões antigos (08–18 da migration_182): reaplicar não desfaz um Ritmo ajustado pelo gestor
+UPDATE public.oculto_config SET janela_inicio = '07:00', janela_fim = '22:00', janela_dias = '0,1,2,3,4,5,6', atualizado_em = now() WHERE id = 1 AND janela_inicio = '08:00' AND janela_fim = '18:00';
