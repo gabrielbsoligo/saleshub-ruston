@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./supabase', () => ({ supabase: {} }));
-import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respondeAs, respostaPendente, ritmoAtual, rotuloStatus } from './ocultoRotulos';
+import { avisoAberturaPendente, diasDaConfig, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respondeAs, respostaPendente, resumoDias, ritmoAtual, rotuloStatus } from './ocultoRotulos';
 
 describe('cliente oculto — rótulos de estado', () => {
   it('pendente diz o motivo real', () => {
@@ -56,7 +56,14 @@ describe('cliente oculto — rótulos de estado', () => {
     expect(respondeAs(p, { conectado: true, ativo: false }, agora)).toBeNull();
   });
   it('ritmo atual: padrões quando a config não tem as colunas', () => {
-    expect(ritmoAtual(null)).toEqual({ resposta_min_s: 40, resposta_max_s: 240, janela_inicio: '08:00', janela_fim: '18:00', janela_sabado_fim: null });
+    expect(ritmoAtual(null)).toEqual({ resposta_min_s: 40, resposta_max_s: 240, janela_inicio: '07:00', janela_fim: '22:00', janela_dias: [0, 1, 2, 3, 4, 5, 6] });
+  });
+  it('dias: leitura da config e resumo do botão', () => {
+    expect(diasDaConfig('6,0,6')).toEqual([0, 6]);
+    expect(diasDaConfig('1,9')).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(resumoDias([0, 1, 2, 3, 4, 5, 6])).toBe('todos os dias');
+    expect(resumoDias([1, 2, 3, 4, 5])).toBe('seg–sex');
+    expect(resumoDias([6, 0])).toBe('dom, sáb');
   });
   it('número só aparece quando a Evolution informou', () => {
     expect(numeroExibido({ numero: null })).toBeNull();

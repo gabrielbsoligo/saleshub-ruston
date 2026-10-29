@@ -13,8 +13,8 @@ export interface OcultoSessao {
   criado_em: string; concluida_em: string | null; proximo_em?: string | null;
 }
 export interface OcultoMensagem { id: number; sessao_id: string; direcao: 'in' | 'out'; texto: string; em: string }
-export interface OcultoConfig { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; resposta_min_s?: number | null; resposta_max_s?: number | null; janela_inicio?: string | null; janela_fim?: string | null; janela_sabado_fim?: string | null }
-export interface OcultoRitmo { resposta_min_s: number; resposta_max_s: number; janela_inicio: string; janela_fim: string; janela_sabado_fim: string | null }
+export interface OcultoConfig { instancia: string; ativo: boolean; conectado: boolean; numero: string | null; max_turnos: number; janela_followup_h: number; resposta_min_s?: number | null; resposta_max_s?: number | null; janela_inicio?: string | null; janela_fim?: string | null; janela_dias?: string | null }
+export interface OcultoRitmo { resposta_min_s: number; resposta_max_s: number; janela_inicio: string; janela_fim: string; janela_dias: number[] }
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? '';
 const ANON = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';

@@ -116,10 +116,15 @@ Deno.test('numeroDoDono: extrai o número do JID da Evolution e recusa vazio/cur
 
 // ── ritmo humano (relógio simulado; America/Sao_Paulo = UTC-3, sem horário de verão) ──
 const brt = (iso: string) => Math.floor(Date.parse(iso + '-03:00') / 1000)   // '2026-11-02T14:00:00' (segunda)
-Deno.test('ritmoDaConfig: padrões seguros e valores inválidos ignorados', () => {
+// desenho antigo (dias úteis 08–18) como config explícita, para os casos de dia fora da lista
+const COMERCIAL = ritmoDaConfig({ janela_inicio: '08:00', janela_fim: '18:00', janela_dias: '1,2,3,4,5' })
+Deno.test('ritmoDaConfig: padrão = todos os dias 07:00–22:00; inválidos caem no padrão', () => {
   assertEquals(ritmoDaConfig({}), RITMO_PADRAO)
-  const r = ritmoDaConfig({ resposta_min_s: 60, resposta_max_s: 30, janela_inicio: '25:00', janela_fim: '09:00', janela_sabado_fim: '12:00' })
-  assertEquals([r.min_s, r.max_s, r.inicio_min, r.fim_min, r.sabado_fim_min], [60, 240, 480, 540, 720])
+  assertEquals([RITMO_PADRAO.inicio_min, RITMO_PADRAO.fim_min, RITMO_PADRAO.dias], [420, 1320, [0, 1, 2, 3, 4, 5, 6]])
+  const r = ritmoDaConfig({ resposta_min_s: 60, resposta_max_s: 30, janela_inicio: '25:00', janela_fim: '09:00', janela_dias: '1,9,x' })
+  assertEquals([r.min_s, r.max_s, r.inicio_min, r.fim_min, r.dias], [60, 240, 420, 540, [0, 1, 2, 3, 4, 5, 6]])
+  assertEquals(ritmoDaConfig({ janela_dias: '6,0,6' }).dias, [0, 6])
+  assertEquals(ritmoDaConfig({ janela_dias: [1, 2, 3] }).dias, [1, 2, 3])
 })
 Deno.test('ritmoDaConfig: fuso inválido cai no padrão (não lança)', () => {
   assertEquals(ritmoDaConfig({ fuso: 'Marte/Olympus' }).fuso, 'America/Sao_Paulo')
@@ -141,19 +146,30 @@ Deno.test('semente: determinística e em [0,1)', () => {
 Deno.test('digitarMs: ~5 caracteres/s entre 2 e 20 s', () => {
   assertEquals([digitarMs(0), digitarMs(50), digitarMs(1000)], [2000, 10000, 20000])
 })
-Deno.test('proximaJanela: dentro da janela não mexe; noite, fim de semana e sábado opcional', () => {
+Deno.test('janela padrão (todos os dias 07–22): sexta 21h30 responde, 22h30 espera 07h, fim de semana de dia responde', () => {
   const r = RITMO_PADRAO
-  assertEquals(proximaJanela(brt('2026-11-02T14:00:00'), r), brt('2026-11-02T14:00:00'))            // segunda 14h
-  assertEquals(proximaJanela(brt('2026-11-02T19:30:00'), r), brt('2026-11-03T08:00:00'))            // segunda 19h30 → terça 8h
-  assertEquals(proximaJanela(brt('2026-11-03T06:10:00'), r), brt('2026-11-03T08:00:00'))            // madrugada → 8h do mesmo dia
-  assertEquals(proximaJanela(brt('2026-11-06T17:59:00') + 240, r), brt('2026-11-09T08:00:00'))      // sexta 18h03 → segunda 8h
-  assertEquals(proximaJanela(brt('2026-11-07T10:00:00'), r), brt('2026-11-09T08:00:00'))            // sábado sem janela → segunda
-  const sab = ritmoDaConfig({ janela_sabado_fim: '12:00' })
-  assertEquals(proximaJanela(brt('2026-11-07T10:00:00'), sab), brt('2026-11-07T10:00:00'))          // sábado de manhã liberado
-  assertEquals(proximaJanela(brt('2026-11-07T12:30:00'), sab), brt('2026-11-09T08:00:00'))          // sábado à tarde → segunda
-  assertEquals(proximaJanela(brt('2026-11-08T09:00:00'), r), brt('2026-11-09T08:00:00'))            // domingo → segunda
-  const j = proximaJanela(brt('2026-11-02T19:30:00'), r, 0.5)
-  assertEquals(j, brt('2026-11-03T08:00:00') + 450)                                                  // folga de até 15 min na abertura
+  assertEquals(proximaJanela(brt('2026-11-06T21:30:00'), r), brt('2026-11-06T21:30:00'))            // sexta 21h30: dentro
+  assertEquals(proximaJanela(brt('2026-11-06T22:30:00'), r), brt('2026-11-07T07:00:00'))            // sexta 22h30 → sábado 7h
+  assertEquals(proximaJanela(brt('2026-11-07T03:00:00'), r), brt('2026-11-07T07:00:00'))            // madrugada de sábado → 7h
+  assertEquals(proximaJanela(brt('2026-11-07T15:00:00'), r), brt('2026-11-07T15:00:00'))            // sábado de dia
+  assertEquals(proximaJanela(brt('2026-11-08T10:00:00'), r), brt('2026-11-08T10:00:00'))            // domingo de dia
+  assertEquals(proximaJanela(brt('2026-11-08T22:00:00'), r), brt('2026-11-09T07:00:00'))            // domingo 22h (fecha) → segunda 7h
+  assertEquals(proximaJanela(brt('2026-11-06T22:30:00'), r, 0.5), brt('2026-11-07T07:00:00') + 450)  // folga de até 15 min na abertura
+})
+Deno.test('janela configurável: só dias úteis 08–18 (sexta 18h03 → segunda; sábado/domingo esperam)', () => {
+  assertEquals(proximaJanela(brt('2026-11-02T14:00:00'), COMERCIAL), brt('2026-11-02T14:00:00'))
+  assertEquals(proximaJanela(brt('2026-11-02T19:30:00'), COMERCIAL), brt('2026-11-03T08:00:00'))
+  assertEquals(proximaJanela(brt('2026-11-06T17:59:00') + 240, COMERCIAL), brt('2026-11-09T08:00:00'))
+  assertEquals(proximaJanela(brt('2026-11-07T10:00:00'), COMERCIAL), brt('2026-11-09T08:00:00'))
+  assertEquals(proximaJanela(brt('2026-11-08T09:00:00'), COMERCIAL), brt('2026-11-09T08:00:00'))
+  const fds = ritmoDaConfig({ janela_dias: '0,6', janela_inicio: '09:00', janela_fim: '13:00' })   // só fim de semana de manhã
+  assertEquals(proximaJanela(brt('2026-11-06T10:00:00'), fds), brt('2026-11-07T09:00:00'))         // sexta → sábado 9h
+  assertEquals(proximaJanela(brt('2026-11-07T14:00:00'), fds), brt('2026-11-08T09:00:00'))         // sábado tarde → domingo 9h
+})
+Deno.test('fuso: a janela é no horário local configurado', () => {
+  const manaus = ritmoDaConfig({ fuso: 'America/Manaus' })   // UTC-4: 22h30 de SP = 21h30 em Manaus (dentro)
+  assertEquals(proximaJanela(brt('2026-11-06T22:30:00'), manaus), brt('2026-11-06T22:30:00'))
+  assertEquals(proximaJanela(brt('2026-11-06T22:30:00'), RITMO_PADRAO), brt('2026-11-07T07:00:00'))
 })
 Deno.test('quandoResponder: usa a última mensagem da empresa, soma as não respondidas e respeita a janela', () => {
   const r = RITMO_PADRAO, t = brt('2026-11-02T14:00:00')
@@ -162,6 +178,6 @@ Deno.test('quandoResponder: usa a última mensagem da empresa, soma as não resp
   assert(q >= t + 40 && q <= t + 240 + 2, String(q - t))
   assertEquals(quandoResponder('sess-1', hist, r), q)                                               // determinístico entre varreduras
   assertEquals(quandoResponder('sess-1', [...hist, { direcao: 'out', texto: 'x', ts: t + 60 }], r), null)
-  const noite = quandoResponder('sess-1', [{ direcao: 'in', texto: 'oi', ts: brt('2026-11-02T21:00:00') }], r)!
-  assert(noite >= brt('2026-11-03T08:00:00') && noite <= brt('2026-11-03T08:15:00'), new Date(noite * 1000).toISOString())
+  const noite = quandoResponder('sess-1', [{ direcao: 'in', texto: 'oi', ts: brt('2026-11-02T23:00:00') }], r)!
+  assert(noite >= brt('2026-11-03T07:00:00') && noite <= brt('2026-11-03T07:15:00'), new Date(noite * 1000).toISOString())
 })
