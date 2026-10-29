@@ -3,12 +3,13 @@
 // Começa SEM número: o painel "Número" cria a instância e mostra o QR para o Gabriel conectar.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Loader2, MessageSquare, Play, QrCode, RefreshCw, Search, StopCircle, UserSearch } from 'lucide-react';
+import { Loader2, MessageSquare, Play, Power, QrCode, RefreshCw, Search, StopCircle, UserSearch } from 'lucide-react';
 import type { Lead } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ocultoRepo, type OcultoConfig, type OcultoMensagem, type OcultoSessao } from '../lib/ocultoRepo';
+import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, rotuloStatus } from '../lib/ocultoRotulos';
+import { useAuth } from '../lib/auth';
 
-const STATUS_LABEL: Record<OcultoSessao['status'], string> = { pendente: 'na fila (sem número)', enviada: 'abertura enviada', conversando: 'conversando', aguardando_followup: 'esperando follow-up', avaliando: 'avaliando (IA)', concluida: 'concluída', erro: 'erro', cancelada: 'cancelada' };
 const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', avaliando: 'bg-indigo-900 text-indigo-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
 const nota = (n: number | null | undefined) => (n == null ? '—' : String(n));
 const fmt = (s: string | null) => (s ? new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—');
@@ -48,7 +49,7 @@ export function ClienteOcultoView() {
         </div>
       </div>
 
-      <NumeroPanel config={config} onChange={carregar} />
+      <NumeroPanel config={config} onChange={carregar} naFila={sessoes.filter(s => s.status === 'pendente').length} />
 
       <div className="grid grid-cols-3 gap-3 text-sm">
         <Stat label="Em andamento" value={String(resumo.abertas)} />
@@ -67,14 +68,14 @@ export function ClienteOcultoView() {
                   <div className="truncate text-[11px] text-v4-text-muted">{s.nicho ?? '—'} · {s.numero_alvo} · {fmt(s.criado_em)}</div>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{STATUS_LABEL[s.status]}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{rotuloStatus(s.status, config)}</span>
                   {s.notas && <span className="text-xs font-semibold text-v4-text">{s.notas.final == null ? 'incompleta' : `${s.notas.final.toFixed(1)}/10`}</span>}
                 </div>
               </button>
             ))}
         </div>
         <div className="min-h-0 overflow-y-auto rounded-xl border border-v4-border p-4">
-          {!sel ? <div className="flex h-full items-center justify-center text-sm text-v4-text-muted"><MessageSquare size={16} className="mr-2" /> Selecione uma sondagem</div> : <SessaoDetalhe s={sel} msgs={msgs} onCancelar={async () => { try { await ocultoRepo.cancelar(sel.id); toast.success('cancelada'); carregar(); } catch (e: any) { toast.error(e?.message); } }} />}
+          {!sel ? <div className="flex h-full items-center justify-center text-sm text-v4-text-muted"><MessageSquare size={16} className="mr-2" /> Selecione uma sondagem</div> : <SessaoDetalhe s={sel} msgs={msgs} config={config} onCancelar={async () => { try { await ocultoRepo.cancelar(sel.id); toast.success('cancelada'); carregar(); } catch (e: any) { toast.error(e?.message); } }} />}
         </div>
       </div>
 
@@ -100,7 +101,10 @@ type Op = 'qr' | 'estado' | 'pairing' | 'criar';
  *    retomados quando a fila libera (nunca "esquecidos"); a GERAÇÃO só serve para descartar efeitos de UI de
  *    respostas de um modo/ciclo anterior (parar/conectar/trocar de modo/desmontar).
  */
-function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChange: () => void }) {
+function NumeroPanel({ config, onChange, naFila }: { config: OcultoConfig | null; onChange: () => void; naFila: number }) {
+  const { profile } = useAuth();
+  const gestor = profile?.role === 'admin';   // gestor do SalesHub = admin aqui (auth.tsx)
+  const [mudando, setMudando] = useState(false);
   const [modo, setModo] = useState<Modo>('ocioso');
   const [qr, setQr] = useState<string | null>(null);
   const [qrVencido, setQrVencido] = useState(false);
@@ -194,17 +198,31 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
     finally { setBusy(false); }
   };
   const verEstado = async () => { const r = await chamar('estado'); if (r) { setEstado(r.estado ?? null); toast.success(`estado: ${r.estado ?? '?'}`); onChange(); } };
-  const pronto = conectado && !!config?.ativo;
+  const estadoEnv = estadoEnvios(config);
+  const alternar = async () => {
+    const ligar = !config?.ativo;
+    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${naFila ? `\n${naFila} sondagem(ns) na fila sairão em até 10 min.` : ''}`)) return;
+    setMudando(true);
+    try { await ocultoRepo.ligarEnvios(ligar); toast.success(ligar ? 'Envios LIGADOS' : 'Envios DESLIGADOS'); onChange(); }
+    catch (e: any) { toast.error(e?.message || 'falhou'); }
+    finally { setMudando(false); }
+  };
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-v4-border px-4 py-3 text-sm">
       <div className="flex items-center gap-3">
-        <span className={`h-2.5 w-2.5 rounded-full ${conectado ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+        <span className={`h-2.5 w-2.5 rounded-full ${estadoEnv === 'pronto' ? 'bg-emerald-400' : estadoEnv === 'desligado' ? 'bg-amber-400' : 'bg-slate-500'}`} />
         <div>
-          <div className="font-medium text-v4-text">Número anônimo: {conectado ? `conectado${config?.numero ? ` (${config.numero})` : ''}` : `não conectado${estado ? ` (${estado})` : ''}`} · envios {config?.ativo ? 'ligados' : 'desligados'}</div>
-          <div className="text-[11px] text-v4-text-muted">{pronto ? 'Sondagens novas saem na hora.' : 'Sem número conectado e ativo, as sondagens ficam na fila e saem quando o número estiver pronto (ativar: oculto_config.ativo).'}</div>
+          <div className="font-medium text-v4-text">Número anônimo: {conectado ? `conectado${numeroExibido(config) ? ` (${numeroExibido(config)})` : ''}` : `não conectado${estado ? ` (${estado})` : ''}`} · <span className={config?.ativo ? 'text-emerald-300' : 'text-amber-300'}>envios {config?.ativo ? 'LIGADOS' : 'DESLIGADOS'}</span></div>
+          <div className="text-[11px] text-v4-text-muted">{explicacaoFaixa(config)}</div>
         </div>
       </div>
+      {gestor && (
+        <button disabled={mudando || !config} onClick={alternar} title={config?.ativo ? 'Desligar: nada mais é enviado (a fila espera)' : 'Ligar: a persona começa a mandar mensagens'}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${config?.ativo ? 'border border-amber-500/60 text-amber-200 hover:bg-amber-900/30' : 'bg-emerald-600 text-white hover:opacity-90'}`}>
+          {mudando ? <Loader2 size={12} className="animate-spin" /> : <Power size={12} />} {config?.ativo ? 'Desligar envios' : 'Ligar envios'}
+        </button>
+      )}
       {!conectado && (
         <div className="flex flex-wrap items-center gap-2">
           <button disabled={busy} onClick={verEstado} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Ver estado</button>
@@ -242,7 +260,7 @@ function NumeroPanel({ config, onChange }: { config: OcultoConfig | null; onChan
   );
 }
 
-function SessaoDetalhe({ s, msgs, onCancelar }: { s: OcultoSessao; msgs: OcultoMensagem[]; onCancelar: () => void }) {
+function SessaoDetalhe({ s, msgs, config, onCancelar }: { s: OcultoSessao; msgs: OcultoMensagem[]; config: OcultoConfig | null; onCancelar: () => void }) {
   const aberta = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando'].includes(s.status);
   return (
     <div className="flex flex-col gap-4">
@@ -275,7 +293,7 @@ function SessaoDetalhe({ s, msgs, onCancelar }: { s: OcultoSessao; msgs: OcultoM
         </div>
       )}
       <div className="flex flex-col gap-2">
-        {msgs.length === 0 && <div className="text-xs text-v4-text-muted">{s.status === 'pendente' ? 'Abertura ainda não enviada (sem número conectado).' : 'Sem mensagens.'}</div>}
+        {msgs.length === 0 && <div className="text-xs text-v4-text-muted">{s.status === 'pendente' ? avisoAberturaPendente(config) : 'Sem mensagens.'}</div>}
         {msgs.map(m => (
           <div key={m.id} className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${m.direcao === 'out' ? 'self-end bg-emerald-900/60 text-emerald-50' : 'self-start bg-white/10 text-v4-text'}`}>
             <div>{m.texto}</div>
@@ -311,7 +329,7 @@ function NovaSondagem({ onClose, onCriada, config }: { onClose: () => void; onCr
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="w-full max-w-lg rounded-xl border border-v4-border bg-v4-surface p-5" onClick={e => e.stopPropagation()}>
         <h2 className="mb-3 text-base font-semibold text-v4-text">Nova sondagem (cliente oculto)</h2>
-        {!config?.conectado && <p className="mb-3 rounded bg-amber-900/40 p-2 text-xs text-amber-200">Sem número conectado: a sondagem fica na fila e a abertura sai quando o número estiver pronto.</p>}
+        {estadoEnvios(config) !== 'pronto' && <p className="mb-3 rounded bg-amber-900/40 p-2 text-xs text-amber-200">{explicacaoFaixa(config)}</p>}
         <label className="text-xs text-v4-text-muted">Lead</label>
         <div className="relative mb-3">
           <Search size={14} className="absolute left-2 top-2.5 text-v4-text-muted" />
