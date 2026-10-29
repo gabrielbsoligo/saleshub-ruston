@@ -62,8 +62,22 @@ export function respondeAs(s: Pick<OcultoSessao, 'status' | 'ultima_in_em' | 'ul
   const hora = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
   return mesmoDia ? `${verbo} às ${hora}` : `${verbo} ${t.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })} às ${hora}`;
 }
+/** dias ativos de "0,1,…" (inválido/vazio = todos) */
+export function diasDaConfig(v: string | null | undefined): number[] {
+  const xs = String(v ?? '').split(',').map(x => x.trim()).filter(Boolean);
+  if (!xs.length || xs.some(x => !/^[0-6]$/.test(x))) return [0, 1, 2, 3, 4, 5, 6];
+  return [...new Set(xs.map(Number))].sort((a, b) => a - b);
+}
+const SIGLAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+/** "todos os dias" / "seg–sex" / "sáb, dom" */
+export function resumoDias(dias: number[]): string {
+  const d = [...new Set(dias)].sort((a, b) => a - b);
+  if (d.length === 7) return 'todos os dias';
+  if (d.join(',') === '1,2,3,4,5') return 'seg–sex';
+  return d.map(x => SIGLAS[x]).join(', ') || 'nenhum dia';
+}
 /** ritmo atual para o formulário do gestor (padrões quando a coluna ainda não existe) */
 export const ritmoAtual = (c: OcultoConfig | null) => ({
   resposta_min_s: c?.resposta_min_s ?? 40, resposta_max_s: c?.resposta_max_s ?? 240,
-  janela_inicio: c?.janela_inicio ?? '08:00', janela_fim: c?.janela_fim ?? '18:00', janela_sabado_fim: c?.janela_sabado_fim ?? null,
+  janela_inicio: c?.janela_inicio ?? '07:00', janela_fim: c?.janela_fim ?? '22:00', janela_dias: diasDaConfig(c?.janela_dias),
 });

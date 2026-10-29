@@ -7,7 +7,7 @@ import { Loader2, MessageSquare, Play, Power, QrCode, RefreshCw, Search, StopCir
 import type { Lead } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ocultoRepo, type OcultoConfig, type OcultoMensagem, type OcultoSessao } from '../lib/ocultoRepo';
-import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respondeAs, respostaPendente, ritmoAtual, rotuloStatus } from '../lib/ocultoRotulos';
+import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respondeAs, respostaPendente, resumoDias, ritmoAtual, rotuloStatus } from '../lib/ocultoRotulos';
 import { useAuth } from '../lib/auth';
 
 const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', avaliando: 'bg-indigo-900 text-indigo-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
@@ -262,7 +262,7 @@ function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | nul
   );
 }
 
-/** ajuste do ritmo humano (só gestor): faixa de atraso antes de cada resposta e janela de horário (fuso de São Paulo) */
+/** ajuste do ritmo humano (só gestor): faixa de atraso antes de cada resposta, horário e dias ativos (fuso de São Paulo) */
 function RitmoForm({ config, onSalvo }: { config: OcultoConfig | null; onSalvo: () => void }) {
   const atual = ritmoAtual(config);
   const [aberto, setAberto] = useState(false);
@@ -272,18 +272,25 @@ function RitmoForm({ config, onSalvo }: { config: OcultoConfig | null; onSalvo: 
   const campo = 'w-16 rounded border border-v4-border bg-transparent px-1.5 py-1 text-xs text-v4-text';
   const salvar = async () => {
     setSalvando(true);
-    try { await ocultoRepo.salvarRitmo({ ...f, resposta_min_s: Number(f.resposta_min_s), resposta_max_s: Number(f.resposta_max_s), janela_sabado_fim: f.janela_sabado_fim || null }); toast.success('Ritmo salvo'); setAberto(false); onSalvo(); }
+    if (!f.janela_dias.length) { toast.error('Escolha ao menos um dia'); setSalvando(false); return; }
+    try { await ocultoRepo.salvarRitmo({ ...f, resposta_min_s: Number(f.resposta_min_s), resposta_max_s: Number(f.resposta_max_s) }); toast.success('Ritmo salvo'); setAberto(false); onSalvo(); }
     catch (e: any) { toast.error(e?.message || 'falhou'); }
     finally { setSalvando(false); }
   };
-  if (!aberto) return <button onClick={() => setAberto(true)} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text" title="Atraso antes de cada resposta e horário em que a persona responde">Ritmo: {atual.resposta_min_s}–{atual.resposta_max_s}s · {atual.janela_inicio}–{atual.janela_fim}{atual.janela_sabado_fim ? ` · sáb até ${atual.janela_sabado_fim}` : ''}</button>;
+  if (!aberto) return <button onClick={() => setAberto(true)} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text" title="Atraso antes de cada resposta e horário em que a persona responde">Ritmo: {atual.resposta_min_s}–{atual.resposta_max_s}s · {atual.janela_inicio}–{atual.janela_fim} · {resumoDias(atual.janela_dias)}</button>;
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-v4-border px-3 py-2 text-xs text-v4-text-muted">
       <span>Atraso de</span><input type="number" min={0} className={campo} value={f.resposta_min_s} onChange={e => setF({ ...f, resposta_min_s: Number(e.target.value) })} />
       <span>a</span><input type="number" min={0} className={campo} value={f.resposta_max_s} onChange={e => setF({ ...f, resposta_max_s: Number(e.target.value) })} /><span>s (+ leitura de mensagens longas)</span>
-      <span>· seg–sex</span><input type="time" className={campo + ' w-24'} value={f.janela_inicio} onChange={e => setF({ ...f, janela_inicio: e.target.value })} />
+      <span>· das</span><input type="time" className={campo + ' w-24'} value={f.janela_inicio} onChange={e => setF({ ...f, janela_inicio: e.target.value })} />
       <span>às</span><input type="time" className={campo + ' w-24'} value={f.janela_fim} onChange={e => setF({ ...f, janela_fim: e.target.value })} />
-      <span>· sábado até</span><input type="time" className={campo + ' w-24'} value={f.janela_sabado_fim ?? ''} onChange={e => setF({ ...f, janela_sabado_fim: e.target.value || null })} title="vazio = não responde no sábado" />
+      <span>· dias</span>
+      {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((sigla, d) => (
+        <label key={d} className="flex items-center gap-0.5" title={['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'][d]}>
+          <input type="checkbox" checked={f.janela_dias.includes(d)} onChange={e => setF({ ...f, janela_dias: e.target.checked ? [...f.janela_dias, d].sort((a, b) => a - b) : f.janela_dias.filter(x => x !== d) })} />{sigla}
+        </label>
+      ))}
+      <span title="Fora do horário (madrugada) a resposta e a abertura esperam a próxima janela">(fora disso, espera)</span>
       <button disabled={salvando} onClick={salvar} className="rounded bg-v4-red px-2 py-1 text-white disabled:opacity-50">{salvando ? 'Salvando…' : 'Salvar'}</button>
       <button onClick={() => setAberto(false)} className="rounded border border-v4-border px-2 py-1">Cancelar</button>
     </div>

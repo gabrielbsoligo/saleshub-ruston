@@ -35,7 +35,7 @@ async function config(sb: any): Promise<Cfg> {
   const { data, error } = await sb.from('oculto_config').select('*').eq('id', 1).maybeSingle()
   if (error) throw new Error(`oculto_config: ${error.message}`)
   if (!data) throw new Error('oculto_config ausente (migration_165)')
-  data.ritmo = ritmoDaConfig(data)   // atraso humano e janela de horário (migration_182; padrões se faltar coluna)
+  data.ritmo = ritmoDaConfig(data)   // atraso humano e janela de horário (migrations 182/183; padrões se faltar coluna)
   return data as Cfg
 }
 const podeEnviar = (cfg: Cfg) => cfg.ativo && cfg.conectado && !!Deno.env.get('EVOLUTION_URL') && !!Deno.env.get('EVOLUTION_APIKEY')
@@ -293,11 +293,12 @@ Deno.serve(async (req) => {
         const min = Number(r.resposta_min_s), max = Number(r.resposta_max_s)
         if (!Number.isInteger(min) || !Number.isInteger(max) || min < 0 || max < min || max > 7200) return json({ error: 'atraso: min e max em segundos inteiros, 0 ≤ min ≤ max ≤ 7200' }, 400)
         if (!hora(r.janela_inicio) || !hora(r.janela_fim) || String(r.janela_fim) <= String(r.janela_inicio)) return json({ error: 'janela: HH:MM, fim depois do início' }, 400)
-        if (r.janela_sabado_fim != null && r.janela_sabado_fim !== '' && (!hora(r.janela_sabado_fim) || String(r.janela_sabado_fim) <= String(r.janela_inicio))) return json({ error: 'sábado: HH:MM depois do início, ou vazio' }, 400)
-        Object.assign(patch, { resposta_min_s: min, resposta_max_s: max, janela_inicio: r.janela_inicio, janela_fim: r.janela_fim, janela_sabado_fim: r.janela_sabado_fim || null })
+        const dias = Array.isArray(r.janela_dias) ? r.janela_dias : null
+        if (!dias || !dias.length || dias.some((d: unknown) => !Number.isInteger(d) || (d as number) < 0 || (d as number) > 6)) return json({ error: 'dias: lista de 0 (dom) a 6 (sáb), ao menos um' }, 400)
+        Object.assign(patch, { resposta_min_s: min, resposta_max_s: max, janela_inicio: r.janela_inicio, janela_fim: r.janela_fim, janela_dias: [...new Set(dias as number[])].sort((a, b) => a - b).join(',') })
       }
       if (!Object.keys(patch).length) return json({ error: 'nada para alterar (ativo e/ou ritmo)' }, 400)
-      const r = await sb.from('oculto_config').update({ ...patch, atualizado_em: new Date().toISOString() }).eq('id', 1).select('ativo, conectado, numero, resposta_min_s, resposta_max_s, janela_inicio, janela_fim, janela_sabado_fim').single()
+      const r = await sb.from('oculto_config').update({ ...patch, atualizado_em: new Date().toISOString() }).eq('id', 1).select('ativo, conectado, numero, resposta_min_s, resposta_max_s, janela_inicio, janela_fim, janela_dias').single()
       if (r.error) return json({ error: r.error.message }, 500)
       console.log('cliente-oculto config', JSON.stringify({ por: membro.id, ...patch }))
       return json({ ok: true, ...r.data })

@@ -7,7 +7,7 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
 - `supabase/migration_165_cliente_oculto.sql` — `oculto_config` (instância, ativo, conectado, limites, modelo),
   `oculto_sessoes` (1 por empresa-alvo: persona, estado, métricas, notas, parecer), `oculto_mensagens`
   (histórico in/out, dedupe por `wa_id`). RLS: leitura para membros ativos; escrita só service_role.
-  Segredo do webhook em `integracao_config.oculto_webhook_secret`. Cron `oculto-varrer` (*/10, só com sessão aberta).
+  Segredo do webhook em `integracao_config.oculto_webhook_secret`. Cron `oculto-varrer` (a cada minuto desde a migration_182; só chama a edge quando há sessão devida).
 - Edge `cliente-oculto` (`--no-verify-jwt`): `conversa.ts` (puro: persona por nicho, prompts, métricas,
   notas, máquina de estados, parser do evento), `adaptadores.ts` (Evolution + Anthropic, fetch injetável),
   `index.ts` (webhook `/s/<segredo>`, `varrer`, `iniciar`, `cancelar`, `instancia`).
@@ -28,7 +28,7 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
 1. Secrets da edge: `EVOLUTION_URL`, `EVOLUTION_APIKEY` (do Railway), `ANTHROPIC_API_KEY` (já existe).
 2. Na aba: **Criar instância** (registra o webhook `<edge>/cliente-oculto/s/<segredo>` com
    `MESSAGES_UPSERT`/`CONNECTION_UPDATE`) → **QR code** → ler no WhatsApp do número anônimo → **Ver estado**.
-3. **Interruptor na tela** (só gestor): botão **Ligar envios** / **Desligar envios** na faixa do número (edge `acao:'config'`, grava `oculto_config.ativo`; pede confirmação ao ligar, com o que vai sair). As sondagens `pendente` e as respostas represadas saem no próximo `varrer` (até 10 min). `ativo` nasce `false` (migration_165) de propósito.
+3. **Interruptor na tela** (só gestor): botão **Ligar envios** / **Desligar envios** na faixa do número (edge `acao:'config'`, grava `oculto_config.ativo`; pede confirmação ao ligar, com o que vai sair). As sondagens `pendente` e as respostas represadas saem pelo `varrer` (a cada minuto), respeitando o ritmo humano (atraso e janela). `ativo` nasce `false` (migration_165) de propósito.
    Sem isso, nada é enviado (as sondagens ficam na fila).
 4. Conferir no primeiro webhook real o nome do evento (`messages.upsert` vs `MESSAGES_UPSERT`: os dois são aceitos)
    e o formato do número no `remoteJid`.
@@ -42,8 +42,10 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
   - `resposta_min_s`/`resposta_max_s` (padrão 40/240): atraso de "ler + pensar" antes de cada resposta, aleatório na faixa
     (determinístico por mensagem), **+ até 120 s** de leitura para mensagens longas (1 s a cada 12 caracteres; soma todas as
     mensagens da empresa ainda sem resposta; conta a partir da ÚLTIMA delas).
-  - `janela_inicio`/`janela_fim` (padrão 08:00/18:00, seg–sex), `janela_sabado_fim` (NULL = sem sábado) e `fuso`
-    (America/Sao_Paulo): fora da janela a resposta **e a abertura** esperam a próxima, com folga de 0–15 min.
+  - `janela_inicio`/`janela_fim` (padrão **07:00/22:00**), `janela_dias` (padrão **todos os dias**, `0,1,2,3,4,5,6`;
+    0=dom … 6=sáb; migration_183) e `fuso` (America/Sao_Paulo). Cliente normal responde a qualquer hora, só não de
+    madrugada: fora da janela (22:00–07:00, ou dia desmarcado) a resposta **e a abertura** esperam a próxima janela,
+    com folga aleatória de 0–15 min na entrada.
   - "digitando...": a Evolution mostra por ~5 caracteres/s (2–20 s) antes de entregar (`delay` do sendText).
   - O portão de horário roda ANTES do LLM (sem custo); envios desligados continuam tendo precedência; limite de turnos intacto.
   - Cron `oculto-varrer` a cada minuto (só dispara com sessão devida) para os atrasos valerem de fato.
@@ -58,7 +60,8 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
   à nossa fala é resposta, não follow-up.
 - **Avaliação IA indisponível** → status `avaliando`, 3 tentativas (30 min); se persistir, conclui com
   `notas.incompleta=true` e `final=null` (tempo e follow-up medidos; qualificação/proposta/tom sem nota) — nunca zero.
-- **Varredura** só pega trabalhos devidos (`proximo_em <= now`, mais antigos primeiro, 15 por execução).
+- **Varredura** (cron a cada minuto) só pega trabalhos devidos (`proximo_em <= now`, mais antigos primeiro, até 15 por
+  execução e no máximo 45 s por execução; o resto fica para o minuto seguinte).
 - Remetente do webhook e número cadastrado passam pela MESMA canonicalização (`numeroWa`: DDI 55 + 9º dígito).
 - **Entrada da empresa** = RPC `oculto_entrada` (uma transação, idempotente): mensagem + watermark `entrada_rev` +
   `proximo_em=now`; vale também durante a abertura (`pendente`). `oculto_envio_registrar`/`oculto_liberar` comparam

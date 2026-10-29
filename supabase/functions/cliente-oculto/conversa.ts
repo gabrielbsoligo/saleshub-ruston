@@ -212,17 +212,23 @@ export function numeroDoDono(v: unknown): string | null {
   return d.length >= 10 && d.length <= 15 ? d : null
 }
 
-// ── ritmo humano: quando a persona responde (atraso de "ler + pensar" e janela de horário comercial) ──
+// ── ritmo humano: quando a persona responde (atraso de "ler + pensar" e janela de horário: só não de madrugada) ──
 // Puro e determinístico: o mesmo histórico dá o mesmo horário a cada varredura (a semente vem da sessão + instante
 // da última mensagem da empresa), então não precisa guardar estado. O "digitando..." sai pela Evolution (delay do sendText).
 export interface Ritmo {
   min_s: number; max_s: number                 // faixa de atraso base (aleatória dentro dela)
-  dias: number[]                               // dias úteis (0=dom … 6=sáb)
-  inicio_min: number; fim_min: number          // janela em minutos do dia (ex.: 480 = 08:00)
-  sabado_fim_min: number | null                // sábado de manhã (inicio..sabado_fim); null = sem sábado
+  dias: number[]                               // dias ativos (0=dom … 6=sáb)
+  inicio_min: number; fim_min: number          // janela em minutos do dia (ex.: 420 = 07:00), a mesma em todos os dias ativos
   fuso: string
 }
-export const RITMO_PADRAO: Ritmo = { min_s: 40, max_s: 240, dias: [1, 2, 3, 4, 5], inicio_min: 8 * 60, fim_min: 18 * 60, sabado_fim_min: null, fuso: 'America/Sao_Paulo' }
+// padrão (pedido do Gabriel, 29/10): cliente normal responde a qualquer hora, só não de madrugada → todos os dias 07:00–22:00
+export const RITMO_PADRAO: Ritmo = { min_s: 40, max_s: 240, dias: [0, 1, 2, 3, 4, 5, 6], inicio_min: 7 * 60, fim_min: 22 * 60, fuso: 'America/Sao_Paulo' }
+/** dias ativos de "0,1,…" ou [0,1,…]; inválido/vazio = todos */
+function diasValidos(v: unknown): number[] {
+  const xs = (Array.isArray(v) ? v : String(v ?? '').split(',')).map(x => String(x).trim()).filter(x => x !== '')
+  if (!xs.length || xs.some(x => !/^[0-6]$/.test(x))) return RITMO_PADRAO.dias
+  return [...new Set(xs.map(Number))].sort((a, b) => a - b)
+}
 const hhmm = (v: unknown): number | null => { const m = String(v ?? '').match(/^([01]\d|2[0-3]):([0-5]\d)$/); return m ? Number(m[1]) * 60 + Number(m[2]) : null }
 /** lê o ritmo de oculto_config com padrões seguros (valor inválido = padrão) */
 export function ritmoDaConfig(c: any): Ritmo {
@@ -231,12 +237,10 @@ export function ritmoDaConfig(c: any): Ritmo {
   const okMax = Number.isFinite(max) && max >= okMin && max <= 7200 ? max : Math.max(okMin, RITMO_PADRAO.max_s)
   const ini = hhmm(c?.janela_inicio) ?? RITMO_PADRAO.inicio_min, fim = hhmm(c?.janela_fim) ?? RITMO_PADRAO.fim_min
   const janelaOk = fim > ini
-  const sab = hhmm(c?.janela_sabado_fim)
   return {
     min_s: okMin, max_s: okMax,
-    dias: RITMO_PADRAO.dias,
+    dias: diasValidos(c?.janela_dias),
     inicio_min: janelaOk ? ini : RITMO_PADRAO.inicio_min, fim_min: janelaOk ? fim : RITMO_PADRAO.fim_min,
-    sabado_fim_min: sab != null && sab > (janelaOk ? ini : RITMO_PADRAO.inicio_min) ? sab : null,
     fuso: fusoValido(c?.fuso) ? c.fuso : RITMO_PADRAO.fuso,
   }
 }
@@ -267,8 +271,8 @@ export function proximaJanela(ts: number, r: Ritmo, seed = 0): number {
   for (let d = 0; d < 8; d++) {
     const t = ts + d * 86400
     const l = local(t, r.fuso)
-    const fim = r.dias.includes(l.dow) ? r.fim_min : (l.dow === 6 && r.sabado_fim_min != null ? r.sabado_fim_min : null)
-    if (fim == null) continue
+    if (!r.dias.includes(l.dow)) continue
+    const fim = r.fim_min
     const inicioDia = t - l.segDia   // meia-noite local desse dia
     const abre = inicioDia + r.inicio_min * 60, fecha = inicioDia + fim * 60
     if (d === 0 && ts >= abre && ts < fecha) return ts
