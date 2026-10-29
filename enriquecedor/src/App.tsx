@@ -12,6 +12,7 @@ import { WorkflowView } from './views/WorkflowView';
 import { ArquitetoView } from './views/ArquitetoView';
 import { Placeholder } from './views/Placeholder';
 import { ClienteOcultoView } from './views/ClienteOcultoView';
+import { CadenciaPainelView } from './views/CadenciaPainelView';
 
 export default function App() {
   const { profile, loading } = useAuth();
@@ -82,7 +83,7 @@ export default function App() {
       case 'arquiteto':
         return <ArquitetoView />;
       case 'cadencia':
-        return <Placeholder title="Cadência multicanal" phase="Fase 4" />;
+        return <CadenciaPainelView />;
       case 'cliente_oculto':
         return <ClienteOcultoView />;
       case 'usuarios':

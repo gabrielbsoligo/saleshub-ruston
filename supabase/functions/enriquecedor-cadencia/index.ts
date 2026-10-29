@@ -15,6 +15,8 @@
 //       liga um Salesbot da UI a um template; com source_id grava o vínculo do canal
 //   {acao:'disparar', dry_run?, limite?}     um ciclo do carteiro (P1 + P2 48h + P3 96h)
 //   {acao:'status'}                   resumo da fila/envios
+//   Painel "Modelos & Canal" (JWT da sessão do SalesHub; ler = membro ativo,
+//   alterar = gestor): painel | sync-vinculos | vincular | desvincular | canal | modelo | importar-modelo
 //   ?acao=webhook&s=<secret>          retorno dos Salesbots (quick reply / texto livre)
 //
 // Secrets: ENRIQ_KOMMO_SECRET, KOMMO_API_TOKEN, ENRIQ_INTEG_EMAIL, ENRIQ_INTEG_SENHA.
@@ -23,10 +25,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { escolherBot } from './vinculo.ts'
 import { conferirVinculos, semVinculo } from './sync.ts'
+import { importarCorpo, volume24h } from './importar.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type, x-enriq-secret',
+  'Access-Control-Allow-Headers': 'authorization, apikey, x-client-info, content-type, x-enriq-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 const json = (status: number, body: unknown) =>
@@ -880,6 +883,139 @@ async function acaoStatus() {
   return json(200, { ok: true, aptos_na_fila: aptos, templates: tpls, canais, vinculos, envios_por_passo: porPasso, respostas })
 }
 
+// ── painel "Modelos & Canal" ─────────────────────────────────────────────────
+// Quem chama: o front do enriquecedor com o JWT da sessão. Membro ativo do time lê;
+// só gestor altera. Toda alteração é no BANCO do hub — nada aqui escreve no Kommo.
+async function membroDoJwt(req: Request): Promise<{ id: string; gestor: boolean } | null> {
+  const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  if (!jwt) return null
+  const db = sb()
+  const { data: u } = await db.auth.getUser(jwt)
+  if (!u?.user) return null
+  const { data: tm } = await db.from('team_members').select('id, role, active').eq('auth_user_id', u.user.id).maybeSingle()
+  if (!tm || tm.active === false) return null
+  return { id: String(tm.id), gestor: tm.role === 'gestor' }
+}
+
+async function acaoPainel() {
+  const db = sb()
+  const desde = new Date(Date.now() - 24 * 3600_000).toISOString()
+  const [canais, modelos, vinculos, envios] = await Promise.all([
+    db.from('enriquecedor_cadencia_canais').select('*').order('source_id'),
+    db.from('enriquecedor_cadencia_templates')
+      .select('id, nome, passo, versao, ativo, padrao, cidades, chaves_vars, corpo, botoes, review_status, kommo_template_id, kommo_bot_id, kommo_bots_por_responsavel')
+      .eq('canal', 'whatsapp').order('passo').order('nome'),
+    db.from('enriquecedor_cadencia_vinculos').select('*'),
+    db.from('enriquecedor_cadencia_envios').select('source_id, kommo_lead_id, enviado_em').eq('canal', 'whatsapp').gte('enviado_em', desde).limit(5000),
+  ])
+  const erro = canais.error ?? modelos.error ?? vinculos.error ?? envios.error
+  if (erro) return json(500, { error: erro.message })
+  return json(200, { ok: true, canais: canais.data, modelos: modelos.data, vinculos: vinculos.data, volume24h: volume24h(envios.data ?? [], Date.now()) })
+}
+
+async function modeloPorNome(db: any, nome: unknown) {
+  const { data } = await db.from('enriquecedor_cadencia_templates').select('id, nome, chaves_vars').eq('nome', String(nome ?? '')).maybeSingle()
+  return data
+}
+
+// Vínculo feito por uma pessoa: ela afirma que o bot manda ESTE modelo NESTE canal
+// (bot_verificado_em = agora). Em seguida confere no Kommo (status da Meta + bot existe).
+async function acaoVincular(b: Record<string, any>) {
+  const db = sb()
+  const t = await modeloPorNome(db, b.template)
+  if (!t) return json(404, { error: 'modelo não encontrado' })
+  const sourceId = Number(b.source_id)
+  const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('source_id', sourceId).maybeSingle()
+  if (!canal) return json(404, { error: `canal ${b.source_id} não cadastrado` })
+  const agora = new Date().toISOString()
+  const patch: Record<string, unknown> = { template_id: t.id, source_id: sourceId, updated_at: agora, erro: null }
+  if (b.kommo_template_id !== undefined) { patch.kommo_template_id = b.kommo_template_id ? String(b.kommo_template_id) : null; patch.review_status = 'nao_verificado' }
+  if (b.bot_id !== undefined) { patch.kommo_bot_id = b.bot_id ? Number(b.bot_id) : null; patch.bot_verificado_em = b.bot_id ? agora : null }
+  const { error } = await db.from('enriquecedor_cadencia_vinculos').upsert(patch, { onConflict: 'template_id,source_id' })
+  if (error) return json(500, { error: error.message })
+  return await acaoSyncVinculos({ source_id: sourceId })
+}
+
+async function acaoDesvincular(b: Record<string, any>) {
+  const db = sb()
+  const t = await modeloPorNome(db, b.template)
+  if (!t) return json(404, { error: 'modelo não encontrado' })
+  const { error } = await db.from('enriquecedor_cadencia_vinculos').delete().eq('template_id', t.id).eq('source_id', Number(b.source_id))
+  return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+}
+
+// Cadastra/edita um canal; ativo=true troca o canal da cadência (um só ativo).
+async function acaoCanal(b: Record<string, any>) {
+  const db = sb()
+  const sourceId = Number(b.source_id)
+  if (!Number.isFinite(sourceId) || sourceId <= 0) return json(400, { error: 'source_id inválido' })
+  const agora = new Date().toISOString()
+  const patch: Record<string, unknown> = { source_id: sourceId, updated_at: agora }
+  for (const k of ['nome', 'telefone'] as const) if (b[k] !== undefined) patch[k] = b[k] ? String(b[k]).slice(0, 120) : null
+  if (b.vivo !== undefined) { patch.vivo = b.vivo === null ? null : !!b.vivo; patch.verificado_em = agora }
+  if (b.limite_24h !== undefined) patch.limite_24h = Math.max(0, Math.floor(Number(b.limite_24h) || 0))
+  if (b.ativo === true) {
+    const { error } = await db.from('enriquecedor_cadencia_canais').update({ ativo: false, updated_at: agora }).eq('ativo', true).neq('source_id', sourceId)
+    if (error) return json(500, { error: error.message })
+    patch.ativo = true
+  } else if (b.ativo === false) patch.ativo = false
+  const { error } = await db.from('enriquecedor_cadencia_canais').upsert(patch, { onConflict: 'source_id' })
+  return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+}
+
+async function acaoModelo(b: Record<string, any>) {
+  const db = sb()
+  const t = await modeloPorNome(db, b.nome)
+  if (!t) return json(404, { error: 'modelo não encontrado' })
+  const patch: Record<string, unknown> = {}
+  if (b.ativo !== undefined) patch.ativo = !!b.ativo
+  if (b.padrao !== undefined) patch.padrao = !!b.padrao
+  if (b.cidades !== undefined) {
+    const c = (Array.isArray(b.cidades) ? b.cidades : []).map((x: unknown) => String(x).trim().toUpperCase()).filter(Boolean)
+    patch.cidades = c.length ? c : null
+  }
+  if (patch.ativo === true && !(Array.isArray(t.chaves_vars) && t.chaves_vars.length)) return json(422, { error: 'modelo sem chaves_vars não pode ser ativado' })
+  if (!Object.keys(patch).length) return json(400, { error: 'nada a alterar' })
+  const { error } = await db.from('enriquecedor_cadencia_templates').update(patch).eq('id', t.id)
+  return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+}
+
+// Traz um modelo do Kommo (pelo nome) pro hub, INATIVO: corpo posicional + chaves_vars
+// a partir dos campos CAD. Ativar e vincular bot são passos seguintes, no painel.
+async function acaoImportarModelo(b: Record<string, any>) {
+  const nome = String(b.nome ?? '').trim()
+  const passo = Number(b.passo)
+  if (!nome || ![1, 2, 3].includes(passo)) return json(400, { error: 'nome e passo (1–3) obrigatórios' })
+  const db = sb()
+  if (await modeloPorNome(db, nome)) return json(409, { error: 'já existe um modelo com esse nome no hub' })
+  const remotos = await listarPaginado('/api/v4/chats/templates?with=reviews', 'chat_templates')
+  if (!remotos) return json(502, { error: 'falha ao ler os modelos no Kommo' })
+  const r = remotos.filter((x: any) => String(x.name ?? '').trim().toLowerCase() === nome.toLowerCase())
+    .sort((a: any, c: any) => Number(c.id) - Number(a.id))[0]
+  if (!r) return json(404, { error: `modelo "${nome}" não existe no Kommo` })
+  const campos = await listarCamposCustom()
+  const nomeDoCampo = new Map([...campos].map(([n, f]) => [f.id, n]))
+  const chaveDoCampo = Object.fromEntries(Object.entries(CAMPO_DA_VAR).map(([k, campo]) => [campo, k]))
+  const imp = importarCorpo(String(r.content ?? ''), r.buttons, nomeDoCampo, chaveDoCampo)
+  if (!imp.ok) return json(422, { error: imp.erro })
+  const { error } = await db.from('enriquecedor_cadencia_templates').insert({
+    nome: String(r.name).trim(), canal: 'whatsapp', passo, versao: 1, corpo: imp.modelo.corpo,
+    variaveis: imp.modelo.variaveis, chaves_vars: imp.modelo.chaves_vars, botoes: imp.modelo.botoes,
+    ativo: false, padrao: false,
+  })
+  return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null, modelo: imp.modelo, kommo_template_id: String(r.id) })
+}
+
+const ACOES_PAINEL: Record<string, { gestor: boolean; fn: (b: Record<string, any>) => Promise<Response> }> = {
+  'painel': { gestor: false, fn: () => acaoPainel() },
+  'sync-vinculos': { gestor: true, fn: (b) => acaoSyncVinculos(b) },
+  'vincular': { gestor: true, fn: (b) => acaoVincular(b) },
+  'desvincular': { gestor: true, fn: (b) => acaoDesvincular(b) },
+  'canal': { gestor: true, fn: (b) => acaoCanal(b) },
+  'modelo': { gestor: true, fn: (b) => acaoModelo(b) },
+  'importar-modelo': { gestor: true, fn: (b) => acaoImportarModelo(b) },
+}
+
 // ── servidor ─────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -918,13 +1054,21 @@ Deno.serve(async (req) => {
   // O cron do Postgres chama disparar/coletar-respostas com o segredo do webhook
   // no ?s= (Vault enriq_webhook_secret) — sem expor o segredo do widget/ops.
   const viaCron = viaQuery && (acao === 'disparar' || acao === 'coletar-respostas' || acao === 'status')
+  // Painel: sem segredo, pela sessão do SalesHub (o segredo continua valendo pra ops).
+  const painel = ACOES_PAINEL[acao]
+  if (painel && !viaHeader) {
+    const membro = await membroDoJwt(req)
+    if (!membro) return json(401, { error: 'faça login no SalesHub' })
+    if (painel.gestor && !membro.gestor) return json(403, { error: 'só gestor altera modelos e canais' })
+    try { return await painel.fn(body) } catch (e) { return json(500, { error: String((e as Error)?.message ?? e) }) }
+  }
   if (!viaHeader && !viaCron) return json(401, { error: 'segredo inválido' })
 
   try {
     if (acao === 'setup') return await acaoSetup(body)
     if (acao === 'submeter') return await acaoSubmeter(body)
     if (acao === 'sync-review') return await acaoSyncReview()
-    if (acao === 'sync-vinculos') return await acaoSyncVinculos(body)
+    if (painel) return await painel.fn(body)
     if (acao === 'vincular-bot') return await acaoVincularBot(body)
     if (acao === 'disparar') {
       // colhe respostas pendentes ANTES de decidir P2/P3 (gating "sem resposta")
