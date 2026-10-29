@@ -8,6 +8,7 @@
 // =============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { redigir } from '../_shared/propostas/redigir.mjs'
+import { ehChaveDeServico } from '../_shared/propostas/servico.ts'
 import { analisarTranscricao, MIN_TRANSCRICAO_CHARS } from '../_shared/propostas/pipeline.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -26,7 +27,7 @@ Deno.serve(async (req) => {
 
   const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
   if (!jwt) return json({ error: 'sem sessão' }, 401)
-  if (jwt !== SERVICE_KEY) {
+  if (!(await ehChaveDeServico(jwt))) {
     const sb = createClient(SUPABASE_URL, SERVICE_KEY)
     const { data: u } = await sb.auth.getUser(jwt)
     const { data: tm } = u?.user

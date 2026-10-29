@@ -12,6 +12,7 @@
 // estreita. Mais robusto que assumir "V4 Company + {empresa}".
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { ehChaveDeServico } from '../_shared/propostas/servico.ts'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
@@ -746,7 +747,7 @@ Deno.serve(async (req) => {
       const stats = await processPending(supabase)
       // Só o cron (service_role) encadeia a fila de propostas; chamador comum não.
       const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-      if (bearer && bearer === SUPABASE_SERVICE_ROLE_KEY) dispararPropostasPendentes()
+      if (await ehChaveDeServico(bearer)) dispararPropostasPendentes(bearer)
       return json({ ok: true, ...stats })
     }
 
@@ -780,10 +781,10 @@ Deno.serve(async (req) => {
 // Gerador de propostas: aproveita este tick (cron que já existe) para a edge
 // proposta-gerar processar a fila 'auto'. Ela mesma confere propostas_config.auto_ativo.
 // Em segundo plano: a geração leva dezenas de segundos e não segura o tick.
-function dispararPropostasPendentes() {
+function dispararPropostasPendentes(chaveServico: string) {
   const p = fetch(`${SUPABASE_URL}/functions/v1/proposta-gerar`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${chaveServico}` },
     body: JSON.stringify({ action: 'processar_pendentes' }),
   }).then((r) => r.body?.cancel()).catch((e) => console.error('disparo proposta-gerar falhou:', e?.message))
   // @ts-ignore EdgeRuntime existe no runtime do Supabase

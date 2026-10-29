@@ -16,6 +16,7 @@
 // =============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { redigir } from '../_shared/propostas/redigir.mjs'
+import { ehChaveDeServico } from '../_shared/propostas/servico.ts'
 import { destravar, prepararTemplateComMembro, processarProposta, reuniaoDoDeal } from '../_shared/propostas/pipeline.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -53,7 +54,7 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'processar_pendentes') {
-      if (!jwt || jwt !== SERVICE_KEY) return json({ error: 'interno' }, 401)
+      if (!(await ehChaveDeServico(jwt))) return json({ error: 'interno' }, 401)
       await destravar(sb)
       const { data: cfg } = await sb.from('propostas_config').select('auto_ativo').eq('id', true).single()
       if (!cfg?.auto_ativo) return json({ ok: true, auto_ativo: false, processadas: 0 })
