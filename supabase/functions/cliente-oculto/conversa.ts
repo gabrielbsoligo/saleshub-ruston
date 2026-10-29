@@ -237,9 +237,10 @@ export function ritmoDaConfig(c: any): Ritmo {
     dias: RITMO_PADRAO.dias,
     inicio_min: janelaOk ? ini : RITMO_PADRAO.inicio_min, fim_min: janelaOk ? fim : RITMO_PADRAO.fim_min,
     sabado_fim_min: sab != null && sab > (janelaOk ? ini : RITMO_PADRAO.inicio_min) ? sab : null,
-    fuso: typeof c?.fuso === 'string' && c.fuso ? c.fuso : RITMO_PADRAO.fuso,
+    fuso: fusoValido(c?.fuso) ? c.fuso : RITMO_PADRAO.fuso,
   }
 }
+function fusoValido(f: unknown): f is string { if (typeof f !== 'string' || !f) return false; try { new Intl.DateTimeFormat('en-US', { timeZone: f }); return true } catch { return false } }
 /** semente em [0,1) a partir de um texto (FNV-1a) */
 export function semente(s: string): number {
   let h = 0x811c9dc5

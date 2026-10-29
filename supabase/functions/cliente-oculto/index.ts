@@ -23,6 +23,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const admin = () => createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { auth: { persistSession: false, autoRefreshToken: false } })
 const ADIA_SEM_ENVIO_S = 300   // < ciclo do cron (*/10): a sessão adiada entra no próximo tick
+const ORCAMENTO_TEMPO_MS = 45_000   // varredura para de pegar sessões depois disso (o cron de 1 min continua)
 const LEASE_S = 180, ORCAMENTO_VARRER = 15, ABERTAS = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando']
 const agoraS = () => Math.floor(Date.now() / 1000)
 const iso = (s: number) => new Date(s * 1000).toISOString()
@@ -257,7 +258,8 @@ Deno.serve(async (req) => {
         const { data: devidas, error } = await sb.from('oculto_sessoes').select('*').in('status', ABERTAS).lte('proximo_em', new Date().toISOString()).order('proximo_em').limit(ORCAMENTO_VARRER)
         if (error) throw new Error(error.message)
         const out: unknown[] = []
-        for (const row of devidas ?? []) out.push(await avancar(sb, cfg, row))
+        const t0 = Date.now()
+        for (const row of devidas ?? []) { if (Date.now() - t0 > ORCAMENTO_TEMPO_MS) break; out.push(await avancar(sb, cfg, row)) }
         return json({ ok: true, processadas: out.length, resultados: out })
       }
       return json(await webhook(sb, cfg, body))

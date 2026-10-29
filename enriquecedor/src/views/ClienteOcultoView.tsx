@@ -202,7 +202,7 @@ function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | nul
   const estadoEnv = estadoEnvios(config);
   const alternar = async () => {
     const ligar = !config?.ativo;
-    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${aoLigar.aberturas || aoLigar.respostas ? `\nSaem em até 10 min: ${aoLigar.aberturas} abertura(s) na fila e ${aoLigar.respostas} resposta(s) represada(s) de conversas em andamento.` : ''}`)) return;
+    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${aoLigar.aberturas || aoLigar.respostas ? `\nVão sair, no horário de atendimento e com o atraso do Ritmo: ${aoLigar.aberturas} abertura(s) na fila e ${aoLigar.respostas} resposta(s) represada(s) de conversas em andamento.` : ''}`)) return;
     setMudando(true);
     try { await ocultoRepo.ligarEnvios(ligar); toast.success(ligar ? 'Envios LIGADOS' : 'Envios DESLIGADOS'); onChange(); }
     catch (e: any) { toast.error(e?.message || 'falhou'); }

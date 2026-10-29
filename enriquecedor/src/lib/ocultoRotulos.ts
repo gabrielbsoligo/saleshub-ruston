@@ -1,5 +1,5 @@
 // Cliente oculto — textos de estado (puros, testados). O status 'pendente' depende do MOTIVO:
-// número desconectado, envios desligados (oculto_config.ativo) ou só esperando o próximo ciclo.
+// número desconectado, envios desligados (oculto_config.ativo) ou agendada (ritmo humano: atraso e janela de horário).
 import type { OcultoConfig, OcultoSessao } from './ocultoRepo';
 
 export type EstadoEnvios = 'sem_numero' | 'desligado' | 'pronto';
@@ -28,7 +28,7 @@ export function oQueSaiAoLigar(sessoes: Pick<OcultoSessao, 'status' | 'ultima_in
 
 export function rotuloStatus(status: OcultoSessao['status'], cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> | null, comRespostaPendente = false): string {
   if (status !== 'pendente') return comRespostaPendente && estadoEnvios(cfg) !== 'pronto' ? `${FIXOS[status]} (resposta presa: ${estadoEnvios(cfg) === 'desligado' ? 'envios desligados' : 'sem número'})` : FIXOS[status];
-  return { sem_numero: 'na fila (sem número)', desligado: 'na fila (envios desligados)', pronto: 'na fila (sai no próximo ciclo)' }[estadoEnvios(cfg)];
+  return { sem_numero: 'na fila (sem número)', desligado: 'na fila (envios desligados)', pronto: 'na fila (agendada)' }[estadoEnvios(cfg)];
 }
 
 /** texto da conversa vazia de uma sessão pendente */
@@ -36,7 +36,7 @@ export function avisoAberturaPendente(cfg: Pick<OcultoConfig, 'conectado' | 'ati
   return {
     sem_numero: 'Abertura ainda não enviada (sem número conectado).',
     desligado: 'Abertura ainda não enviada (envios desligados — um gestor liga no interruptor acima).',
-    pronto: 'Abertura sai no próximo ciclo (até 10 min).',
+    pronto: 'Abertura agendada para o horário de atendimento (veja "abre às" na lista).',
   }[estadoEnvios(cfg)];
 }
 
@@ -45,21 +45,22 @@ export function explicacaoFaixa(cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> |
   return {
     sem_numero: 'Sem número conectado: as sondagens ficam na fila e saem quando o número estiver pronto.',
     desligado: 'Envios DESLIGADOS: nada é enviado (nem abertura, nem resposta). As sondagens ficam na fila até um gestor ligar.',
-    pronto: 'Envios LIGADOS: sondagens novas saem na hora; as da fila saem em até 10 min.',
+    pronto: 'Envios LIGADOS: aberturas e respostas saem no horário de atendimento, com o atraso do Ritmo (a fila é varrida a cada minuto).',
   }[estadoEnvios(cfg)];
 }
 
 /** número exibido: só quando a Evolution informou */
 export const numeroExibido = (cfg: Pick<OcultoConfig, 'numero'> | null): string | null => (cfg?.numero ? `+${cfg.numero}` : null);
 
-/** "responde às 14:37": resposta represada com envios prontos e horário agendado no futuro */
+/** "responde às 14:37" (resposta represada) ou "abre às 08:05" (abertura na fila): envios prontos e horário agendado no futuro */
 export function respondeAs(s: Pick<OcultoSessao, 'status' | 'ultima_in_em' | 'ultima_out_em' | 'proximo_em'>, cfg: Pick<OcultoConfig, 'conectado' | 'ativo'> | null, agoraMs = Date.now()): string | null {
-  if (!respostaPendente(s) || estadoEnvios(cfg) !== 'pronto' || !s.proximo_em) return null;
+  const verbo = s.status === 'pendente' ? 'abre' : respostaPendente(s) ? 'responde' : null;
+  if (!verbo || estadoEnvios(cfg) !== 'pronto' || !s.proximo_em) return null;
   const t = new Date(s.proximo_em);
   if (t.getTime() <= agoraMs) return null;
   const mesmoDia = t.toDateString() === new Date(agoraMs).toDateString();
   const hora = t.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
-  return mesmoDia ? `responde às ${hora}` : `responde ${t.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })} às ${hora}`;
+  return mesmoDia ? `${verbo} às ${hora}` : `${verbo} ${t.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })} às ${hora}`;
 }
 /** ritmo atual para o formulário do gestor (padrões quando a coluna ainda não existe) */
 export const ritmoAtual = (c: OcultoConfig | null) => ({

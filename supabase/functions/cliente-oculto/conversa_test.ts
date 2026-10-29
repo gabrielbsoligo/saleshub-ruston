@@ -121,6 +121,10 @@ Deno.test('ritmoDaConfig: padrões seguros e valores inválidos ignorados', () =
   const r = ritmoDaConfig({ resposta_min_s: 60, resposta_max_s: 30, janela_inicio: '25:00', janela_fim: '09:00', janela_sabado_fim: '12:00' })
   assertEquals([r.min_s, r.max_s, r.inicio_min, r.fim_min, r.sabado_fim_min], [60, 240, 480, 540, 720])
 })
+Deno.test('ritmoDaConfig: fuso inválido cai no padrão (não lança)', () => {
+  assertEquals(ritmoDaConfig({ fuso: 'Marte/Olympus' }).fuso, 'America/Sao_Paulo')
+  assertEquals(ritmoDaConfig({ fuso: 'America/Manaus' }).fuso, 'America/Manaus')
+})
 Deno.test('atrasoResposta: dentro de [min, max] + leitura limitada a 120 s', () => {
   const r = RITMO_PADRAO
   assertEquals(atrasoResposta(0, 0, r), 40)
