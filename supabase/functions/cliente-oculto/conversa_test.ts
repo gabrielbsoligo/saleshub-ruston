@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { aceitarEvento, classificarEnvio, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { aceitarEvento, classificarEnvio, exigeEnvio, numeroDoDono, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 
 const T0 = 1_800_000_000
 const H = 3600
@@ -101,4 +101,15 @@ Deno.test('classificarEnvio: aceito = ok; 4xx = definitivo (não reenviar); time
   assertEquals(classificarEnvio({ ok: false, status: 0, transporte: true }), 'incerto')
   assertEquals(classificarEnvio({ ok: false, status: 502 }), 'incerto')
   assertEquals(classificarEnvio({ ok: false, status: 429 }), 'incerto')
+})
+
+Deno.test('exigeEnvio: só abrir/responder mandam mensagem', () => {
+  assertEquals(['abrir', 'responder', 'aguardar_followup', 'avaliar', 'esperar'].map(exigeEnvio), [true, true, false, false, false])
+})
+Deno.test('numeroDoDono: extrai o número do JID da Evolution e recusa vazio/curto', () => {
+  assertEquals(numeroDoDono('5512981234567@s.whatsapp.net'), '5512981234567')
+  assertEquals(numeroDoDono('5512981234567:23@s.whatsapp.net'), '5512981234567')
+  assertEquals(numeroDoDono(null), null)
+  assertEquals(numeroDoDono('abc'), null)
+  assertEquals(numeroDoDono('123'), null)
 })

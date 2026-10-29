@@ -203,3 +203,11 @@ export function classificarEnvio(r: { ok: boolean; status: number; transporte?: 
   if (r.transporte || r.status === 0 || r.status >= 500 || r.status === 408 || r.status === 429) return 'incerto'
   return 'definitivo'
 }
+
+/** ações da decisão que mandam mensagem ao WhatsApp (precisam de envios ligados e número conectado) */
+export const exigeEnvio = (acao: string) => acao === 'abrir' || acao === 'responder'
+/** número do chip conectado a partir do que a Evolution informa ("5511...@s.whatsapp.net", "5511...:12@..."); null se não houver */
+export function numeroDoDono(v: unknown): string | null {
+  const d = String(v ?? '').split('@')[0].split(':')[0].replace(/\D/g, '')
+  return d.length >= 10 && d.length <= 15 ? d : null
+}

@@ -6,6 +6,8 @@
 //   Bearer        {acao:'iniciar', lead_id, numero?, nicho?}   → cria sessão (pendente) e tenta a abertura
 //   Bearer        {acao:'cancelar', sessao_id}                 → cancela (invalida qualquer envio em curso)
 //   Bearer        {acao:'instancia', op:'criar'|'qr'|'estado'} → prepara o número (QR na tela)
+//   Bearer GESTOR {acao:'config', ativo:boolean}             → interruptor dos envios (oculto_config.ativo)
+// O cron 'oculto-varrer' fica SEMPRE ligado: com ativo=false a varredura só adia (sem LLM, sem envio).
 // Concorrência e efeitos (ver migration_165): posse por sessão (oculto_claim/oculto_renovar) em TODO
 // avanço; config (ativo && conectado) revalidada ANTES de cada envio, já com o texto do LLM na mão;
 // intenção de envio persistida antes do POST (fase 'enviando' + envio_pendente); resultado aceito →
@@ -13,13 +15,14 @@
 // e reconciliação (findMessages / eco do webhook) antes de qualquer reenvio.
 // Deploy: --no-verify-jwt.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { PADRAO, aceitarEvento, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { PADRAO, aceitarEvento, exigeEnvio, numeroDoDono, classificarEnvio, consolidar, decidir, metricas, numeroWa, personaPara, promptAbertura, promptAvaliacao, promptProximaFala, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 import { anthropicHaiku, evolution, extrairJson, type Evolution, type Llm } from './adaptadores.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } })
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const admin = () => createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', { auth: { persistSession: false, autoRefreshToken: false } })
+const ADIA_SEM_ENVIO_S = 300   // < ciclo do cron (*/10): a sessão adiada entra no próximo tick
 const LEASE_S = 180, ORCAMENTO_VARRER = 15, ABERTAS = ['pendente', 'enviada', 'conversando', 'aguardando_followup', 'avaliando']
 const agoraS = () => Math.floor(Date.now() / 1000)
 const iso = (s: number) => new Date(s * 1000).toISOString()
@@ -40,14 +43,14 @@ function evo(cfg: Cfg): Evolution | null {
 }
 function llm(cfg: Cfg): Llm | null { const k = Deno.env.get('ANTHROPIC_API_KEY'); return k ? anthropicHaiku(k, cfg.modelo) : null }
 
-async function autenticarMembro(req: Request, sb: any): Promise<string | null> {
+async function autenticarMembro(req: Request, sb: any): Promise<{ id: string; gestor: boolean } | null> {
   const auth = req.headers.get('authorization') ?? ''
   const jwt = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : ''
   if (!jwt) return null
   const { data: u } = await sb.auth.getUser(jwt)
   if (!u?.user) return null
-  const { data: tm } = await sb.from('team_members').select('id, active').eq('auth_user_id', u.user.id).maybeSingle()
-  return tm?.id && tm.active !== false ? tm.id : null
+  const { data: tm } = await sb.from('team_members').select('id, active, role').eq('auth_user_id', u.user.id).maybeSingle()
+  return tm?.id && tm.active !== false ? { id: String(tm.id), gestor: tm.role === 'gestor' } : null
 }
 
 function toSessao(r: any): Sessao {
@@ -80,7 +83,7 @@ async function falar(sb: any, cfg0: Cfg, s: Sessao, token: string, rev: number, 
   await renovar(sb, s.id, token)
   const cfg = await config(sb)
   const wa = evo(cfg)
-  if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 600) }); return { adiado: 'envios desligados/número desconectado' } }
+  if (!podeEnviar(cfg) || !wa) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + ADIA_SEM_ENVIO_S) }); return { adiado: 'envios desligados/número desconectado' } }
   // intenção persistida ANTES do POST — com as saídas JÁ conhecidas (wa_id) para a reconciliação não confundir
   const { data: antes, error: ea } = await sb.from('oculto_mensagens').select('wa_id').eq('sessao_id', s.id).eq('direcao', 'out')
   if (ea) throw new Error(`oculto_mensagens: ${ea.message}`)
@@ -176,7 +179,9 @@ async function avancar(sb: any, cfg: Cfg, row: any) {
     const s = toSessao(atual); const hist = await historico(sb, s.id)
     const d = decidir(s, hist, agoraS())
     const persona = atual.persona && Object.keys(atual.persona).length ? atual.persona : personaPara(s.nicho, s.empresa)
-    if (d.acao === 'abrir') { if (!podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + 1800) }); return { id: s.id, pendente: 'sem número/ativo' } } return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, [], true)) } }
+    // envios desligados (ou número caído): adia ANTES de gerar texto — não gasta LLM a cada varredura
+    if (exigeEnvio(d.acao) && !podeEnviar(cfg)) { await gravar(sb, s.id, token, { proximo_em: iso(agoraS() + ADIA_SEM_ENVIO_S) }); return { id: s.id, pendente: 'envios desligados/sem número' } }
+    if (d.acao === 'abrir') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, [], true)) }
     if (d.acao === 'responder') return { id: s.id, ...(await falar(sb, cfg, s, token, rev, persona, hist, false)) }
     if (d.acao === 'aguardar_followup') { await gravar(sb, s.id, token, { status: 'aguardando_followup', proximo_em: iso(d.proximo_em) }); return { id: s.id, acao: 'aguardando_followup' } }
     if (d.acao === 'avaliar') return await avaliar(sb, cfg, atual, token, hist, d.motivo)
@@ -198,7 +203,8 @@ async function webhook(sb: any, cfg: Cfg, body: any) {
   const ev = String(body?.event ?? '').toLowerCase().replace(/_/g, '.')
   if (ev === 'connection.update') {
     const estado = String(body?.data?.state ?? body?.data?.status ?? '')
-    await sb.from('oculto_config').update({ conectado: estado === 'open', atualizado_em: new Date().toISOString() }).eq('id', 1)
+    const dono = numeroDoDono(body?.data?.wuid ?? body?.data?.owner ?? body?.data?.instance?.owner)
+    await sb.from('oculto_config').update({ conectado: estado === 'open', ...(dono ? { numero: dono } : {}), atualizado_em: new Date().toISOString() }).eq('id', 1)
     return { ok: true, conectado: estado === 'open' }
   }
   if (ev !== 'messages.upsert') return { ok: true, ignorado: ev || 'sem evento' }
@@ -264,11 +270,20 @@ Deno.serve(async (req) => {
       const empresa = lead.nome_fantasia || lead.razao_social || 'empresa'
       const nicho = body.nicho ?? lead.segmento ?? null
       const persona = personaPara(nicho, empresa)
-      const { data: nova, error: ei } = await sb.from('oculto_sessoes').insert({ lead_id: lead.id, empresa, nicho, numero_alvo: numero, persona, max_turnos: cfg.max_turnos, janela_followup_h: cfg.janela_followup_h, pedido_por: membro }).select('*').single()
+      const { data: nova, error: ei } = await sb.from('oculto_sessoes').insert({ lead_id: lead.id, empresa, nicho, numero_alvo: numero, persona, max_turnos: cfg.max_turnos, janela_followup_h: cfg.janela_followup_h, pedido_por: membro.id }).select('*').single()
       if (ei) { if (String(ei.code) === '23505') return json({ error: 'já existe sessão aberta para este número' }, 409); return json({ error: ei.message }, 500) }
       if (!nova) return json({ error: 'não gravou' }, 500)
       const r = podeEnviar(cfg) ? await avancar(sb, cfg, nova) : { pendente: 'sem número/ativo' }
       return json({ ok: true, sessao_id: nova.id, status: (r as any).enviado ? 'enviada' : (r as any).erro ? 'erro' : 'pendente', detalhe: r, aviso: podeEnviar(cfg) ? undefined : 'sem número conectado/ativo: a abertura sai quando o número estiver pronto' })
+    }
+    if (acao === 'config') {
+      // interruptor dos envios: só gestor; a varredura e cada envio leem oculto_config.ativo na hora
+      if (!membro.gestor) return json({ error: 'só gestor liga/desliga os envios' }, 403)
+      if (typeof body?.ativo !== 'boolean') return json({ error: 'ativo deve ser true/false' }, 400)
+      const r = await sb.from('oculto_config').update({ ativo: body.ativo, atualizado_em: new Date().toISOString() }).eq('id', 1).select('ativo, conectado, numero').single()
+      if (r.error) return json({ error: r.error.message }, 500)
+      console.log('cliente-oculto config', JSON.stringify({ por: membro.id, ativo: body.ativo }))
+      return json({ ok: true, ...r.data })
     }
     if (acao === 'cancelar') {
       // cancelar invalida a posse (token limpo + status fora de ABERTAS): qualquer envio em curso falha na revalidação
@@ -296,10 +311,11 @@ Deno.serve(async (req) => {
         return json({ ok: true, pairingCode: q.pairingCode, estado: q.estado, nota: q.pairingCode ? undefined : 'provedor não devolveu pairing code (use o QR)' })
       }
       const st = await wa.estado()
-      if (st.ok) await sb.from('oculto_config').update({ conectado: st.estado === 'open', numero: st.numero ? numeroWa(st.numero) : null, atualizado_em: new Date().toISOString() }).eq('id', 1)
+      const dono = numeroDoDono(st.numero)
+      if (st.ok) await sb.from('oculto_config').update({ conectado: st.estado === 'open', ...(dono ? { numero: dono } : {}), atualizado_em: new Date().toISOString() }).eq('id', 1)
       return json(st)
     }
-    return json({ error: 'acao deve ser iniciar|cancelar|instancia' }, 400)
+    return json({ error: 'acao deve ser iniciar|cancelar|instancia|config' }, 400)
   } catch (e) {
     console.error('cliente-oculto', e)
     return json({ error: String((e as Error)?.message ?? e) }, 500)
