@@ -79,3 +79,27 @@ export function escolherBot(
   if (!botId) return { ...base, motivo: `sem bot deste modelo no WhatsApp do responsável do card (${quem ?? uid ?? 'sem responsável'})` }
   return { ...base, motivo: null }
 }
+
+export const AGUARDANDO_CONFERENCIA = 'aguardando conferência no Kommo'
+
+/**
+ * O que gravar quando uma pessoa vincula/confirma no painel (b = {bot_id?, kommo_template_id?}).
+ * - bot_id presente = a pessoa afirma que ESTE bot manda o modelo vinculado neste canal →
+ *   bot_verificado_em = agora (null se tirou o bot);
+ * - modelo do Kommo trocado SEM bot_id → a confirmação anterior não vale mais (null);
+ * - sempre grava bloqueado (erro AGUARDANDO_CONFERENCIA): só o sync bem-sucedido libera.
+ */
+export function patchVincular(modeloAtual: string | null, b: { bot_id?: unknown; kommo_template_id?: unknown }, agora: string) {
+  const patch: Record<string, unknown> = { updated_at: agora, erro: AGUARDANDO_CONFERENCIA }
+  const novoModelo = b.kommo_template_id !== undefined ? (b.kommo_template_id ? String(b.kommo_template_id) : null) : undefined
+  if (novoModelo !== undefined && novoModelo !== modeloAtual) {
+    patch.kommo_template_id = novoModelo
+    patch.review_status = 'nao_verificado'
+    patch.bot_verificado_em = null
+  }
+  if (b.bot_id !== undefined) {
+    patch.kommo_bot_id = b.bot_id ? Number(b.bot_id) : null
+    patch.bot_verificado_em = b.bot_id ? agora : null
+  }
+  return patch
+}

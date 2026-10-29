@@ -25,7 +25,7 @@
 // Opcionais: KOMMO_SUBDOMAIN, ENRIQ_MOTOR_URL, ENRIQ_APP_URL. Deploy --no-verify-jwt.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { escolherBot } from './vinculo.ts'
+import { escolherBot, patchVincular } from './vinculo.ts'
 import { conferirVinculos, planoTroca, semVinculo } from './sync.ts'
 import { importarCorpo, volume24h } from './importar.ts'
 
@@ -920,8 +920,13 @@ async function modeloPorNome(db: any, nome: unknown) {
   return data
 }
 
-// Vínculo feito por uma pessoa: ela afirma que o bot manda ESTE modelo NESTE canal
-// (bot_verificado_em = agora). Em seguida confere no Kommo (status da Meta + bot existe).
+// Vínculo feito por uma pessoa. Regras de confirmação do par bot × modelo × canal:
+// - bot_id nesta chamada = a pessoa afirma que ESTE bot manda o modelo vinculado NESTE
+//   canal → bot_verificado_em = agora (é o "Confirmar bot" e o vincular com bot);
+// - só trocar o modelo do Kommo (sem bot_id) invalida a confirmação anterior → a confirmar.
+// Grava BLOQUEADO (erro 'aguardando conferência') e só a conferência no Kommo bem-sucedida
+// libera; se o Kommo falhar, continua bloqueado (o sync preserva o erro sem a lista de bots).
+// Regra em vinculo.ts (patchVincular).
 async function acaoVincular(b: Record<string, any>) {
   const db = sb()
   const t = await modeloPorNome(db, b.template)
@@ -929,10 +934,10 @@ async function acaoVincular(b: Record<string, any>) {
   const sourceId = Number(b.source_id)
   const { data: canal } = await db.from('enriquecedor_cadencia_canais').select('source_id').eq('source_id', sourceId).maybeSingle()
   if (!canal) return json(404, { error: `canal ${b.source_id} não cadastrado` })
-  const agora = new Date().toISOString()
-  const patch: Record<string, unknown> = { template_id: t.id, source_id: sourceId, updated_at: agora, erro: null }
-  if (b.kommo_template_id !== undefined) { patch.kommo_template_id = b.kommo_template_id ? String(b.kommo_template_id) : null; patch.review_status = 'nao_verificado' }
-  if (b.bot_id !== undefined) { patch.kommo_bot_id = b.bot_id ? Number(b.bot_id) : null; patch.bot_verificado_em = b.bot_id ? agora : null }
+  const { data: atual, error: errAtual } = await db.from('enriquecedor_cadencia_vinculos')
+    .select('kommo_template_id').eq('template_id', t.id).eq('source_id', sourceId).maybeSingle()
+  if (errAtual) return json(500, { error: errAtual.message })
+  const patch = { template_id: t.id, source_id: sourceId, ...patchVincular(atual?.kommo_template_id ?? null, b, new Date().toISOString()) }
   const { error } = await db.from('enriquecedor_cadencia_vinculos').upsert(patch, { onConflict: 'template_id,source_id' })
   if (error) return json(500, { error: error.message })
   return await acaoSyncVinculos({ source_id: sourceId })
@@ -956,13 +961,15 @@ async function acaoCanal(b: Record<string, any>) {
   for (const k of ['nome', 'telefone'] as const) if (b[k] !== undefined) patch[k] = b[k] ? String(b[k]).slice(0, 120) : null
   if (b.vivo !== undefined) { patch.vivo = b.vivo === null ? null : !!b.vivo; patch.verificado_em = agora }
   if (b.limite_24h !== undefined) patch.limite_24h = Math.max(0, Math.floor(Number(b.limite_24h) || 0))
-  if (b.ativo === true) {
-    const { error } = await db.from('enriquecedor_cadencia_canais').update({ ativo: false, updated_at: agora }).eq('ativo', true).neq('source_id', sourceId)
-    if (error) return json(500, { error: error.message })
-    patch.ativo = true
-  } else if (b.ativo === false) patch.ativo = false
+  if (b.ativo === false) patch.ativo = false
   const { error } = await db.from('enriquecedor_cadencia_canais').upsert(patch, { onConflict: 'source_id' })
-  return json(error ? 500 : 200, { ok: !error, erro: error?.message ?? null })
+  if (error) return json(500, { error: error.message })
+  // Trocar o canal em uso: uma transação só no banco (migration_181) — nunca fica sem ativo.
+  if (b.ativo === true) {
+    const { error: e } = await db.rpc('enriq_cadencia_ativar_canal', { p_source_id: sourceId })
+    if (e) return json(500, { error: e.message })
+  }
+  return json(200, { ok: true })
 }
 
 async function acaoModelo(b: Record<string, any>) {

@@ -1,6 +1,6 @@
 // deno test supabase/functions/enriquecedor-cadencia/vinculo_test.ts
 import { assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { botDoResponsavel, escolherBot, type ModeloLegado, type Vinculo } from './vinculo.ts'
+import { AGUARDANDO_CONFERENCIA, botDoResponsavel, escolherBot, patchVincular, type ModeloLegado, type Vinculo } from './vinculo.ts'
 
 const LARY = 14559996, EDRIC = 15444836, NOVO = 70787, VELHO = 68797
 const tpl: ModeloLegado = {
@@ -59,4 +59,21 @@ Deno.test('bot com erro no último sync (sumiu/desativado) bloqueia', () => {
 Deno.test('bot copiado na troca de número e ainda não confirmado bloqueia', () => {
   const e = escolherBot(tpl, LARY, NOVO, [vinc({ bot_verificado_em: null })])
   assertEquals(e.motivo, 'modelo sdna_p1_auditoria_v1: bot 81791 ainda não confirmado no canal 70787')
+})
+
+Deno.test('patchVincular: trocar só o modelo do Kommo invalida a confirmação do bot', () => {
+  const T = '2026-10-29T18:00:00Z'
+  assertEquals(patchVincular('66785', { kommo_template_id: '66819' }, T),
+    { updated_at: T, erro: AGUARDANDO_CONFERENCIA, kommo_template_id: '66819', review_status: 'nao_verificado', bot_verificado_em: null })
+  // mesmo modelo de novo: nada de identidade muda (continua bloqueado até o sync)
+  assertEquals(patchVincular('66785', { kommo_template_id: '66785' }, T), { updated_at: T, erro: AGUARDANDO_CONFERENCIA })
+})
+
+Deno.test('patchVincular: bot informado confirma o par; tirar o bot zera a confirmação; nunca grava liberado', () => {
+  const T = '2026-10-29T18:00:00Z'
+  assertEquals(patchVincular('66785', { bot_id: 81791 }, T), { updated_at: T, erro: AGUARDANDO_CONFERENCIA, kommo_bot_id: 81791, bot_verificado_em: T })
+  assertEquals(patchVincular(null, { bot_id: '81791', kommo_template_id: '66819' }, T).bot_verificado_em, T)
+  assertEquals(patchVincular('66785', { bot_id: null }, T), { updated_at: T, erro: AGUARDANDO_CONFERENCIA, kommo_bot_id: null, bot_verificado_em: null })
+  // gravado assim, o carteiro bloqueia até o sync limpar o erro
+  assertEquals(escolherBot(tpl, LARY, NOVO, [vinc({ erro: AGUARDANDO_CONFERENCIA })]).motivo, `modelo sdna_p1_auditoria_v1 no canal 70787: ${AGUARDANDO_CONFERENCIA}`)
 })

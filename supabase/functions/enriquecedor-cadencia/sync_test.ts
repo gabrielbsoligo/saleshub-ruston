@@ -75,3 +75,9 @@ Deno.test('planoTroca: mesmo bot, cópia aprovada de mesmo nome no destino; sem 
     { template_id: 't3', nome: 'em_revisao', kommo_bot_id: null, kommo_template_id: null, review_status: 'em_revisao', ja_vinculado: false },
   ])
 })
+
+Deno.test('erro "aguardando conferência" só sai com a lista de bots lida (sync bem-sucedido)', () => {
+  const pendente = v({ erro: 'aguardando conferência no Kommo' })
+  assertEquals(conferirVinculos([M1], REMOTOS, NOVO, [pendente], null)[0].erro, 'aguardando conferência no Kommo')
+  assertEquals(conferirVinculos([M1], REMOTOS, NOVO, [pendente], BOTS)[0].erro, null)
+})
