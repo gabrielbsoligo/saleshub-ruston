@@ -38,14 +38,15 @@ Railway do Gabriel) com a empresa do lead e avalia o atendimento. Primeiro pelos
   `oculto_renovar` falha se a sessão foi cancelada ou mudou de dono → **cancelar invalida qualquer envio em curso**.
 - **Config revalidada antes de CADA envio** (já com o texto do LLM): `ativo && conectado` desligado = adia, não envia.
 - **Envios desligados**: a varredura adia abertura/resposta em 300 s ANTES de chamar o LLM (sem custo); avaliação e follow-up seguem. O cron `oculto-varrer` fica SEMPRE ligado — o único interruptor é `ativo`.
-- **Ritmo humano** (migration_182, parâmetros em , editáveis pelo gestor no botão **Ritmo** da tela):
-  - / (padrão 40/240): atraso de "ler + pensar" antes de cada resposta, aleatório na faixa
+- **Ritmo humano** (migration_182, parâmetros em `oculto_config`, editáveis pelo gestor no botão **Ritmo** da tela):
+  - `resposta_min_s`/`resposta_max_s` (padrão 40/240): atraso de "ler + pensar" antes de cada resposta, aleatório na faixa
     (determinístico por mensagem), **+ até 120 s** de leitura para mensagens longas (1 s a cada 12 caracteres; soma todas as
     mensagens da empresa ainda sem resposta; conta a partir da ÚLTIMA delas).
-  - / (padrão 08:00/18:00, seg–sex) e  (NULL = sem sábado),     (America/Sao_Paulo): fora da janela a resposta **e a abertura** esperam a próxima, com folga de 0–15 min.
-  - "digitando...": a Evolution mostra por ~5 caracteres/s (2–20 s) antes de entregar ( do sendText).
+  - `janela_inicio`/`janela_fim` (padrão 08:00/18:00, seg–sex), `janela_sabado_fim` (NULL = sem sábado) e `fuso`
+    (America/Sao_Paulo): fora da janela a resposta **e a abertura** esperam a próxima, com folga de 0–15 min.
+  - "digitando...": a Evolution mostra por ~5 caracteres/s (2–20 s) antes de entregar (`delay` do sendText).
   - O portão de horário roda ANTES do LLM (sem custo); envios desligados continuam tendo precedência; limite de turnos intacto.
-  - Cron  a cada minuto (só dispara com sessão devida) para os atrasos valerem de fato.
+  - Cron `oculto-varrer` a cada minuto (só dispara com sessão devida) para os atrasos valerem de fato.
   - A tela mostra "responde às HH:MM" na sessão com resposta agendada.
 - Rótulos da tela dizem o motivo de `pendente` (sem número / envios desligados / próximo ciclo) e marcam "resposta presa".
 - **Envio**: intenção gravada antes do POST (`fase='enviando'`, `envio_pendente`); aceito → `oculto_envio_registrar`
