@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts'
-import { aceitarEvento, classificarEnvio, exigeEnvio, numeroDoDono, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
+import { aceitarEvento, atrasoResposta, classificarEnvio, digitarMs, exigeEnvio, numeroDoDono, proximaJanela, quandoResponder, RITMO_PADRAO, ritmoDaConfig, semente, consolidar, decidir, idDeterministico, identidadeEstavel, metricas, notaFollowup, notaTempo, numeroWa, personaPara, proximoAposFala, textoDoEvento, type Msg, type Sessao } from './conversa.ts'
 
 const T0 = 1_800_000_000
 const H = 3600
@@ -112,4 +112,56 @@ Deno.test('numeroDoDono: extrai o número do JID da Evolution e recusa vazio/cur
   assertEquals(numeroDoDono(null), null)
   assertEquals(numeroDoDono('abc'), null)
   assertEquals(numeroDoDono('123'), null)
+})
+
+// ── ritmo humano (relógio simulado; America/Sao_Paulo = UTC-3, sem horário de verão) ──
+const brt = (iso: string) => Math.floor(Date.parse(iso + '-03:00') / 1000)   // '2026-11-02T14:00:00' (segunda)
+Deno.test('ritmoDaConfig: padrões seguros e valores inválidos ignorados', () => {
+  assertEquals(ritmoDaConfig({}), RITMO_PADRAO)
+  const r = ritmoDaConfig({ resposta_min_s: 60, resposta_max_s: 30, janela_inicio: '25:00', janela_fim: '09:00', janela_sabado_fim: '12:00' })
+  assertEquals([r.min_s, r.max_s, r.inicio_min, r.fim_min, r.sabado_fim_min], [60, 240, 480, 540, 720])
+})
+Deno.test('ritmoDaConfig: fuso inválido cai no padrão (não lança)', () => {
+  assertEquals(ritmoDaConfig({ fuso: 'Marte/Olympus' }).fuso, 'America/Sao_Paulo')
+  assertEquals(ritmoDaConfig({ fuso: 'America/Manaus' }).fuso, 'America/Manaus')
+})
+Deno.test('atrasoResposta: dentro de [min, max] + leitura limitada a 120 s', () => {
+  const r = RITMO_PADRAO
+  assertEquals(atrasoResposta(0, 0, r), 40)
+  assertEquals(atrasoResposta(0, 0.999999, r), 240)
+  assertEquals(atrasoResposta(120, 0, r), 50)
+  assertEquals(atrasoResposta(10_000, 0, r), 160)
+  for (let k = 0; k < 50; k++) { const a = atrasoResposta(k * 37, semente('s' + k), r); assert(a >= 40 && a <= 360, String(a)) }
+})
+Deno.test('semente: determinística e em [0,1)', () => {
+  assertEquals(semente('abc:123'), semente('abc:123'))
+  assert(semente('abc:123') !== semente('abc:124'))
+  for (const s of ['', 'x', 'sessao:1800000000']) { const v = semente(s); assert(v >= 0 && v < 1) }
+})
+Deno.test('digitarMs: ~5 caracteres/s entre 2 e 20 s', () => {
+  assertEquals([digitarMs(0), digitarMs(50), digitarMs(1000)], [2000, 10000, 20000])
+})
+Deno.test('proximaJanela: dentro da janela não mexe; noite, fim de semana e sábado opcional', () => {
+  const r = RITMO_PADRAO
+  assertEquals(proximaJanela(brt('2026-11-02T14:00:00'), r), brt('2026-11-02T14:00:00'))            // segunda 14h
+  assertEquals(proximaJanela(brt('2026-11-02T19:30:00'), r), brt('2026-11-03T08:00:00'))            // segunda 19h30 → terça 8h
+  assertEquals(proximaJanela(brt('2026-11-03T06:10:00'), r), brt('2026-11-03T08:00:00'))            // madrugada → 8h do mesmo dia
+  assertEquals(proximaJanela(brt('2026-11-06T17:59:00') + 240, r), brt('2026-11-09T08:00:00'))      // sexta 18h03 → segunda 8h
+  assertEquals(proximaJanela(brt('2026-11-07T10:00:00'), r), brt('2026-11-09T08:00:00'))            // sábado sem janela → segunda
+  const sab = ritmoDaConfig({ janela_sabado_fim: '12:00' })
+  assertEquals(proximaJanela(brt('2026-11-07T10:00:00'), sab), brt('2026-11-07T10:00:00'))          // sábado de manhã liberado
+  assertEquals(proximaJanela(brt('2026-11-07T12:30:00'), sab), brt('2026-11-09T08:00:00'))          // sábado à tarde → segunda
+  assertEquals(proximaJanela(brt('2026-11-08T09:00:00'), r), brt('2026-11-09T08:00:00'))            // domingo → segunda
+  const j = proximaJanela(brt('2026-11-02T19:30:00'), r, 0.5)
+  assertEquals(j, brt('2026-11-03T08:00:00') + 450)                                                  // folga de até 15 min na abertura
+})
+Deno.test('quandoResponder: usa a última mensagem da empresa, soma as não respondidas e respeita a janela', () => {
+  const r = RITMO_PADRAO, t = brt('2026-11-02T14:00:00')
+  const hist: Msg[] = [{ direcao: 'out', texto: 'oi', ts: t - 100 }, { direcao: 'in', texto: 'Boa tarde', ts: t - 10 }, { direcao: 'in', texto: 'com quem falo?', ts: t }]
+  const q = quandoResponder('sess-1', hist, r)!
+  assert(q >= t + 40 && q <= t + 240 + 2, String(q - t))
+  assertEquals(quandoResponder('sess-1', hist, r), q)                                               // determinístico entre varreduras
+  assertEquals(quandoResponder('sess-1', [...hist, { direcao: 'out', texto: 'x', ts: t + 60 }], r), null)
+  const noite = quandoResponder('sess-1', [{ direcao: 'in', texto: 'oi', ts: brt('2026-11-02T21:00:00') }], r)!
+  assert(noite >= brt('2026-11-03T08:00:00') && noite <= brt('2026-11-03T08:15:00'), new Date(noite * 1000).toISOString())
 })

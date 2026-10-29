@@ -7,7 +7,7 @@ import { Loader2, MessageSquare, Play, Power, QrCode, RefreshCw, Search, StopCir
 import type { Lead } from '../types';
 import { leadsRepo } from '../lib/leadsRepo';
 import { ocultoRepo, type OcultoConfig, type OcultoMensagem, type OcultoSessao } from '../lib/ocultoRepo';
-import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respostaPendente, rotuloStatus } from '../lib/ocultoRotulos';
+import { avisoAberturaPendente, estadoEnvios, explicacaoFaixa, numeroExibido, oQueSaiAoLigar, respondeAs, respostaPendente, ritmoAtual, rotuloStatus } from '../lib/ocultoRotulos';
 import { useAuth } from '../lib/auth';
 
 const STATUS_COR: Record<OcultoSessao['status'], string> = { pendente: 'bg-slate-700 text-slate-200', enviada: 'bg-sky-900 text-sky-200', conversando: 'bg-amber-900 text-amber-200', aguardando_followup: 'bg-violet-900 text-violet-200', avaliando: 'bg-indigo-900 text-indigo-200', concluida: 'bg-emerald-900 text-emerald-200', erro: 'bg-red-900 text-red-200', cancelada: 'bg-slate-800 text-slate-400' };
@@ -69,6 +69,7 @@ export function ClienteOcultoView() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[10px] ${STATUS_COR[s.status]}`}>{rotuloStatus(s.status, config, respostaPendente(s))}</span>
+                  {respondeAs(s, config) && <span className="text-[10px] text-sky-300">{respondeAs(s, config)}</span>}
                   {s.notas && <span className="text-xs font-semibold text-v4-text">{s.notas.final == null ? 'incompleta' : `${s.notas.final.toFixed(1)}/10`}</span>}
                 </div>
               </button>
@@ -201,7 +202,7 @@ function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | nul
   const estadoEnv = estadoEnvios(config);
   const alternar = async () => {
     const ligar = !config?.ativo;
-    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${aoLigar.aberturas || aoLigar.respostas ? `\nSaem em até 10 min: ${aoLigar.aberturas} abertura(s) na fila e ${aoLigar.respostas} resposta(s) represada(s) de conversas em andamento.` : ''}`)) return;
+    if (ligar && !window.confirm(`Ligar os envios do cliente oculto?\n\nA persona passa a mandar mensagens de WhatsApp para empresas reais.${aoLigar.aberturas || aoLigar.respostas ? `\nVão sair, no horário de atendimento e com o atraso do Ritmo: ${aoLigar.aberturas} abertura(s) na fila e ${aoLigar.respostas} resposta(s) represada(s) de conversas em andamento.` : ''}`)) return;
     setMudando(true);
     try { await ocultoRepo.ligarEnvios(ligar); toast.success(ligar ? 'Envios LIGADOS' : 'Envios DESLIGADOS'); onChange(); }
     catch (e: any) { toast.error(e?.message || 'falhou'); }
@@ -223,6 +224,7 @@ function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | nul
           {mudando ? <Loader2 size={12} className="animate-spin" /> : <Power size={12} />} {config?.ativo ? 'Desligar envios' : 'Ligar envios'}
         </button>
       )}
+      {gestor && <RitmoForm config={config} onSalvo={onChange} />}
       {!conectado && (
         <div className="flex flex-wrap items-center gap-2">
           <button disabled={busy} onClick={verEstado} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text disabled:opacity-50">Ver estado</button>
@@ -256,6 +258,34 @@ function NumeroPanel({ config, onChange, aoLigar }: { config: OcultoConfig | nul
           <div className="mt-2 text-[11px] text-slate-600">WhatsApp → Dispositivos conectados → Conectar dispositivo → "Conectar com número de telefone" → digite o código. Estado: {estado ?? '…'} (verificando a cada 5 s)</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** ajuste do ritmo humano (só gestor): faixa de atraso antes de cada resposta e janela de horário (fuso de São Paulo) */
+function RitmoForm({ config, onSalvo }: { config: OcultoConfig | null; onSalvo: () => void }) {
+  const atual = ritmoAtual(config);
+  const [aberto, setAberto] = useState(false);
+  const [f, setF] = useState(atual);
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => { if (!aberto) setF(ritmoAtual(config)); }, [config, aberto]);
+  const campo = 'w-16 rounded border border-v4-border bg-transparent px-1.5 py-1 text-xs text-v4-text';
+  const salvar = async () => {
+    setSalvando(true);
+    try { await ocultoRepo.salvarRitmo({ ...f, resposta_min_s: Number(f.resposta_min_s), resposta_max_s: Number(f.resposta_max_s), janela_sabado_fim: f.janela_sabado_fim || null }); toast.success('Ritmo salvo'); setAberto(false); onSalvo(); }
+    catch (e: any) { toast.error(e?.message || 'falhou'); }
+    finally { setSalvando(false); }
+  };
+  if (!aberto) return <button onClick={() => setAberto(true)} className="rounded-lg border border-v4-border px-3 py-1.5 text-xs text-v4-text-muted hover:text-v4-text" title="Atraso antes de cada resposta e horário em que a persona responde">Ritmo: {atual.resposta_min_s}–{atual.resposta_max_s}s · {atual.janela_inicio}–{atual.janela_fim}{atual.janela_sabado_fim ? ` · sáb até ${atual.janela_sabado_fim}` : ''}</button>;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-v4-border px-3 py-2 text-xs text-v4-text-muted">
+      <span>Atraso de</span><input type="number" min={0} className={campo} value={f.resposta_min_s} onChange={e => setF({ ...f, resposta_min_s: Number(e.target.value) })} />
+      <span>a</span><input type="number" min={0} className={campo} value={f.resposta_max_s} onChange={e => setF({ ...f, resposta_max_s: Number(e.target.value) })} /><span>s (+ leitura de mensagens longas)</span>
+      <span>· seg–sex</span><input type="time" className={campo + ' w-24'} value={f.janela_inicio} onChange={e => setF({ ...f, janela_inicio: e.target.value })} />
+      <span>às</span><input type="time" className={campo + ' w-24'} value={f.janela_fim} onChange={e => setF({ ...f, janela_fim: e.target.value })} />
+      <span>· sábado até</span><input type="time" className={campo + ' w-24'} value={f.janela_sabado_fim ?? ''} onChange={e => setF({ ...f, janela_sabado_fim: e.target.value || null })} title="vazio = não responde no sábado" />
+      <button disabled={salvando} onClick={salvar} className="rounded bg-v4-red px-2 py-1 text-white disabled:opacity-50">{salvando ? 'Salvando…' : 'Salvar'}</button>
+      <button onClick={() => setAberto(false)} className="rounded border border-v4-border px-2 py-1">Cancelar</button>
     </div>
   );
 }
