@@ -11,18 +11,18 @@ Benchmark: deck EE 2026 (template) e a página ee-2026. A v2 não só enfeita: e
 |---|---|
 | todos os gerados | fundo PNG vinho com brilho vermelho (`fundos/`, alternando `a`/`b`) e cartões de "vidro" (branco translúcido + borda vermelha fina) |
 | Diagnóstico / Contexto | grade de até 4×2. Ícone por item e 1ª oração (até `:`, `;`, `,` ou ` (`) em negrito. Mesmo texto. |
-| O que entregamos | grade 2×1 a 3×2 de "features": ícone, **título curto = nome do ícone do catálogo** (Landing page, CRM + WhatsApp…) e o texto aprovado como detalhe |
+| O que entregamos | grade 2×1 a 3×2 de "features": ícone, título curto e detalhe. Título: o que o deck curto escreve antes dos dois-pontos em **"Título curto: detalhe"** (até 5 palavras; o detalhe vira o resto). Sem isso, ou se não couber na grade, o nome do ícone do catálogo (Landing page, CRM + WhatsApp…) e o texto inteiro como detalhe |
 | Próximos passos | passos numerados na horizontal; o selo amarelo "CONDIÇÃO VÁLIDA ATÉ dd/mm" sai só se a validade estiver escrita |
 | Investimento, Etapa 2 | linhas e cartões em vidro, mais as peças da v1 (ícones, tabela × condição, pílulas, gráfico de mídia) |
-| **novo** capa do cliente | 1º slide: nome do cliente (do rodapé), tipo da proposta (do rótulo) e data (`--data`) |
+| **novo** capa do cliente | **substitui** a capa institucional (padrão). Nome do cliente (do rodapé), tipo (`tipo` do gerador, senão o rótulo), data e a **marca V4**: "V4 COMPANY" em texto e, à direita, a arte da capa institucional (mão com o cubo V4, `marca/`). Com `capa: 'depois'`, vai sem a arte (ela está no slide anterior) |
 | **novo** Como fica na prática | wireframes em shapes (navegador, celular, quadro do CRM, busca) das entregas que têm forma visível; sem texto inventado e com nota "ilustração" |
-| **novo** case V4 | `casos-v0.json`: 6 cases oficiais da página EE 2026, com foto, antes → depois e frase. Escolhido por afinidade de sinais (CRM, comercial, Google, landing…); sem afinidade (menos de 2 sinais), não entra. O closer troca ou apaga. |
+| **novo** case V4 | **desligado por padrão** (`caso: 'nao'`); o closer liga (`'sim'`), com aviso no rodapé fora de Estruturação. `casos-v0.json`: 6 cases oficiais da página EE 2026. Escolhido por afinidade (3 sinais ou mais, 1 específico; `modeloVenda` soma 1 ao case do mesmo modelo: pdv, inside-sales, e-commerce) |
 | **novo** A proposta em números | até 4 números que **já estão no deck**: valor e desconto do painel, prazo, nº de entregas, validade, acompanhamento |
 | linha do tempo, mídia | como na v1, com o fundo da v2 |
 
 Layout que não cabe (texto longo, itens demais) **cai na lista da v1 com vidro**: nunca corta texto. Rodar de novo dá 0 pedidos (testado com simulação).
 
-Assets: `fundos/` (gerados por `gerar-fundos.mjs`) e `casos/` (fotos da página oficial). Os dois são publicados com os ícones por `publicar-icones.mjs` em `propostas-visual/<pasta>/v1/`.
+Assets: `fundos/` (gerados por `gerar-fundos.mjs`), `casos/` (fotos da página oficial) e `marca/v4-capa.png` (recorte da arte da capa institucional do deck aprovado). Todos são publicados com os ícones por `publicar-icones.mjs` em `propostas-visual/<pasta>/v1/`.
 
 ## O que acrescenta (v1)
 | Peça | Onde | Como |
@@ -55,8 +55,8 @@ node --test propostas/visual/visual.test.mjs
 ```
 O token nunca é impresso. O erro do Google passa por `redigir()`.
 
-## Integração com o gerador (a combinar com a Etapa 2)
-Depois do batchUpdate da geração, chamar `aplicarVisual({ token, apresentacaoId, base: baseIconesDoProjeto(SUPABASE_URL) })`. O `SUPABASE_URL` é o do **mesmo projeto da proposta** (no hub, o de produção, com a migration_186 aplicada e os ícones publicados).
+## Integração com o gerador
+Depois do batchUpdate da geração, chamar `aplicarVisualV2({ token, apresentacaoId, assets: assetsDoProjeto(SUPABASE_URL), data: 'dd/mm/aaaa', capa: 'substituir', caso: incluirCase ? 'sim' : 'nao', tipo: escopo.oferta.tipo, modeloVenda })` (v1: `aplicarVisual({ token, apresentacaoId, base: baseIconesDoProjeto(SUPABASE_URL) })`). `tipo` ('estruturacao' | 'implementacao' | 'execucao' | 'implementacao_e_execucao') vale no lugar do rótulo do deck, na capa e no critério do case; `modeloVenda` é texto livre ("pontual"/"recorrente" não dão bônus). O `SUPABASE_URL` é o do **mesmo projeto da proposta** (no hub, o de produção, com a migration_186 aplicada e os ícones publicados).
 - O batchUpdate é atômico. Se o Google não conseguir baixar um ícone, `aplicarVisual` repete **uma vez sem as imagens** e devolve `semIcones: true` com `erroIcones`.
 - Qualquer outra falha lança erro. A integração faz `try/catch`, loga o erro (já redigido) e grava na proposta a pendência "camada visual não aplicada: <motivo>" (ou "sem ícones: <motivo>"). **Nunca** derruba a proposta.
 - Pendência fixa enquanto o Gabriel não decidir: "números dos cartões substituídos por ícones".
