@@ -591,7 +591,7 @@ export function requestsVisual(apresentacao, { base, prefixo = `vz${Math.random(
 // camada (grafismo, barras, etapas, linha do tempo) entra e `semIcones` avisa.
 // Quem integra no pipeline: try/catch, log redigido e pendência na proposta, nunca erro.
 // `planejar` troca o plano (a v2 passa o seu); o padrão é a v1.
-export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = globalThis.fetch, dryRun = false, planejar = (ap) => requestsVisual(ap, { base }) }) {
+export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = globalThis.fetch, dryRun = false, planejar = (ap) => requestsVisual(ap, { base }), planoB = semImagens }) {
   const auth = { Authorization: `Bearer ${token}` };
   const id = encodeURIComponent(apresentacaoId);
   const r = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${id}`, { headers: auth });
@@ -609,13 +609,15 @@ export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = g
   };
   const erro = await enviar(requests);
   if (!erro) return { resumo, total: requests.length, aplicado: true, semIcones: false };
-  // sem imagens = sem createImage e sem fundo de imagem (v2)
-  const semImagens = requests.filter((q) => !q.createImage && !q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill);
-  if (!/image|url|fetch/i.test(erro) || semImagens.length === requests.length) throw new Error(erro);
-  const erro2 = await enviar(semImagens);
+  const lote2 = planoB(requests);
+  if (!/image|url|fetch/i.test(erro) || lote2.length === requests.length) throw new Error(erro);
+  const erro2 = await enviar(lote2);
   if (erro2) throw new Error(`${erro} | sem ícones: ${erro2}`);
-  return { resumo, total: semImagens.length, aplicado: true, semIcones: true, erroIcones: erro };
+  return { resumo, total: lote2.length, aplicado: true, semIcones: true, erroIcones: erro };
 }
+
+// Plano B padrão: o mesmo lote sem imagens (createImage) e sem fundos de imagem.
+export const semImagens = (requests) => requests.filter((q) => !q.createImage && !q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill);
 
 // Primitivas para os layouts v2 (visual-v2.mjs). Não são API pública do gerador.
 export const primitivas = { PT, pt, cor, forma, imagem, aparencia, texto, caixa, paraTras, mover, cabecalho, brutoEl, capital, barraEmpilhada, props };

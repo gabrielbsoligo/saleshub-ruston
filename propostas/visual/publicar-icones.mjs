@@ -30,6 +30,9 @@ async function req(metodo, caminho, corpo, extra = {}) {
 }
 
 console.log(`${arquivos.length} PNGs (${PASTAS.map((p) => `${p}: ${arquivos.filter((a) => a.pasta === p).length}`).join(', ')}) → ${BUCKET_ICONES}/<pasta>/${VERSAO_ICONES}${dryRun ? ' (dry-run)' : ''}`);
+// O bucket limita a 1 MB por arquivo (migration_186): avisa antes, com o nome do arquivo.
+const grandes = arquivos.filter((a) => readFileSync(a.caminho).length > 1048576);
+if (grandes.length) { console.error(`acima de 1 MB (o bucket recusa; reduza antes): ${grandes.map((a) => `${a.pasta}/${a.f}`).join(', ')}`); process.exit(1); }
 if (dryRun) process.exit(0);
 
 // O bucket nasce da migration (migration_186_propostas_visual_bucket.sql), não daqui.

@@ -39,13 +39,11 @@ const urlFundo = (assets, nome) => `${assets}/fundos/${VERSAO_ASSETS}/fundo-${no
 const urlCaso = (assets, arquivo) => `${assets}/casos/${VERSAO_ASSETS}/${arquivo}`;
 
 // ---------- peças ----------
-const fundo = (pagina, url) => ({
-  updatePageProperties: {
-    objectId: pagina,
-    pageProperties: { pageBackgroundFill: { stretchedPictureFill: { contentUrl: url } } },
-    fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl',
-  },
-});
+// Cor sólida ANTES da imagem: se o plano B tirar a imagem, o slide continua vinho (texto claro legível).
+const fundo = (pagina, url) => [
+  { updatePageProperties: { objectId: pagina, pageProperties: { pageBackgroundFill: { solidFill: { color: { rgbColor: ESTILO.fundo } } } }, fields: 'pageBackgroundFill.solidFill.color' } },
+  { updatePageProperties: { objectId: pagina, pageProperties: { pageBackgroundFill: { stretchedPictureFill: { contentUrl: url } } }, fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl' } },
+];
 const vidro = (id, forte = false) => aparencia(id, { fundo: ESTILO.branco, alfa: forte ? 0.1 : 0.055, contorno: ESTILO.vermelhoClaro, alfaContorno: 0.5, espessura: 0.75 });
 const imagemRet = (id, pagina, url, x, y, w, h) => ({ createImage: { objectId: id, url, elementProperties: props(pagina, x, y, w, h) } });
 const ico = (id, pagina, assets, chave, x, y, s, variante = 'amarelo') => ({ createImage: { objectId: id, url: urlIcone(`${assets}/icones/${VERSAO_ASSETS}`, chave, variante), elementProperties: props(pagina, x, y, s, s) } });
@@ -63,12 +61,20 @@ export function cabe(textoAlvo, larguraPt, alturaPt, fonte) {
 const fonteQueCabe = (textos, w, h, fontes = [11, 10, 9]) => fontes.find((f) => textos.every((t) => cabe(t, w, h, f))) ?? null;
 
 // Título curto do entregável: o nome do ícone (já é do catálogo), nunca texto novo.
-export function tituloCurto(t) {
-  const i = ICONES.find((x) => x.chave === iconePara(t));
-  if (i?.nome && i.chave !== 'padrao') return i.nome.charAt(0).toUpperCase() + i.nome.slice(1);
-  const corte = semNumero(t).split(/[:;,(]/)[0].trim();
-  return corte.split(/\s+/).slice(0, 4).join(' ');
+// Só usa o nome do ícone se a palavra-chave estiver no SUJEITO do item (1ª oração ou
+// primeiros 30 caracteres): "Relatório ... por WhatsApp" não vira "CRM + WhatsApp".
+// Senão, as primeiras palavras do próprio texto (sem terminar em preposição).
+const SOLTAS = new Set(['de', 'da', 'do', 'das', 'dos', 'para', 'com', 'e', 'no', 'na', 'nos', 'nas', 'em', 'a', 'o', 'as', 'os', 'ao', 'por', 'pela', 'pelo']);
+export function tituloCurtoComOrigem(t) {
+  const limpo = semNumero(t);
+  const sujeito = primeiraOracao(limpo) || limpo.slice(0, 30);
+  const i = ICONES.find((x) => x.chave === iconePara(sujeito));
+  if (i?.nome && i.chave !== 'padrao') return { titulo: i.nome.charAt(0).toUpperCase() + i.nome.slice(1), origem: 'icone' };
+  const palavras = limpo.split(/[:;,(]/)[0].trim().split(/\s+/).slice(0, 4);
+  while (palavras.length > 1 && SOLTAS.has(normalizar(palavras[palavras.length - 1]))) palavras.pop();
+  return { titulo: palavras.join(' '), origem: 'texto' };
 }
+export const tituloCurto = (t) => tituloCurtoComOrigem(t).titulo;
 
 // 1ª oração (até ":", ";", "," ou " (") para o negrito, se for curta.
 export function primeiraOracao(t) {
@@ -91,7 +97,13 @@ export function planoGradeEntregas(a, W, H) {
   const detalhes = a.cartoes.map((c) => semNumero(c.texto));
   const fonte = fonteQueCabe(detalhes, cw / PT - 24, ch / PT - 58, [11, 10, 9]);
   if (!fonte) return null;
-  return { cols, rows, gap, cw, ch, fonte, detalhes };
+  // Título (Anton ~0,5 em por caractere) em 1 linha na caixa de 34pt: 16pt, senão 14 ou 12.
+  const origens = a.cartoes.map((c) => tituloCurtoComOrigem(c.texto));
+  const titulos = origens.map((o) => o.titulo);
+  const larguraTitulo = cw / PT - 60;
+  const tamTitulo = [16, 14, 12].find((f) => titulos.every((t) => t.length * f * 0.5 <= larguraTitulo));
+  if (!tamTitulo) return null;
+  return { cols, rows, gap, cw, ch, fonte, detalhes, titulos, tamTitulo, origens: origens.map((o) => o.origem) };
 }
 
 export function requestsGradeEntregas(a, plano, W, H, assets) {
@@ -107,7 +119,7 @@ export function requestsGradeEntregas(a, plano, W, H, assets) {
       forma(`${id}o`, a.sid, 'ELLIPSE', x + pt(12), y + pt(12), pt(34), pt(34)),
       aparencia(`${id}o`, { fundo: ESTILO.vermelhoClaro, alfa: 0.22 }),
       ico(`${id}i`, a.sid, assets, chave, x + pt(19), y + pt(19), pt(20)),
-      ...caixa(`${id}t`, a.sid, x + pt(52), y + pt(12), plano.cw - pt(60), pt(34), tituloCurto(c.texto), { fonte: ESTILO.fonteTitulo, tamanho: 16 }),
+      ...caixa(`${id}t`, a.sid, x + pt(52), y + pt(12), plano.cw - pt(60), pt(34), plano.titulos[i], { fonte: ESTILO.fonteTitulo, tamanho: plano.tamTitulo }),
       ...caixa(`${id}d`, a.sid, x + pt(6), y + pt(52), plano.cw - pt(12), plano.ch - pt(56), plano.detalhes[i], { rgb: BRANCO_SUAVE, tamanho: plano.fonte }),
       { updateShapeProperties: { objectId: `${id}d`, shapeProperties: { contentAlignment: 'TOP' }, fields: 'contentAlignment' } },
       { deleteObject: { objectId: c.id } },
@@ -230,7 +242,7 @@ export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data })
   const tam = nome.length > 26 ? 40 : nome.length > 16 ? 48 : 58;
   return [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
-    fundo(sid, urlFundo(assets, 'capa')),
+    ...fundo(sid, urlFundo(assets, 'capa')),
     ...caixa(`${sid}_vk`, sid, m, Math.round(H * 0.2), W * 0.7, pt(22), `PROPOSTA COMERCIAL${tipo ? `  ·  ${tipo.toUpperCase()}` : ''}`, { rgb: ESTILO.amarelo, tamanho: 11, negrito: true }),
     ...caixa(`${sid}_vn`, sid, m, Math.round(H * 0.27), W * 0.78, Math.round(H * 0.42), nome, { fonte: ESTILO.fonteTitulo, tamanho: tam }),
     { updateShapeProperties: { objectId: `${sid}_vn`, shapeProperties: { contentAlignment: 'TOP' }, fields: 'contentAlignment' } },
@@ -245,7 +257,9 @@ export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data })
 // Números que JÁ estão no deck: valor (_p2) e desconto (_p1), prazo, nº de entregas, validade (_p0).
 export function numerosDoDeck(analisados) {
   const inv = analisados.find((a) => a.p?.p2);
-  const entregas = analisados.find((a) => /^proposta/.test(normalizar(a.rotulo)) && a.cartoes.length);
+  // Entregas: soma os slides de proposta (inclui "(cont.)"), sem os [PREENCHER].
+  const nEntregas = analisados.filter((a) => /^proposta/.test(normalizar(a.rotulo)))
+    .flatMap((a) => a.cartoes).filter((c) => !/\[PREENCHER/i.test(c.texto)).length;
   const tudo = analisados.flatMap((a) => a.cartoes.map((c) => c.texto)).join('\n');
   const prazo = tudo.match(/prazo[^:\n]*:\s*(\d+)\s*dias/i);
   const acomp = tudo.match(/(\d+)\s*dias\s+de\s+acompanhamento/i);
@@ -255,9 +269,9 @@ export function numerosDoDeck(analisados) {
     inv?.p.p2 && valorBRL(inv.p.p2.texto) != null
       && { rotulo: 'INVESTIMENTO', valor: inv.p.p2.texto.trim(), sub: (inv.p.p1?.texto || inv.p.p3?.texto || '').trim().toLowerCase() },
     prazo && { rotulo: 'PRAZO', valor: `${prazo[1]} dias`, sub: 'de implementação' },
-    entregas && { rotulo: 'ENTREGAS', valor: String(entregas.cartoes.length), sub: 'nesta etapa' },
+    nEntregas > 0 && { rotulo: 'ENTREGAS', valor: String(nEntregas), sub: 'nesta etapa' },
     val && { rotulo: 'CONDIÇÃO', valor: `até ${val[1]}`, sub: 'para fechamento' },
-    acomp && { rotulo: 'ACOMPANHAMENTO', valor: `${acomp[1]} dias`, sub: 'depois do setup' },
+    acomp && { rotulo: 'ACOMPANHAMENTO', valor: `${acomp[1]} dias`, sub: 'de acompanhamento' },
   ].filter(Boolean).slice(0, 4);
 }
 
@@ -271,7 +285,7 @@ export function requestsNumeros(tiles, { sid, indice, W, H, assets, rotulo, roda
   const reqs = [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
     ...cabecalho(sid, W, H, rotulo, 'A proposta em números'),
-    fundo(sid, urlFundo(assets, 'destaque')),
+    ...fundo(sid, urlFundo(assets, 'destaque')),
   ];
   tiles.forEach((t, i) => {
     const x = m + i * (tw + gap);
@@ -289,23 +303,28 @@ export function requestsNumeros(tiles, { sid, indice, W, H, assets, rotulo, roda
 }
 
 // Case do catálogo oficial com mais afinidade com o problema escrito no deck.
-const SINAIS = ['crm', 'comercial', 'lead', 'google', 'landing', 'convers|convert', 'rastre|ga4', 'tiktok', 'b2b', 'loja|showroom', 'whatsapp', 'e-?commerce|checkout'];
+// Genéricos ("comercial", "lead"...) aparecem em quase todo diagnóstico: contam na nota,
+// mas o case só entra com 3 sinais ou mais e pelo menos 1 específico.
+const SINAIS_GENERICOS = ['comercial', 'lead', 'convers|convert'];
+const SINAIS_ESPECIFICOS = ['crm', 'google', 'landing', 'rastre|ga4', 'tiktok', 'b2b', 'loja|showroom', 'whatsapp', 'e-?commerce|checkout'];
 export function escolherCaso(textoDeck, casos = CASOS.casos) {
   const t = normalizar(textoDeck);
+  const casa = (lista, d) => lista.filter((s) => new RegExp(s).test(t) && new RegExp(s).test(d)).length;
   let melhor = null;
   for (const c of casos) {
     const d = normalizar(`${c.desafio} ${c.segmento}`);
-    const nota = SINAIS.filter((s) => new RegExp(s).test(t) && new RegExp(s).test(d)).length;
-    if (!melhor || nota > melhor.nota) melhor = { caso: c, nota };
+    const especificos = casa(SINAIS_ESPECIFICOS, d);
+    const nota = especificos + casa(SINAIS_GENERICOS, d);
+    if (!melhor || nota > melhor.nota) melhor = { caso: c, nota, especificos };
   }
-  return melhor && melhor.nota >= 2 ? melhor : null;
+  return melhor && melhor.nota >= 3 && melhor.especificos >= 1 ? melhor : null;
 }
 
 // Largura da foto com a altura do slide (proporção do arquivo); nunca menor que a coluna.
 const fotoLargura = (caso, H, minimo) => Math.max(minimo, Math.round(H * ((caso.largura || 3) / (caso.altura || 2))));
 const primeiraFrase = (t) => (String(t).match(/^.*?[.!?](\s|$)/)?.[0] || String(t)).trim();
 
-export function requestsCaso(caso, { sid, indice, W, H, assets, rodape }) {
+export function requestsCaso(caso, { sid, indice, W, H, assets, rodape, aviso = null }) {
   const { m } = geo(W, H);
   const fotoW = Math.round(W * 0.4);
   const x = fotoW + pt(28);
@@ -313,7 +332,7 @@ export function requestsCaso(caso, { sid, indice, W, H, assets, rodape }) {
   const nums = caso.numeros.filter((n) => n.depois).slice(0, 3);
   const reqs = [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
-    fundo(sid, urlFundo(assets, 'b')),
+    ...fundo(sid, urlFundo(assets, 'b')),
     imagemRet(`${sid}_vf`, sid, urlCaso(assets, caso.imagem), fotoW - fotoLargura(caso, H, fotoW), 0, fotoLargura(caso, H, fotoW), H),
     forma(`${sid}_vfx`, sid, 'RECTANGLE', fotoW - pt(4), 0, pt(4), H), aparencia(`${sid}_vfx`, { fundo: ESTILO.vermelhoClaro }),
     ...caixa(`${sid}_r`, sid, x, Math.round(H * 0.07), w, pt(20), 'QUEM JÁ FEZ ESSE CAMINHO COM A V4', { rgb: ESTILO.vermelhoClaro, tamanho: 10, negrito: true }),
@@ -337,7 +356,7 @@ export function requestsCaso(caso, { sid, indice, W, H, assets, rodape }) {
   });
   reqs.push(
     ...caixa(`${sid}_vq`, sid, x, Math.round(H * 0.77), w, pt(36), `“${caso.frase}”`, { tamanho: 11, negrito: true }),
-    ...caixa(`${sid}_f`, sid, x, Math.round(H * 0.91), w, Math.round(H * 0.06), 'CASE V4  ·  FONTE: PÁGINA OFICIAL ESTRUTURAÇÃO ESTRATÉGICA 2026', { rgb: ESTILO.cinza, tamanho: 8, negrito: true }),
+    ...caixa(`${sid}_f`, sid, x, Math.round(H * 0.91), w, Math.round(H * 0.06), aviso || 'CASE V4  ·  FONTE: PÁGINA OFICIAL ESTRUTURAÇÃO ESTRATÉGICA 2026', { rgb: ESTILO.cinza, tamanho: 8, negrito: true }),
   );
   return reqs;
 }
@@ -414,7 +433,7 @@ export function requestsMockups(itens, { sid, indice, W, H, assets, rotulo, roda
   const reqs = [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
     ...cabecalho(sid, W, H, rotulo, 'Como fica na prática'),
-    fundo(sid, urlFundo(assets, 'a')),
+    ...fundo(sid, urlFundo(assets, 'a')),
   ];
   itens.forEach((it, i) => {
     const x = m + i * (w + gap);
@@ -432,7 +451,11 @@ export function requestsMockups(itens, { sid, indice, W, H, assets, rotulo, roda
 }
 
 // ---------- orquestração ----------
-export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.random().toString(36).slice(2, 8)}`, data = null, casos = CASOS.casos } = {}) {
+// Opções (decisões do Gabriel pendentes; padrões conservadores):
+//   capa: 'depois' (após a capa institucional) | 'antes' | 'substituir' (apaga a institucional) | 'nao'
+//   caso: 'auto' (só em proposta de Estruturação) | 'sim' (qualquer tipo, com aviso no rodapé) | 'nao'
+export const AVISO_CASO = 'RESULTADO DE ESTRUTURAÇÃO ESTRATÉGICA COM EXECUÇÃO CONTÍNUA, NÃO DESTA PROPOSTA  ·  CASE V4, PÁGINA OFICIAL EE 2026';
+export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.random().toString(36).slice(2, 8)}`, data = null, casos = CASOS.casos, capa = 'depois', caso: modoCaso = 'auto' } = {}) {
   if (!assets) throw new Error('raiz dos assets ausente');
   const base = `${assets}/icones/${VERSAO_ASSETS}`;
   const W = apresentacao.pageSize?.width?.magnitude ?? 9144000;
@@ -451,11 +474,18 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
     const feito = [];
     const r = normalizar(a.rotulo);
     const t = normalizar(a.titulo);
-    reqs.push(fundo(a.sid, urlFundo(assets, k % 2 ? 'b' : 'a')));
+    reqs.push(...fundo(a.sid, urlFundo(assets, k % 2 ? 'b' : 'a')));
     if (temEtapa2 && (ETAPA2.test(r) || /^proposta/.test(r))) { reqs.push(...requestsEtapas(a, W, ETAPA2.test(r) ? 2 : 1)); feito.push('etapas'); }
 
     let layout = null;
-    if (/^proposta/.test(r)) { const p = planoGradeEntregas(a, W, H); if (p) { reqs.push(...requestsGradeEntregas(a, p, W, H, assets)); layout = 'grade_entregas'; } }
+    if (/^proposta/.test(r)) {
+      const p = planoGradeEntregas(a, W, H);
+      if (p) {
+        reqs.push(...requestsGradeEntregas(a, p, W, H, assets));
+        layout = 'grade_entregas';
+        feito.push(`titulos:icone=${p.origens.filter((o) => o === 'icone').length},texto=${p.origens.filter((o) => o === 'texto').length}`);
+      }
+    }
     else if (/^(diagnostico|contexto)/.test(r)) { const p = planoGradeDiagnostico(a, W, H); if (p) { reqs.push(...requestsGradeDiagnostico(a, p, W, H, assets)); layout = 'grade_diagnostico'; } }
     else if (/^decisao/.test(r) || /proximos passos/.test(t)) { const p = planoPassos(a, W, H); if (p) { reqs.push(...requestsPassos(a, p, W, H)); layout = p.validade ? 'passos+validade' : 'passos'; } }
 
@@ -465,7 +495,7 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
       if (novaW) { reqs.push(...requestsMidia(a, midia, W, novaW, base)); feito.push('grafico_midia'); }
       else if (!existe(`${a.sid}_vms`)) {
         const indice = indiceDe(a.sid) + 1;
-        novos.push({ indice, requests: [...requestsSlideMidia(midia, { sid: `${a.sid}_vms`, indice, W, H, base, rotulo: a.rotulo, assessoria: dadosAssessoria(a), aproximado: a.cartoes.some((c) => /cerca de|aprox/i.test(c.texto)), rodape, grafismo: false }), fundo(`${a.sid}_vms`, urlFundo(assets, 'b'))] });
+        novos.push({ indice, requests: [...requestsSlideMidia(midia, { sid: `${a.sid}_vms`, indice, W, H, base, rotulo: a.rotulo, assessoria: dadosAssessoria(a), aproximado: a.cartoes.some((c) => /cerca de|aprox/i.test(c.texto)), rodape, grafismo: false }), ...fundo(`${a.sid}_vms`, urlFundo(assets, 'b'))] });
         feito.push('grafico_midia_slide_proprio');
       }
     }
@@ -482,10 +512,12 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
 
   // Slides novos, na ordem em que entram no deck (empate no índice: ordem de registro).
   const cliente = clienteDoDeck(analisados);
-  if (cliente && !existe('_vcapa')) {
-    const indice = 0;
-    novos.push({ indice, requests: requestsCapa({ sid: `${prefixo}_vcapa`, indice, W, H, assets, cliente, tipo: tipoDoDeck(analisados), data }) });
-    resumo.push({ slide: `${prefixo}_vcapa`, titulo: cliente, feito: ['capa_cliente'] });
+  const institucional = slides.length && !analisarSlide(slides[0]) ? slides[0].objectId : null;
+  if (cliente && capa !== 'nao' && !existe('_vcapa')) {
+    const indice = capa === 'depois' && institucional ? 1 : 0;
+    const extra = capa === 'substituir' && institucional ? [{ deleteObject: { objectId: institucional } }] : [];
+    novos.push({ indice, requests: [...requestsCapa({ sid: `${prefixo}_vcapa`, indice, W, H, assets, cliente, tipo: tipoDoDeck(analisados), data }), ...extra] });
+    resumo.push({ slide: `${prefixo}_vcapa`, titulo: cliente, feito: [`capa_cliente:${capa}`] });
   }
   const entregas = analisados.find((a) => /^proposta/.test(normalizar(a.rotulo)) && a.cartoes.length);
   const inv = analisados.find((a) => a.p?.p2 || a.linhas.length);
@@ -496,9 +528,11 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
     resumo.push({ slide: `${prefixo}_vmock`, titulo: 'COMO FICA NA PRÁTICA', feito: [`mockups:${mk.length}`] });
   }
   const textoDeck = analisados.flatMap((a) => [a.titulo, ...a.cartoes.map((c) => c.texto)]).join('\n');
-  const caso = escolherCaso(textoDeck, casos);
+  const ehEstruturacao = /estruturacao/.test(normalizar(tipoDoDeck(analisados)));
+  const caso = modoCaso === 'nao' || (modoCaso === 'auto' && !ehEstruturacao) ? null : escolherCaso(textoDeck, casos);
   if (caso && !existe('_vcase')) {
-    novos.push({ indice: depoisEntregas, requests: requestsCaso(caso.caso, { sid: `${prefixo}_vcase`, indice: depoisEntregas, W, H, assets, rodape }) });
+    const aviso = ehEstruturacao ? null : AVISO_CASO;
+    novos.push({ indice: depoisEntregas, requests: requestsCaso(caso.caso, { sid: `${prefixo}_vcase`, indice: depoisEntregas, W, H, assets, rodape, aviso }) });
     resumo.push({ slide: `${prefixo}_vcase`, titulo: caso.caso.nome, feito: [`case:${caso.caso.id}:${caso.nota}`] });
   }
   const tiles = numerosDoDeck(analisados);
@@ -511,7 +545,7 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
   if (marcos.length >= 3 && !existe('_vtl')) {
     const iProx = slides.findIndex((s) => { const a = analisarSlide(s); return a && /proximos passos/.test(normalizar(a.titulo)); });
     const indice = iProx >= 0 ? iProx : indiceDe(analisados[analisados.length - 1].sid) + 1;
-    novos.push({ indice, requests: [...requestsLinhaDoTempo(marcos, { sid: `${prefixo}_vtl`, indice, W, H, base, rodape, grafismo: false }), fundo(`${prefixo}_vtl`, urlFundo(assets, 'a'))] });
+    novos.push({ indice, requests: [...requestsLinhaDoTempo(marcos, { sid: `${prefixo}_vtl`, indice, W, H, base, rodape, grafismo: false }), ...fundo(`${prefixo}_vtl`, urlFundo(assets, 'a'))] });
     resumo.push({ slide: `${prefixo}_vtl`, titulo: 'COMO VAI SER', feito: [`linha_do_tempo:${marcos.length}`] });
   }
   const ordem = novos.map((n, i) => ({ ...n, i })).sort((x, y) => y.indice - x.indice || y.i - x.i);
@@ -520,5 +554,13 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
 }
 
 // Aplica a v2 (mesma rede e mesmo plano B da v1: sem imagens se o Google não baixar alguma).
-export const aplicarVisualV2 = ({ assets, data = null, ...resto }) =>
-  aplicarVisual({ ...resto, planejar: (ap) => requestsVisualV2(ap, { assets, data }) });
+export const aplicarVisualV2 = ({ assets, data = null, capa, caso, ...resto }) =>
+  aplicarVisual({ ...resto, planejar: (ap) => requestsVisualV2(ap, { assets, data, capa, caso }), planoB: planoBV2 });
+
+// Plano B da v2: tira imagens e fundos de imagem (a cor sólida que vem antes fica) e
+// descarta o slide de case inteiro (sem a foto ele perde 40% da área).
+export function planoBV2(requests) {
+  const casos = requests.filter((q) => q.createSlide?.objectId.endsWith('_vcase')).map((q) => q.createSlide.objectId);
+  const doCaso = (q) => casos.some((sid) => JSON.stringify(q).includes(`"${sid}`));
+  return requests.filter((q) => !q.createImage && !q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill && !doCaso(q));
+}

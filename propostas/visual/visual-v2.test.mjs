@@ -7,7 +7,7 @@ import { requestsDeckCurto } from '../../supabase/functions/_shared/propostas/de
 import { analisarSlide } from '../../supabase/functions/_shared/propostas/visual.mjs';
 import {
   requestsVisualV2, aplicarVisualV2, assetsDoProjeto, tituloCurto, primeiraOracao, validadeDoTexto, escolherCaso,
-  numerosDoDeck, cabe, planoGradeEntregas, planoGradeDiagnostico, planoPassos, mockupsDoDeck,
+  numerosDoDeck, cabe, AVISO_CASO, planoGradeEntregas, planoGradeDiagnostico, planoPassos, mockupsDoDeck,
 } from '../../supabase/functions/_shared/propostas/visual-v2.mjs';
 
 const PT = 12700;
@@ -87,10 +87,25 @@ function simular(apresentacao, requests) {
 
 test('título curto = nome do ícone (catálogo), nunca texto novo', () => {
   assert.equal(tituloCurto('01   Landing page focada em conversão'), 'Landing page');
-  assert.equal(tituloCurto('Página otimizada para aparecer nas buscas por IA'), 'Busca por IA');
-  assert.equal(tituloCurto('CRM integrado ao WhatsApp'), 'CRM + WhatsApp');
+  assert.equal(tituloCurto('Página otimizada para aparecer nas buscas por IA (ChatGPT, Gemini) e no Google orgânico'), 'Busca por IA');
+  assert.equal(tituloCurto('CRM integrado ao WhatsApp, com IA de recepção'), 'CRM + WhatsApp');
   // sem ícone conhecido: as primeiras palavras do próprio texto, até a pontuação
   assert.equal(tituloCurto('Algo bem diferente: com detalhe'), 'Algo bem diferente');
+});
+
+test('título curto: palavra-chave fora do sujeito não vira cabeçalho (sondas do Vedor)', () => {
+  assert.equal(tituloCurto('Treinamento do time comercial no CRM'), 'Treinamento do time comercial');
+  assert.equal(tituloCurto('Revisão mensal das metas com a empresa'), 'Revisão mensal das metas');
+  assert.equal(tituloCurto('Automação de follow-up para leads parados há 30 dias'), 'Automação de follow-up');
+  assert.notEqual(tituloCurto('Relatório semanal enviado ao cliente por WhatsApp'), 'CRM + WhatsApp');
+  // os 6 da Authoral seguem com o nome do ícone
+  const authoral = [
+    ['Landing page focada em conversão, no modelo de portfólio, com os melhores projetos entregues', 'Landing page'],
+    ['Funis personalizados no CRM (ex.: arquitetos e parceiros; cliente final), com etapas até o fechamento', 'Funis'],
+    ['Rastreamento de ponta a ponta: UTMs, pixel e tags, e API de conversão ligando o CRM às campanhas', 'Rastreamento'],
+    ['Setup de campanha no Google Ads pronto para rodar, com 15 dias de acompanhamento', 'Google Ads'],
+  ];
+  for (const [t, esperado] of authoral) assert.equal(tituloCurto(t), esperado, t);
 });
 
 test('primeira oração em destaque só quando curta; validade lida do texto', () => {
@@ -113,8 +128,10 @@ test('catálogo de cases: fonte oficial, imagem publicada, números com valor "d
 
 test('case escolhido por afinidade com o problema; sem afinidade, sem case', () => {
   assert.equal(escolherCaso('Sem CRM, leads aleatórios, atendimento comercial lento').caso.id, 'valec-renault');
-  assert.equal(escolherCaso('E-commerce com checkout ruim e conversão baixa').caso.modelo, 'e-commerce');
+  assert.equal(escolherCaso('E-commerce com checkout ruim, conversão baixa e rastreamento GA4 quebrado').caso.modelo, 'e-commerce');
   assert.equal(escolherCaso('Texto sem relação nenhuma'), null);
+  // só sinais genéricos (comercial, lead) não bastam: precisa de 3 e de 1 específico
+  assert.equal(escolherCaso('Atendimento comercial lento; leads chegam e esfriam'), null);
 });
 
 test('números do slide-resumo saem do deck; sem dado, sem número', () => {
@@ -145,10 +162,10 @@ test('mockups só das entregas com forma visível (no máximo 3, sem repetir des
 
 test('plano v2: layouts, slides novos na ordem certa, IDs únicos e sem colisão', () => {
   const d = deck();
-  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '30/10/2026' });
+  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '30/10/2026', caso: 'sim' });
   const por = Object.fromEntries(resumo.map((r) => [r.slide, r.feito]));
   assert.deepEqual(por.xD, ['grade_diagnostico']);
-  assert.deepEqual(por.xA, ['grade_entregas']);
+  assert.deepEqual(por.xA, ['titulos:icone=4,texto=0', 'grade_entregas']);
   assert.deepEqual(por.xI, ['icones_linhas:1', 'comparativo_preco']);
   assert.deepEqual(por.xC, ['passos+validade']);
   const novos = criados(requests);
@@ -156,7 +173,7 @@ test('plano v2: layouts, slides novos na ordem certa, IDs únicos e sem colisão
   const existentes = new Set(d.slides.flatMap((s) => [s.objectId, ...s.pageElements.map((e) => e.objectId)]));
   for (const id of novos) assert.ok(!existentes.has(id), id);
   const ap = simular(d, requests);
-  assert.deepEqual(ap.slides.map((s) => s.objectId), ['tst_vcapa', 'capaV4', 'xD', 'xA', 'tst_vmock', 'tst_vcase', 'tst_vnum', 'xI', 'tst_vtl', 'xC']);
+  assert.deepEqual(ap.slides.map((s) => s.objectId), ['capaV4', 'tst_vcapa', 'xD', 'xA', 'tst_vmock', 'tst_vcase', 'tst_vnum', 'xI', 'tst_vtl', 'xC']);
   // nada de assets de fora: todo fundo/imagem vem da raiz do projeto
   for (const r of requests) {
     const url = r.createImage?.url || r.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill?.contentUrl;
@@ -186,7 +203,41 @@ test('integração com o deck curto (main): plano completo sem colisão', () => 
   const novos = criados(requests);
   assert.equal(new Set(novos).size, novos.length);
   const final = simular(ap, requests);
-  assert.equal(final.slides[0].objectId, 'vT_vcapa');
+  assert.deepEqual(final.slides.slice(0, 2).map((x) => x.objectId), ['capa', 'vT_vcapa']);
+  assert.ok(!JSON.stringify(resumo).includes('case:'), 'implementação sem opt-in: sem case');
+});
+
+test('capa: depois da institucional (padrão), antes, substituindo ou nenhuma', () => {
+  const ordem = (capa) => simular(deck(), requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'k', capa }).requests).slides.slice(0, 2).map((x) => x.objectId);
+  assert.deepEqual(ordem(undefined), ['capaV4', 'k_vcapa']);
+  assert.deepEqual(ordem('antes'), ['k_vcapa', 'capaV4']);
+  assert.deepEqual(ordem('substituir'), ['k_vcapa', 'xD']);
+  assert.deepEqual(ordem('nao'), ['capaV4', 'xD']);
+});
+
+test('case: automático só em Estruturação; com opt-in em outro tipo, leva o aviso no rodapé', () => {
+  const textos = (o) => requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'c', ...o }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  assert.ok(!textos({}).some((t) => /VALEC/.test(t)), 'implementação: sem case por padrão');
+  assert.ok(textos({ caso: 'sim' }).includes(AVISO_CASO));
+  const d = deck();
+  d.slides[2] = lista('xA', 'PROPOSTA · ESTRUTURAÇÃO ESTRATÉGICA', 'O QUE ENTREGAMOS', ['Persona e ICP', 'CRM integrado ao WhatsApp', 'Landing page']);
+  const t = requestsVisualV2(d, { assets: ASSETS, prefixo: 'c' }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  assert.ok(t.some((x) => /VALEC/.test(x)) && !t.includes(AVISO_CASO));
+});
+
+test('números: entregas somam "(cont.)" e ignoram [PREENCHER]; textos sem inventar', () => {
+  const d = deck();
+  d.slides.splice(3, 0, lista('xA2', 'PROPOSTA · IMPLEMENTAÇÃO', 'O QUE ENTREGAMOS AGORA (CONT.)', ['Rastreamento', '[PREENCHER] entregáveis combinados']));
+  const ns = numerosDoDeck(d.slides.map(analisarSlide).filter(Boolean));
+  assert.equal(ns.find((n) => n.rotulo === 'ENTREGAS').valor, '5');
+  assert.ok(!JSON.stringify(ns).includes('setup'));
+});
+
+test('título grande demais para a grade: fonte menor, nunca quebra', () => {
+  const d = lista('g', 'PROPOSTA · X', 'T', ['Acompanhamento semanal', 'Implementação completa', 'Rastreamento total', 'Landing page', 'Google Ads', 'Funis no CRM']);
+  const p = planoGradeEntregas(analisarSlide(d), W, H);
+  assert.ok(p && [16, 14, 12].includes(p.tamTitulo));
+  for (const t of p.titulos) assert.ok(t.length * p.tamTitulo * 0.5 <= p.cw / PT - 60, t);
 });
 
 test('aplicarVisualV2: falha de imagem repete sem imagens E sem fundos de imagem', async () => {
@@ -199,8 +250,13 @@ test('aplicarVisualV2: falha de imagem repete sem imagens E sem fundos de imagem
       ? { ok: false, status: 400, json: async () => ({ error: { message: 'There was a problem retrieving the image' } }) }
       : { ok: true, status: 200, json: async () => ({}) };
   };
-  const r = await aplicarVisualV2({ token: 't', apresentacaoId: 'p', assets: ASSETS, fetchImpl });
+  const r = await aplicarVisualV2({ token: 't', apresentacaoId: 'p', assets: ASSETS, fetchImpl, caso: 'sim' });
+  assert.ok(JSON.stringify(posts[0]).includes('_vcase'));
   assert.equal(r.semIcones, true);
   assert.ok(!posts[1].some((q) => q.createImage || q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill));
+  for (const sid of posts[1].filter((q) => q.createSlide).map((q) => q.createSlide.objectId)) {
+    assert.ok(posts[1].some((q) => q.updatePageProperties?.objectId === sid && q.updatePageProperties.pageProperties.pageBackgroundFill.solidFill), `sem fundo: ${sid}`);
+  }
+  assert.ok(!JSON.stringify(posts[1]).includes('_vcase'), 'case sai inteiro no plano B');
   assert.equal(assetsDoProjeto('https://abc.supabase.co/'), 'https://abc.supabase.co/storage/v1/object/public/propostas-visual');
 });
