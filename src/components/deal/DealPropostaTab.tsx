@@ -23,7 +23,15 @@ export interface Proposta {
   visto_em: string | null;
   enviada_em: string | null;
   created_at: string;
+  tipo_identificado?: string | null;
 }
+
+const NOME_TIPO: Record<string, string> = {
+  estruturacao: 'Estruturação',
+  implementacao: 'Implementação',
+  execucao: 'Execução mensal',
+  implementacao_e_execucao: 'Implementação + execução',
+};
 
 const STATUS: Record<Proposta['status'], { label: string; cls: string }> = {
   pendente: { label: 'Na fila', cls: 'bg-yellow-500/20 text-yellow-400' },
@@ -71,6 +79,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
   const [gerando, setGerando] = useState(false);
   const [reuniaoId, setReuniaoId] = useState('');
   const [colar, setColar] = useState(false);
+  const [tipoOferta, setTipoOferta] = useState('');
   const [texto, setTexto] = useState('');
   const [autoAtivo, setAutoAtivo] = useState<boolean | null>(null);
   const ehGestor = currentUser?.role === 'gestor';
@@ -81,7 +90,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
 
   const carregar = useCallback(async () => {
     const { data, error } = await supabase.from('propostas')
-      .select('id, deal_id, reuniao_id, origem, status, url, pendencias, erro, visto_em, enviada_em, created_at')
+      .select('id, deal_id, reuniao_id, origem, status, url, pendencias, erro, visto_em, enviada_em, created_at, tipo_identificado:escopo->oferta->>tipo')
       .eq('deal_id', deal.id).order('created_at', { ascending: false });
     if (error) toast.error(`Propostas: ${error.message}`);
     setPropostas((data as Proposta[]) || []);
@@ -117,6 +126,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
         action: 'gerar', deal_id: deal.id,
         reuniao_id: reuniaoId || null,
         transcricao_texto: colar && texto.trim() ? texto : null,
+        tipo_oferta: tipoOferta || null,
       });
       if (r.status === 'revisao') toast.success('Proposta gerada — revise no Google Slides antes de enviar.');
       else if (r.status === 'erro') toast.error(`Não gerou: ${r.erro}`);
@@ -159,9 +169,20 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
       <div className="bg-[var(--color-v4-bg)] border border-[var(--color-v4-border)] rounded-lg p-4 space-y-3">
         <div className="flex items-center gap-2 text-sm font-medium text-white"><FileText size={16} /> Gerar proposta (Google Slides)</div>
         <p className="text-xs text-[var(--color-v4-text-muted)]">
-          Usa o deck oficial EE 2026 e monta escopo, plano e preço a partir da transcrição da reunião. A proposta fica para
-          você revisar e editar no Slides; o envio ao cliente é sempre feito por você.
+          Monta escopo e preço a partir da transcrição da reunião: Estruturação usa o deck EE 2026 completo; implementação
+          ou execução usam o deck curto (institucional + entregáveis + investimento). A proposta fica para você revisar e
+          editar no Slides; o envio ao cliente é sempre feito por você.
         </p>
+        <div>
+          <label className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">Tipo de oferta</label>
+          <select value={tipoOferta} onChange={e => setTipoOferta(e.target.value)} className={inputCls}>
+            <option value="">Automático (a IA identifica pela call)</option>
+            <option value="estruturacao">Estruturação Estratégica (SABER)</option>
+            <option value="implementacao">Implementação pontual (TER)</option>
+            <option value="execucao">Execução recorrente (EXECUTAR)</option>
+            <option value="implementacao_e_execucao">Implementação + execução (TER + EXECUTAR)</option>
+          </select>
+        </div>
         <div>
           <label className="text-[10px] uppercase text-[var(--color-v4-text-muted)]">Reunião</label>
           <select value={reuniaoId} onChange={e => setReuniaoId(e.target.value)} className={inputCls}>
@@ -201,6 +222,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
                   <span className={`px-2 py-0.5 rounded-full ${STATUS[p.status].cls}`}>{STATUS[p.status].label}</span>
                   <span className="text-[var(--color-v4-text-muted)]">
                     {new Date(p.created_at).toLocaleString('pt-BR')} · {p.origem === 'auto' ? 'automática' : 'manual'}
+                    {p.tipo_identificado && ` · ${NOME_TIPO[p.tipo_identificado] || p.tipo_identificado}`}
                   </span>
                 </div>
                 {EM_ANDAMENTO.includes(p.status) && <Loader2 size={14} className="animate-spin text-yellow-400" />}

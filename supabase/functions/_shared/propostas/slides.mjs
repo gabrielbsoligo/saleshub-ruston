@@ -415,11 +415,15 @@ export function requestsSlidesEscopo(secoes, { indice, pageSize, prefixo = novoP
 // Validação mínima (sem dependência de lib de JSON Schema): o que quebraria a geração.
 export function validarEscopo(e) {
   const erros = [];
-  if (e?.schema_version !== 'proposta-escopo/v0') erros.push('schema_version deve ser proposta-escopo/v0');
+  if (!['proposta-escopo/v0', 'proposta-escopo/v1'].includes(e?.schema_version)) erros.push('schema_version deve ser proposta-escopo/v0 ou v1');
   if (!e?.cliente?.empresa) erros.push('cliente.empresa é obrigatório');
   if (!['inside_sales', 'pdv', 'ecommerce'].includes(e?.cliente?.modelo_venda)) erros.push('cliente.modelo_venda inválido');
-  if (!Array.isArray(e?.escopo?.semanas) || !e.escopo.semanas.length) erros.push('escopo.semanas vazio');
-  if (!e?.preco?.estruturacao) erros.push('preco.estruturacao é obrigatório (valores podem ser null)');
+  // Fora da Estruturação (deck curto) não há semanas nem preço de estruturação.
+  const tipo = e?.oferta?.tipo ?? 'estruturacao';
+  if (!['estruturacao', 'implementacao', 'execucao', 'implementacao_e_execucao'].includes(tipo)) erros.push('oferta.tipo inválido');
+  const curto = tipo !== 'estruturacao';
+  if (!curto && (!Array.isArray(e?.escopo?.semanas) || !e.escopo.semanas.length)) erros.push('escopo.semanas vazio');
+  if (!curto && !e?.preco?.estruturacao) erros.push('preco.estruturacao é obrigatório (valores podem ser null)');
 
   // Preço: null/ausente vira [PREENCHER]; valor presente tem de ser número válido.
   const valor = (v, nome) => {
@@ -442,11 +446,33 @@ export function validarEscopo(e) {
   inteiro(exe.meses, 'preco.execucao_mensal.meses');
   texto(e?.plano_execucao?.faixa_midia, 'plano_execucao.faixa_midia');
   texto(e?.preco?.validade, 'preco.validade');
+  // Oferta do deck curto: preço da oferta, valor por item, custos de terceiros, etapa 2.
+  const of = e?.preco?.oferta || {};
+  valor(of.valor_tabela, 'preco.oferta.valor_tabela');
+  valor(of.valor_final, 'preco.oferta.valor_final');
+  valor(of.valor_parcela, 'preco.oferta.valor_parcela');
+  inteiro(of.parcelas, 'preco.oferta.parcelas');
+  if (of.desconto_percentual != null && !(typeof of.desconto_percentual === 'number' && of.desconto_percentual > 0 && of.desconto_percentual < 100)) {
+    erros.push('preco.oferta.desconto_percentual deve ser número entre 0 e 100 ou null');
+  }
+  (e?.entregaveis || []).forEach((i, k) => valor(i?.valor, `entregaveis[${k}].valor`));
+  (e?.custos_terceiros || []).forEach((c, k) => {
+    valor(c?.valor, `custos_terceiros[${k}].valor`);
+    if (typeof c?.texto !== 'string' || !c.texto.trim()) erros.push(`custos_terceiros[${k}] sem texto`);
+  });
+  valor(e?.etapa2?.valor_mensal, 'etapa2.valor_mensal');
+  (e?.etapa2?.verba_midia || []).forEach((v, k) => valor(v?.valor, `etapa2.verba_midia[${k}].valor`));
 
   // Todo item que vira slide: texto obrigatório; da IA, só com citação da transcrição.
   const colecoes = [
     ['contexto.dores', e?.contexto?.dores],
     ['contexto.objetivos', e?.contexto?.objetivos],
+    ['contexto.publico', e?.contexto?.publico],
+    ['contexto.concorrentes', e?.contexto?.concorrentes],
+    ['contexto.cliente_fornece', e?.contexto?.cliente_fornece],
+    ['contexto.proximos_passos', e?.contexto?.proximos_passos],
+    ['entregaveis', e?.entregaveis],
+    ['etapa2.itens', e?.etapa2?.itens],
     ...(e?.escopo?.semanas || []).map((s) => [`semana ${s.id}`, s.itens]),
     ['escopo.overdeliveries', e?.escopo?.overdeliveries],
     ['plano_execucao.itens', e?.plano_execucao?.itens],

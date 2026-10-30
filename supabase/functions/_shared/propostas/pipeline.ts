@@ -5,7 +5,7 @@
 // Slides gerado com o token Google do closer (ou da conta reserva) →
 // status 'revisao'. Nunca envia nada ao cliente.
 // =============================================================
-import catalogo from './catalogo-v0.json' with { type: 'json' }
+import catalogo from './catalogo-v1.json' with { type: 'json' }
 import { criarCliente, ErroGoogle } from './google.mjs'
 import { gerarProposta, prepararTemplate } from './gerar.mjs'
 import { extrairJson, montarPrompt, normalizarEscopo } from './analise.mjs'
@@ -79,10 +79,17 @@ export async function carregarTranscricao(sb: any, deal: any, reuniaoId: string 
   return { reuniao_id: null, texto: '' }
 }
 
-export async function analisarTranscricao(texto: string, empresa: string, modeloVenda: string | null = null) {
-  const prompt = montarPrompt({ transcricao: texto, catalogo, empresa, modeloVenda })
+// opcoes.tipoOferta: escolhido pelo closer (null = a IA classifica).
+// opcoes.dataReuniao ('aaaa-mm-dd'): base da validade relativa ("hoje", "fim do mês");
+// dataAssumida = não é a data da reunião (ex.: data do pedido).
+export async function analisarTranscricao(
+  texto: string, empresa: string, modeloVenda: string | null = null,
+  opcoes: { tipoOferta?: string | null, dataReuniao?: string | null, dataAssumida?: boolean } = {},
+) {
+  const { tipoOferta = null, dataReuniao = null, dataAssumida = false } = opcoes
+  const prompt = montarPrompt({ transcricao: texto, catalogo, empresa, modeloVenda, tipoOferta })
   const { texto: resposta, provedor } = await chamarLLM(prompt)
-  const escopo = normalizarEscopo(extrairJson(resposta), { catalogo, empresa, transcricao: texto, modeloVenda })
+  const escopo = normalizarEscopo(extrairJson(resposta), { catalogo, empresa, transcricao: texto, modeloVenda, tipoOferta, dataReuniao, dataAssumida })
   const erros = validarEscopo(escopo)
   if (erros.length) throw new Error(`escopo da análise inválido: ${erros.join('; ')}`)
   return { escopo, provedor }
@@ -126,7 +133,17 @@ export async function processarProposta(sb: any, id: string) {
       throw new Error('sem transcrição da reunião (busque no Meet ou cole o texto)')
     }
 
-    const { escopo, provedor } = await analisarTranscricao(texto, deal.empresa)
+    // Data da reunião (fuso de Brasília) para a validade relativa; sem reunião, a do pedido.
+    const diaSP = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+    let dataReuniao: string | null = null
+    if (reuniaoId) {
+      const { data: r } = await sb.from('reunioes').select('data_reuniao').eq('id', reuniaoId).maybeSingle()
+      if (r?.data_reuniao) dataReuniao = diaSP(r.data_reuniao)
+    }
+    const dataAssumida = !dataReuniao
+    if (!dataReuniao) dataReuniao = diaSP(p.created_at || new Date().toISOString())
+
+    const { escopo, provedor } = await analisarTranscricao(texto, deal.empresa, null, { tipoOferta: p.tipo_oferta || null, dataReuniao, dataAssumida })
     await atualizar(sb, id, { status: 'gerando', escopo, reuniao_id: reuniaoId, provedor_llm: provedor })
 
     // Conta Google: closer do deal; se não tiver conexão/permissão, a conta reserva.
@@ -145,7 +162,7 @@ export async function processarProposta(sb: any, id: string) {
         const editores = closerEmail && closerEmail !== emailDe(mid) ? [closerEmail] : []
         resultado = await gerarProposta(criarCliente(token), {
           templateId: cfg.template_id, escopo, pastaId: cfg.pasta_id || undefined,
-          editores, dominio: cfg.dominio || null,
+          editores, dominio: cfg.dominio || null, slidesCurto: cfg.slides_curto || [],
         })
         usado = mid
         break
