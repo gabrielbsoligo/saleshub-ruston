@@ -60,6 +60,7 @@ REGRAS (obrigatórias):
 5b. VALIDADE: a data até quando a proposta/condição vale, combinada na reunião ("validade" no formato dd/mm/aaaa ou dd/mm, com a evidência literal). Sem data falada: null.
 5c. TAMANHO: "texto" de cada item com no máximo 90 caracteres; "titulo" de cada semana com no máximo 45 caracteres.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
+6b. CITAÇÕES e EVIDÊNCIAS: copie de 6 a 20 palavras SEGUIDAS de uma única fala da transcrição, exatamente como estão escritas (inclusive erros de transcrição e números como "6,500"), sem juntar falas, resumir ou corrigir. Citação que não for cópia exata é descartada.
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
 
@@ -132,9 +133,10 @@ const MODELOS = ['inside_sales', 'pdv', 'ecommerce'];
 
 const escaparRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Expressões monetárias completas, com posição: "R$ 29.750,00", "29750", "5 mil",
+// "6,500" (a transcrição do Meet às vezes separa milhar com vírgula; centavos têm 2 dígitos),
 // "29,75 mil", "5k", "29 mil e 750". Não quebra número maior em pedaços ("750"
 // de "29.750") e ignora quantidades ("12x", "6 meses").
-const RE_DINHEIRO = /(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?(?:\s*(mil|k)\b(?:\s*e\s*(\d{1,3})\b)?)?/gi;
+const RE_DINHEIRO = /(\d{1,3}(?:[.,]\d{3})+(?!\d)|\d+)(?:,(\d{1,2}))?(?:\s*(mil|k)\b(?:\s*e\s*(\d{1,3})\b)?)?/gi;
 export function expressoesMonetarias(texto) {
   const t = String(texto || '').toLowerCase();
   const out = [];
@@ -142,7 +144,7 @@ export function expressoesMonetarias(texto) {
     const fim = m.index + m[0].length;
     if (/[\d.,]/.test(t[m.index - 1] || '')) continue;
     if (!m[3] && /^\s*(x\b|vezes|parcelas|meses|%)/.test(t.slice(fim))) continue;
-    let v = Number(m[1].replace(/\./g, '')) + (m[2] ? Number(m[2].padEnd(2, '0')) / 100 : 0);
+    let v = Number(m[1].replace(/[.,]/g, '')) + (m[2] ? Number(m[2].padEnd(2, '0')) / 100 : 0);
     if (m[3]) v = v * 1000 + (m[4] ? Number(m[4]) : 0);
     out.push({ valor: Math.round(v * 100) / 100, ini: m.index, fim });
   }

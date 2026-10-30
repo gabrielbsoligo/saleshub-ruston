@@ -441,3 +441,10 @@ test('Vedor (semanas) #2/#3: execução vazia vira pendência; ex_* repetido nã
   assert.equal(f.plano_execucao.itens[1].texto, 'Tráfego A');
   assert.ok(!f.pendencias.some((p) => p.startsWith('plano de execução não veio')));
 });
+
+test('Authoral 30/10: milhar com vírgula da transcrição do Meet ("6,500") vale 6500; centavos seguem com 2 dígitos', () => {
+  assert.deepEqual(valoresMonetarios('ela seria 6,500 e o mensal 4.000'), [6500, 4000]);
+  assert.deepEqual(valoresMonetarios('R$ 29,75 mil ou R$ 5.809,76'), [29750, 5809.76]);
+  assert.deepEqual(valoresMonetarios('1,2345'), [1.23], 'vírgula com 4 dígitos não é milhar');
+  assert.deepEqual(valoresMonetarios('12 vezes de 433'), [433]);
+});
