@@ -4,7 +4,8 @@
 // O Slides baixa a imagem uma vez, na inserção; o deck não depende do bucket depois.
 //   set -a; . ~/.oraculo/segredos/saleshub.env; set +a     (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)
 //   node propostas/visual/publicar-icones.mjs [--dry-run]
-// Reverter: apagar o bucket propostas-visual (Storage) ou só a pasta da versão.
+// Pré-requisito: bucket criado pela migration_186. Reverter: rollback da migration_186
+// (apaga objetos e bucket) ou só a pasta da versão.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,12 +27,9 @@ async function req(metodo, caminho, corpo, extra = {}) {
 console.log(`${arquivos.length} ícones → ${BUCKET_ICONES}/icones/${VERSAO_ICONES}${dryRun ? ' (dry-run)' : ''}`);
 if (dryRun) process.exit(0);
 
+// O bucket nasce da migration (migration_186_propostas_visual_bucket.sql), não daqui.
 const b = await req('GET', `bucket/${BUCKET_ICONES}`);
-if (!b.ok) {
-  const c = await req('POST', 'bucket', JSON.stringify({ id: BUCKET_ICONES, name: BUCKET_ICONES, public: true, allowed_mime_types: ['image/png'], file_size_limit: 1048576 }), { 'Content-Type': 'application/json' });
-  if (!c.ok) { console.error(`criar bucket: HTTP ${c.status} ${c.texto}`); process.exit(1); }
-  console.log('bucket criado (público, só PNG, até 1 MB)');
-}
+if (!b.ok) { console.error(`bucket ${BUCKET_ICONES} não existe: aplique a migration_186 antes (HTTP ${b.status})`); process.exit(1); }
 let falhas = 0;
 for (const f of arquivos) {
   const r = await req('POST', `object/${BUCKET_ICONES}/icones/${VERSAO_ICONES}/${f}`, readFileSync(join(pasta, f)), { 'Content-Type': 'image/png', 'x-upsert': 'true', 'cache-control': 'max-age=31536000' });

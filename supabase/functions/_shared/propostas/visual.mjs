@@ -270,7 +270,13 @@ export function dadosComparativo(a) {
   const de = valorBRL(m[1]);
   const por = valorBRL(m[2]);
   if (!(de > 0 && por > 0 && por < de)) return null;
-  return { de, por, pct: Math.round((1 - por / de) * 100) };
+  // O "%" da barra é o que o closer falou (_p1, "20% DE DESCONTO"), nunca recalculado.
+  // Sem _p1, ou divergindo do de/por em mais de 1 ponto: barra sem percentual.
+  const falado = a.p?.p1?.texto.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  const pctFalado = falado ? Number(falado[1].replace(',', '.')) : null;
+  const pctConta = (1 - por / de) * 100;
+  const rotulo = pctFalado != null && Math.abs(pctFalado - pctConta) <= 1 ? `-${falado[1]}%` : 'CONDIÇÃO';
+  return { de, por, rotulo };
 }
 
 export function requestsComparativo(a, d) {
@@ -285,7 +291,7 @@ export function requestsComparativo(a, d) {
   const bw = w - rot - pt(4);
   const linhas = [
     { k: 0, rotulo: 'TABELA', valor: formatarBRL(d.de), larg: bw, fundo: ESTILO.cinza, alfa: 0.35, txt: ESTILO.branco, rotCor: ESTILO.cinza, riscado: true },
-    { k: 1, rotulo: `-${d.pct}%`, valor: formatarBRL(d.por), larg: Math.round(bw * (d.por / d.de)), fundo: ESTILO.amarelo, alfa: 1, txt: ESTILO.fundo, rotCor: ESTILO.amarelo, riscado: false },
+    { k: 1, rotulo: d.rotulo, valor: formatarBRL(d.por), larg: Math.round(bw * (d.por / d.de)), fundo: ESTILO.amarelo, alfa: 1, txt: ESTILO.fundo, rotCor: ESTILO.amarelo, riscado: false },
   ];
   const reqs = [{ deleteObject: { objectId: p4.id } }];
   for (const l of linhas) {
@@ -302,24 +308,33 @@ export function requestsComparativo(a, d) {
   return reqs;
 }
 
-// Verba de mídia: "R$ 2.000 em Google ... R$ 800 em Meta" num cartão do slide.
+// Slides onde verba de mídia é proposta (não Diagnóstico, onde seria gasto passado).
+export const ROTULO_SLIDE_MIDIA = /etapa 2|proxima etapa|proposta|investimento|verba/;
+const ETAPA2 = /etapa 2|proxima etapa/;
+const MENSAL = /m[eê]s|mensal/i;
+
+// Verba de mídia: "R$ 2.000 em Google ... R$ 800 em Meta" num cartão de slide de proposta.
+// `mensal` só quando o cartão ou o slide fala em mês: o período não é presumido.
 export function dadosMidia(a) {
+  if (!ROTULO_SLIDE_MIDIA.test(normalizar(a.rotulo))) return null;
   for (const c of a.cartoes) {
     const g = c.texto.match(/R\$\s*([\d.,]+)\s+(?:em|no|de)\s+Google/i);
     const mt = c.texto.match(/R\$\s*([\d.,]+)\s+(?:em|no|de)\s+Meta/i);
     if (g && mt) {
       const google = valorBRL(`R$ ${g[1]}`);
       const meta = valorBRL(`R$ ${mt[1]}`);
-      if (google > 0 && meta > 0) return { google, meta, total: google + meta };
+      const mensal = MENSAL.test(c.texto) || MENSAL.test(a.titulo) || a.cartoes.some((o) => MENSAL.test(o.texto));
+      if (google > 0 && meta > 0) return { google, meta, total: google + meta, mensal };
     }
   }
   return null;
 }
 
-// Assessoria mensal ("assessoria ... R$ 4.000 por mês"), para o total do mês.
+// Valor mensal da etapa ("assessoria ... R$ 4.000 por mês" ou, no deck curto,
+// "Investimento: R$ 4.000 por mês"), para o total do mês.
 export function dadosAssessoria(a) {
   for (const c of a.cartoes) {
-    const m = c.texto.match(/assessoria[^$]*?R\$\s*([\d.,]+)\s*(?:por|\/)\s*m[eê]s/i);
+    const m = c.texto.replace(/^\s*\d+\s+/, '').match(/(?:assessoria[^$]*?|^investimento:\s*)R\$\s*([\d.,]+)\s*(?:por|\/)\s*m[eê]s/i);
     if (m) return valorBRL(`R$ ${m[1]}`);
   }
   return null;
@@ -332,9 +347,10 @@ export function larguraComPainel(a, W) {
   const novaW = Math.round((W - 2 * m) * 0.6);
   for (const c of a.cartoes) {
     const fonte = c.fonte || 12;
-    const util = novaW / PT - 2 * 8;
+    // o cartão perde o "01   " e ganha o recuo do ícone (requestsIconesCartoes)
+    const util = novaW / PT - 2 * 8 - (tamIconeCartao(c.h) / PT + ICONE_CARTAO.gap);
     const porLinha = Math.floor(util / (fonte * 0.5));
-    const alturaTexto = linhasDoTexto(c.texto, porLinha) * fonte * 1.2 + 8;
+    const alturaTexto = linhasDoTexto(c.texto.replace(/^\s*\d+\s+/, ''), porLinha) * fonte * 1.2 + 8;
     if (alturaTexto > c.h / PT) return null;
   }
   return novaW;
@@ -360,7 +376,7 @@ export function requestsMidia(a, d, W, novaW, base) {
     ...a.cartoes.map((c) => mover(c, { w: novaW })),
     forma(pid, a.sid, 'ROUND_RECTANGLE', x, topo, w, fim - topo),
     aparencia(pid, { fundo: ESTILO.cartao }),
-    ...caixa(`${pid}0`, a.sid, bx, topo + pt(8), bw, pt(18), 'VERBA DE MÍDIA SUGERIDA / MÊS', { rgb: ESTILO.amarelo, tamanho: 9, negrito: true }),
+    ...caixa(`${pid}0`, a.sid, bx, topo + pt(8), bw, pt(18), `VERBA DE MÍDIA SUGERIDA${d.mensal ? ' / MÊS' : ''}`, { rgb: ESTILO.amarelo, tamanho: 9, negrito: true }),
     ...caixa(`${pid}1`, a.sid, bx, topo + pt(28), bw, pt(40), formatarBRL(d.total), { fonte: ESTILO.fonteTitulo, tamanho: 30 }),
     ...caixa(`${pid}2`, a.sid, bx, topo + pt(68), bw, pt(18), 'paga direto às plataformas', { rgb: ESTILO.cinza, tamanho: 9 }),
     forma(`${pid}g`, a.sid, 'RECTANGLE', bx, by, gw, bh),
@@ -424,14 +440,15 @@ export function requestsSlideMidia(d, { sid, indice, W, H, base, rotulo, assesso
   const w = W - 2 * m;
   const reqs = [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
-    ...cabecalho(sid, W, H, rotulo, 'Investimento mensal sugerido'),
+    ...cabecalho(sid, W, H, rotulo, d.mensal ? 'Investimento mensal sugerido' : 'Investimento em mídia sugerido'),
   ];
   const google = { valor: d.google, cor: ESTILO.vermelhoClaro, txt: ESTILO.branco, nome: 'Google Ads', icone: 'google_ads' };
   const meta = { valor: d.meta, cor: ESTILO.amarelo, txt: ESTILO.fundo, nome: 'Meta Ads', icone: 'meta_ads' };
   let y = Math.round(H * 0.35);
-  reqs.push(...caixa(`${sid}_vm0`, sid, m, y, w, pt(18), `VERBA DE MÍDIA / MÊS  ·  ${formatarBRL(d.total)}`, { rgb: ESTILO.amarelo, tamanho: 10, negrito: true }));
+  reqs.push(...caixa(`${sid}_vm0`, sid, m, y, w, pt(18), `VERBA DE MÍDIA${d.mensal ? ' / MÊS' : ''}  ·  ${formatarBRL(d.total)}`, { rgb: ESTILO.amarelo, tamanho: 10, negrito: true }));
   reqs.push(...barraEmpilhada(`${sid}_vmb`, sid, m, y + pt(22), w, pt(30), [google, meta], base));
-  if (assessoria) {
+  // Somar mensalidade com verba só quando a verba também é mensal.
+  if (assessoria && d.mensal) {
     y += pt(100);
     const total = assessoria + d.total;
     reqs.push(...caixa(`${sid}_vm1`, sid, m, y, w, pt(18), `MÊS COMPLETO (ASSESSORIA + MÍDIA)  ·  ${formatarBRL(total)}`, { rgb: ESTILO.amarelo, tamanho: 10, negrito: true }));
@@ -464,14 +481,16 @@ export function marcosDoDeck(analisados) {
   }
   const acomp = tudo.match(/(\d+)\s*dias\s+de\s+acompanhamento/i);
   if (acomp) marcos.push({ chave: 'acompanhamento', quando: `+${acomp[1]} dias`, titulo: 'Acompanhamento', texto: /google ads/i.test(tudo.slice(Math.max(0, acomp.index - 80), acomp.index)) ? 'Google Ads no ar' : '' });
-  const etapa2 = analisados.find((a) => /etapa 2/.test(normalizar(a.rotulo)));
+  const etapa2 = analisados.find((a) => ETAPA2.test(normalizar(a.rotulo)));
   if (etapa2) {
+    // "A partir de janeiro: tracionar" (deck à mão) ou "Janeiro: próxima etapa" (deck curto)
     const quando = `${etapa2.titulo} ${etapa2.cartoes.map((c) => c.texto).join(' ')}`.match(/a partir de\s+([a-zà-ú]+)/i);
-    const depois = etapa2.titulo.split(':')[1]?.trim();
+    const [antes, depois] = etapa2.titulo.split(':').map((t) => t.trim());
+    const nome = /proxima etapa/.test(normalizar(etapa2.rotulo)) ? 'Próxima etapa' : 'Etapa 2';
     marcos.push({
       chave: 'tracao',
-      quando: quando ? capital(quando[1]) : 'Etapa 2',
-      titulo: depois ? `Etapa 2 · ${capital(depois)}` : 'Etapa 2',
+      quando: quando ? capital(quando[1]) : depois && antes.length <= 20 ? capital(antes) : nome,
+      titulo: depois && quando && normalizar(depois) !== normalizar(nome) ? `${nome} · ${capital(depois)}` : nome,
       texto: /opcional/i.test(etapa2.rotulo) ? 'Opcional' : '',
     });
   }
@@ -518,7 +537,7 @@ export function requestsVisual(apresentacao, { base, prefixo = `vz${Math.random(
   const slides = apresentacao.slides || [];
   const analisados = slides.map(analisarSlide).filter(Boolean);
   const novos = analisados.filter((a) => !a.jaVisual);
-  const temEtapa2 = analisados.some((a) => /etapa 2/.test(normalizar(a.rotulo)));
+  const temEtapa2 = analisados.some((a) => ETAPA2.test(normalizar(a.rotulo)));
   const reqs = [];
   const resumo = [];
   const novosSlides = []; // { indice (na ordem original), requests }
@@ -529,7 +548,7 @@ export function requestsVisual(apresentacao, { base, prefixo = `vz${Math.random(
     const feito = [];
     reqs.push(...requestsGrafismo(a, W, H));
     const r = normalizar(a.rotulo);
-    if (temEtapa2 && (/etapa 2/.test(r) || /^proposta/.test(r))) { reqs.push(...requestsEtapas(a, W, /etapa 2/.test(r) ? 2 : 1)); feito.push('etapas'); }
+    if (temEtapa2 && (ETAPA2.test(r) || /^proposta/.test(r))) { reqs.push(...requestsEtapas(a, W, ETAPA2.test(r) ? 2 : 1)); feito.push('etapas'); }
     const midia = dadosMidia(a);
     const novaW = midia ? larguraComPainel(a, W) : null;
     if (midia && novaW) {
@@ -565,19 +584,31 @@ export function requestsVisual(apresentacao, { base, prefixo = `vz${Math.random(
 
 // ---------- rede ----------
 // Lê a apresentação completa (com posições) e aplica a camada visual.
+// O batchUpdate é atômico: um ícone que o Google não consegue baixar derruba o lote
+// inteiro (o deck fica intacto). Nesse caso tenta UMA vez sem as imagens; o resto da
+// camada (grafismo, barras, etapas, linha do tempo) entra e `semIcones` avisa.
+// Quem integra no pipeline: try/catch, log redigido e pendência na proposta, nunca erro.
 export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = globalThis.fetch, dryRun = false }) {
   const auth = { Authorization: `Bearer ${token}` };
-  const r = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${apresentacaoId}`, { headers: auth });
+  const id = encodeURIComponent(apresentacaoId);
+  const r = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${id}`, { headers: auth });
   if (!r.ok) throw new Error(`slides.presentations.get: HTTP ${r.status}`);
   const apresentacao = await r.json();
   const { requests, resumo } = requestsVisual(apresentacao, { base });
   if (dryRun || !requests.length) return { resumo, total: requests.length, aplicado: false };
-  const u = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${apresentacaoId}:batchUpdate`, {
-    method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }),
-  });
-  if (!u.ok) {
+  const enviar = async (lote) => {
+    const u = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${id}:batchUpdate`, {
+      method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ requests: lote }),
+    });
+    if (u.ok) return null;
     const corpo = await u.json().catch(() => ({}));
-    throw new Error(redigir(`slides.batchUpdate: HTTP ${u.status} ${String(corpo?.error?.message || '').slice(0, 300)}`, [token]));
-  }
-  return { resumo, total: requests.length, aplicado: true };
+    return redigir(`slides.batchUpdate: HTTP ${u.status} ${String(corpo?.error?.message || '').slice(0, 300)}`, [token]);
+  };
+  const erro = await enviar(requests);
+  if (!erro) return { resumo, total: requests.length, aplicado: true, semIcones: false };
+  const semImagens = requests.filter((q) => !q.createImage);
+  if (!/image|url|fetch/i.test(erro) || semImagens.length === requests.length) throw new Error(erro);
+  const erro2 = await enviar(semImagens);
+  if (erro2) throw new Error(`${erro} | sem ícones: ${erro2}`);
+  return { resumo, total: semImagens.length, aplicado: true, semIcones: true, erroIcones: erro };
 }

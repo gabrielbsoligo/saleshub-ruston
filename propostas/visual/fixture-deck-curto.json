@@ -1,0 +1,157 @@
+{
+  "_origem": "copiado de propostas/gerador/oferta.test.mjs (brutoImpl e transcricao, fictícios)",
+  "transcricao": "Closer: Hoje quem atende os clientes é só você?\r\nLead: Sou eu que faço o atendimento comercial, somente eu, e não tenho CRM nenhum.\r\nLead: Os clientes da região de Taubaté são o meu público principal.\r\nCloser: Para vocês eu faria uma landing page focada em conversão, ela seria 2500 só ela.\r\nCloser: E para eu implementar o CRM com essa IA de atendimento, ele é um valor de 4.000.\r\nCloser: Ele tem um valor de ferramenta que é direto com eles, que é de R$ 140.\r\nCloser: Então essa implementação ali, ela seria 6,500. O que eu consigo fazer para esse fechamento hoje, agora nesse final de mês? Eu consigo tirar 20%, tá? Então ficaria 52,200.\r\nCloser: Então fica 12 vezes de 433.\r\nLead: Eu tenho as fotos dos projetos no Google Drive.\r\nCloser: De janeiro para frente a gente iria aumentar o investimento, uns R$ 2.000 em Google Ads.\r\nCloser: Então mais uns R$ 800 vamos colocar ali em Instagram para o remarketing.\r\nCloser: Seria uma assessoria contínua do gestor de tráfego, a gente estaria falando de um mensal de uns 4.000.\r\nLead: Preciso conversar com meu sócio e te dou um retorno até as 4 horas da tarde.",
+  "escopo": {
+    "oferta": {
+      "tipo": "implementacao",
+      "citacao": "eu faria uma landing page focada em conversão"
+    },
+    "cliente": {
+      "modelo_venda": null
+    },
+    "contexto": {
+      "dores": [
+        {
+          "texto": "Atendimento só da dona, sem CRM",
+          "origem": "ia",
+          "citacao": "sou eu que faço o atendimento comercial, somente eu"
+        }
+      ],
+      "publico": [
+        {
+          "texto": "Clientes da região de Taubaté",
+          "origem": "ia",
+          "citacao": "Os clientes da região de Taubaté são o meu público principal"
+        }
+      ],
+      "concorrentes": [
+        {
+          "texto": "Concorrente inventado",
+          "origem": "ia",
+          "citacao": "isso não foi dito"
+        }
+      ],
+      "cliente_fornece": [
+        {
+          "texto": "Fotos dos projetos",
+          "origem": "ia",
+          "citacao": "Eu tenho as fotos dos projetos no Google Drive"
+        }
+      ],
+      "proximos_passos": [
+        {
+          "texto": "Alinhar com o sócio e retornar até 16h",
+          "origem": "ia",
+          "citacao": "Preciso conversar com meu sócio e te dou um retorno"
+        }
+      ]
+    },
+    "escopo": {
+      "semanas": [
+        {
+          "id": "s1",
+          "titulo": "Semana 1",
+          "itens": [
+            {
+              "catalogo_id": "s1_persona_icp",
+              "texto": "Persona",
+              "origem": "catalogo"
+            }
+          ]
+        }
+      ]
+    },
+    "entregaveis": [
+      {
+        "produto_id": "p_implementacao_de_landing_page",
+        "texto": "Landing page focada em conversão",
+        "citacao": "eu faria uma landing page focada em conversão",
+        "recorrencia": "unico",
+        "valor": 2500,
+        "evidencia_valor": "ela seria 2500 só ela"
+      },
+      {
+        "produto_id": "p_inexistente",
+        "texto": "CRM com IA de atendimento",
+        "citacao": "para eu implementar o CRM com essa IA de atendimento",
+        "recorrencia": "unico",
+        "valor": 4000,
+        "evidencia_valor": "ele é um valor de 4.000"
+      },
+      {
+        "produto_id": null,
+        "texto": "Site completo de 10 páginas",
+        "citacao": "um site completo de dez páginas",
+        "valor": 9000
+      }
+    ],
+    "plano_execucao": {
+      "incluido": true,
+      "itens": []
+    },
+    "preco": {
+      "estruturacao": {
+        "valor_total": 6500
+      },
+      "oferta": {
+        "valor_tabela": 6500,
+        "desconto_percentual": 20,
+        "valor_final": 5200,
+        "parcelas": 12,
+        "valor_parcela": 433,
+        "recorrencia": "unico",
+        "evidencias": {
+          "valor_tabela": "Então essa implementação ali, ela seria 6,500",
+          "desconto": "Eu consigo tirar 20%, tá?",
+          "valor_final": "Então ficaria 52,200",
+          "parcelas": "Então fica 12 vezes de 433",
+          "valor_parcela": "Então fica 12 vezes de 433"
+        }
+      },
+      "validade": "hoje",
+      "evidencias": {
+        "validade": "O que eu consigo fazer para esse fechamento hoje, agora nesse final de mês?"
+      }
+    },
+    "custos_terceiros": [
+      {
+        "texto": "Ferramenta do CRM",
+        "valor": 140,
+        "periodicidade": "mensal",
+        "evidencia": "Ele tem um valor de ferramenta que é direto com eles, que é de R$ 140"
+      }
+    ],
+    "etapa2": {
+      "incluida": true,
+      "itens": [
+        {
+          "texto": "Assessoria contínua de tráfego",
+          "origem": "ia",
+          "citacao": "Seria uma assessoria contínua do gestor de tráfego"
+        }
+      ],
+      "valor_mensal": 4000,
+      "verba_midia": [
+        {
+          "canal": "Google Ads",
+          "valor": 2000,
+          "evidencia": "uns R$ 2.000 em Google Ads"
+        },
+        {
+          "canal": "Meta Ads (Instagram)",
+          "valor": 800,
+          "evidencia": "Então mais uns R$ 800 vamos colocar ali em Instagram"
+        },
+        {
+          "canal": "TikTok",
+          "valor": 500,
+          "evidencia": "uns R$ 2.000 em Google Ads"
+        }
+      ],
+      "evidencias": {
+        "quando": "De janeiro para frente a gente iria aumentar o investimento",
+        "valor_mensal": "a gente estaria falando de um mensal de uns 4.000"
+      }
+    }
+  }
+}
