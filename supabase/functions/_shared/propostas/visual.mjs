@@ -311,7 +311,9 @@ export function requestsComparativo(a, d) {
 // Slides onde verba de mídia é proposta (não Diagnóstico, onde seria gasto passado).
 export const ROTULO_SLIDE_MIDIA = /etapa 2|proxima etapa|proposta|investimento|verba/;
 const ETAPA2 = /etapa 2|proxima etapa/;
-const MENSAL = /m[eê]s|mensal/i;
+// Palavra inteira, no texto sem acento: "mesmo" e "mesa" não são mês.
+const MENSAL = /\bmes\b|\bmensa(l|is)\b|\bmensalidade\b/;
+const ehMensal = (t) => MENSAL.test(normalizar(t));
 
 // Verba de mídia: "R$ 2.000 em Google ... R$ 800 em Meta" num cartão de slide de proposta.
 // `mensal` só quando o cartão ou o slide fala em mês: o período não é presumido.
@@ -323,7 +325,7 @@ export function dadosMidia(a) {
     if (g && mt) {
       const google = valorBRL(`R$ ${g[1]}`);
       const meta = valorBRL(`R$ ${mt[1]}`);
-      const mensal = MENSAL.test(c.texto) || MENSAL.test(a.titulo) || a.cartoes.some((o) => MENSAL.test(o.texto));
+      const mensal = ehMensal(a.titulo) || a.cartoes.some((o) => ehMensal(o.texto));
       if (google > 0 && meta > 0) return { google, meta, total: google + meta, mensal };
     }
   }

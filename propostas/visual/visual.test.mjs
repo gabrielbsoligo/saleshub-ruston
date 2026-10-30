@@ -233,6 +233,12 @@ test('verba de mídia: só em slide de proposta; "/ MÊS" só se o texto falar e
   const comMes = analisarSlide(lista('f', 'PRÓXIMA ETAPA · OPCIONAL', 'T', ['Investimento: R$ 4.000 por mês', 'Verba: R$ 2.000 em Google Ads e R$ 800 em Meta Ads']));
   assert.equal(dadosMidia(comMes).mensal, true);
   assert.equal(dadosAssessoria(comMes), 4000);
+  // palavra inteira: "mesmo"/"mesa(s)" não são mês; "mensais"/"mensalidade" são
+  const etapa = (t) => dadosMidia(analisarSlide(lista('g', 'ETAPA 2', 'T', [t]))).mensal;
+  assert.equal(etapa('R$ 2.000 em Google Ads e R$ 800 em Meta Ads, conforme combinado na reunião mesmo'), false);
+  assert.equal(etapa('R$ 2.000 em Google Ads e R$ 800 em Meta Ads para a linha de mesas'), false);
+  assert.equal(etapa('R$ 2.000 em Google Ads e R$ 800 em Meta Ads mensais'), true);
+  assert.equal(etapa('R$ 2.000 em Google Ads e R$ 800 em Meta Ads por mês'), true);
 });
 
 test('coluna do gráfico: a conta de "cabe" desconta o recuo do ícone', () => {
