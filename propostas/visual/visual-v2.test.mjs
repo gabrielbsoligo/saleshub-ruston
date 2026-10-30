@@ -366,3 +366,13 @@ test('capa: kicker longo não invade o nome, em 16:9 e em 4:3', () => {
     assert.ok(tamK <= 10, `${w}x${h}: ${tamK}`);
   }
 });
+
+test('empate de nota entre cases qualificados: vence o do modelo do deal (sonda do Vedor)', () => {
+  const casos = [
+    { id: 'p', modelo: 'pdv', desafio: 'CRM comercial leads conversão google', segmento: '' },
+    { id: 'i', modelo: 'inside-sales', desafio: 'CRM comercial leads google', segmento: '' },
+  ];
+  const r = escolherCaso('crm comercial leads conversão google', casos, { modeloVenda: 'inside sales' });
+  assert.equal(r.caso.id, 'i');
+  assert.equal(escolherCaso('crm comercial leads conversão google', casos).caso.id, 'p');
+});
