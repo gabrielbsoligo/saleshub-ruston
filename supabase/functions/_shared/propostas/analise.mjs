@@ -52,7 +52,7 @@ export function montarPrompt({ transcricao, catalogo, empresa, modeloVenda = nul
   return `Você monta o ESCOPO de uma proposta da V4 Company (Estruturação Estratégica + plano de execução) a partir da transcrição da reunião de vendas com o lead "${empresa}".
 
 REGRAS (obrigatórias):
-1. Escolha itens do CATÁLOGO pelo id ("catalogo_id") e adapte o texto ao lead com poucas palavras. Mantenha a estrutura de semanas s1, s2, s3, s4 (onboarding é opcional).
+1. Escolha itens do CATÁLOGO pelo id ("catalogo_id") e adapte o texto ao lead com poucas palavras. Traga SEMPRE as quatro semanas s1, s2, s3 e s4, cada uma com os itens do catálogo que fazem sentido para o lead (onboarding é opcional); no plano de execução, liste os itens padrão (ex_*) e os adicionais combinados.
 2. A Semana 3 usa a variante do modelo de venda do lead (inside_sales, pdv ou ecommerce).${modeloVenda ? ` Modelo informado: ${modeloVenda}.` : ''}
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
@@ -276,11 +276,28 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   let modelo = MODELOS.includes(modeloVenda) ? modeloVenda : MODELOS.includes(bruto?.cliente?.modelo_venda) ? bruto.cliente.modelo_venda : null;
   if (!modelo) { modelo = 'inside_sales'; pendencias.push('modelo de venda não identificado (usei inside_sales)'); }
 
-  const semanas = (Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : [])
+  const daAnalise = (Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : [])
     .filter((s) => s && typeof s.id === 'string')
     .map((s) => ({ id: s.id, titulo: textoOuNull(s.titulo) || s.id, itens: lista(s.itens, `semana ${s.id}`) }))
     .filter((s) => s.itens.length);
-  if (!semanas.length) pendencias.push('escopo vazio: monte as semanas na revisão');
+  // A proposta padrão (EE 2026) tem as Semanas 1 a 4: a que a análise omitiu ou
+  // esvaziou entra com os itens do catálogo (S3 pela variante do modelo) e vira
+  // pendência para o closer revisar. Ordem do catálogo; ids extras vão ao fim.
+  const ordem = catalogo.semanas.map((s) => s.id);
+  const semanas = [];
+  for (const s of catalogo.semanas) {
+    const veio = daAnalise.find((x) => x.id === s.id);
+    if (veio) { semanas.push(veio); continue; }
+    if (s.id === 'onboarding') continue;
+    const nomeModelo = catalogo.modelos_venda.find((m) => m.id === modelo)?.nome || modelo;
+    semanas.push({
+      id: s.id,
+      titulo: s.variantes ? `${s.titulo} (${nomeModelo})` : s.titulo,
+      itens: (s.itens || s.variantes?.[modelo] || []).map((i) => ({ catalogo_id: i.id, texto: i.texto, origem: 'catalogo', citacao: null })),
+    });
+    pendencias.push(`${s.titulo.split(' — ')[0]} não veio da análise: entrou com os itens padrão do catálogo — revise`);
+  }
+  semanas.push(...daAnalise.filter((x) => !ordem.includes(x.id)));
 
   const enfasesValidas = new Set(catalogo.enfases.map((e) => e.id));
   const est = bruto?.preco?.estruturacao || {};
@@ -394,6 +411,14 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     .map(evidenciaDe).filter(Boolean))];
 
   const pe = bruto?.plano_execucao || {};
+  // O pacote padrão da execução está fixo no slide "Resumo da Proposta": o slide de
+  // escopo traz os itens padrão (com o texto adaptado, se veio) e depois os extras.
+  let itensExecucao = lista(pe.itens, 'plano de execução');
+  if (pe.incluido !== false) {
+    const padrao = catalogo.execucao.itens_padrao.map((p) => itensExecucao.find((i) => i.catalogo_id === p.id)
+      || { catalogo_id: p.id, texto: p.texto, origem: 'catalogo', citacao: null });
+    itensExecucao = [...padrao, ...itensExecucao.filter((i) => !padrao.includes(i))];
+  }
   const escopo = {
     schema_version: 'proposta-escopo/v0',
     catalogo_versao: catalogo.versao,
@@ -406,13 +431,13 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     contexto: { dores: lista(bruto?.contexto?.dores, 'dores').slice(0, 4) },
     escopo: {
       enfases: (Array.isArray(bruto?.escopo?.enfases) ? bruto.escopo.enfases : []).filter((e) => enfasesValidas.has(e)),
-      semanas: semanas.length ? semanas : [{ id: 's1', titulo: 'Semana 1', itens: [{ catalogo_id: null, texto: '[PREENCHER: escopo]', origem: 'closer', citacao: null }] }],
+      semanas,
       overdeliveries: lista(bruto?.escopo?.overdeliveries, 'overdeliveries'),
     },
     plano_execucao: {
       incluido: pe.incluido !== false,
       faixa_midia: textoConferido(pe.faixa_midia, 'faixa de mídia'),
-      itens: lista(pe.itens, 'plano de execução'),
+      itens: itensExecucao,
     },
     preco,
     pendencias: [...new Set(pendencias)],
