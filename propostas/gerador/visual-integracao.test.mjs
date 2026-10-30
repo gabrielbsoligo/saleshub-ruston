@@ -11,6 +11,7 @@ test('tituloCurto: até 5 palavras, sem dois-pontos, diferente do texto', () => 
   assert.equal(tituloCurto('  Landing page. ', 'Página enxuta'), 'Landing page');
   assert.equal(tituloCurto('Setup de campanha no Google Ads', 'x'), null); // 6 palavras
   assert.equal(tituloCurto('CRM: IA', 'x'), null);
+  assert.equal(tituloCurto('CRM (ex.: Kommo)', 'x'), null);
   assert.equal(tituloCurto('Landing page', 'Landing page'), null);
   assert.equal(tituloCurto(null, 'x'), null);
   assert.equal(tituloCurto(42, 'x'), null);

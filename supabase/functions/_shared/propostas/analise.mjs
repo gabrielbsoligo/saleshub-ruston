@@ -82,7 +82,7 @@ REGRAS (obrigatórias):
 2. A Semana 3 usa a variante do modelo de venda do lead (inside_sales, pdv ou ecommerce).${modeloVenda ? ` Modelo informado: ${modeloVenda}.` : ''}
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
-4b. (Outros tipos) "entregaveis": cada entregável que o closer ofereceu, com "produto_id" do PORTFÓLIO V4 quando corresponder (senão null), "titulo" (nome curto do entregável, até 5 palavras, ex.: "Landing page", "CRM com IA"), "texto" (o detalhe adaptado ao lead, frase de até ~12 palavras, sem repetir o título), "citacao" literal OBRIGATÓRIA (onde o closer ofereceu aquele item), "recorrencia" ("unico" para projeto/implementação, "mensal" para serviço recorrente) e, se o closer falou o preço DAQUELE item, "valor" e "evidencia_valor" (trecho literal com o número). Só o que foi oferecido: nada do catálogo da Estruturação.
+4b. (Outros tipos) "entregaveis": cada entregável que o closer ofereceu, com "produto_id" do PORTFÓLIO V4 quando corresponder (senão null), "titulo" (nome curto do entregável, de preferência até 3 palavras e 24 caracteres, nunca mais de 5 palavras, sem parênteses; ex.: "Landing page", "CRM com IA"), "texto" (o detalhe adaptado ao lead, frase de até ~12 palavras, sem repetir o título), "citacao" literal OBRIGATÓRIA (onde o closer ofereceu aquele item), "recorrencia" ("unico" para projeto/implementação, "mensal" para serviço recorrente) e, se o closer falou o preço DAQUELE item, "valor" e "evidencia_valor" (trecho literal com o número). Só o que foi oferecido: nada do catálogo da Estruturação.
 5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
 5b. VALIDADE: até quando a proposta/condição vale, como combinado na reunião. Data explícita: "validade" no formato dd/mm/aaaa ou dd/mm. Prazo relativo ("hoje", "amanhã", "fim do mês", "sexta-feira", "essa semana"): escreva o termo como foi dito (ex.: "hoje"). Sempre com a evidência literal. Nada combinado: null.
 5c. TAMANHO: "texto" de cada item é UMA frase de até ~12 palavras (no máximo 90 caracteres), direta, sem rodeio; "titulo" de cada semana com no máximo 45 caracteres. O limite vale para "texto", nunca para "citacao" (que segue a regra 6b).
@@ -345,10 +345,11 @@ function inteiro(v) {
 }
 const textoOuNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 // Título curto do entregável (contrato com a camada visual: "Título: detalhe", até 5 palavras).
-// Mais longo, com dois-pontos ou repetindo o texto inteiro: null (o deck usa só o texto).
+// Mais longo, com dois-pontos/parênteses/ponto ou repetindo o texto inteiro: null
+// (o deck usa só o texto e a camada visual cai no título de hoje).
 export function tituloCurto(titulo, texto = '') {
   const t = textoOuNull(titulo)?.replace(/[.;:,\s]+$/, '');
-  if (!t || /:/.test(t) || t.split(/\s+/).length > 5) return null;
+  if (!t || /[:().]/.test(t) || t.split(/\s+/).length > 5) return null;
   if (normalizarTexto(t) === normalizarTexto(texto)) return null;
   return t;
 }
