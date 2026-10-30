@@ -13,18 +13,22 @@ import { redigir } from './redigir.mjs';
 export const PENDENCIA_CASE = 'case V4 incluído a pedido do closer: confirme com a franqueadora o uso das fotos e números antes de enviar';
 
 // dd/mm/aaaa no fuso de Brasília (data da capa).
+// Cada chamada ao Slides com teto: a edge tem 150 s e a camada roda no fim.
+export const TIMEOUT_SLIDES_MS = 20_000;
+const fetchComTeto = (u, o = {}) => fetch(u, { ...o, signal: AbortSignal.timeout(TIMEOUT_SLIDES_MS) });
+
 export const dataBR = (d = new Date()) => d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' });
 
 export async function aplicarCamadaVisual({
-  token, apresentacaoId, supabaseUrl, tipo = null, modeloVenda = null, incluirCase = false,
-  hoje = new Date(), aplicar = aplicarVisualV2, log = console.error,
+  token, apresentacaoId, supabaseUrl, tipo = /** @type {string | null} */ (null), modeloVenda = /** @type {string | null} */ (null), incluirCase = false,
+  hoje = new Date(), aplicar = aplicarVisualV2, fetchImpl = fetchComTeto, log = console.error,
 }) {
   const pendencias = [];
   const seguro = (t) => redigir(String(t ?? '').slice(0, 300), [token]);
   try {
     const r = await aplicar({
       token, apresentacaoId, assets: assetsDoProjeto(supabaseUrl), data: dataBR(hoje),
-      capa: 'substituir', caso: incluirCase ? 'sim' : 'nao', tipo, modeloVenda,
+      capa: 'substituir', caso: incluirCase ? 'sim' : 'nao', tipo, modeloVenda, fetchImpl,
     });
     if (r?.semIcones) {
       log(`proposta visual: aplicada sem imagens: ${seguro(r.erroIcones)}`);
@@ -37,8 +41,9 @@ export async function aplicarCamadaVisual({
     else if (incluirCase) pendencias.push(PENDENCIA_CASE);
     return { aplicado: !!r?.aplicado, pendencias };
   } catch (e) {
-    log(`proposta visual: camada não aplicada: ${seguro(e?.message)}`);
-    pendencias.push(`camada visual não aplicada: ${seguro(e?.message)}`);
+    const motivo = seguro(e?.message ?? e) || 'erro desconhecido';
+    log(`proposta visual: camada não aplicada: ${motivo}`);
+    pendencias.push(`camada visual não aplicada: ${motivo}`);
     return { aplicado: false, pendencias };
   }
 }

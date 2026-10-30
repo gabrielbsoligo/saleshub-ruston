@@ -344,13 +344,18 @@ function inteiro(v) {
   return Number.isInteger(v) && v >= 1 ? v : null;
 }
 const textoOuNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-// Título curto do entregável (contrato com a camada visual: "Título: detalhe", até 5 palavras).
-// Mais longo, com dois-pontos/parênteses/ponto ou repetindo o texto inteiro: null
+// Título curto do entregável (contrato com a camada visual: "Título: detalhe", até 5
+// palavras e 44 caracteres). Mais longo, com dois-pontos/parênteses/ponto, repetindo o
+// texto inteiro ou sem nenhuma palavra (4+ letras) do texto ou da citação: null
 // (o deck usa só o texto e a camada visual cai no título de hoje).
-export function tituloCurto(titulo, texto = '') {
+export function tituloCurto(titulo, texto = '', citacao = '') {
   const t = textoOuNull(titulo)?.replace(/[.;:,\s]+$/, '');
-  if (!t || /[:().]/.test(t) || t.split(/\s+/).length > 5) return null;
+  if (!t || /[:().]/.test(t) || t.length > 44 || t.split(/\s+/).length > 5) return null;
   if (normalizarTexto(t) === normalizarTexto(texto)) return null;
+  const base = new Set(normalizarTexto(`${texto} ${citacao || ''}`).split(/[^a-z0-9]+/));
+  // palavra de 4+ letras ou sigla ("CRM", "SEO") que esteja no texto ou na citação
+  const chaves = t.split(/\s+/).filter((p) => /^[A-Z0-9]{2,}$/.test(p) || normalizarTexto(p).length >= 4).map(normalizarTexto);
+  if (!chaves.some((p) => base.has(p))) return null;
   return t;
 }
 
@@ -519,7 +524,7 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       const recorrencia = e.recorrencia === 'mensal' ? 'mensal' : 'unico';
       entregaveis.push({
         produto_id: produtos.has(e.produto_id) ? e.produto_id : null,
-        titulo: tituloCurto(e.titulo, texto), texto, origem: 'ia', citacao, recorrencia,
+        titulo: tituloCurto(e.titulo, texto, citacao), texto, origem: 'ia', citacao, recorrencia,
         valor: dinheiro(null, numero(e.valor), recorrencia === 'mensal' ? 'execucao' : 'estruturacao', `valor de "${texto}"`, e.evidencia_valor),
       });
     }

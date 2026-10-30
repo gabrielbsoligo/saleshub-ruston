@@ -180,6 +180,9 @@ export async function processarProposta(sb: any, id: string) {
     }
     if (!resultado) throw new Error(`nenhuma conta Google conseguiu gerar: ${falhas.join(' | ')}`)
 
+    // Deck já existe: grava antes da camada (se a edge morrer nela, o closer acha o deck).
+    await atualizar(sb, id, { presentation_id: resultado.id, url: resultado.url, gerado_com_member_id: usado })
+
     // Camada visual v2 (ícones, grades, capa do cliente). Falha vira pendência, nunca erro.
     const visual = await aplicarCamadaVisual({
       token: tokenUsado, apresentacaoId: resultado.id, supabaseUrl: SUPABASE_URL,

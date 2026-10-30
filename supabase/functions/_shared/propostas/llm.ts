@@ -13,13 +13,13 @@ import { redigir } from './redigir.mjs'
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') ?? ''
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CLAUDE_MODEL = Deno.env.get('PROPOSTA_CLAUDE_MODEL') ?? 'claude-sonnet-5-5'
-const CLAUDE_EFFORT = Deno.env.get('PROPOSTA_CLAUDE_EFFORT') ?? 'low'
+const CLAUDE_EFFORT = ['low', 'medium', 'high'].includes(Deno.env.get('PROPOSTA_CLAUDE_EFFORT') ?? '') ? Deno.env.get('PROPOSTA_CLAUDE_EFFORT')! : 'low'
 const PRINCIPAL = Deno.env.get('PROPOSTA_LLM_PRINCIPAL') === 'claude' ? 'claude' : 'openai'
 // Orçamento total das duas chamadas: com Drive/Slides depois, cabe nos 150 s de
 // wall-clock da Edge no plano free. A primária tem um teto; a reserva, o que sobrar.
 const ORCAMENTO_LLM_MS = 100_000
 const TIMEOUT_OPENAI_MS = 45_000
-const TIMEOUT_CLAUDE_MS = 75_000
+const TIMEOUT_CLAUDE_MS = 55_000 // a OpenAI de reserva ainda tem os 45 s dela
 const TIMEOUT_RESERVA_MIN_MS = 20_000
 
 const CHAVES = [OPENAI_API_KEY, ANTHROPIC_API_KEY]

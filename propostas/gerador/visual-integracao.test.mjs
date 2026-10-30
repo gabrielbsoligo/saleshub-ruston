@@ -8,8 +8,13 @@ import { aplicarCamadaVisual, dataBR, PENDENCIA_CASE } from '../../supabase/func
 
 test('tituloCurto: até 5 palavras, sem dois-pontos, diferente do texto', () => {
   assert.equal(tituloCurto('CRM com IA', 'CRM integrado ao WhatsApp'), 'CRM com IA');
-  assert.equal(tituloCurto('  Landing page. ', 'Página enxuta'), 'Landing page');
+  assert.equal(tituloCurto('  Landing page. ', 'Página enxuta', 'eu faço a landing page para vocês'), 'Landing page');
   assert.equal(tituloCurto('Setup de campanha no Google Ads', 'x'), null); // 6 palavras
+  // Vedor: título sem relação com o texto nem com a citação
+  assert.equal(tituloCurto('CRM com IA', 'Landing page de captação', 'eu faço a landing page para vocês'), null);
+  assert.equal(tituloCurto('Landing page', 'Página enxuta', 'uma página bem enxuta'), null);
+  // Vedor: teto de 44 caracteres (contrato com o parse da camada visual)
+  assert.equal(tituloCurto('Implementação completa de automações comerciais', 'automações comerciais no WhatsApp'), null);
   assert.equal(tituloCurto('CRM: IA', 'x'), null);
   assert.equal(tituloCurto('CRM (ex.: Kommo)', 'x'), null);
   assert.equal(tituloCurto('Landing page', 'Landing page'), null);
@@ -85,4 +90,14 @@ test('camada: sem imagens vira pendência; erro vira pendência redigida e nunca
 
 test('dataBR usa o fuso de Brasília', () => {
   assert.equal(dataBR(new Date('2026-10-31T01:30:00Z')), '30/10/2026');
+});
+
+test('camada (Vedor): erro que não é Error tem motivo; fetchImpl com teto chega ao aplicarVisual', async () => {
+  const s = await aplicarCamadaVisual({ ...base, aplicar: async () => { throw 'quebrou'; }, log: () => {} });
+  assert.deepEqual(s.pendencias, ['camada visual não aplicada: quebrou']);
+  const v = await aplicarCamadaVisual({ ...base, aplicar: async () => { throw {}; }, log: () => {} });
+  assert.match(v.pendencias[0], /^camada visual não aplicada: \S/);
+  let recebido;
+  await aplicarCamadaVisual({ ...base, aplicar: async (a) => { recebido = a; return { aplicado: true }; }, log: () => {} });
+  assert.equal(typeof recebido.fetchImpl, 'function');
 });
