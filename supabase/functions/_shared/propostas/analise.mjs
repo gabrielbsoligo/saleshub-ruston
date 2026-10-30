@@ -60,7 +60,7 @@ REGRAS (obrigatórias):
 5b. VALIDADE: a data até quando a proposta/condição vale, combinada na reunião ("validade" no formato dd/mm/aaaa ou dd/mm, com a evidência literal). Sem data falada: null.
 5c. TAMANHO: "texto" de cada item com no máximo 90 caracteres; "titulo" de cada semana com no máximo 45 caracteres.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
-6b. CITAÇÕES e EVIDÊNCIAS: copie de 6 a 20 palavras SEGUIDAS de uma única fala da transcrição, exatamente como estão escritas (inclusive erros de transcrição e números como "6,500"), sem juntar falas, resumir ou corrigir. Citação que não for cópia exata é descartada.
+6b. CITAÇÕES e EVIDÊNCIAS: copie de 6 a 20 palavras SEGUIDAS de uma única fala da transcrição (se a fala inteira tiver menos de 6 palavras, copie a fala inteira), exatamente como estão escritas (inclusive erros de transcrição e números como "6,500"), sem juntar falas, resumir ou corrigir. Citação que não for cópia exata é descartada.
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
 
@@ -147,6 +147,12 @@ export function expressoesMonetarias(texto) {
     let v = Number(m[1].replace(/[.,]/g, '')) + (m[2] ? Number(m[2].padEnd(2, '0')) / 100 : 0);
     if (m[3]) v = v * 1000 + (m[4] ? Number(m[4]) : 0);
     out.push({ valor: Math.round(v * 100) / 100, ini: m.index, fim });
+    // "29,750 mil": a vírgula também pode ser decimal; as duas leituras ficam no mesmo
+    // trecho e o número proposto pelo LLM escolhe.
+    if (m[3] && !m[2] && /^\d{1,3},\d{3}$/.test(m[1])) {
+      const alt = Number(m[1].replace(',', '.')) * 1000 + (m[4] ? Number(m[4]) : 0);
+      out.push({ valor: Math.round(alt * 100) / 100, ini: m.index, fim });
+    }
   }
   return out;
 }

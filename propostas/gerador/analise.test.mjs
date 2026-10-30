@@ -448,3 +448,9 @@ test('Authoral 30/10: milhar com vírgula da transcrição do Meet ("6,500") val
   assert.deepEqual(valoresMonetarios('1,2345'), [1.23], 'vírgula com 4 dígitos não é milhar');
   assert.deepEqual(valoresMonetarios('12 vezes de 433'), [433]);
 });
+
+test('Vedor (milhar) #1: "29,750 mil" guarda as duas leituras no mesmo trecho', () => {
+  const v = valoresMonetarios('fica 29,750 mil o projeto');
+  assert.ok(v.includes(29750) && v.includes(29750000));
+  assert.deepEqual(valoresMonetarios('1,5 mil'), [1500]);
+});
