@@ -1,0 +1,216 @@
+{
+  "versao": "casos-v0",
+  "fonte": "https://ee-2026-v4company.vercel.app/ (página oficial V4, Estruturação Estratégica 2026), extraído em 2026-10-30",
+  "casos": [
+    {
+      "modelo": "pdv",
+      "nome": "Óticas Prevent",
+      "segmento": "Varejo de óticas",
+      "desafio": "Rede gigante batendo no teto do Google e do Meta (CPM/CPL subindo, eficiência caindo). Reposicionamos TikTok Ads e Kwai como pilar de aquisição local, com criativos nativos e segmentação por município, e trocamos a métrica de \"custo do clique\" para agendamento, comparecimento e fechamento na loja.",
+      "numeros": [
+        {
+          "rotulo": "ROAS",
+          "antes": "10x",
+          "depois": "13,83x",
+          "nota": null
+        },
+        {
+          "rotulo": "Receita gerada",
+          "antes": null,
+          "depois": "R$ 5,06M",
+          "nota": null
+        }
+      ],
+      "frase": "Canal saturado não pede mais verba; pede o canal certo e a métrica certa.",
+      "imagem": "oticas-prevent.png",
+      "id": "oticas-prevent",
+      "largura": 768,
+      "altura": 512
+    },
+    {
+      "modelo": "pdv",
+      "nome": "Valec Renault",
+      "segmento": "Concessionária",
+      "desafio": "Gerava leads, mas vivia a \"ilusão do tráfego\": o gargalo era o comercial não converter na loja. Conectamos o marketing ao CRM e retroalimentamos as campanhas toda semana com base em quem comprava, focando em oferta direta e lead com intenção real.",
+      "numeros": [
+        {
+          "rotulo": "Receita",
+          "antes": "R$ 392,5K",
+          "depois": "R$ 1,69M",
+          "nota": "4,3x em receita"
+        },
+        {
+          "rotulo": "Vendas",
+          "antes": "5",
+          "depois": "16",
+          "nota": null
+        },
+        {
+          "rotulo": "CAC",
+          "antes": "R$ 3.600",
+          "depois": "R$ 1.588",
+          "nota": null
+        },
+        {
+          "rotulo": "Ticket",
+          "antes": "R$ 90K",
+          "depois": "R$ 180K",
+          "nota": null
+        },
+        {
+          "rotulo": "Conversão",
+          "antes": "4,55%",
+          "depois": "6,99%",
+          "nota": null
+        }
+      ],
+      "frase": "Marketing sem comercial é só tráfego. No CRM, vira venda.",
+      "imagem": "valec-renault.png",
+      "id": "valec-renault",
+      "largura": 768,
+      "altura": 480
+    },
+    {
+      "modelo": "inside-sales",
+      "nome": "CVC Corp",
+      "segmento": "Turismo / Educação",
+      "desafio": "Venda consultiva de ciclo longo, com leads desqualificados, volume baixo e CAC alto (R$ 1.250). Plugamos a mídia no e-mail/CRM, passamos a analisar cohort respeitando o ciclo de decisão e fizemos os criativos atuarem como filtro, entregando MQL real ao vendedor.",
+      "numeros": [
+        {
+          "rotulo": "Receita gerada",
+          "antes": null,
+          "depois": "R$ 91,6M",
+          "nota": null
+        },
+        {
+          "rotulo": "CAC",
+          "antes": "R$ 1.250",
+          "depois": "R$ 544",
+          "nota": null
+        },
+        {
+          "rotulo": "ROAS",
+          "antes": "12x",
+          "depois": "21x",
+          "nota": null
+        }
+      ],
+      "frase": "Em venda consultiva, criativo bom não gera mais lead; gera o lead certo.",
+      "imagem": "cvc-corp.png",
+      "id": "cvc-corp",
+      "largura": 710,
+      "altura": 509
+    },
+    {
+      "modelo": "inside-sales",
+      "nome": "Medfutura",
+      "segmento": "Distribuidora B2B / Medicamentos",
+      "desafio": "B2B de saúde com alto custo de mídia e nenhuma conversão proporcional: fuga na landing page, anúncio saturado, comercial no escuro. Como em B2B volume não é qualidade, reestruturamos o Google Ads por intenção de compra e produto rentável, com mensuração e rotina de otimização orientada ao comercial.",
+      "numeros": [
+        {
+          "rotulo": "ROAS",
+          "antes": null,
+          "depois": "82,52x",
+          "nota": "com R$ 8,9K de investimento"
+        },
+        {
+          "rotulo": "CPL",
+          "antes": null,
+          "depois": "R$ 11,51",
+          "nota": null
+        },
+        {
+          "rotulo": "Conversão LP",
+          "antes": null,
+          "depois": "25,26%",
+          "nota": null
+        },
+        {
+          "rotulo": "Receita gerada",
+          "antes": null,
+          "depois": "R$ 734K",
+          "nota": null
+        }
+      ],
+      "frase": "B2B escala com precisão cirúrgica, não com volume bruto.",
+      "imagem": "medfutura.png",
+      "id": "medfutura",
+      "largura": 710,
+      "altura": 474
+    },
+    {
+      "modelo": "e-commerce",
+      "nome": "UV Line",
+      "segmento": "E-commerce / Proteção solar",
+      "desafio": "E-commerce maduro com verba alta, mas conversão baixa (1,11%) e ROAS travado nos 7x, sem escalar sem perder margem. Escalamos por diversificação + sazonalidade: além de Google e Meta, entramos com Pinterest e TikTok, mantendo o grosso da verba no motor principal e cortando rápido todo teste sem performance.",
+      "numeros": [
+        {
+          "rotulo": "Receita gerada",
+          "antes": null,
+          "depois": "R$ 10,8M",
+          "nota": "~R$ 1M em um dia"
+        },
+        {
+          "rotulo": "ROAS",
+          "antes": "7,94x",
+          "depois": "14,56x",
+          "nota": null
+        },
+        {
+          "rotulo": "Conversão",
+          "antes": "1,11%",
+          "depois": "4,03%",
+          "nota": null
+        },
+        {
+          "rotulo": "CAC",
+          "antes": "R$ 40",
+          "depois": "R$ 21",
+          "nota": null
+        }
+      ],
+      "frase": "Escala não é só mais verba; é o canal certo na hora certa.",
+      "imagem": "uv-line.png",
+      "id": "uv-line",
+      "largura": 754,
+      "altura": 503
+    },
+    {
+      "modelo": "e-commerce",
+      "nome": "Total Arte",
+      "segmento": "E-commerce / Bens de consumo",
+      "desafio": "Marca gigante no offline apanhando no digital: CAC estourando a margem (R$ 40,21), site convertendo só 2,24% e dados ruins demais pra saber onde estava o problema. Arrumamos a casa: faxina no rastreamento do GA4 e landing pages de apoio pra não perder venda enquanto o site era ajustado.",
+      "numeros": [
+        {
+          "rotulo": "Conversão",
+          "antes": "2,24%",
+          "depois": "5,88%",
+          "nota": null
+        },
+        {
+          "rotulo": "ROAS",
+          "antes": "5,76x",
+          "depois": "12,12x",
+          "nota": null
+        },
+        {
+          "rotulo": "CAC",
+          "antes": "R$ 40",
+          "depois": "R$ 22",
+          "nota": null
+        },
+        {
+          "rotulo": "Receita gerada",
+          "antes": null,
+          "depois": "R$ 1,16M",
+          "nota": null
+        }
+      ],
+      "frase": "Às vezes o problema não é o anúncio; é a casa.",
+      "imagem": "total-arte.png",
+      "id": "total-arte",
+      "largura": 724,
+      "altura": 463
+    }
+  ]
+}

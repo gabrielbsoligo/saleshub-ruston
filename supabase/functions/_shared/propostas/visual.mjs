@@ -437,7 +437,7 @@ function cabecalho(sid, W, H, rotulo, titulo) {
 }
 
 // Slide próprio do gráfico de mídia (quando não cabe ao lado dos cartões).
-export function requestsSlideMidia(d, { sid, indice, W, H, base, rotulo, assessoria = null, aproximado = false, rodape = 'V4 COMPANY' }) {
+export function requestsSlideMidia(d, { sid, indice, W, H, base, rotulo, assessoria = null, aproximado = false, rodape = 'V4 COMPANY', grafismo = true }) {
   const m = Math.round(W * 0.055);
   const w = W - 2 * m;
   const reqs = [
@@ -461,7 +461,7 @@ export function requestsSlideMidia(d, { sid, indice, W, H, base, rotulo, assesso
   const nota = ['Verba de mídia paga direto às plataformas.', aproximado ? 'Valores aproximados, conforme a proposta.' : ''].filter(Boolean).join(' ');
   reqs.push(...caixa(`${sid}_vmn`, sid, m, Math.round(H * 0.84), w, pt(18), nota, { rgb: ESTILO.cinza, tamanho: 9 }));
   reqs.push(...caixa(`${sid}_f`, sid, m, Math.round(H * 0.91), w, Math.round(H * 0.06), rodape, { rgb: ESTILO.cinza, tamanho: ESTILO.tamanhoRodape, negrito: true }));
-  reqs.push(...requestsGrafismo({ sid }, W, H));
+  if (grafismo) reqs.push(...requestsGrafismo({ sid }, W, H));
   return reqs;
 }
 
@@ -499,7 +499,7 @@ export function marcosDoDeck(analisados) {
   return marcos;
 }
 
-export function requestsLinhaDoTempo(marcos, { sid, indice, W, H, base, rodape = 'V4 COMPANY' }) {
+export function requestsLinhaDoTempo(marcos, { sid, indice, W, H, base, rodape = 'V4 COMPANY', grafismo = true }) {
   const m = Math.round(W * 0.055);
   const n = marcos.length;
   const colW = (W - 2 * m) / n;
@@ -527,7 +527,7 @@ export function requestsLinhaDoTempo(marcos, { sid, indice, W, H, base, rodape =
     if (mc.texto) reqs.push(...caixa(`${id}d`, sid, bx, yLinha + d / 2 + pt(30), bw, pt(36), mc.texto, { rgb: ESTILO.cinza, tamanho: 10, alinhar: 'CENTER' }));
   });
   reqs.push(...caixa(`${sid}_f`, sid, m, Math.round(H * 0.91), W - 2 * m, Math.round(H * 0.06), rodape, { rgb: ESTILO.cinza, tamanho: ESTILO.tamanhoRodape, negrito: true }));
-  reqs.push(...requestsGrafismo({ sid }, W, H));
+  if (grafismo) reqs.push(...requestsGrafismo({ sid }, W, H));
   return reqs;
 }
 
@@ -590,13 +590,14 @@ export function requestsVisual(apresentacao, { base, prefixo = `vz${Math.random(
 // inteiro (o deck fica intacto). Nesse caso tenta UMA vez sem as imagens; o resto da
 // camada (grafismo, barras, etapas, linha do tempo) entra e `semIcones` avisa.
 // Quem integra no pipeline: try/catch, log redigido e pendência na proposta, nunca erro.
-export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = globalThis.fetch, dryRun = false }) {
+// `planejar` troca o plano (a v2 passa o seu); o padrão é a v1.
+export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = globalThis.fetch, dryRun = false, planejar = (ap) => requestsVisual(ap, { base }) }) {
   const auth = { Authorization: `Bearer ${token}` };
   const id = encodeURIComponent(apresentacaoId);
   const r = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${id}`, { headers: auth });
   if (!r.ok) throw new Error(`slides.presentations.get: HTTP ${r.status}`);
   const apresentacao = await r.json();
-  const { requests, resumo } = requestsVisual(apresentacao, { base });
+  const { requests, resumo } = planejar(apresentacao);
   if (dryRun || !requests.length) return { resumo, total: requests.length, aplicado: false };
   const enviar = async (lote) => {
     const u = await fetchImpl(`https://slides.googleapis.com/v1/presentations/${id}:batchUpdate`, {
@@ -608,9 +609,13 @@ export async function aplicarVisual({ token, apresentacaoId, base, fetchImpl = g
   };
   const erro = await enviar(requests);
   if (!erro) return { resumo, total: requests.length, aplicado: true, semIcones: false };
-  const semImagens = requests.filter((q) => !q.createImage);
+  // sem imagens = sem createImage e sem fundo de imagem (v2)
+  const semImagens = requests.filter((q) => !q.createImage && !q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill);
   if (!/image|url|fetch/i.test(erro) || semImagens.length === requests.length) throw new Error(erro);
   const erro2 = await enviar(semImagens);
   if (erro2) throw new Error(`${erro} | sem ícones: ${erro2}`);
   return { resumo, total: semImagens.length, aplicado: true, semIcones: true, erroIcones: erro };
 }
+
+// Primitivas para os layouts v2 (visual-v2.mjs). Não são API pública do gerador.
+export const primitivas = { PT, pt, cor, forma, imagem, aparencia, texto, caixa, paraTras, mover, cabecalho, brutoEl, capital, barraEmpilhada, props };

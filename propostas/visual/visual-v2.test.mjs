@@ -1,0 +1,206 @@
+// node --test propostas/visual/visual-v2.test.mjs
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { normalizarEscopo } from '../../supabase/functions/_shared/propostas/analise.mjs';
+import { requestsDeckCurto } from '../../supabase/functions/_shared/propostas/deck-curto.mjs';
+import { analisarSlide } from '../../supabase/functions/_shared/propostas/visual.mjs';
+import {
+  requestsVisualV2, aplicarVisualV2, assetsDoProjeto, tituloCurto, primeiraOracao, validadeDoTexto, escolherCaso,
+  numerosDoDeck, cabe, planoGradeEntregas, planoGradeDiagnostico, planoPassos, mockupsDoDeck,
+} from '../../supabase/functions/_shared/propostas/visual-v2.mjs';
+
+const PT = 12700;
+const ASSETS = 'https://exemplo.supabase.co/storage/v1/object/public/propostas-visual';
+const W = 9144000;
+const H = 5143500;
+const CASOS = JSON.parse(readFileSync(new URL('../../supabase/functions/_shared/propostas/casos-v0.json', import.meta.url), 'utf8'));
+
+const el = (id, texto, [x, y, w, h], fonte = 12, tipo = 'ROUND_RECTANGLE') => ({
+  objectId: id,
+  size: { width: { magnitude: w * PT, unit: 'EMU' }, height: { magnitude: h * PT, unit: 'EMU' } },
+  transform: { scaleX: 1, scaleY: 1, translateX: x * PT, translateY: y * PT, unit: 'EMU' },
+  shape: { shapeType: tipo, text: texto == null ? undefined : { textElements: [{ textRun: { content: `${texto}\n`, style: { fontSize: { magnitude: fonte, unit: 'PT' } } } }] } },
+});
+const lista = (sid, rotulo, titulo, itens, h = 32) => ({
+  objectId: sid,
+  pageElements: [
+    el(`${sid}_r`, rotulo, [39, 28, 640, 28], 11, 'TEXT_BOX'),
+    el(`${sid}_t`, titulo, [39, 52, 640, 60], 30, 'TEXT_BOX'),
+    ...itens.map((t, i) => el(`${sid}_c${i}`, `${String(i + 1).padStart(2, '0')}   ${t}`, [39, 137 + i * (h + 5), 640, h])),
+    el(`${sid}_f`, 'V4 COMPANY  ·  MARCENARIA TESTE', [39, 368, 640, 24], 9, 'TEXT_BOX'),
+  ],
+});
+const investimento = (sid) => ({
+  objectId: sid,
+  pageElements: [
+    el(`${sid}_r`, 'INVESTIMENTO · IMPLEMENTAÇÃO', [39, 28, 640, 28], 11, 'TEXT_BOX'),
+    el(`${sid}_t`, 'QUAL É O INVESTIMENTO?', [39, 52, 640, 60], 30, 'TEXT_BOX'),
+    el(`${sid}_i0`, null, [39, 141, 381, 42]),
+    el(`${sid}_i0a`, 'Landing page focada em conversão', [48, 141, 282, 42], 12, 'TEXT_BOX'),
+    el(`${sid}_i0b`, 'R$ 2.500', [321, 141, 91, 42], 14, 'TEXT_BOX'),
+    el(`${sid}_p`, null, [439, 141, 241, 191]),
+    el(`${sid}_p0`, 'CONDIÇÃO PARA FECHAMENTO ATÉ 30/10', [453, 149, 212, 23], 10, 'TEXT_BOX'),
+    el(`${sid}_p1`, '20% DE DESCONTO', [453, 174, 212, 26], 20, 'TEXT_BOX'),
+    el(`${sid}_p2`, 'R$ 5.200', [453, 205, 212, 49], 40, 'TEXT_BOX'),
+    el(`${sid}_p4`, 'de R$ 6.500 por R$ 5.200', [453, 291, 212, 23], 10, 'TEXT_BOX'),
+  ],
+});
+const deck = () => ({
+  pageSize: { width: { magnitude: W, unit: 'EMU' }, height: { magnitude: H, unit: 'EMU' } },
+  slides: [
+    { objectId: 'capaV4', pageElements: [] },
+    lista('xD', 'DIAGNÓSTICO', 'O QUE OUVIMOS DA MARCENARIA', ['Sem CRM: não dá para saber de onde veio cada lead', 'Atendimento comercial feito por uma pessoa só', 'Site atual em Wix, sem foco em conversão']),
+    lista('xA', 'PROPOSTA · IMPLEMENTAÇÃO', 'O QUE ENTREGAMOS AGORA', [
+      'Landing page no modelo de portfólio', 'CRM integrado ao WhatsApp, com IA de recepção', 'Funis personalizados no CRM',
+      'Setup de campanha no Google Ads pronto para rodar, com 15 dias de acompanhamento',
+    ]),
+    investimento('xI'),
+    lista('xC', 'DECISÃO', 'PRÓXIMOS PASSOS', ['Cliente alinha a proposta com quem decide', 'Condição de 20% válida para fechamento até 30/10', 'Prazo de entrega da implementação: 30 Dias']),
+  ],
+});
+const criados = (reqs) => reqs.flatMap((r) => [r.createShape?.objectId, r.createImage?.objectId, r.createSlide?.objectId]).filter(Boolean);
+
+// Executa no "Slides" os requests que mudam a estrutura (para ordem, idempotência e integração).
+function simular(apresentacao, requests) {
+  const slides = apresentacao.slides.map((s) => ({ ...s, pageElements: [...s.pageElements] }));
+  const porId = new Map();
+  const pagina = (id) => slides.find((s) => s.objectId === id);
+  for (const r of requests) {
+    if (r.deleteObject) {
+      const i = slides.findIndex((s) => s.objectId === r.deleteObject.objectId);
+      if (i >= 0) slides.splice(i, 1);
+      else for (const s of slides) s.pageElements = s.pageElements.filter((e) => e.objectId !== r.deleteObject.objectId);
+    }
+    if (r.createSlide) slides.splice(r.createSlide.insertionIndex, 0, { objectId: r.createSlide.objectId, pageElements: [] });
+    const novo = r.createShape || r.createImage;
+    if (novo) {
+      const ep = novo.elementProperties;
+      const e = { objectId: novo.objectId, size: ep.size, transform: ep.transform, shape: r.createShape ? { shapeType: r.createShape.shapeType, text: { textElements: [] } } : undefined };
+      pagina(ep.pageObjectId).pageElements.push(e);
+      porId.set(novo.objectId, e);
+    }
+    if (r.insertText) porId.get(r.insertText.objectId)?.shape.text.textElements.push({ textRun: { content: r.insertText.text } });
+  }
+  return { ...apresentacao, slides };
+}
+
+test('título curto = nome do ícone (catálogo), nunca texto novo', () => {
+  assert.equal(tituloCurto('01   Landing page focada em conversão'), 'Landing page');
+  assert.equal(tituloCurto('Página otimizada para aparecer nas buscas por IA'), 'Busca por IA');
+  assert.equal(tituloCurto('CRM integrado ao WhatsApp'), 'CRM + WhatsApp');
+  // sem ícone conhecido: as primeiras palavras do próprio texto, até a pontuação
+  assert.equal(tituloCurto('Algo bem diferente: com detalhe'), 'Algo bem diferente');
+});
+
+test('primeira oração em destaque só quando curta; validade lida do texto', () => {
+  assert.equal(primeiraOracao('01   Sem CRM: não dá para saber'), 'Sem CRM');
+  assert.equal(primeiraOracao('Marcenaria com 43 anos (JM Marcenaria) e showroom'), 'Marcenaria com 43 anos');
+  assert.equal(primeiraOracao('Texto sem pontuação nenhuma até o fim'), null);
+  assert.equal(validadeDoTexto('Condição de 20% válida para fechamento até 30/10'), '30/10');
+  assert.equal(validadeDoTexto('Proposta válida até 05/11/2026'), '05/11/2026');
+  assert.equal(validadeDoTexto('Retorno ao Gabriel hoje, 30/10, até 15h'), null);
+});
+
+test('catálogo de cases: fonte oficial, imagem publicada, números com valor "depois"', () => {
+  assert.match(CASOS.fonte, /ee-2026-v4company\.vercel\.app/);
+  assert.equal(CASOS.casos.length, 6);
+  for (const c of CASOS.casos) {
+    assert.ok(existsSync(new URL(`./casos/${c.imagem}`, import.meta.url)), c.imagem);
+    assert.ok(c.largura > 0 && c.altura > 0 && c.frase && c.numeros.some((n) => n.depois), c.id);
+  }
+});
+
+test('case escolhido por afinidade com o problema; sem afinidade, sem case', () => {
+  assert.equal(escolherCaso('Sem CRM, leads aleatórios, atendimento comercial lento').caso.id, 'valec-renault');
+  assert.equal(escolherCaso('E-commerce com checkout ruim e conversão baixa').caso.modelo, 'e-commerce');
+  assert.equal(escolherCaso('Texto sem relação nenhuma'), null);
+});
+
+test('números do slide-resumo saem do deck; sem dado, sem número', () => {
+  const ns = numerosDoDeck(deck().slides.map(analisarSlide).filter(Boolean));
+  assert.deepEqual(ns.map((n) => [n.rotulo, n.valor]), [['INVESTIMENTO', 'R$ 5.200'], ['PRAZO', '30 dias'], ['ENTREGAS', '4'], ['CONDIÇÃO', 'até 30/10']]);
+  assert.equal(ns[0].sub, '20% de desconto');
+  assert.deepEqual(numerosDoDeck([analisarSlide(lista('z', 'DIAGNÓSTICO', 'T', ['nada']))]), []);
+});
+
+test('grades só quando o texto cabe; senão o slide fica em lista (v1 com vidro)', () => {
+  assert.ok(cabe('x'.repeat(30), 200, 20, 10));
+  assert.ok(!cabe('x '.repeat(200), 100, 30, 10));
+  const a = analisarSlide(deck().slides[2]);
+  assert.equal(planoGradeEntregas(a, W, H).cols, 2); // 4 entregas: 2x2
+  const slideLongo = lista('L', 'PROPOSTA · X', 'T', Array.from({ length: 6 }, () => 'palavra '.repeat(60)));
+  assert.equal(planoGradeEntregas(analisarSlide(slideLongo), W, H), null);
+  assert.equal(planoGradeDiagnostico(analisarSlide(lista('M', 'DIAGNÓSTICO', 'T', Array(9).fill('x'))), W, H), null);
+  assert.equal(planoPassos(analisarSlide(lista('P', 'DECISÃO', 'PRÓXIMOS PASSOS', Array(6).fill('x'))), W, H), null);
+  const { resumo } = requestsVisualV2({ pageSize: deck().pageSize, slides: [slideLongo] }, { assets: ASSETS });
+  assert.ok(resumo[0].feito.includes('lista_vidro'));
+});
+
+test('mockups só das entregas com forma visível (no máximo 3, sem repetir desenho)', () => {
+  const a = analisarSlide(deck().slides[2]);
+  assert.deepEqual(mockupsDoDeck(a).map((m) => [m.desenho, m.nome]), [['navegador', 'Landing page'], ['celular', 'CRM + WhatsApp'], ['quadro', 'Funis']]);
+  assert.deepEqual(mockupsDoDeck(analisarSlide(lista('q', 'PROPOSTA', 'T', ['Algo', 'Outro']))), []);
+});
+
+test('plano v2: layouts, slides novos na ordem certa, IDs únicos e sem colisão', () => {
+  const d = deck();
+  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '30/10/2026' });
+  const por = Object.fromEntries(resumo.map((r) => [r.slide, r.feito]));
+  assert.deepEqual(por.xD, ['grade_diagnostico']);
+  assert.deepEqual(por.xA, ['grade_entregas']);
+  assert.deepEqual(por.xI, ['icones_linhas:1', 'comparativo_preco']);
+  assert.deepEqual(por.xC, ['passos+validade']);
+  const novos = criados(requests);
+  assert.equal(new Set(novos).size, novos.length, `repetidos: ${novos.filter((x, i) => novos.indexOf(x) !== i)}`);
+  const existentes = new Set(d.slides.flatMap((s) => [s.objectId, ...s.pageElements.map((e) => e.objectId)]));
+  for (const id of novos) assert.ok(!existentes.has(id), id);
+  const ap = simular(d, requests);
+  assert.deepEqual(ap.slides.map((s) => s.objectId), ['tst_vcapa', 'capaV4', 'xD', 'xA', 'tst_vmock', 'tst_vcase', 'tst_vnum', 'xI', 'tst_vtl', 'xC']);
+  // nada de assets de fora: todo fundo/imagem vem da raiz do projeto
+  for (const r of requests) {
+    const url = r.createImage?.url || r.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill?.contentUrl;
+    if (url) assert.ok(url.startsWith(`${ASSETS}/`), url);
+  }
+  // capa: nome do cliente do rodapé e a data passada
+  const textos = requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  assert.ok(textos.includes('MARCENARIA TESTE'));
+  assert.ok(textos.some((t) => t.includes('30/10/2026')));
+});
+
+test('idempotente: rodar de novo sobre o resultado não gera pedido', () => {
+  const ap = simular(deck(), requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'tst' }).requests);
+  const { requests } = requestsVisualV2(ap, { assets: ASSETS, prefixo: 'tst2' });
+  assert.deepEqual(requests, []);
+});
+
+test('integração com o deck curto (main): plano completo sem colisão', () => {
+  const fx = JSON.parse(readFileSync(new URL('./fixture-deck-curto.json', import.meta.url), 'utf8'));
+  const catalogo = JSON.parse(readFileSync(new URL('../../supabase/functions/_shared/propostas/catalogo-v1.json', import.meta.url), 'utf8'));
+  const e = normalizarEscopo(fx.escopo, { catalogo, empresa: 'Marcenaria Exemplo', transcricao: fx.transcricao, dataReuniao: '2026-10-30' });
+  const base0 = { pageSize: deck().pageSize, slides: [{ objectId: 'capa', pageElements: [] }] };
+  const ap = simular(base0, requestsDeckCurto(e, base0, { manter: ['capa'], prefixo: 'gpT' }).requests);
+  const { requests, resumo } = requestsVisualV2(ap, { assets: ASSETS, prefixo: 'vT' });
+  const r = JSON.stringify(resumo);
+  for (const f of ['grade_entregas', 'comparativo_preco', 'capa_cliente']) assert.ok(r.includes(f), `${f}: ${r}`);
+  const novos = criados(requests);
+  assert.equal(new Set(novos).size, novos.length);
+  const final = simular(ap, requests);
+  assert.equal(final.slides[0].objectId, 'vT_vcapa');
+});
+
+test('aplicarVisualV2: falha de imagem repete sem imagens E sem fundos de imagem', async () => {
+  const posts = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method !== 'POST') return { ok: true, status: 200, json: async () => deck() };
+    const lote = JSON.parse(init.body).requests;
+    posts.push(lote);
+    return posts.length === 1
+      ? { ok: false, status: 400, json: async () => ({ error: { message: 'There was a problem retrieving the image' } }) }
+      : { ok: true, status: 200, json: async () => ({}) };
+  };
+  const r = await aplicarVisualV2({ token: 't', apresentacaoId: 'p', assets: ASSETS, fetchImpl });
+  assert.equal(r.semIcones, true);
+  assert.ok(!posts[1].some((q) => q.createImage || q.updatePageProperties?.pageProperties?.pageBackgroundFill?.stretchedPictureFill));
+  assert.equal(assetsDoProjeto('https://abc.supabase.co/'), 'https://abc.supabase.co/storage/v1/object/public/propostas-visual');
+});
