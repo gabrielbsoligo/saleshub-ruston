@@ -1,15 +1,16 @@
 // =============================================================
 // PrepCallView — aba "Prep Call" na sidebar
 // =============================================================
-// Closer dispara analise pre-reuniao (Claude Code Routine) via
-// formulario, acompanha status em realtime, ve briefing em markdown
-// quando pronto.
+// Closer dispara a analise pre-reuniao pelo formulario; o motor do
+// Enriquecedor coleta (site, Instagram, Google, anuncios) e escreve o
+// briefing. A tela acompanha a tentativa em realtime e mostra o markdown
+// quando pronto (e a pagina de apresentacao com as imagens capturadas).
 // =============================================================
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '../store';
 import { supabase } from '../lib/supabase';
-import { firePrepCallRoutine } from '../lib/prepCallRoutine';
+import { dispararPrepCall, temColetaDoMotor } from '../lib/prepCall';
 import { CasesPanel, CasesRecentes } from './CasesPanel';
 import { MarkdownView } from './ui/MarkdownView';
 import type { PrepBriefing, PrepBriefingInputs, PrepBriefingStatus, PrepBriefingProgressStage, Lead } from '../types';
@@ -95,70 +96,21 @@ export const PrepCallView: React.FC = () => {
   const handleCreated = () => {
     setShowForm(false);
     fetchBriefings();
-    toast.success('Briefing disparado. Demora 1-3 min.', { icon: '✨' });
+    toast.success('Briefing disparado. Demora de 3 a 8 min.', { icon: '✨' });
   };
 
   const retryBriefing = async (b: PrepBriefing) => {
-    // Smart retry: se tem scraped_data util, chama prep-call-rerun direto
-    // (pula GitHub Action). Senao, full flow via prep-call-fire.
-    const hasScraped = b.scraped_data && typeof b.scraped_data === 'object' && (
-      b.scraped_data.site?.fetched ||
-      b.scraped_data.instagram?.fetched ||
-      b.scraped_data.meta_ads?.fetched ||
-      b.scraped_data.google_ads?.fetched
-    );
-
-    const toastId = toast.loading(hasScraped ? 'Rerunning Routine (dados ja coletados)...' : 'Reenviando...');
-
+    // Reenviar abre uma tentativa nova no motor. Com coleta do motor já feita,
+    // reaproveita (só reescreve o briefing); sem ela, coleta tudo de novo.
+    const reaproveitar = temColetaDoMotor(b.scraped_data);
+    const toastId = toast.loading(reaproveitar ? 'Reescrevendo com os dados já coletados...' : 'Reenviando...');
     try {
-      if (hasScraped) {
-        // Rerun: chama nova edge function que usa scraped_data existente
-        const { data, error } = await supabase.functions.invoke('prep-call-rerun', {
-          body: { briefing_id: b.id },
-        });
-        if (error || (data && data.should_fallback)) {
-          // Fallback pra full flow se rerun nao puder
-          throw new Error('fallback');
-        }
-        toast.success('Rerun OK. Analisando... 1-3 min.', { id: toastId, icon: '✨' });
-      } else {
-        // Full flow via prep-call-fire
-        await supabase.from('prep_briefings').update({
-          status: 'pending',
-          progress_stage: 'queued',
-          error_message: null,
-          briefing_markdown: null,
-          failed_stage: null,
-          completed_at: null,
-        }).eq('id', b.id);
-        await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
-        toast.success('Reenviado. Demora 3-5 min.', { id: toastId, icon: '✨' });
-      }
-      fetchBriefings();
+      await dispararPrepCall(b.id, { reaproveitar });
+      toast.success(reaproveitar ? 'Reenviado. Demora de 2 a 5 min.' : 'Reenviado. Demora de 3 a 8 min.', { id: toastId, icon: '✨' });
     } catch (err: any) {
-      if (err.message === 'fallback') {
-        // Rerun disse pra fazer fallback — dispara full flow
-        try {
-          await supabase.from('prep_briefings').update({
-            status: 'pending', progress_stage: 'queued',
-            error_message: null, briefing_markdown: null, failed_stage: null, completed_at: null,
-          }).eq('id', b.id);
-          await firePrepCallRoutine(b.id, b.empresa, b.inputs || {});
-          toast.success('Full retry disparado.', { id: toastId });
-          fetchBriefings();
-          return;
-        } catch (e: any) {
-          err = e;
-        }
-      }
-      await supabase.from('prep_briefings').update({
-        status: 'error',
-        failed_stage: 'retry',
-        error_message: err.message || String(err),
-      }).eq('id', b.id);
       toast.error(`Falhou: ${err.message || 'erro'}`, { id: toastId });
-      fetchBriefings();
     }
+    fetchBriefings();
   };
 
   if (!currentUser) return null;
@@ -358,22 +310,17 @@ const PrepCallForm: React.FC<{
         .single();
       if (insErr || !created) throw new Error(insErr?.message || 'Falha ao criar registro');
 
-      // 2. Dispara Routine
+      // 2. Abre a tentativa (o motor do Enriquecedor pega na fila)
       try {
-        const { session_id, session_url } = await firePrepCallRoutine(created.id, empresa.trim(), inputs);
-        await supabase.from('prep_briefings').update({
-          status: 'processing',
-          routine_session_id: session_id,
-          routine_session_url: session_url,
-        }).eq('id', created.id);
+        await dispararPrepCall(created.id);
         onCreated();
-      } catch (routineErr: any) {
-        // Se Routine falhou, marca como error
+      } catch (fireErr: any) {
         await supabase.from('prep_briefings').update({
           status: 'error',
-          error_message: routineErr.message || String(routineErr),
+          failed_stage: 'disparo',
+          error_message: fireErr.message || String(fireErr),
         }).eq('id', created.id);
-        toast.error(`Routine falhou: ${routineErr.message || 'erro desconhecido'}`);
+        toast.error(`Não foi possível disparar: ${fireErr.message || 'erro desconhecido'}`);
         onCreated(); // fecha mesmo assim pra mostrar o erro na listagem
       }
     } catch (e: any) {
@@ -533,16 +480,17 @@ const PrepCallForm: React.FC<{
 
 // ---------- ProgressTracker (mostra etapa atual + ETA) ----------
 const STAGE_META: Record<string, { label: string; order: number; etaMin: number; etaMax: number }> = {
-  queued:          { label: 'Na fila',              order: 0, etaMin: 0,   etaMax: 5 },
-  dispatched:      { label: 'Disparando pro worker',order: 1, etaMin: 2,   etaMax: 10 },
-  scraping:        { label: 'Coletando dados',      order: 2, etaMin: 15,  etaMax: 90 },
-  calling_routine: { label: 'Enviando pra IA',      order: 3, etaMin: 1,   etaMax: 5 },
-  analyzing:       { label: 'IA analisando',        order: 4, etaMin: 60,  etaMax: 240 },
-  completed:       { label: 'Pronto',               order: 5, etaMin: 0,   etaMax: 0 },
-  error:           { label: 'Erro',                 order: 5, etaMin: 0,   etaMax: 0 },
+  queued:          { label: 'Na fila do motor',               order: 0, etaMin: 0,   etaMax: 10 },
+  scraping:        { label: 'Coletando site, redes e anúncios', order: 1, etaMin: 60,  etaMax: 240 },
+  analyzing:       { label: 'IA escrevendo o briefing',       order: 2, etaMin: 90,  etaMax: 300 },
+  completed:       { label: 'Pronto',                         order: 3, etaMin: 0,   etaMax: 0 },
+  error:           { label: 'Erro',                           order: 3, etaMin: 0,   etaMax: 0 },
+  // etapas do motor antigo (briefings anteriores à troca)
+  dispatched:      { label: 'Disparando',                     order: 0, etaMin: 0,   etaMax: 0 },
+  calling_routine: { label: 'Enviando pra IA',                order: 2, etaMin: 0,   etaMax: 0 },
 };
 
-const STAGES_ORDER: PrepBriefingProgressStage[] = ['queued', 'dispatched', 'scraping', 'calling_routine', 'analyzing'];
+const STAGES_ORDER: PrepBriefingProgressStage[] = ['queued', 'scraping', 'analyzing'];
 
 const ProgressTracker: React.FC<{ briefing: PrepBriefing }> = ({ briefing: b }) => {
   const [now, setNow] = useState(Date.now());
@@ -553,8 +501,11 @@ const ProgressTracker: React.FC<{ briefing: PrepBriefing }> = ({ briefing: b }) 
 
   const stage = b.progress_stage || 'queued';
   const currentOrder = STAGE_META[stage]?.order ?? 0;
-  const elapsedSec = Math.floor((now - new Date(b.created_at).getTime()) / 1000);
-  const isStuck = elapsedSec > 480 && b.status === 'processing'; // > 8 min
+  // Relógio da TENTATIVA (Reenviar zera); briefings antigos usam o created_at.
+  const inicio = new Date(b.started_at || b.created_at).getTime();
+  const elapsedSec = Math.max(0, Math.floor((now - inicio) / 1000));
+  const prazoMin = b.deadline_at ? Math.round((new Date(b.deadline_at).getTime() - inicio) / 60000) : 10;
+  const isStuck = b.status === 'processing' && elapsedSec > (prazoMin - 3) * 60;
   const stageLabel = STAGE_META[stage]?.label || stage;
 
   return (
@@ -600,16 +551,12 @@ const ProgressTracker: React.FC<{ briefing: PrepBriefing }> = ({ briefing: b }) 
       )}
 
       {/* Aviso amarelo se stuck */}
-      {isStuck && b.github_run_url && (
+      {isStuck && (
         <div className="mt-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-xs">
           <p className="text-yellow-400 font-medium mb-1">⚠️ Pode estar travando</p>
-          <p className="text-[var(--color-v4-text-muted)] mb-2">
-            Briefing está em "{stageLabel}" há {Math.floor(elapsedSec / 60)} min. Aos 10 min, marcaremos como erro automaticamente.
+          <p className="text-[var(--color-v4-text-muted)]">
+            Briefing está em "{stageLabel}" há {Math.floor(elapsedSec / 60)} min. Aos {prazoMin} min, marcaremos como erro automaticamente — aí é só usar Reenviar.
           </p>
-          <a href={b.github_run_url} target="_blank" rel="noopener"
-             className="inline-flex items-center gap-1 text-yellow-400 hover:underline">
-            <ExternalLink size={11} /> Ver logs do GitHub Actions
-          </a>
         </div>
       )}
     </div>
@@ -774,12 +721,6 @@ const BriefingDrawer: React.FC<{
                 <RotateCw size={14} />
               </button>
             )}
-            {b.routine_session_url && (
-              <a href={b.routine_session_url} target="_blank" rel="noopener" title="Abrir sessão Claude"
-                 className="p-2 rounded hover:bg-[var(--color-v4-surface)] text-[var(--color-v4-text-muted)] hover:text-white">
-                <ExternalLink size={14} />
-              </a>
-            )}
             <button onClick={onDelete} title="Apagar"
                     className="p-2 rounded hover:bg-red-500/10 text-[var(--color-v4-text-muted)] hover:text-red-400">
               <Trash2 size={14} />
@@ -836,6 +777,7 @@ const BriefingDrawer: React.FC<{
               <ProgressTracker briefing={b} />
               <p className="text-xs text-[var(--color-v4-text-muted)] text-center mt-6">
                 A tela atualiza sozinha quando terminar.
+                {displayedMarkdown && ' Enquanto isso, a versão anterior continua valendo (inclusive o link de apresentação).'}
               </p>
             </div>
           ) : b.status === 'error' ? (
@@ -854,6 +796,14 @@ const BriefingDrawer: React.FC<{
               <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-2">
                 Vai usar os mesmos dados do formulário original.
               </p>
+              {/* Reenviar que falhou: o briefing anterior continua disponível abaixo */}
+              {displayedMarkdown && (
+                <div className="w-full mt-6 pt-4 border-t border-red-500/20">
+                  <p className="text-xs text-[var(--color-v4-text-muted)] mb-3">Versão anterior (continua valendo):</p>
+                  {displayedJson && <CloserOnlyPanel json={displayedJson} />}
+                  <MarkdownView source={displayedMarkdown} />
+                </div>
+              )}
             </div>
           ) : displayedMarkdown ? (
             <>

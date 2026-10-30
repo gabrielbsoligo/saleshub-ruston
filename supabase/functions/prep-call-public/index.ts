@@ -68,7 +68,8 @@ Deno.serve(async (req) => {
             })
         }
 
-        if (briefing.status !== 'completed') {
+        // Reenviar em andamento (ou que falhou) mantém o briefing anterior no ar.
+        if (briefing.status !== 'completed' && !briefing.briefing_json) {
             return new Response(JSON.stringify({ error: 'briefing not completed', status: briefing.status }), {
                 status: 409,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
