@@ -132,9 +132,9 @@ BEGIN
            deadline_at = v_deadline,
            failed_stage = NULL,
            error_message = NULL,
-           briefing_markdown = NULL,
-           briefing_json = NULL,
            completed_at = NULL
+           -- briefing_markdown/briefing_json ficam: se a tentativa nova falhar, o closer
+           -- continua com o briefing anterior (prep_call_concluir sobrescreve no sucesso).
      WHERE id = b.id;
 
     INSERT INTO public.prep_call_jobs (briefing_id, attempt_id, reaproveitar_coleta)

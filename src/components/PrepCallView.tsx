@@ -777,6 +777,7 @@ const BriefingDrawer: React.FC<{
               <ProgressTracker briefing={b} />
               <p className="text-xs text-[var(--color-v4-text-muted)] text-center mt-6">
                 A tela atualiza sozinha quando terminar.
+                {displayedMarkdown && ' Enquanto isso, a versão anterior continua valendo (inclusive o link de apresentação).'}
               </p>
             </div>
           ) : b.status === 'error' ? (
@@ -795,6 +796,14 @@ const BriefingDrawer: React.FC<{
               <p className="text-[10px] text-[var(--color-v4-text-muted)] mt-2">
                 Vai usar os mesmos dados do formulário original.
               </p>
+              {/* Reenviar que falhou: o briefing anterior continua disponível abaixo */}
+              {displayedMarkdown && (
+                <div className="w-full mt-6 pt-4 border-t border-red-500/20">
+                  <p className="text-xs text-[var(--color-v4-text-muted)] mb-3">Versão anterior (continua valendo):</p>
+                  {displayedJson && <CloserOnlyPanel json={displayedJson} />}
+                  <MarkdownView source={displayedMarkdown} />
+                </div>
+              )}
             </div>
           ) : displayedMarkdown ? (
             <>

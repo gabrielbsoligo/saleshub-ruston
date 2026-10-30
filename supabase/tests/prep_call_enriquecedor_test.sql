@@ -80,6 +80,16 @@ BEGIN
     PERFORM prep_call_claim('teste', 5, 180, 80);
     IF (SELECT status || '/' || failed_stage FROM prep_briefings WHERE id = b) <> 'error/motor' THEN RAISE EXCEPTION 'T20 esgotado'; END IF;
 
+    -- R2: Reenviar sobre um briefing pronto que falha mantém o briefing anterior
+    UPDATE prep_briefings SET status = 'completed', briefing_markdown = '# anterior', briefing_json = '{"schema_version":"v1"}' WHERE id = b;
+    r := prep_call_disparar(b, false);
+    IF (SELECT briefing_markdown FROM prep_briefings WHERE id = b) IS DISTINCT FROM '# anterior' THEN RAISE EXCEPTION 'T20b disparo apagou o briefing'; END IF;
+    SELECT * INTO c FROM prep_call_claim('teste', 5, 180, 80) WHERE briefing_id = b;
+    PERFORM prep_call_falhar(c.job_id, c.claim_token, 'ia', 'erro 1', NULL);
+    SELECT * INTO c FROM prep_call_claim('teste', 5, 180, 80) WHERE briefing_id = b;
+    IF prep_call_falhar(c.job_id, c.claim_token, 'ia', 'erro 2', NULL) <> 'erro' THEN RAISE EXCEPTION 'T20c falha final'; END IF;
+    IF (SELECT status || '/' || briefing_markdown FROM prep_briefings WHERE id = b) <> 'error/# anterior' THEN RAISE EXCEPTION 'T20d briefing anterior perdido'; END IF;
+
     -- teto diário: fila barrada com erro claro
     r := prep_call_disparar(b, false);
     PERFORM prep_call_claim('teste', 5, 180, 0);
@@ -99,4 +109,4 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id = 'prep-call-visuais' AND public) THEN RAISE EXCEPTION 'T24 bucket'; END IF;
 END
 $t$;
-SELECT 'prep_call_enriquecedor: 24 verificações OK' AS resultado;
+SELECT 'prep_call_enriquecedor: 27 verificações OK' AS resultado;

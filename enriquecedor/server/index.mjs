@@ -14,7 +14,7 @@ try { dns.setDefaultResultOrder('ipv4first'); } catch { /* Node antigo */ }
 import pLimit from 'p-limit';
 import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
-import { sondarSite as sondarSiteSeguro } from './sonda.mjs';
+import { sondarSite as sondarSiteSeguro, hostPublico, ipPrivado } from './sonda.mjs';
 import { disponibilidade, escolherPadrao, variaveisDe } from './cadenciaModelos.mjs';
 import { executarPrep, contagensInstagram } from './prepCall.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -4570,9 +4570,15 @@ async function prepTick() {
   try {
     jobs = await sbRpc(SERVICE_KEY, 'prep_call_claim', { p_worker: WORKER_ID, p_limite: livre, p_lease_seg: 180, p_teto_diario: PREP_DAILY_CAP });
   } catch (e) {
-    // Migration ainda não aplicada / banco fora: não insiste a cada 2 s.
-    _prepPausaAte = Date.now() + 60_000;
-    console.warn('[prep] claim falhou (pausa de 60 s):', String(e?.message || e).slice(0, 160));
+    const msg = String(e?.message || e);
+    // Migration ainda não aplicada (função ausente) ou banco inalcançável: não insiste a cada 2 s.
+    // Qualquer outro erro (ex.: deadlock 40P01 com um disparo simultâneo) só espera o próximo tick.
+    if (/PGRST202|42883|could not find the function|fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|HTTP 5\d\d/i.test(msg)) {
+      _prepPausaAte = Date.now() + 60_000;
+      console.warn('[prep] claim indisponível (pausa de 60 s):', msg.slice(0, 160));
+    } else {
+      console.warn('[prep] claim falhou (tenta no próximo tick):', msg.slice(0, 160));
+    }
     return;
   }
   for (const job of jobs ?? []) void executarPrepJob(job);
@@ -4588,11 +4594,13 @@ async function executarPrepJob(job) {
     falhar: (j, { etapa, mensagem, scraped }) => rpc('prep_call_falhar', { p_job: j.job_id, p_token: j.claim_token, p_etapa: etapa, p_mensagem: mensagem, p_scraped: scraped ?? null }),
   };
   const deps = {
+    validarUrl: (url) => validarUrlPrep(url),
     googleNegocio: (empresa, cidade) => serperPlacesCached(marcaDe(empresa), cidade, []),
     descobrirSite: ({ empresa, cidade, gmn }) => discoverSite({ companyName: empresa, nomeFantasia: marcaDe(empresa), cidade, cnpj: job.lead_cnpj ?? null, gmn: gmn ?? null }),
-    auditar: (url) => auditUrl(url),
+    // Defesa em profundidade: a URL já passou por validarUrl na coleta.
+    auditar: async (url) => auditUrl(await urlPublicaPrep(url)),
     pagespeed: (url) => pagespeed(url),
-    telaSite: (url) => capturarTela(url),
+    telaSite: async (url) => capturarTela(await urlPublicaPrep(url)),
     acharInstagram: (empresa, opts) => findCompanySocial(marcaDe(empresa), 'instagram', [], opts),
     perfilInstagram: (handle) => perfilInstagramPrep(handle),
     metaPagina: async (fbUrl, marca) => {
@@ -4607,13 +4615,47 @@ async function executarPrepJob(job) {
   try {
     const r = await reqCtx.run({ token: SERVICE_KEY, leadId: null, fase: 'PREP' }, () =>
       executarPrep(job, { deps, db, gerarTexto: gerarTextoPrep, modelo: PREP_MODEL, log: (m) => console.log(`[prep] ${job.empresa}: ${m}`) }));
-    console.log(`[prep] ${job.empresa} (execução ${job.execucao}): ${r.ok ? 'concluído' : r.encerrada ? 'tentativa encerrada' : `falhou — ${r.erro}`} em ${Math.round((Date.now() - t0) / 1000)} s`);
-    void registrarMetrica({ fonte: 'job:prep', ms: Date.now() - t0, ok: !!r.ok, note: r.erro ?? null, fase: 'PREP' });
+    const u = r.usage;
+    const tokens = u ? `in=${u.input_tokens ?? '?'} out=${u.output_tokens ?? '?'} cache=${u.cache_read_input_tokens ?? 0}` : null;
+    console.log(`[prep] ${job.empresa} (execução ${job.execucao}): ${r.ok ? `concluído (${r.modelo})` : r.encerrada ? 'tentativa encerrada' : `falhou — ${r.erro}`} em ${Math.round((Date.now() - t0) / 1000)} s${tokens ? ` · ${tokens}` : ''}`);
+    // Custo: modelo e tokens na métrica (note), para acompanhar o gasto do Prep.
+    void registrarMetrica({ fonte: 'job:prep', ms: Date.now() - t0, ok: !!r.ok, note: [r.modelo, tokens, r.erro].filter(Boolean).join(' · ') || null, fase: 'PREP' });
+    if (r.ok) void limparVisuaisAntigos(job).catch(() => {});
   } catch (e) {
     console.warn(`[prep] ${job.empresa}: erro inesperado`, String(e?.message || e).slice(0, 200));
   } finally {
     prepRodando = Math.max(0, prepRodando - 1);
   }
+}
+
+// Anti-SSRF do Prep Call (o site é texto livre do closer): http(s), host público e
+// TODO IP resolvido público (faixas da sonda.mjs). validarUrlPrep ainda segue os
+// redirects pela sonda (cada salto revalidado) e recusa se algum cair na rede
+// interna. A navegação headless barra, a cada requisição, host não público.
+async function urlPublicaPrep(u) {
+  let url;
+  try { url = new URL(u); } catch { throw new Error('URL do site inválida'); }
+  if (!/^https?:$/.test(url.protocol)) throw new Error('URL do site precisa ser http(s)');
+  if (!hostPublico(url.hostname)) throw new Error(`host não público: ${url.hostname}`);
+  const ips = await dns.promises.lookup(url.hostname, { all: true }).catch(() => []);
+  if (!ips.length) throw new Error(`host não resolve: ${url.hostname}`);
+  if (ips.some((x) => ipPrivado(x.address))) throw new Error(`host aponta para rede interna: ${url.hostname}`);
+  return url.toString();
+}
+async function validarUrlPrep(u) {
+  const url = await urlPublicaPrep(u);
+  const r = await sondarSiteSeguro(url).catch(() => null);
+  // Só recusa por motivo de segurança; site lento/fora do ar segue para a auditoria (proxy/navegador).
+  if (r && r.ok === false && /publico|privad|esquema|invalid/i.test(String(r.motivo))) throw new Error(`redirect para destino não público (${r.motivo})`);
+  return url;
+}
+async function barrarRedeInterna(page) {
+  await page.route('**/*', (route) => {
+    let h = '';
+    try { h = new URL(route.request().url()).hostname; } catch { /* data:, blob: */ }
+    if (h && !hostPublico(h.replace(/^\[|\]$/g, ''))) return route.abort();
+    return route.continue();
+  });
 }
 
 // Tela (JPEG) de uma página pública, acima da dobra. Com proxy quando pedido.
@@ -4625,6 +4667,7 @@ async function capturarTela(url, { proxy = null, esperaMs = 3000, largura = 1280
     try {
       ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: largura, height: altura }, ...(proxy ? { proxy } : {}) });
       const page = await ctx.newPage();
+      await barrarRedeInterna(page);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForTimeout(esperaMs);
       return await page.screenshot({ type: 'jpeg', quality: 70 });
@@ -4664,8 +4707,11 @@ async function salvarVisualPrep(job, nome, conteudo, tipo = 'image/jpeg') {
   let corpo = conteudo;
   let ct = tipo;
   if (typeof conteudo === 'string') {
-    if (!/^https:\/\//i.test(conteudo)) return null;
-    const r = await fetchWithTimeout(conteudo, { headers: { 'user-agent': UA } }, 15000);
+    // Só imagens de CDN conhecido (criativos da Meta; Google), https e SEM seguir redirect.
+    let host = '';
+    try { const u = new URL(conteudo); host = u.protocol === 'https:' ? u.hostname : ''; } catch { /* inválida */ }
+    if (!/(^|\.)(fbcdn\.net|facebook\.com|cdninstagram\.com|googleusercontent\.com|ggpht\.com)$/i.test(host)) return null;
+    const r = await fetch(conteudo, { headers: { 'user-agent': UA }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
     if (!r.ok) throw new Error(`imagem ${nome}: HTTP ${r.status}`);
     ct = (r.headers.get('content-type') || '').split(';')[0].trim();
     if (!/^image\/(jpeg|png|webp)$/.test(ct)) throw new Error(`imagem ${nome}: tipo ${ct || '?'}`);
@@ -4683,9 +4729,24 @@ async function salvarVisualPrep(job, nome, conteudo, tipo = 'image/jpeg') {
   return `${AUTH_SUPABASE_URL}/storage/v1/object/public/${PREP_BUCKET}/${caminho}`;
 }
 
+// Retenção: concluída a tentativa, apaga as imagens das tentativas anteriores do
+// mesmo briefing (a página pública só mostra a versão vigente).
+async function limparVisuaisAntigos(job) {
+  const hdr = { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}`, 'content-type': 'application/json' };
+  const lista = async (prefix) => {
+    const r = await fetch(`${AUTH_SUPABASE_URL}/storage/v1/object/list/${PREP_BUCKET}`, { method: 'POST', headers: hdr, body: JSON.stringify({ prefix, limit: 100 }) });
+    return r.ok ? r.json() : [];
+  };
+  const tentativas = (await lista(`${job.briefing_id}/`)).map((x) => x.name).filter((n) => n && n !== job.attempt_id);
+  const caminhos = [];
+  for (const t of tentativas) for (const f of await lista(`${job.briefing_id}/${t}/`)) if (f.name) caminhos.push(`${job.briefing_id}/${t}/${f.name}`);
+  if (!caminhos.length) return;
+  await fetch(`${AUTH_SUPABASE_URL}/storage/v1/object/${PREP_BUCKET}`, { method: 'DELETE', headers: hdr, body: JSON.stringify({ prefixes: caminhos }) });
+}
+
 // Briefing pela API do Claude (streaming: a resposta é longa). Fallback do
 // servidor em recusa; se a conta não aceitar o beta, repete sem ele.
-async function gerarTextoPrep(prompt) {
+async function gerarTextoPrep(prompt, { signal } = {}) {
   const client = anthropicClient();
   if (!client) throw new Error('ANTHROPIC_API_KEY ausente no motor');
   const params = {
@@ -4697,15 +4758,20 @@ async function gerarTextoPrep(prompt) {
   };
   let msg;
   try {
-    msg = await client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }).finalMessage();
+    // signal: tentativa encerrada ou prazo estourado cancela o stream (para de gerar e de cobrar).
+    msg = await client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }, { signal }).finalMessage();
   } catch (e) {
     if (e?.status !== 400 || !/fallback|beta/i.test(String(e?.message || ''))) throw e;
     console.warn('[prep] fallback do servidor recusado — repetindo sem ele');
-    msg = await client.messages.stream(params).finalMessage();
+    msg = await client.messages.stream(params, { signal }).finalMessage();
   }
   if (msg.stop_reason === 'refusal') throw new Error('o modelo recusou gerar o briefing');
   if (msg.stop_reason === 'max_tokens') throw new Error('briefing cortado no limite de tokens');
-  return (msg.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+  return {
+    texto: (msg.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join(''),
+    modelo: msg.model ?? PREP_MODEL, // com fallback, pode ser outro modelo
+    usage: msg.usage ?? null,
+  };
 }
 
 if (SERVICE_KEY) {
