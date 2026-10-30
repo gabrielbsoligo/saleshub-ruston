@@ -365,7 +365,9 @@ export function escolherCaso(textoDeck, casos = CASOS.casos, { modeloVenda = nul
     const base = especificos + casa(SINAIS_GENERICOS, d);
     if (base < 3 || especificos < 1) continue;
     const nota = base + (modelo && c.modelo === modelo ? 1 : 0);
-    if (!melhor || nota > melhor.nota) melhor = { caso: c, nota, especificos };
+    // Empate de nota: vence o do modelo do deal (senão, o primeiro do catálogo).
+    const doModelo = Boolean(modelo && c.modelo === modelo);
+    if (!melhor || nota > melhor.nota || (nota === melhor.nota && doModelo && !melhor.doModelo)) melhor = { caso: c, nota, especificos, doModelo };
   }
   return melhor;
 }
