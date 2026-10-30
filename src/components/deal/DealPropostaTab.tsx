@@ -80,6 +80,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
   const [reuniaoId, setReuniaoId] = useState('');
   const [colar, setColar] = useState(false);
   const [tipoOferta, setTipoOferta] = useState('');
+  const [incluirCase, setIncluirCase] = useState(false);
   const [texto, setTexto] = useState('');
   const [autoAtivo, setAutoAtivo] = useState<boolean | null>(null);
   const ehGestor = currentUser?.role === 'gestor';
@@ -127,10 +128,11 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
         reuniao_id: reuniaoId || null,
         transcricao_texto: colar && texto.trim() ? texto : null,
         tipo_oferta: tipoOferta || null,
+        incluir_case: incluirCase,
       });
       if (r.status === 'revisao') toast.success('Proposta gerada — revise no Google Slides antes de enviar.');
       else if (r.status === 'erro') toast.error(`Não gerou: ${r.erro}`);
-      setTexto(''); setColar(false);
+      setTexto(''); setColar(false); setIncluirCase(false);
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -194,6 +196,9 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
         </div>
         <label className="flex items-center gap-2 text-xs text-[var(--color-v4-text-muted)]">
           <input type="checkbox" checked={colar} onChange={e => setColar(e.target.checked)} /> Colar a transcrição (quando o Meet não gravou)
+        </label>
+        <label className="flex items-center gap-2 text-xs text-[var(--color-v4-text-muted)]">
+          <input type="checkbox" checked={incluirCase} onChange={e => setIncluirCase(e.target.checked)} /> Incluir um case V4 (só depois de confirmar com a franqueadora o uso das fotos e números)
         </label>
         {colar && <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={6} className={inputCls} placeholder="Cole aqui a transcrição da call" />}
         <button onClick={gerar} disabled={gerando || emAndamento}

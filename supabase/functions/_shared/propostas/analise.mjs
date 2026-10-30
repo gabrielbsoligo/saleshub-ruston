@@ -82,10 +82,10 @@ REGRAS (obrigatórias):
 2. A Semana 3 usa a variante do modelo de venda do lead (inside_sales, pdv ou ecommerce).${modeloVenda ? ` Modelo informado: ${modeloVenda}.` : ''}
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
-4b. (Outros tipos) "entregaveis": cada entregável que o closer ofereceu, com "produto_id" do PORTFÓLIO V4 quando corresponder (senão null), "texto" adaptado ao lead, "citacao" literal OBRIGATÓRIA (onde o closer ofereceu aquele item), "recorrencia" ("unico" para projeto/implementação, "mensal" para serviço recorrente) e, se o closer falou o preço DAQUELE item, "valor" e "evidencia_valor" (trecho literal com o número). Só o que foi oferecido: nada do catálogo da Estruturação.
+4b. (Outros tipos) "entregaveis": cada entregável que o closer ofereceu, com "produto_id" do PORTFÓLIO V4 quando corresponder (senão null), "titulo" (nome curto do entregável, de preferência até 3 palavras e 24 caracteres, nunca mais de 5 palavras, sem parênteses; ex.: "Landing page", "CRM com IA"), "texto" (o detalhe adaptado ao lead, frase de até ~12 palavras, sem repetir o título), "citacao" literal OBRIGATÓRIA (onde o closer ofereceu aquele item), "recorrencia" ("unico" para projeto/implementação, "mensal" para serviço recorrente) e, se o closer falou o preço DAQUELE item, "valor" e "evidencia_valor" (trecho literal com o número). Só o que foi oferecido: nada do catálogo da Estruturação.
 5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
 5b. VALIDADE: até quando a proposta/condição vale, como combinado na reunião. Data explícita: "validade" no formato dd/mm/aaaa ou dd/mm. Prazo relativo ("hoje", "amanhã", "fim do mês", "sexta-feira", "essa semana"): escreva o termo como foi dito (ex.: "hoje"). Sempre com a evidência literal. Nada combinado: null.
-5c. TAMANHO: "texto" de cada item com no máximo 90 caracteres; "titulo" de cada semana com no máximo 45 caracteres.
+5c. TAMANHO: "texto" de cada item é UMA frase de até ~12 palavras (no máximo 90 caracteres), direta, sem rodeio; "titulo" de cada semana com no máximo 45 caracteres. O limite vale para "texto", nunca para "citacao" (que segue a regra 6b).
 5d. (Outros tipos) "preco.oferta": "valor_tabela" (preço cheio falado, antes de desconto), "desconto_percentual" (só o número, ex.: 20), "valor_final" (o valor a pagar com o desconto, como foi falado), "parcelas", "valor_parcela" e "recorrencia" ("unico" ou "mensal"), cada um com sua evidência literal em "preco.oferta.evidencias".
 5e. "custos_terceiros": custos pagos pelo cliente direto a terceiros e que NÃO estão no preço (ferramenta, licença, verba de mídia), com "texto", "valor", "periodicidade" ("mensal", "unico" ou null se não foi dito) e "evidencia" literal.
 5f. "etapa2": se o closer apresentou uma PRÓXIMA ETAPA opcional (ex.: assessoria mensal depois da implementação), "incluida": true, "itens" (texto + citação literal, origem "ia"), "valor_mensal", "verba_midia" (lista de {"canal","valor","evidencia"}) e "evidencias" ({"quando","valor_mensal"}). Senão "incluida": false.
@@ -99,7 +99,7 @@ FORMATO:
 {"schema_version":"proposta-escopo/v1",${comTipos ? `"oferta":{"tipo":"${tiposDeOferta(catalogo).join('|')}","citacao":""},` : ''}"cliente":{"empresa":"${empresa}","contato":null,"segmento":null,"modelo_venda":"inside_sales|pdv|ecommerce"},
  "contexto":{"dores":[{"texto":"","origem":"ia","citacao":""}],"publico":[],"concorrentes":[],"cliente_fornece":[],"proximos_passos":[]},
  "escopo":{"enfases":["id"],"semanas":[{"id":"s1","titulo":"Semana 1 — ...","itens":[{"catalogo_id":"id|null","texto":"","origem":"catalogo|ia","citacao":null}]}],"overdeliveries":[]},
- "entregaveis":[{"produto_id":"id|null","texto":"","citacao":"","recorrencia":"unico|mensal","valor":null,"evidencia_valor":null}],
+ "entregaveis":[{"produto_id":"id|null","titulo":"","texto":"","citacao":"","recorrencia":"unico|mensal","valor":null,"evidencia_valor":null}],
  "plano_execucao":{"incluido":true,"faixa_midia":null,"itens":[]},
  "preco":{"estruturacao":{"valor_total":null,"parcelas":null,"valor_parcela":null,"condicao":null},"execucao_mensal":{"valor":null,"valor_com_social":null,"meses":null},"oferta":{"valor_tabela":null,"desconto_percentual":null,"valor_final":null,"parcelas":null,"valor_parcela":null,"recorrencia":"unico","evidencias":{"valor_tabela":null,"desconto":null,"valor_final":null,"parcelas":null,"valor_parcela":null}},"fonte":"transcricao","validade":null,"evidencias":{"valor_total":null,"parcelas":null,"valor_parcela":null,"execucao_valor":null,"execucao_com_social":null,"meses":null,"validade":null}},
  "custos_terceiros":[{"texto":"","valor":null,"periodicidade":null,"evidencia":""}],
@@ -344,6 +344,20 @@ function inteiro(v) {
   return Number.isInteger(v) && v >= 1 ? v : null;
 }
 const textoOuNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+// Título curto do entregável (contrato com a camada visual: "Título: detalhe", até 5
+// palavras e 44 caracteres). Mais longo, com dois-pontos/parênteses/ponto, repetindo o
+// texto inteiro ou sem nenhuma palavra (4+ letras) do texto ou da citação: null
+// (o deck usa só o texto e a camada visual cai no título de hoje).
+export function tituloCurto(titulo, texto = '', citacao = '') {
+  const t = textoOuNull(titulo)?.replace(/[.;:,\s]+$/, '');
+  if (!t || /[:().]/.test(t) || t.length > 44 || t.split(/\s+/).length > 5) return null;
+  if (normalizarTexto(t) === normalizarTexto(texto)) return null;
+  const base = new Set(normalizarTexto(`${texto} ${citacao || ''}`).split(/[^a-z0-9]+/));
+  // palavra de 4+ letras ou sigla ("CRM", "SEO") que esteja no texto ou na citação
+  const chaves = t.split(/\s+/).filter((p) => /^[A-Z0-9]{2,}$/.test(p) || normalizarTexto(p).length >= 4).map(normalizarTexto);
+  if (!chaves.some((p) => base.has(p))) return null;
+  return t;
+}
 
 // dataReuniao ('aaaa-mm-dd'): base da validade relativa; dataAssumida = não veio da reunião
 // (ex.: transcrição colada), vira aviso. tipoOferta: escolhido pelo closer (vence a IA).
@@ -510,7 +524,7 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       const recorrencia = e.recorrencia === 'mensal' ? 'mensal' : 'unico';
       entregaveis.push({
         produto_id: produtos.has(e.produto_id) ? e.produto_id : null,
-        texto, origem: 'ia', citacao, recorrencia,
+        titulo: tituloCurto(e.titulo, texto, citacao), texto, origem: 'ia', citacao, recorrencia,
         valor: dinheiro(null, numero(e.valor), recorrencia === 'mensal' ? 'execucao' : 'estruturacao', `valor de "${texto}"`, e.evidencia_valor),
       });
     }

@@ -22,6 +22,10 @@ const MAX_CHARS = 140;
 const cortar = (t) => (t.length > MAX_CHARS ? `${t.slice(0, MAX_CHARS - 1).trimEnd()}…` : t);
 const diaMes = (data) => String(data).split('/').slice(0, 2).join('/');
 const brl = (v, recorrencia) => `${formatarBRL(v)}${recorrencia === 'mensal' ? '/mês' : ''}`;
+const semAcento = (t) => String(t).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Texto que já começa pelo título não repete ("Landing page: Landing page de...").
+export const itemEntregavel = (e) =>
+  e.titulo && !semAcento(e.texto).startsWith(semAcento(e.titulo)) ? `${e.titulo}: ${e.texto}` : e.texto;
 const maiuscula = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 // "Google Ads", "Meta Ads (Instagram)" → "R$ 2.000 em Google Ads"
 const listaE = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(', ')} e ${xs.at(-1)}` : xs[0] || '');
@@ -56,7 +60,8 @@ export function secoesCurto(escopo) {
   ];
   if (contexto.length) secoes.push({ tipo: 'lista', rotulo: 'Contexto', titulo: 'Contexto do projeto', itens: contexto });
 
-  const entregaveis = (escopo.entregaveis || []).map((e) => e.texto);
+  // "Título curto: detalhe" (a camada visual usa o título no cartão); sem título, só o texto.
+  const entregaveis = (escopo.entregaveis || []).map(itemEntregavel);
   secoes.push({
     tipo: 'lista',
     rotulo: `Proposta · ${NOME_TIPO[tipo] || 'Entregáveis'}`,
@@ -66,7 +71,7 @@ export function secoesCurto(escopo) {
 
   // Investimento: itens com valor falado, preço de tabela, condição (desconto/validade).
   const linhas = (escopo.entregaveis || []).filter((e) => e.valor != null)
-    .map((e) => ({ texto: e.texto, valor: brl(e.valor, e.recorrencia) }))
+    .map((e) => ({ texto: e.titulo || e.texto, valor: brl(e.valor, e.recorrencia) }))
     .slice(0, 4); // 4 itens + a linha do preço de tabela cabem no slide
   const temDesconto = of.desconto_percentual != null;
   if (of.valor_tabela != null && (linhas.length > 1 || temDesconto)) {
