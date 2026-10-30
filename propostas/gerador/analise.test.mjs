@@ -398,7 +398,8 @@ test('Gabriel 30/10: semana omitida ou esvaziada pela análise entra com o padr�
   const s3 = e.escopo.semanas.find((s) => s.id === 's3');
   assert.ok(s3.itens.length && s3.itens.every((i) => i.catalogo_id.startsWith('s3is_')), 'S3 vazia → variante inside sales');
   assert.match(s3.titulo, /Inside Sales/);
-  for (const n of [2, 3, 4]) assert.ok(e.pendencias.some((p) => p.startsWith(`Semana ${n} não veio da análise`)));
+  for (const n of [2, 4]) assert.ok(e.pendencias.some((p) => p.startsWith(`Semana ${n} não veio da análise`)));
+  assert.ok(e.pendencias.some((p) => p.startsWith('Semana 3 ficou sem itens válidos')), 'S3 veio vazia');
   assert.ok(!e.pendencias.some((p) => p.startsWith('Semana 1 não veio')));
   assert.deepEqual(validarEscopo(e), []);
 });
@@ -418,4 +419,25 @@ test('Gabriel 30/10: plano de execução traz o pacote padrão (texto adaptado m
   assert.equal(e.plano_execucao.itens[0].texto, 'Gestor de Conta');
   b.plano_execucao.incluido = false;
   assert.equal(normalizarEscopo(b, ctx).plano_execucao.itens.length, 2, 'sem execução, nada é completado');
+});
+
+test('Vedor (semanas) #1: semana repetida junta os itens; nada some em silêncio', () => {
+  const b = bruto();
+  b.escopo.semanas.push({ id: 's1', titulo: 'Semana 1 de novo', itens: [{ catalogo_id: 's1_tam_sam_som', texto: 'TAM/SAM/SOM', origem: 'catalogo' }] });
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.escopo.semanas.filter((s) => s.id === 's1').length, 1);
+  assert.deepEqual(e.escopo.semanas.find((s) => s.id === 's1').itens.map((i) => i.catalogo_id), ['s1_persona_icp', 'li_icp_contas', 's1_tam_sam_som']);
+});
+
+test('Vedor (semanas) #2/#3: execução vazia vira pendência; ex_* repetido não duplica', () => {
+  const b = bruto(); b.plano_execucao.itens = [];
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.plano_execucao.itens.length, 4);
+  assert.ok(e.pendencias.some((p) => p.startsWith('plano de execução não veio da análise')));
+  const c = bruto();
+  c.plano_execucao.itens.push({ catalogo_id: 'ex_trafego', texto: 'Tráfego A', origem: 'catalogo' }, { catalogo_id: 'ex_trafego', texto: 'Tráfego B', origem: 'catalogo' });
+  const f = normalizarEscopo(c, ctx);
+  assert.deepEqual(f.plano_execucao.itens.map((i) => i.catalogo_id), ['ex_gestor_conta', 'ex_trafego', 'ex_designer', 'ex_coord']);
+  assert.equal(f.plano_execucao.itens[1].texto, 'Tráfego A');
+  assert.ok(!f.pendencias.some((p) => p.startsWith('plano de execução não veio')));
 });

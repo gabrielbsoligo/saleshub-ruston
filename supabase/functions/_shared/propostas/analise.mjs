@@ -276,10 +276,18 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   let modelo = MODELOS.includes(modeloVenda) ? modeloVenda : MODELOS.includes(bruto?.cliente?.modelo_venda) ? bruto.cliente.modelo_venda : null;
   if (!modelo) { modelo = 'inside_sales'; pendencias.push('modelo de venda não identificado (usei inside_sales)'); }
 
-  const daAnalise = (Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : [])
-    .filter((s) => s && typeof s.id === 'string')
-    .map((s) => ({ id: s.id, titulo: textoOuNull(s.titulo) || s.id, itens: lista(s.itens, `semana ${s.id}`) }))
-    .filter((s) => s.itens.length);
+  // Semana repetida (duas "s1") é uma só: itens juntados, título da primeira.
+  const daAnalise = [];
+  const vieram = new Set();
+  for (const s of Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : []) {
+    if (!s || typeof s.id !== 'string') continue;
+    vieram.add(s.id);
+    const itens = lista(s.itens, `semana ${s.id}`);
+    const ja = daAnalise.find((x) => x.id === s.id);
+    if (ja) ja.itens.push(...itens);
+    else daAnalise.push({ id: s.id, titulo: textoOuNull(s.titulo) || s.id, itens });
+  }
+  for (let k = daAnalise.length - 1; k >= 0; k--) if (!daAnalise[k].itens.length) daAnalise.splice(k, 1);
   // A proposta padrão (EE 2026) tem as Semanas 1 a 4: a que a análise omitiu ou
   // esvaziou entra com os itens do catálogo (S3 pela variante do modelo) e vira
   // pendência para o closer revisar. Ordem do catálogo; ids extras vão ao fim.
@@ -295,7 +303,10 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       titulo: s.variantes ? `${s.titulo} (${nomeModelo})` : s.titulo,
       itens: (s.itens || s.variantes?.[modelo] || []).map((i) => ({ catalogo_id: i.id, texto: i.texto, origem: 'catalogo', citacao: null })),
     });
-    pendencias.push(`${s.titulo.split(' — ')[0]} não veio da análise: entrou com os itens padrão do catálogo — revise`);
+    const nome = s.titulo.split(' — ')[0];
+    pendencias.push(vieram.has(s.id)
+      ? `${nome} ficou sem itens válidos: entrou com os itens padrão do catálogo — revise`
+      : `${nome} não veio da análise: entrou com os itens padrão do catálogo — revise`);
   }
   semanas.push(...daAnalise.filter((x) => !ordem.includes(x.id)));
 
@@ -417,7 +428,12 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   if (pe.incluido !== false) {
     const padrao = catalogo.execucao.itens_padrao.map((p) => itensExecucao.find((i) => i.catalogo_id === p.id)
       || { catalogo_id: p.id, texto: p.texto, origem: 'catalogo', citacao: null });
-    itensExecucao = [...padrao, ...itensExecucao.filter((i) => !padrao.includes(i))];
+    // item do catálogo repetido pela análise conta uma vez só
+    const vistos = new Set(padrao.map((i) => i.catalogo_id));
+    const extras = itensExecucao.filter((i) => !padrao.includes(i)
+      && (!i.catalogo_id || !vistos.has(i.catalogo_id)) && (vistos.add(i.catalogo_id), true));
+    if (!itensExecucao.length) pendencias.push('plano de execução não veio da análise: entrou o pacote padrão do catálogo — revise');
+    itensExecucao = [...padrao, ...extras];
   }
   const escopo = {
     schema_version: 'proposta-escopo/v0',
