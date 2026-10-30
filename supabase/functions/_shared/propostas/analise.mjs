@@ -48,33 +48,70 @@ function catalogoCompacto(c) {
   return linhas.join('\n');
 }
 
-export function montarPrompt({ transcricao, catalogo, empresa, modeloVenda = null }) {
-  return `Você monta o ESCOPO de uma proposta da V4 Company (Estruturação Estratégica + plano de execução) a partir da transcrição da reunião de vendas com o lead "${empresa}".
+// Portfólio V4 (catálogo v1): só nome e categoria STEP. O valor base não vai ao
+// prompt: preço é sempre o falado na reunião.
+function portfolioCompacto(c) {
+  const linhas = [];
+  for (const step of ['ter', 'executar', 'saber', 'destrava_receita', 'potencializar']) {
+    const ps = (c.produtos || []).filter((p) => p.step === step);
+    if (!ps.length) continue;
+    linhas.push(`## ${step.toUpperCase()}`);
+    for (const p of ps) linhas.push(`- ${p.id}: ${p.nome}`);
+  }
+  return linhas.join('\n');
+}
 
+export function tiposDeOferta(catalogo) {
+  return (catalogo.tipos_oferta || []).map((t) => t.id);
+}
+
+export function montarPrompt({ transcricao, catalogo, empresa, modeloVenda = null, tipoOferta = null }) {
+  const tipos = catalogo.tipos_oferta || [];
+  const comTipos = tipos.length > 0;
+  const forcado = comTipos && tiposDeOferta(catalogo).includes(tipoOferta) ? tipoOferta : null;
+  const passoTipo = comTipos ? `
+PASSO 1 — TIPO DE OFERTA. Antes do escopo, classifique o que o closer OFERECEU na reunião (não o que a V4 costuma vender):
+${tipos.map((t) => `- ${t.id} (${t.nome}, STEP ${t.step}): ${t.quando}`).join('\n')}
+Ponha em "oferta" o tipo e uma citação literal que mostre a oferta.${forcado ? ` O closer já escolheu o tipo: ${forcado}. Use este.` : ''}
+Se o tipo for "estruturacao", siga as regras 1 a 4 (semanas). Se NÃO for, deixe "escopo.semanas" vazio, "plano_execucao.incluido" false, e preencha "entregaveis" (regra 4b) e "preco.oferta" (regra 5d).
+` : '';
+  return `Você monta o ESCOPO de uma proposta da V4 Company a partir da transcrição da reunião de vendas com o lead "${empresa}".
+${passoTipo}
 REGRAS (obrigatórias):
-1. Escolha itens do CATÁLOGO pelo id ("catalogo_id") e adapte o texto ao lead com poucas palavras. Traga SEMPRE as quatro semanas s1, s2, s3 e s4, cada uma com os itens do catálogo que fazem sentido para o lead (onboarding é opcional); no plano de execução, liste os itens padrão (ex_*) e os adicionais combinados.
+1. (Estruturação) Escolha itens do CATÁLOGO pelo id ("catalogo_id") e adapte o texto ao lead com poucas palavras. Traga SEMPRE as quatro semanas s1, s2, s3 e s4, cada uma com os itens do catálogo que fazem sentido para o lead (onboarding é opcional); no plano de execução, liste os itens padrão (ex_*) e os adicionais combinados.
 2. A Semana 3 usa a variante do modelo de venda do lead (inside_sales, pdv ou ecommerce).${modeloVenda ? ` Modelo informado: ${modeloVenda}.` : ''}
 3. Ênfases e overdeliveries só entram se a conversa pedir ou o closer prometer. Item fora do catálogo: catalogo_id null, origem "ia" e "citacao" com um trecho LITERAL da transcrição (copiado, sem parafrasear).
 4. Itens do catálogo sem adaptação específica: origem "catalogo", citacao null.
+4b. (Outros tipos) "entregaveis": cada entregável que o closer ofereceu, com "produto_id" do PORTFÓLIO V4 quando corresponder (senão null), "texto" adaptado ao lead, "citacao" literal OBRIGATÓRIA (onde o closer ofereceu aquele item), "recorrencia" ("unico" para projeto/implementação, "mensal" para serviço recorrente) e, se o closer falou o preço DAQUELE item, "valor" e "evidencia_valor" (trecho literal com o número). Só o que foi oferecido: nada do catálogo da Estruturação.
 5. PREÇO: só o que o closer FALOU na reunião. Valores em número (29750, não "29,7 mil"). Se não foi falado, use null. Nunca invente nem use tabela de preço. Para CADA valor preenchido, ponha em "evidencias" o trecho LITERAL da transcrição onde aquele valor foi dito (com o número como foi falado). Estruturação é o valor do projeto; execução é o valor mensal; "execucao_com_social" só se o closer falou o valor do pacote COM social media.
-5b. VALIDADE: a data até quando a proposta/condição vale, combinada na reunião ("validade" no formato dd/mm/aaaa ou dd/mm, com a evidência literal). Sem data falada: null.
+5b. VALIDADE: até quando a proposta/condição vale, como combinado na reunião. Data explícita: "validade" no formato dd/mm/aaaa ou dd/mm. Prazo relativo ("hoje", "amanhã", "fim do mês", "sexta-feira", "essa semana"): escreva o termo como foi dito (ex.: "hoje"). Sempre com a evidência literal. Nada combinado: null.
 5c. TAMANHO: "texto" de cada item com no máximo 90 caracteres; "titulo" de cada semana com no máximo 45 caracteres.
+5d. (Outros tipos) "preco.oferta": "valor_tabela" (preço cheio falado, antes de desconto), "desconto_percentual" (só o número, ex.: 20), "valor_final" (o valor a pagar com o desconto, como foi falado), "parcelas", "valor_parcela" e "recorrencia" ("unico" ou "mensal"), cada um com sua evidência literal em "preco.oferta.evidencias".
+5e. "custos_terceiros": custos pagos pelo cliente direto a terceiros e que NÃO estão no preço (ferramenta, licença, verba de mídia), com "texto", "valor", "periodicidade" ("mensal", "unico" ou null se não foi dito) e "evidencia" literal.
+5f. "etapa2": se o closer apresentou uma PRÓXIMA ETAPA opcional (ex.: assessoria mensal depois da implementação), "incluida": true, "itens" (texto + citação literal, origem "ia"), "valor_mensal", "verba_midia" (lista de {"canal","valor","evidencia"}) e "evidencias" ({"quando","valor_mensal"}). Senão "incluida": false.
 6. "dores": até 4 dores ditas pelo lead, cada uma com citação literal (origem "ia").
+6a. Contexto (opcional, até 4 itens cada, com citação literal, origem "ia"): "publico" (quem o lead quer atingir, região), "concorrentes" (citados por nome), "cliente_fornece" (o que o lead vai fornecer: fotos, acessos...), "proximos_passos" (decisor, retorno combinado, prazos).
 6b. CITAÇÕES e EVIDÊNCIAS: copie de 6 a 20 palavras SEGUIDAS de uma única fala da transcrição (se a fala inteira tiver menos de 6 palavras, copie a fala inteira), exatamente como estão escritas (inclusive erros de transcrição e números como "6,500"), sem juntar falas, resumir ou corrigir. Citação que não for cópia exata é descartada.
 7. "pendencias": o que faltou para fechar a proposta (ex.: "preço da execução não foi falado").
 8. Responda APENAS o JSON, sem texto antes ou depois.
 
 FORMATO:
-{"schema_version":"proposta-escopo/v0","cliente":{"empresa":"${empresa}","contato":null,"segmento":null,"modelo_venda":"inside_sales|pdv|ecommerce"},
- "contexto":{"dores":[{"texto":"","origem":"ia","citacao":""}]},
+{"schema_version":"proposta-escopo/v1",${comTipos ? `"oferta":{"tipo":"${tiposDeOferta(catalogo).join('|')}","citacao":""},` : ''}"cliente":{"empresa":"${empresa}","contato":null,"segmento":null,"modelo_venda":"inside_sales|pdv|ecommerce"},
+ "contexto":{"dores":[{"texto":"","origem":"ia","citacao":""}],"publico":[],"concorrentes":[],"cliente_fornece":[],"proximos_passos":[]},
  "escopo":{"enfases":["id"],"semanas":[{"id":"s1","titulo":"Semana 1 — ...","itens":[{"catalogo_id":"id|null","texto":"","origem":"catalogo|ia","citacao":null}]}],"overdeliveries":[]},
+ "entregaveis":[{"produto_id":"id|null","texto":"","citacao":"","recorrencia":"unico|mensal","valor":null,"evidencia_valor":null}],
  "plano_execucao":{"incluido":true,"faixa_midia":null,"itens":[]},
- "preco":{"estruturacao":{"valor_total":null,"parcelas":null,"valor_parcela":null,"condicao":null},"execucao_mensal":{"valor":null,"valor_com_social":null,"meses":null},"fonte":"transcricao","validade":null,"evidencias":{"valor_total":null,"parcelas":null,"valor_parcela":null,"execucao_valor":null,"execucao_com_social":null,"meses":null,"validade":null}},
+ "preco":{"estruturacao":{"valor_total":null,"parcelas":null,"valor_parcela":null,"condicao":null},"execucao_mensal":{"valor":null,"valor_com_social":null,"meses":null},"oferta":{"valor_tabela":null,"desconto_percentual":null,"valor_final":null,"parcelas":null,"valor_parcela":null,"recorrencia":"unico","evidencias":{"valor_tabela":null,"desconto":null,"valor_final":null,"parcelas":null,"valor_parcela":null}},"fonte":"transcricao","validade":null,"evidencias":{"valor_total":null,"parcelas":null,"valor_parcela":null,"execucao_valor":null,"execucao_com_social":null,"meses":null,"validade":null}},
+ "custos_terceiros":[{"texto":"","valor":null,"periodicidade":null,"evidencia":""}],
+ "etapa2":{"incluida":false,"itens":[],"valor_mensal":null,"verba_midia":[],"evidencias":{"quando":null,"valor_mensal":null}},
  "pendencias":[]}
 
-CATÁLOGO (versão ${catalogo.versao}):
+CATÁLOGO DA ESTRUTURAÇÃO (versão ${catalogo.versao}):
 ${catalogoCompacto(catalogo)}
-
+${comTipos ? `
+PORTFÓLIO V4 (produtos avulsos por categoria STEP; use o id em "produto_id"):
+${portfolioCompacto(catalogo)}
+` : ''}
 TRANSCRIÇÃO:
 ${transcricao}`;
 }
@@ -200,6 +237,7 @@ const MENSAL = /(por mes|ao mes|mensal|mensais|mensalidade|recorren|execucao)/;
 const ESTRUTURA = /(estrutura|setup|implementa|projeto|parcela|vezes|\d+x)/;
 export function papelConfere(evidencia, papel) {
   const n = normalizarTexto(evidencia);
+  if (papel === 'qualquer') return true;
   if (papel === 'social') return MENSAL.test(n) && /social/.test(n);
   if (papel === 'execucao') return MENSAL.test(n);
   return !MENSAL.test(n) || ESTRUTURA.test(n);
@@ -249,6 +287,46 @@ export function falaDeValidade(oracaoNorm) {
 }
 const ORACAO = /[.!?;:,](?=\s)|\n/g;
 
+// Validade relativa (P4): "hoje", "amanhã", "fim do mês", "essa semana", "sexta-feira"
+// viram data pela data da reunião. O trecho precisa falar de validade ou de fechamento
+// ("para esse fechamento hoje"); data de entrega/início não conta.
+export function falaDeValidadeRelativa(norm) {
+  const t = norm.replace(/\bvalem? a pena\b/g, ' ');
+  if (ENTREGA.test(t) && !VALIDADE_EXPLICITA.test(t)) return false;
+  return VALIDADE.test(t) || VALIDADE_FRACA.test(t);
+}
+const DIAS_SEMANA = { segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5 };
+const somarDias = (d, n) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
+const proximoDiaSemana = (d, alvo) => somarDias(d, (alvo - d.getUTCDay() + 7) % 7);
+// dataReuniao: 'aaaa-mm-dd'. Devolve { data: 'dd/mm/aaaa', termo } com a data mais cedo
+// citada, ou null se o trecho não traz prazo relativo reconhecível.
+export function resolverValidadeRelativa(evidenciaNorm, dataReuniao) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(dataReuniao || ''));
+  if (!m) return null;
+  const base = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  const achados = [];
+  const t = evidenciaNorm;
+  if (/\bhoje\b/.test(t)) achados.push(['hoje', base]);
+  if (/\bamanha\b/.test(t)) achados.push(['amanhã', somarDias(base, 1)]);
+  if (/\b(fim|final) (do |de |desse |deste |nesse |neste )?mes\b/.test(t)) {
+    achados.push(['fim do mês', new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0))]);
+  }
+  if (/\b(fim|final) (da |de |dessa |desta |nessa |nesta )?semana\b|\b(essa|esta|nessa|nesta) semana\b/.test(t)) {
+    achados.push(['esta semana', proximoDiaSemana(base, 5)]);
+  }
+  // "segunda" sozinha é ordinal ("segunda etapa"): dia da semana só com "feira" ou "até/na ...".
+  for (const [nome, n] of Object.entries(DIAS_SEMANA)) {
+    if (new RegExp(`\\b${nome} feira\\b|\\b(ate|na|nesta|nessa|essa|esta) ${nome}\\b(?! (etapa|etapas|fase|fases|parte|vez|parcela|opcao|proposta|reuniao|call|semana))`).test(t)) {
+      achados.push([`${nome}-feira`, proximoDiaSemana(base, n)]);
+    }
+  }
+  if (!achados.length) return null;
+  achados.sort((a, b) => a[1] - b[1]);
+  const [termo, d] = achados[0];
+  return { data: formatarData({ dia: d.getUTCDate(), mes: d.getUTCMonth() + 1, ano: d.getUTCFullYear() }), termo };
+}
+const formatarDataIso = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso); return m ? `${m[3]}/${m[2]}/${m[1]}` : iso; };
+
 export const formasParcelas = (p) => [`${p}x`, `${p} x`, `${p} vezes`, `${p} parcelas`];
 export const formasMeses = (m) => [`${m} meses`];
 
@@ -261,10 +339,28 @@ function inteiro(v) {
 }
 const textoOuNull = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
-export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modeloVenda = null }) {
+// dataReuniao ('aaaa-mm-dd'): base da validade relativa; dataAssumida = não veio da reunião
+// (ex.: transcrição colada), vira aviso. tipoOferta: escolhido pelo closer (vence a IA).
+export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modeloVenda = null, tipoOferta = null, dataReuniao = null, dataAssumida = false }) {
   const ids = idsDoCatalogo(catalogo);
   const tNorm = normalizarTexto(transcricao);
   const pendencias = Array.isArray(bruto?.pendencias) ? bruto.pendencias.filter((p) => typeof p === 'string' && p.trim()) : [];
+
+  // Tipo de oferta (P1). Catálogo sem tipos (v0) = sempre Estruturação.
+  const tipos = catalogo.tipos_oferta || [];
+  let oferta = { tipo: 'estruturacao', origem: 'padrao', citacao: null };
+  if (tipos.length) {
+    const citOferta = textoOuNull(bruto?.oferta?.citacao);
+    const citacao = citOferta && citacaoNaTranscricao(citOferta, tNorm) ? citOferta : null;
+    if (tipos.some((t) => t.id === tipoOferta)) oferta = { tipo: tipoOferta, origem: 'closer', citacao };
+    else if (tipos.some((t) => t.id === bruto?.oferta?.tipo)) oferta = { tipo: bruto.oferta.tipo, origem: 'ia', citacao };
+    else pendencias.push('tipo de oferta não identificado: usei Estruturação — se não for, gere de novo escolhendo o tipo');
+    if (oferta.origem === 'ia') {
+      const nome = tipos.find((t) => t.id === oferta.tipo).nome;
+      pendencias.push(`tipo de oferta identificado pela IA: ${nome}${citacao ? ` ("${citacao}")` : ''} — se não for, gere de novo escolhendo o tipo`);
+    }
+  }
+  const ehEstruturacao = oferta.tipo === 'estruturacao';
 
   const item = (i, onde) => {
     if (!i || typeof i.texto !== 'string' || !i.texto.trim()) return null;
@@ -282,12 +378,13 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   const lista = (arr, onde) => (Array.isArray(arr) ? arr.map((i) => item(i, onde)).filter(Boolean) : []);
 
   let modelo = MODELOS.includes(modeloVenda) ? modeloVenda : MODELOS.includes(bruto?.cliente?.modelo_venda) ? bruto.cliente.modelo_venda : null;
-  if (!modelo) { modelo = 'inside_sales'; pendencias.push('modelo de venda não identificado (usei inside_sales)'); }
+  if (!modelo) { modelo = 'inside_sales'; if (ehEstruturacao) pendencias.push('modelo de venda não identificado (usei inside_sales)'); }
 
   // Semana repetida (duas "s1") é uma só: itens juntados, título da primeira.
   const daAnalise = [];
   const vieram = new Set();
-  for (const s of Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : []) {
+  // Fora da Estruturação não há semanas (a IA às vezes manda mesmo assim).
+  for (const s of ehEstruturacao && Array.isArray(bruto?.escopo?.semanas) ? bruto.escopo.semanas : []) {
     if (!s || typeof s.id !== 'string') continue;
     vieram.add(s.id);
     const itens = lista(s.itens, `semana ${s.id}`);
@@ -301,7 +398,7 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   // pendência para o closer revisar. Ordem do catálogo; ids extras vão ao fim.
   const ordem = catalogo.semanas.map((s) => s.id);
   const semanas = [];
-  for (const s of catalogo.semanas) {
+  for (const s of ehEstruturacao ? catalogo.semanas : []) {
     const veio = daAnalise.find((x) => x.id === s.id);
     if (veio) { semanas.push(veio); continue; }
     if (s.id === 'onboarding') continue;
@@ -329,16 +426,19 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   // expressão da fonte usada por dois campos = ambígua. Senão: null + pendência.
   const fonteMapa = normalizarComMapa(transcricao);
   const exprsFonte = expressoesMonetarias(transcricao);
-  const evidenciaDe = (campo) => {
-    const t = textoOuNull(ev[campo]);
+  const conferida = (t0) => {
+    const t = textoOuNull(t0);
     return t && citacaoNaTranscricao(t, tNorm) ? t : null;
   };
+  const evidenciaDe = (campo) => conferida(ev[campo]);
   const aceitos = [];
   const naoConfirmado = (rotulo) => pendencias.push(`${rotulo}: a análise sugeriu um valor que não foi confirmado na transcrição — confira`);
-  const dinheiro = (campo, valor, papel, rotulo) => {
+  // campo = chave para a checagem de ambiguidade (null = não entra nela).
+  const dinheiro = (campo, valor, papel, rotulo, evidencia = evidenciaDe(campo), { silencioso = false } = {}) => {
     if (valor == null) return null;
-    const e = evidenciaDe(campo);
-    if (!e || !papelConfere(e, papel)) { naoConfirmado(rotulo); return null; }
+    const e = conferida(evidencia);
+    const falhou = () => { if (!silencioso) naoConfirmado(rotulo); return null; };
+    if (!e || !papelConfere(e, papel)) return falhou();
     const alvo = Math.round(valor * 100) / 100;
     const spans = localizarCitacao(e, fonteMapa);
     const exprs = exprsFonte.filter((x) => spans.some(([a, b]) => x.ini < b && x.fim > a));
@@ -351,13 +451,13 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       return pk !== 'ambiguo' && pk !== 'com';
     };
     const casa = exprs.filter((x) => x.valor === alvo && pacoteOk(x));
-    if (!casa.length) { naoConfirmado(rotulo); return null; }
-    aceitos.push({ campo, posicoes: casa.map((x) => x.ini), rotulo });
+    if (!casa.length) return falhou();
+    if (campo) aceitos.push({ campo, posicoes: casa.map((x) => x.ini), rotulo });
     return valor;
   };
-  const quantidade = (campo, valor, formas, rotulo) => {
+  const quantidade = (campo, valor, formas, rotulo, evidencia = evidenciaDe(campo)) => {
     if (valor == null) return null;
-    const e = evidenciaDe(campo);
+    const e = conferida(evidencia);
     if (e && formas(valor).some((f) => contemTermo(normalizarTexto(e), f))) return valor;
     pendencias.push(`${rotulo}: não confirmado na transcrição — confira`);
     return null;
@@ -369,28 +469,129 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     pendencias.push(`${rotulo}: não confirmado na transcrição — confira`);
     return null;
   };
+  // Fora da Estruturação os campos de estruturação/execução não valem (a oferta tem o seu preço).
+  const soEstr = (f) => (ehEstruturacao ? f() : null);
   const preco = {
     estruturacao: {
-      valor_total: dinheiro('valor_total', numero(est.valor_total), 'estruturacao', 'preço da estruturação'),
-      parcelas: quantidade('parcelas', inteiro(est.parcelas), formasParcelas, 'parcelas'),
-      valor_parcela: dinheiro('valor_parcela', numero(est.valor_parcela), 'estruturacao', 'valor da parcela'),
-      condicao: textoConferido(est.condicao, 'condição de pagamento'),
+      valor_total: soEstr(() => dinheiro('valor_total', numero(est.valor_total), 'estruturacao', 'preço da estruturação')),
+      parcelas: soEstr(() => quantidade('parcelas', inteiro(est.parcelas), formasParcelas, 'parcelas')),
+      valor_parcela: soEstr(() => dinheiro('valor_parcela', numero(est.valor_parcela), 'estruturacao', 'valor da parcela')),
+      condicao: soEstr(() => textoConferido(est.condicao, 'condição de pagamento')),
     },
     execucao_mensal: {
-      valor: dinheiro('execucao_valor', numero(exe.valor), 'execucao', 'preço da execução'),
-      valor_com_social: dinheiro('execucao_com_social', numero(exe.valor_com_social), 'social', 'preço da execução com social media'),
-      meses: quantidade('meses', inteiro(exe.meses), formasMeses, 'meses da execução'),
+      valor: soEstr(() => dinheiro('execucao_valor', numero(exe.valor), 'execucao', 'preço da execução')),
+      valor_com_social: soEstr(() => dinheiro('execucao_com_social', numero(exe.valor_com_social), 'social', 'preço da execução com social media')),
+      meses: soEstr(() => quantidade('meses', inteiro(exe.meses), formasMeses, 'meses da execução')),
     },
     validade: null,
     fonte: 'transcricao',
     citacoes: [],
   };
+
+  // Entregáveis e preço da oferta (implementação / execução; P2 e P3). Cada entregável
+  // precisa de citação literal (onde o closer ofereceu); valor por item com a sua evidência.
+  const produtos = new Set((catalogo.produtos || []).map((p) => p.id));
+  const entregaveis = [];
+  const custos = [];
+  let etapa2 = null;
+  if (!ehEstruturacao) {
+    for (const e of Array.isArray(bruto?.entregaveis) ? bruto.entregaveis : []) {
+      const texto = textoOuNull(e?.texto);
+      if (!texto) continue;
+      const citacao = conferida(e.citacao);
+      if (!citacao) { pendencias.push(`entregável sem citação conferida na transcrição — "${texto}"`); continue; }
+      const recorrencia = e.recorrencia === 'mensal' ? 'mensal' : 'unico';
+      entregaveis.push({
+        produto_id: produtos.has(e.produto_id) ? e.produto_id : null,
+        texto, origem: 'ia', citacao, recorrencia,
+        valor: dinheiro(null, numero(e.valor), recorrencia === 'mensal' ? 'execucao' : 'estruturacao', `valor de "${texto}"`, e.evidencia_valor),
+      });
+    }
+    if (!entregaveis.length) pendencias.push('nenhum entregável confirmado na transcrição: preencha o que foi oferecido');
+
+    const of = bruto?.preco?.oferta || {};
+    const evo = of.evidencias && typeof of.evidencias === 'object' ? of.evidencias : {};
+    const recorrencia = of.recorrencia === 'mensal' ? 'mensal' : 'unico';
+    const papel = recorrencia === 'mensal' ? 'execucao' : 'estruturacao';
+    const tabela = dinheiro('oferta_tabela', numero(of.valor_tabela), papel, 'preço de tabela', evo.valor_tabela);
+    // Desconto: o número com "%" ou "por cento" no trecho literal.
+    let desconto = numero(of.desconto_percentual);
+    if (desconto != null) {
+      const e = conferida(evo.desconto);
+      const n = escaparRe(String(desconto).replace('.', ','));
+      if (!(desconto > 0 && desconto < 100) || !e || !new RegExp(`(^|[^\\d.,])${n}\\s*(%|por ?cento)`, 'i').test(e)) {
+        naoConfirmado('desconto');
+        desconto = null;
+      }
+    }
+    let final = dinheiro('oferta_final', numero(of.valor_final), papel, 'valor com desconto', evo.valor_final, { silencioso: true });
+    let finalCalculado = false;
+    if (final == null && tabela != null && desconto != null) {
+      // Não foi lido limpo (ex.: o Meet escreveu "52,200"): calcula da tabela e do desconto, ambos conferidos.
+      final = Math.round(tabela * (1 - desconto / 100) * 100) / 100;
+      finalCalculado = true;
+      pendencias.push(`valor com desconto calculado (preço de tabela − ${String(desconto).replace('.', ',')}%) — confira`);
+    } else if (final == null && numero(of.valor_final) != null) naoConfirmado('valor com desconto');
+    preco.oferta = {
+      recorrencia,
+      valor_tabela: tabela,
+      desconto_percentual: desconto,
+      valor_final: final,
+      valor_final_calculado: finalCalculado,
+      parcelas: quantidade(null, inteiro(of.parcelas), formasParcelas, 'parcelas', evo.parcelas),
+      valor_parcela: dinheiro('oferta_parcela', numero(of.valor_parcela), papel, 'valor da parcela', evo.valor_parcela),
+    };
+    if (tabela == null && final == null) pendencias.push('preço da oferta não confirmado na transcrição: preencha');
+
+    // Custos pagos pelo cliente direto a terceiros (ferramenta, licença, mídia).
+    for (const c of Array.isArray(bruto?.custos_terceiros) ? bruto.custos_terceiros : []) {
+      const texto = textoOuNull(c?.texto);
+      const e = conferida(c?.evidencia);
+      if (!texto) continue;
+      if (!e) { pendencias.push(`custo de terceiros sem evidência na transcrição — "${texto}"`); continue; }
+      const valor = dinheiro(null, numero(c.valor), 'qualquer', `valor de "${texto}"`, e);
+      const periodicidade = c.periodicidade === 'mensal' && MENSAL.test(normalizarTexto(e)) ? 'mensal'
+        : c.periodicidade === 'unico' ? 'unico' : null;
+      if (valor != null && !periodicidade) pendencias.push(`custo "${texto}": periodicidade não falada — confira`);
+      custos.push({ texto, valor, periodicidade, citacao: e });
+    }
+
+    // Próxima etapa opcional (P5).
+    const e2 = bruto?.etapa2;
+    if (e2 && e2.incluida === true) {
+      const ev2 = e2.evidencias && typeof e2.evidencias === 'object' ? e2.evidencias : {};
+      const q = conferida(ev2.quando);
+      const mes = q ? MESES.find((m) => contemTermo(normalizarTexto(q), m)) : null;
+      const verba = [];
+      for (const v of Array.isArray(e2.verba_midia) ? e2.verba_midia : []) {
+        const canal = textoOuNull(v?.canal);
+        const e = conferida(v?.evidencia);
+        const nomes = canal ? normalizarTexto(canal).split(' ').filter((w) => w.length >= 4) : [];
+        // o canal tem de estar no trecho (ex.: "Google", "Instagram")
+        if (!canal || !e || !nomes.some((w) => contemTermo(normalizarTexto(e), w))) {
+          if (canal) pendencias.push(`verba de mídia "${canal}" não confirmada na transcrição — confira`);
+          continue;
+        }
+        const valor = dinheiro(null, numero(v.valor), 'qualquer', `verba de ${canal}`, e);
+        if (valor != null) verba.push({ canal, valor });
+      }
+      etapa2 = {
+        quando: mes ? `a partir de ${mes === 'marco' ? 'março' : mes}` : null,
+        itens: lista(e2.itens, 'etapa 2'),
+        valor_mensal: dinheiro('etapa2_mensal', numero(e2.valor_mensal), 'execucao', 'valor mensal da etapa 2', ev2.valor_mensal),
+        verba_midia: verba,
+      };
+      if (!etapa2.itens.length && etapa2.valor_mensal == null) etapa2 = null;
+    }
+  }
+
   // Validade (decisão do Gabriel, 29/10): a data combinada na reunião, com a SUA
   // evidência; a data é lida na fonte (dia + mês explícitos) e o trecho precisa
-  // falar de validade/prazo. Sem isso: null → [PREENCHER] + pendência.
+  // falar de validade/prazo. Prazo relativo ("hoje", "fim do mês") vira data pela
+  // data da reunião (P4). Sem isso: null → [PREENCHER] + pendência.
   {
     const v = textoOuNull(bruto?.preco?.validade);
-    if (v) {
+    if (v && datasNoTexto(v).length) {
       const alvo = datasNoTexto(v)[0];
       const e = evidenciaDe('validade');
       const spans = e ? localizarCitacao(e, fonteMapa) : [];
@@ -408,12 +609,24 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
         const trecho = oracaoDe(casa);
         pendencias.push(`validade ${formatarData(casa)} lida em: "${trecho.length > 140 ? `${trecho.slice(0, 140)}…` : trecho}" — confira`);
       } else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
+    } else if (v) {
+      const e = evidenciaDe('validade');
+      const en = e ? normalizarTexto(e) : '';
+      const rel = e && falaDeValidadeRelativa(en) ? resolverValidadeRelativa(en, dataReuniao) : null;
+      if (rel) {
+        preco.validade = rel.data;
+        const base = dataAssumida ? `${formatarDataIso(dataReuniao)}, data do pedido (a reunião não estava vinculada)` : formatarDataIso(dataReuniao);
+        pendencias.push(`validade ${rel.data} calculada de "${rel.termo}" pela data da reunião (${base}), lida em: "${e}" — confira`);
+      } else if (e && falaDeValidadeRelativa(en) && !dataReuniao) {
+        pendencias.push('validade da proposta: prazo relativo sem a data da reunião — preencha');
+      } else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
     }
   }
   // A mesma expressão da fonte sustentando dois campos = papel ambíguo → nenhum.
   const LUGAR = {
     valor_total: ['estruturacao', 'valor_total'], valor_parcela: ['estruturacao', 'valor_parcela'],
     execucao_valor: ['execucao_mensal', 'valor'], execucao_com_social: ['execucao_mensal', 'valor_com_social'],
+    oferta_tabela: ['oferta', 'valor_tabela'], oferta_final: ['oferta', 'valor_final'], oferta_parcela: ['oferta', 'valor_parcela'],
   };
   const ambiguos = new Set();
   for (const a of aceitos) {
@@ -422,8 +635,11 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     }
   }
   for (const a of ambiguos) {
-    const [grupo, chave] = LUGAR[a.campo];
-    preco[grupo][chave] = null;
+    if (a.campo === 'etapa2_mensal') etapa2.valor_mensal = null;
+    else {
+      const [grupo, chave] = LUGAR[a.campo];
+      preco[grupo][chave] = null;
+    }
     pendencias.push(`${a.rotulo}: valor ambíguo na transcrição — confira`);
   }
   preco.citacoes = [...new Set(['valor_total', 'parcelas', 'valor_parcela', 'execucao_valor', 'execucao_com_social', 'meses', 'validade']
@@ -432,8 +648,8 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
   const pe = bruto?.plano_execucao || {};
   // O pacote padrão da execução está fixo no slide "Resumo da Proposta": o slide de
   // escopo traz os itens padrão (com o texto adaptado, se veio) e depois os extras.
-  let itensExecucao = lista(pe.itens, 'plano de execução');
-  if (pe.incluido !== false) {
+  let itensExecucao = ehEstruturacao ? lista(pe.itens, 'plano de execução') : [];
+  if (ehEstruturacao && pe.incluido !== false) {
     const padrao = catalogo.execucao.itens_padrao.map((p) => itensExecucao.find((i) => i.catalogo_id === p.id)
       || { catalogo_id: p.id, texto: p.texto, origem: 'catalogo', citacao: null });
     // item do catálogo repetido pela análise conta uma vez só
@@ -443,24 +659,36 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     if (!itensExecucao.length) pendencias.push('plano de execução não veio da análise: entrou o pacote padrão do catálogo — revise');
     itensExecucao = [...padrao, ...extras];
   }
+  const ctx = bruto?.contexto || {};
   const escopo = {
-    schema_version: 'proposta-escopo/v0',
+    schema_version: tipos.length ? 'proposta-escopo/v1' : 'proposta-escopo/v0',
     catalogo_versao: catalogo.versao,
+    ...(tipos.length ? { oferta } : {}),
     cliente: {
       empresa,
       contato: textoOuNull(bruto?.cliente?.contato),
       segmento: textoOuNull(bruto?.cliente?.segmento),
       modelo_venda: modelo,
     },
-    contexto: { dores: lista(bruto?.contexto?.dores, 'dores').slice(0, 4) },
-    escopo: {
-      enfases: (Array.isArray(bruto?.escopo?.enfases) ? bruto.escopo.enfases : []).filter((e) => enfasesValidas.has(e)),
-      semanas,
-      overdeliveries: lista(bruto?.escopo?.overdeliveries, 'overdeliveries'),
+    contexto: {
+      dores: lista(ctx.dores, 'dores').slice(0, 4),
+      // Seções de contexto (P7), só com citação conferida.
+      ...(tipos.length ? {
+        publico: lista(ctx.publico, 'público').slice(0, 4),
+        concorrentes: lista(ctx.concorrentes, 'concorrentes').slice(0, 4),
+        cliente_fornece: lista(ctx.cliente_fornece, 'o que o cliente fornece').slice(0, 4),
+        proximos_passos: lista(ctx.proximos_passos, 'próximos passos').slice(0, 4),
+      } : {}),
     },
+    escopo: {
+      enfases: ehEstruturacao ? (Array.isArray(bruto?.escopo?.enfases) ? bruto.escopo.enfases : []).filter((e) => enfasesValidas.has(e)) : [],
+      semanas,
+      overdeliveries: ehEstruturacao ? lista(bruto?.escopo?.overdeliveries, 'overdeliveries') : [],
+    },
+    ...(ehEstruturacao ? {} : { entregaveis, custos_terceiros: custos, etapa2 }),
     plano_execucao: {
-      incluido: pe.incluido !== false,
-      faixa_midia: textoConferido(pe.faixa_midia, 'faixa de mídia'),
+      incluido: ehEstruturacao && pe.incluido !== false,
+      faixa_midia: ehEstruturacao ? textoConferido(pe.faixa_midia, 'faixa de mídia') : null,
       itens: itensExecucao,
     },
     preco,

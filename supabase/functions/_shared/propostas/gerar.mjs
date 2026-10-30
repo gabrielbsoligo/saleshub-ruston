@@ -14,10 +14,15 @@ import {
   planejarPreparar, requestsPreencher, requestsSlidesEscopo, secoesEscopo,
   validarEscopo, verificarTemplate,
 } from './slides.mjs';
+import { NOME_TIPO, requestsDeckCurto } from './deck-curto.mjs';
+
+// Oferta que não é a Estruturação usa o deck curto (P6).
+export const ehDeckCurto = (escopo) => !!escopo?.oferta?.tipo && escopo.oferta.tipo !== 'estruturacao';
 
 export function nomeProposta(escopo, hoje = new Date()) {
   const d = hoje.toISOString().slice(0, 10);
-  return `Proposta V4 — ${escopo.cliente.empresa} — ${d}`;
+  const tipo = ehDeckCurto(escopo) ? ` — ${NOME_TIPO[escopo.oferta.tipo] || escopo.oferta.tipo}` : '';
+  return `Proposta V4 — ${escopo.cliente.empresa}${tipo} — ${d}`;
 }
 
 function falhar(titulo, erros) {
@@ -25,9 +30,18 @@ function falhar(titulo, erros) {
 }
 
 // Monta tudo o que o batchUpdate vai receber, sem rede (usado também no --dry-run).
-export function planejar(escopo, apresentacao, { conferirTemplate = true, prefixo = novoPrefixo() } = {}) {
+// slidesCurto: objectIds institucionais mantidos no deck curto (propostas_config.slides_curto).
+export function planejar(escopo, apresentacao, { conferirTemplate = true, prefixo = novoPrefixo(), slidesCurto = [] } = {}) {
   const erros = validarEscopo(escopo);
   if (erros.length) falhar('escopo inválido', erros);
+  if (ehDeckCurto(escopo)) {
+    const existentes = idsExistentes(apresentacao);
+    const { requests, secoes } = requestsDeckCurto(escopo, apresentacao, { manter: slidesCurto, prefixo });
+    const novos = requests.flatMap((r) => [r.createSlide?.objectId, r.createShape?.objectId]).filter(Boolean);
+    const colisao = novos.filter((id) => existentes.has(id));
+    if (colisao.length) falhar('objectId já existe no template', colisao);
+    return { indice: null, secoes, valores: {}, pendencias: [...new Set(escopo.pendencias || [])], requests };
+  }
   if (conferirTemplate) {
     const errosTpl = verificarTemplate(apresentacao);
     if (errosTpl.length) falhar('template incompatível', errosTpl);
@@ -94,7 +108,7 @@ export async function garantirAcesso(cliente, fileId, regra) {
 //   4. só então move para a pasta validada e confere de novo.
 // Tudo depois da cópia é compensado: em qualquer falha a cópia é apagada; se nem
 // isso der, o erro diz o id.
-export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], dominio = null, exportar = [], hoje }) {
+export async function gerarProposta(cliente, { templateId, escopo, pastaId, editores = [], dominio = null, exportar = [], hoje, slidesCurto = [] }) {
   const erros = validarEscopo(escopo);
   if (erros.length) falhar('escopo inválido', erros);
   const regra = { dominio, editores };
@@ -111,7 +125,7 @@ export async function gerarProposta(cliente, { templateId, escopo, pastaId, edit
     await garantirAcesso(cliente, copia.id, { dominio: null, editores: [] });
 
     const apresentacao = await cliente.apresentacao(copia.id);
-    plano = planejar(escopo, apresentacao);
+    plano = planejar(escopo, apresentacao, { slidesCurto });
     const r = await cliente.batchUpdate(copia.id, plano.requests);
     const faltando = conferirTrocas(plano.requests, r.replies);
     if (faltando.length) falhar('placeholders sem troca (proposta não compartilhada)', faltando);

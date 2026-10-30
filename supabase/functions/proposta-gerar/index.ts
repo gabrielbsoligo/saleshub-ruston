@@ -73,8 +73,12 @@ Deno.serve(async (req) => {
     if (!membro) return json({ error: 'usuário sem cadastro ativo no SalesHub' }, 403)
 
     if (action === 'gerar') {
-      const { deal_id, reuniao_id = null, transcricao_texto = null } = body
+      const { deal_id, reuniao_id = null, transcricao_texto = null, tipo_oferta = null } = body
       if (!deal_id) return json({ error: 'deal_id obrigatório' }, 400)
+      // Tipo escolhido pelo closer (null = a IA classifica).
+      if (tipo_oferta != null && !['estruturacao', 'implementacao', 'execucao', 'implementacao_e_execucao'].includes(tipo_oferta)) {
+        return json({ error: 'tipo_oferta inválido' }, 400)
+      }
       if (!(await podeNoDeal(sb, membro, deal_id))) return json({ error: 'só o closer do deal ou gestor' }, 403)
       if (reuniao_id) {
         const { data: deal } = await sb.from('deals').select('id, lead_id, reuniao_id').eq('id', deal_id).single()
@@ -85,7 +89,7 @@ Deno.serve(async (req) => {
       if (eAtiva) throw eAtiva
       if (em?.length) return json({ error: 'já há uma proposta sendo gerada para este deal' }, 409)
       const { data: nova, error } = await sb.from('propostas').insert({
-        deal_id, reuniao_id, origem: 'manual', status: 'pendente', solicitado_por: membro.id,
+        deal_id, reuniao_id, origem: 'manual', status: 'pendente', solicitado_por: membro.id, tipo_oferta,
         transcricao_manual: typeof transcricao_texto === 'string' && transcricao_texto.trim() ? transcricao_texto : null,
       }).select('id').single()
       if (error) throw error

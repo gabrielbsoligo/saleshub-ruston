@@ -3,7 +3,7 @@
 // =============================================================
 // Para testar a análise isolada (ex.: transcrições antigas anonimizadas).
 // Acesso: gestor (JWT do SalesHub) ou interno (service_role).
-// Body: { transcricao, empresa, modelo_venda? } → { escopo, provedor }
+// Body: { transcricao, empresa, modelo_venda?, tipo_oferta?, data_reuniao? (aaaa-mm-dd) } → { escopo, provedor }
 // Deploy: supabase functions deploy proposta-escopo --no-verify-jwt
 // =============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -40,12 +40,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { transcricao, empresa, modelo_venda = null } = await req.json()
+    const { transcricao, empresa, modelo_venda = null, tipo_oferta = null, data_reuniao = null } = await req.json()
     if (typeof transcricao !== 'string' || transcricao.trim().length < MIN_TRANSCRICAO_CHARS) {
       return json({ error: `transcrição curta demais (mínimo ${MIN_TRANSCRICAO_CHARS} caracteres)` }, 400)
     }
     if (typeof empresa !== 'string' || !empresa.trim()) return json({ error: 'empresa obrigatória' }, 400)
-    const r = await analisarTranscricao(transcricao, empresa.trim(), modelo_venda)
+    const r = await analisarTranscricao(transcricao, empresa.trim(), modelo_venda, { tipoOferta: tipo_oferta, dataReuniao: data_reuniao })
     return json({ ok: true, ...r })
   } catch (e) {
     console.error('proposta-escopo:', redigir((e as Error).message))

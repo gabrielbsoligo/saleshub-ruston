@@ -1,0 +1,910 @@
+{
+  "versao": "v1",
+  "data": "2026-10-30",
+  "status": "rascunho — montado pelo Engenheiro a partir das fontes abaixo; a validar com o Gabriel",
+  "fontes": [
+    "Deck Google Slides 'EE - 2026 - Inside Sales' (1UBz0S97QuVvYKk7vxjmVds00Xd3XwN8eWwyJB-krAJo): slides de investimento (únicos com texto editável; o resto do deck é imagem)",
+    "https://ee-2026-v4company.vercel.app/ (cronograma, Semana 3 por modelo, Combos Executar)",
+    "https://lp.v4company.com/executar/profissionais (profissionais e faixas de alocação)",
+    "Vault 05 - Estruturações (hubs de clientes) para ênfases e overdeliveries recorrentes",
+    "Portfólio de Produtos V4 (portfolio.v4company.com), lido em 30/10/2026: nome, categoria STEP e valor base"
+  ],
+  "regras": [
+    "A IA só escolhe itens deste catálogo (por id) e adapta o texto ao lead; item novo entra com origem 'ia' e precisa de citação da transcrição.",
+    "O closer pode pôr, tirar e alterar qualquer item, inclusive o institucional.",
+    "Preço NÃO vem do catálogo: vem do que o closer falou na reunião (transcrição). Os valores em 'precos_referencia' são só referência para a revisão."
+  ],
+  "tipos_oferta": [
+    {
+      "id": "estruturacao",
+      "nome": "Estruturação Estratégica",
+      "step": "saber",
+      "quando": "projeto de diagnóstico e planejamento em semanas (EE 2026), com ou sem plano de execução mensal",
+      "deck": "completo"
+    },
+    {
+      "id": "implementacao",
+      "nome": "Implementação pontual",
+      "step": "ter",
+      "quando": "entregáveis avulsos de escopo fechado e pagamento único (ex.: landing page, site, CRM, setup de campanha, traqueamento)",
+      "deck": "curto"
+    },
+    {
+      "id": "execucao",
+      "nome": "Execução recorrente",
+      "step": "executar",
+      "quando": "assessoria/profissionais mensais sem projeto de Estruturação (ex.: gestão de mídia, social media, CRM mensal)",
+      "deck": "curto"
+    },
+    {
+      "id": "implementacao_e_execucao",
+      "nome": "Implementação + execução",
+      "step": "ter+executar",
+      "quando": "implementação pontual agora e assessoria mensal em seguida ou junto",
+      "deck": "curto"
+    }
+  ],
+  "modelos_venda": [
+    {
+      "id": "inside_sales",
+      "nome": "Inside Sales"
+    },
+    {
+      "id": "pdv",
+      "nome": "PDV / Loja Física"
+    },
+    {
+      "id": "ecommerce",
+      "nome": "E-commerce / Vendas Online"
+    }
+  ],
+  "entregaveis_investimento": [
+    {
+      "id": "aud_midia_paga",
+      "texto": "Auditoria de Mídia Paga"
+    },
+    {
+      "id": "aud_criativos",
+      "texto": "Auditoria de Criativos"
+    },
+    {
+      "id": "diag_cro",
+      "texto": "Diagnóstico de Ambientes (CRO)"
+    },
+    {
+      "id": "aud_comercial",
+      "texto": "Auditoria do setor Comercial"
+    },
+    {
+      "id": "analise_competitiva",
+      "texto": "Análise Competitiva"
+    },
+    {
+      "id": "mapa_estrategia",
+      "texto": "Mapa da sua estratégia de Marketing e Vendas"
+    },
+    {
+      "id": "lp_criativos",
+      "texto": "Landing Page + Criativos"
+    },
+    {
+      "id": "miv",
+      "texto": "Manual de Identidade Visual"
+    },
+    {
+      "id": "manual_comunicacao",
+      "texto": "Manual de Comunicação"
+    },
+    {
+      "id": "reguas_crm",
+      "texto": "Réguas CRM"
+    },
+    {
+      "id": "gmn",
+      "texto": "Estruturação do Google Meu Negócio"
+    }
+  ],
+  "semanas": [
+    {
+      "id": "onboarding",
+      "titulo": "Onboarding técnico",
+      "itens": [
+        {
+          "id": "onb_grupo",
+          "texto": "Criação do grupo com o cliente"
+        },
+        {
+          "id": "onb_alinhamento",
+          "texto": "Reunião de alinhamento"
+        },
+        {
+          "id": "onb_acessos",
+          "texto": "Solicitação de acessos"
+        }
+      ]
+    },
+    {
+      "id": "s1",
+      "titulo": "Semana 1 — Descoberta e Pesquisa de Mercado",
+      "itens": [
+        {
+          "id": "s1_concorrentes_swot",
+          "texto": "Análise de concorrentes e SWOT"
+        },
+        {
+          "id": "s1_aud_comunicacao",
+          "texto": "Auditoria de comunicação digital"
+        },
+        {
+          "id": "s1_persona_icp",
+          "texto": "Persona e ICP"
+        },
+        {
+          "id": "s1_arquitetura_presenca",
+          "texto": "Arquitetura de presença digital"
+        },
+        {
+          "id": "s1_tam_sam_som",
+          "texto": "Pesquisa de mercado (TAM/SAM/SOM)"
+        },
+        {
+          "id": "s1_apresentacao",
+          "texto": "Reunião de apresentação"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "titulo": "Semana 2 — Diagnóstico e Posicionamento",
+      "itens": [
+        {
+          "id": "s2_diag_midia",
+          "texto": "Diagnóstico de mídia paga"
+        },
+        {
+          "id": "s2_diag_organico",
+          "texto": "Diagnóstico do orgânico"
+        },
+        {
+          "id": "s2_diag_criativos",
+          "texto": "Diagnóstico de criativos"
+        },
+        {
+          "id": "s2_maturidade",
+          "texto": "Diagnóstico de maturidade digital"
+        },
+        {
+          "id": "s2_posicionamento",
+          "texto": "Posicionamento com PUV e taglines"
+        },
+        {
+          "id": "s2_apresentacao",
+          "texto": "Reunião de apresentação"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "titulo": "Semana 3 — Estrutura da Operação",
+      "variantes": {
+        "inside_sales": [
+          {
+            "id": "s3is_cro",
+            "texto": "Diagnóstico de CRO"
+          },
+          {
+            "id": "s3is_cliente_oculto",
+            "texto": "Cliente oculto"
+          },
+          {
+            "id": "s3is_diag_comercial",
+            "texto": "Diagnóstico comercial e das etapas do funil"
+          },
+          {
+            "id": "s3is_metricas",
+            "texto": "Métricas e critérios do funil"
+          },
+          {
+            "id": "s3is_pipeline",
+            "texto": "Pipeline com réguas e script consultivo"
+          },
+          {
+            "id": "s3is_lp",
+            "texto": "Landing page (diagnóstico ou implementação)"
+          },
+          {
+            "id": "s3is_apresentacao",
+            "texto": "Reunião de apresentação"
+          }
+        ],
+        "pdv": [
+          {
+            "id": "s3pdv_base",
+            "texto": "Diagnóstico da base ativa e do controle de vendas"
+          },
+          {
+            "id": "s3pdv_gmn",
+            "texto": "Diagnóstico do Google Meu Negócio"
+          },
+          {
+            "id": "s3pdv_lp",
+            "texto": "Landing page (diagnóstico ou implementação)"
+          },
+          {
+            "id": "s3pdv_experiencia",
+            "texto": "Diagnóstico remoto da experiência no PDV"
+          },
+          {
+            "id": "s3pdv_regua_whats",
+            "texto": "Régua de WhatsApp para pré, durante e pós-visita"
+          },
+          {
+            "id": "s3pdv_apresentacao",
+            "texto": "Reunião de apresentação"
+          }
+        ],
+        "ecommerce": [
+          {
+            "id": "s3ec_cro",
+            "texto": "Diagnóstico de CRO (checkout, PDP e carrinho)"
+          },
+          {
+            "id": "s3ec_funil",
+            "texto": "Diagnóstico do funil"
+          },
+          {
+            "id": "s3ec_marketplace",
+            "texto": "Diagnóstico de marketplace (se aplicável)"
+          },
+          {
+            "id": "s3ec_regua_crm",
+            "texto": "Régua de relacionamento e CRM (e-mail e WhatsApp)"
+          },
+          {
+            "id": "s3ec_carrinho_posvenda",
+            "texto": "Recuperação de carrinho e pós-venda"
+          },
+          {
+            "id": "s3ec_apresentacao",
+            "texto": "Reunião de apresentação"
+          }
+        ]
+      }
+    },
+    {
+      "id": "s4",
+      "titulo": "Semana 4 — Identidade e Plano de Mídia",
+      "itens": [
+        {
+          "id": "s4_brandbook",
+          "texto": "Manual de marca (brandbook + MIV)"
+        },
+        {
+          "id": "s4_banco_copy",
+          "texto": "Banco de copy"
+        },
+        {
+          "id": "s4_briefing_criativos",
+          "texto": "Briefing de criativos"
+        },
+        {
+          "id": "s4_forecast",
+          "texto": "Forecast e plano de mídia de 6 meses"
+        },
+        {
+          "id": "s4_apresentacao",
+          "texto": "Reunião de apresentação"
+        }
+      ]
+    }
+  ],
+  "enfases": [
+    {
+      "id": "linkedin_b2b",
+      "nome": "Ênfase em LinkedIn (inside sales B2B)",
+      "status": "exemplo do Gabriel (2026-10-29)",
+      "itens": [
+        {
+          "id": "li_perfil_empresa",
+          "semana": "s1",
+          "texto": "Auditoria da página da empresa e dos perfis dos decisores no LinkedIn"
+        },
+        {
+          "id": "li_icp_contas",
+          "semana": "s1",
+          "texto": "Lista de contas-alvo e cargos decisores (ICP no LinkedIn)"
+        },
+        {
+          "id": "li_cadencia_social_selling",
+          "semana": "s3",
+          "texto": "Cadência de social selling e prospecção no LinkedIn integrada ao CRM"
+        },
+        {
+          "id": "li_ads_plano",
+          "semana": "s4",
+          "texto": "Plano de LinkedIn Ads (lead gen forms) no forecast de 6 meses"
+        }
+      ]
+    },
+    {
+      "id": "auditoria_google_ads",
+      "nome": "Ênfase em auditoria de Google Ads",
+      "status": "exemplo do Gabriel (2026-10-29)",
+      "itens": [
+        {
+          "id": "gads_auditoria_conta",
+          "semana": "s2",
+          "texto": "Auditoria completa da conta de Google Ads (estrutura, palavras-chave, termos de pesquisa, lances)"
+        },
+        {
+          "id": "gads_rastreamento",
+          "semana": "s2",
+          "texto": "Auditoria de rastreamento e conversões (GTM, GA4, conversões offline)"
+        },
+        {
+          "id": "gads_reestruturacao",
+          "semana": "s4",
+          "texto": "Plano de reestruturação das campanhas (Search, PMax, Shopping se aplicável)"
+        }
+      ]
+    },
+    {
+      "id": "crm_implantacao",
+      "nome": "Ênfase em CRM e réguas",
+      "status": "recorrente nas estruturações (ex.: Altisvac, Nick Modas) — a validar",
+      "itens": [
+        {
+          "id": "crm_funis",
+          "semana": "s3",
+          "texto": "Desenho dos funis no CRM (pré-vendas, vendas, carteira/recompra)"
+        },
+        {
+          "id": "crm_whatsapp_api",
+          "semana": "s3",
+          "texto": "Réguas de WhatsApp com API oficial (pós-venda, reposição, reativação)"
+        }
+      ]
+    },
+    {
+      "id": "marketplace",
+      "nome": "Ênfase em marketplace (Mercado Livre, Shopee)",
+      "status": "recorrente nas estruturações (ex.: Altisvac) — a validar",
+      "itens": [
+        {
+          "id": "mkt_diag_anuncios",
+          "semana": "s2",
+          "texto": "Diagnóstico dos anúncios e da reputação no marketplace"
+        },
+        {
+          "id": "mkt_reativacao_base",
+          "semana": "s3",
+          "texto": "Reativação da base de compradores do marketplace para venda direta"
+        }
+      ]
+    }
+  ],
+  "overdeliveries_sugeridos": [
+    {
+      "id": "od_cliente_oculto",
+      "texto": "Cliente oculto com relatório de atendimento",
+      "status": "a validar"
+    },
+    {
+      "id": "od_treinamento_time",
+      "texto": "Treinamento do time comercial no novo processo",
+      "status": "a validar"
+    },
+    {
+      "id": "od_campanha_indicacao",
+      "texto": "Campanha de indicação estruturada",
+      "status": "a validar"
+    },
+    {
+      "id": "od_crm_v4",
+      "texto": "CRM da V4 incluso durante a estruturação",
+      "status": "visto em Nick Modas (2026-10-27) — a validar"
+    }
+  ],
+  "execucao": {
+    "itens_padrao": [
+      {
+        "id": "ex_gestor_conta",
+        "texto": "Gestor de Conta + Reunião Semanal"
+      },
+      {
+        "id": "ex_trafego",
+        "texto": "Gestor de tráfego (Compartilhado 1:10)"
+      },
+      {
+        "id": "ex_designer",
+        "texto": "Designer (Compartilhado 1:10)"
+      },
+      {
+        "id": "ex_coord",
+        "texto": "Coordenador Estratégico"
+      }
+    ],
+    "adicionais": [
+      {
+        "id": "ex_social",
+        "texto": "Social media (Compartilhado 1:10)"
+      }
+    ],
+    "profissionais_executar": [
+      "Gestor de Tráfego",
+      "Designer Gráfico",
+      "Redator Publicitário",
+      "Social Media",
+      "Analista de CRM",
+      "Sales Enablement",
+      "Business Intelligence"
+    ],
+    "alocacao_horas": {
+      "minimo": 16,
+      "maximo": 160,
+      "nota": "10% (16h) a 100% (160h); faixas intermediárias a confirmar"
+    },
+    "faixas_midia": [
+      "R$ 0 a 20k",
+      "R$ 2k a 5k",
+      "R$ 5k a 15k",
+      "R$ 15k a 50k",
+      "R$ 50k+"
+    ]
+  },
+  "precos_referencia": {
+    "aviso": "Só referência para a revisão; o preço da proposta é o falado na reunião.",
+    "deck_ee2026_inside_sales": {
+      "estruturacao_total": 56000,
+      "parcela_exibida": "12x de R$ 1.830,00 (condição exclusiva junto com a execução)",
+      "execucao_0a20k_midia": 5809.76,
+      "execucao_com_social": 7809.76
+    },
+    "site_ee2026": {
+      "estruturacao_setup": 36120,
+      "parcelado_desconto_pct": 20,
+      "a_vista_desconto_pct": 30,
+      "combo_executar_meses": 6
+    }
+  },
+  "produtos": [
+    {
+      "id": "p_profissional_de_vendas_closer",
+      "nome": "Profissional de Vendas (CLOSER)",
+      "step": "executar",
+      "valor_base_referencia": 4277.14
+    },
+    {
+      "id": "p_estruturacao_estrategica_3_0",
+      "nome": "Estruturação Estratégica 3.0",
+      "step": "saber",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_combo_performance_social_media_12_postagens_mes",
+      "nome": "Combo Performance - Social Media - 12 Postagens/Mês",
+      "step": "executar",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_black_box",
+      "nome": "Black Box",
+      "step": "potencializar",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_profissional_de_gestao_de_midia_paga",
+      "nome": "Profissional de Gestão de Mídia Paga",
+      "step": "executar",
+      "valor_base_referencia": 5497.14
+    },
+    {
+      "id": "p_manutencao_de_ghl_crm",
+      "nome": "Manutenção de GHL CRM",
+      "step": "executar",
+      "valor_base_referencia": 716.34
+    },
+    {
+      "id": "p_profissional_de_audiovisual",
+      "nome": "Profissional de Audiovisual",
+      "step": "executar",
+      "valor_base_referencia": 6120.95
+    },
+    {
+      "id": "p_implementacao_de_captacao_e_edicao_de_video",
+      "nome": "Implementação de Captação e Edição de Vídeo",
+      "step": "ter",
+      "valor_base_referencia": 9743.18
+    },
+    {
+      "id": "p_implementacao_de_captacao_e_edicao_de_fotos",
+      "nome": "Implementação de Captação e Edição de Fotos",
+      "step": "ter",
+      "valor_base_referencia": 8580.68
+    },
+    {
+      "id": "p_combo_performance_inside_sales",
+      "nome": "Combo Performance - Inside Sales",
+      "step": "executar",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_combo_performance_e_commerce",
+      "nome": "Combo Performance - E-commerce",
+      "step": "executar",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_combo_performance_pdv",
+      "nome": "Combo Performance - PDV",
+      "step": "executar",
+      "valor_base_referencia": null
+    },
+    {
+      "id": "p_implementacao_de_site",
+      "nome": "Implementação de Site",
+      "step": "ter",
+      "valor_base_referencia": 18264.5
+    },
+    {
+      "id": "p_destrava_receita",
+      "nome": "Destrava Receita",
+      "step": "destrava_receita",
+      "valor_base_referencia": 160981.25
+    },
+    {
+      "id": "p_diagnostico_de_midia_paga_meta_e_google_ads",
+      "nome": "Diagnóstico de Mídia Paga (Meta e Google Ads)",
+      "step": "saber",
+      "valor_base_referencia": 12605.81
+    },
+    {
+      "id": "p_implementacao_de_produtos_para_e_commerce",
+      "nome": "Implementação de Produtos para E-commerce",
+      "step": "ter",
+      "valor_base_referencia": 12762.2
+    },
+    {
+      "id": "p_profissional_de_marketplace",
+      "nome": "Profissional de Marketplace",
+      "step": "executar",
+      "valor_base_referencia": 5497.14
+    },
+    {
+      "id": "p_implementacao_de_e_commerce",
+      "nome": "Implementação de E-commerce",
+      "step": "ter",
+      "valor_base_referencia": 30951.83
+    },
+    {
+      "id": "p_implementacao_de_chatbot",
+      "nome": "Implementação de Chatbot",
+      "step": "ter",
+      "valor_base_referencia": 5925.2
+    },
+    {
+      "id": "p_manutencao",
+      "nome": "Manutenção",
+      "step": "executar",
+      "valor_base_referencia": 992.01
+    },
+    {
+      "id": "p_auditoria_tecnica_de_traqueamento_completo",
+      "nome": "Auditoria Técnica de Traqueamento Completo",
+      "step": "destrava_receita",
+      "valor_base_referencia": 6282.81
+    },
+    {
+      "id": "p_auditoria_tecnica_de_ambientes_cro_seo_marketplace",
+      "nome": "Auditoria Técnica de Ambientes (CRO / SEO) — Marketplace",
+      "step": "destrava_receita",
+      "valor_base_referencia": 7090.66
+    },
+    {
+      "id": "p_implementacao_google_meu_negocio",
+      "nome": "Implementação Google Meu Negócio",
+      "step": "ter",
+      "valor_base_referencia": 3392.19
+    },
+    {
+      "id": "p_estruturacao_de_produtos_para_marketplace_ate_100_skus",
+      "nome": "Estruturação de Produtos para Marketplace - Até 100 SKUs",
+      "step": "ter",
+      "valor_base_referencia": 12218.76
+    },
+    {
+      "id": "p_construcao_de_posicionamento_estrategico_redes_sociais",
+      "nome": "Construção de Posicionamento Estratégico (Redes Sociais)",
+      "step": "ter",
+      "valor_base_referencia": 8358.63
+    },
+    {
+      "id": "p_implementacao_crm_marketing",
+      "nome": "Implementação CRM Marketing",
+      "step": "ter",
+      "valor_base_referencia": 6225.7
+    },
+    {
+      "id": "p_implementacao_crm_vendas",
+      "nome": "Implementação CRM Vendas",
+      "step": "ter",
+      "valor_base_referencia": 7194.63
+    },
+    {
+      "id": "p_implementacao_de_traqueamento_completo",
+      "nome": "Implementação de Traqueamento Completo",
+      "step": "ter",
+      "valor_base_referencia": 6649.05
+    },
+    {
+      "id": "p_implementacao_de_produtos_para_marketplace_ate_50_skus",
+      "nome": "Implementação de Produtos para Marketplace - Até 50 SKUs",
+      "step": "ter",
+      "valor_base_referencia": 8919.32
+    },
+    {
+      "id": "p_diagnostico_e_planejamento_de_crm_marketing",
+      "nome": "Diagnóstico e Planejamento de CRM Marketing",
+      "step": "saber",
+      "valor_base_referencia": 29318.3
+    },
+    {
+      "id": "p_implementacao_da_plataforma_marketplace",
+      "nome": "Implementação da Plataforma Marketplace",
+      "step": "ter",
+      "valor_base_referencia": 11012.3
+    },
+    {
+      "id": "p_profissional_de_seo",
+      "nome": "Profissional de SEO",
+      "step": "executar",
+      "valor_base_referencia": 5477.14
+    },
+    {
+      "id": "p_analise_consultiva_do_time_de_vendas",
+      "nome": "Análise Consultiva do Time de Vendas",
+      "step": "saber",
+      "valor_base_referencia": 17805.16
+    },
+    {
+      "id": "p_implementacao_de_reguas_de_relacionamento",
+      "nome": "Implementação de Réguas de Relacionamento",
+      "step": "ter",
+      "valor_base_referencia": 3333.29
+    },
+    {
+      "id": "p_auditoria_tecnica_das_campanhas_google_ads",
+      "nome": "Auditoria técnica das campanhas (Google Ads)",
+      "step": "destrava_receita",
+      "valor_base_referencia": 5228.88
+    },
+    {
+      "id": "p_auditoria_tecnica_das_campanhas_meta_ads",
+      "nome": "Auditoria técnica das campanhas (Meta Ads)",
+      "step": "destrava_receita",
+      "valor_base_referencia": 4482.25
+    },
+    {
+      "id": "p_auditoria_tecnica_de_criativos_ads_mensagens",
+      "nome": "Auditoria técnica de Criativos Ads & Mensagens",
+      "step": "destrava_receita",
+      "valor_base_referencia": 6566.19
+    },
+    {
+      "id": "p_auditoria_tecnica_de_redes_sociais",
+      "nome": "Auditoria Técnica de Redes Sociais",
+      "step": "destrava_receita",
+      "valor_base_referencia": 5577.16
+    },
+    {
+      "id": "p_auditoria_tecnica_de_ambientes_cro_seo_inside_sales",
+      "nome": "Auditoria técnica de ambientes (CRO / SEO) Inside Sales",
+      "step": "destrava_receita",
+      "valor_base_referencia": 6630.5
+    },
+    {
+      "id": "p_auditoria_tecnica_de_crm_marketing",
+      "nome": "Auditoria técnica de CRM Marketing",
+      "step": "destrava_receita",
+      "valor_base_referencia": 9487.78
+    },
+    {
+      "id": "p_auditoria_tecnica_de_pos_venda_cs",
+      "nome": "Auditoria técnica de Pós-Venda/CS",
+      "step": "destrava_receita",
+      "valor_base_referencia": 9149.89
+    },
+    {
+      "id": "p_auditoria_tecnica_comercial_pre_vendas",
+      "nome": "Auditoria técnica comercial - Pré-vendas",
+      "step": "destrava_receita",
+      "valor_base_referencia": 6994.38
+    },
+    {
+      "id": "p_auditoria_tecnica_comercial_fechamento",
+      "nome": "Auditoria técnica comercial - Fechamento",
+      "step": "destrava_receita",
+      "valor_base_referencia": 8867.91
+    },
+    {
+      "id": "p_implementacao_e_gestao_de_dados",
+      "nome": "Implementação e Gestão de Dados",
+      "step": "ter",
+      "valor_base_referencia": 9885.49
+    },
+    {
+      "id": "p_implementacao_de_landing_page",
+      "nome": "Implementação de Landing Page",
+      "step": "ter",
+      "valor_base_referencia": 3348.99
+    },
+    {
+      "id": "p_implementacao_de_pesquisa_de_satisfacao",
+      "nome": "Implementação de Pesquisa de Satisfação",
+      "step": "ter",
+      "valor_base_referencia": 4377.3
+    },
+    {
+      "id": "p_implementacao_de_hubspot_crm_for_marketing",
+      "nome": "Implementação de Hubspot CRM for Marketing",
+      "step": "ter",
+      "valor_base_referencia": 11025.73
+    },
+    {
+      "id": "p_implementacao_de_hubspot_crm_for_sales",
+      "nome": "Implementação de Hubspot CRM for Sales",
+      "step": "ter",
+      "valor_base_referencia": 10878.87
+    },
+    {
+      "id": "p_implementacao_crm",
+      "nome": "Implementação CRM",
+      "step": "ter",
+      "valor_base_referencia": 3656.49
+    },
+    {
+      "id": "p_implementacao_de_pack_de_criativos",
+      "nome": "Implementação de Pack de Criativos",
+      "step": "ter",
+      "valor_base_referencia": 10896.81
+    },
+    {
+      "id": "p_implementacao_de_seo",
+      "nome": "Implementação de SEO",
+      "step": "ter",
+      "valor_base_referencia": 7586.45
+    },
+    {
+      "id": "p_implementacao_de_setup_inicial_de_social_ads",
+      "nome": "Implementação de Setup Inicial de Social Ads",
+      "step": "ter",
+      "valor_base_referencia": 4461.35
+    },
+    {
+      "id": "p_implementacao_de_setup_inicial_de_google_ads",
+      "nome": "Implementação de Setup Inicial de Google Ads",
+      "step": "ter",
+      "valor_base_referencia": 4752.61
+    },
+    {
+      "id": "p_elaboracao_de_identidade_visual",
+      "nome": "Elaboração de Identidade Visual",
+      "step": "ter",
+      "valor_base_referencia": 11108.69
+    },
+    {
+      "id": "p_implementacao_google_local_service_ads",
+      "nome": "Implementação Google Local Service Ads",
+      "step": "ter",
+      "valor_base_referencia": 4921.88
+    },
+    {
+      "id": "p_implementacao_google_my_business_profile",
+      "nome": "Implementação Google My Business Profile",
+      "step": "ter",
+      "valor_base_referencia": 3780
+    },
+    {
+      "id": "p_auditoria_tecnica_de_ambientes_cro_seo_e_commerce",
+      "nome": "Auditoria técnica de ambientes (CRO / SEO) E-commerce",
+      "step": "destrava_receita",
+      "valor_base_referencia": 9020
+    },
+    {
+      "id": "p_manutencao_de_kommo_crm",
+      "nome": "Manutenção de Kommo CRM",
+      "step": "executar",
+      "valor_base_referencia": 716.34
+    },
+    {
+      "id": "p_manutencao_de_landing_page",
+      "nome": "Manutenção de Landing Page",
+      "step": "executar",
+      "valor_base_referencia": 620.67
+    },
+    {
+      "id": "p_manutencao_de_gestao_de_dados_bi",
+      "nome": "Manutenção de Gestão de Dados (BI)",
+      "step": "executar",
+      "valor_base_referencia": 847
+    },
+    {
+      "id": "p_manutencao_de_site",
+      "nome": "Manutenção de Site",
+      "step": "executar",
+      "valor_base_referencia": 1228.87
+    },
+    {
+      "id": "p_profissional_de_web_design",
+      "nome": "Profissional de Web Design",
+      "step": "executar",
+      "valor_base_referencia": 8070.95
+    },
+    {
+      "id": "p_profissional_de_pre_vendas_sdr",
+      "nome": "Profissional de Pré-Vendas (SDR)",
+      "step": "executar",
+      "valor_base_referencia": 3427.86
+    },
+    {
+      "id": "p_profissional_de_sales_enablement",
+      "nome": "Profissional de Sales Enablement",
+      "step": "executar",
+      "valor_base_referencia": 4327.86
+    },
+    {
+      "id": "p_profissional_de_business_intelligence",
+      "nome": "Profissional de Business Intelligence",
+      "step": "executar",
+      "valor_base_referencia": 4957.14
+    },
+    {
+      "id": "p_profissional_de_social_media",
+      "nome": "Profissional de Social Media",
+      "step": "executar",
+      "valor_base_referencia": 7707.74
+    },
+    {
+      "id": "p_profissional_de_designer_grafico",
+      "nome": "Profissional de Designer Gráfico",
+      "step": "executar",
+      "valor_base_referencia": 7707.74
+    },
+    {
+      "id": "p_profissional_de_redacao_publicitaria",
+      "nome": "Profissional de Redação Publicitária",
+      "step": "executar",
+      "valor_base_referencia": 5751.59
+    },
+    {
+      "id": "p_diagnostico_e_performance_comercial_360",
+      "nome": "Diagnóstico e Performance Comercial 360º",
+      "step": "saber",
+      "valor_base_referencia": 20286.05
+    },
+    {
+      "id": "p_diagnostico_e_planejamento_de_redes_sociais",
+      "nome": "Diagnóstico e Planejamento de Redes Sociais",
+      "step": "saber",
+      "valor_base_referencia": 12171.33
+    },
+    {
+      "id": "p_diagnostico_e_planejamento_de_marketing_e_vendas_no_digital",
+      "nome": "Diagnóstico e Planejamento de Marketing e Vendas no Digital",
+      "step": "saber",
+      "valor_base_referencia": 34671.35
+    },
+    {
+      "id": "p_profissional_de_crm",
+      "nome": "Profissional de CRM",
+      "step": "executar",
+      "valor_base_referencia": 4327.86
+    },
+    {
+      "id": "p_manutencao_de_hubspot",
+      "nome": "Manutenção de Hubspot",
+      "step": "executar",
+      "valor_base_referencia": 1436.46
+    }
+  ]
+}
