@@ -71,7 +71,6 @@ test('catalogo_id inexistente sem citação é descartado; ênfase desconhecida 
   assert.deepEqual(s1.itens.map((i) => i.catalogo_id), ['s1_persona_icp', 'li_icp_contas']);
   assert.ok(e.pendencias.some((p) => p.includes('Item com id falso')));
   assert.deepEqual(e.escopo.enfases, ['linkedin_b2b']);
-  assert.ok(!e.escopo.semanas.some((s) => s.id === 's3'), 'semana vazia sai');
 });
 
 test('overdelivery prometido com citação real fica', () => {
@@ -232,7 +231,8 @@ test('modelo de venda: informado pelo chamador vence; ausente vira pendência', 
 test('resposta vazia/lixo do LLM não quebra: escopo mínimo + pendências', () => {
   const e = normalizarEscopo({}, ctx);
   assert.deepEqual(validarEscopo(e), []);
-  assert.ok(e.pendencias.some((p) => p.includes('escopo vazio')));
+  assert.deepEqual(e.escopo.semanas.map((s) => s.id), ['s1', 's2', 's3', 's4']);
+  assert.ok(e.pendencias.some((p) => p.includes('Semana 1 não veio da análise')));
   assert.equal(e.preco.estruturacao.valor_total, null);
 });
 
@@ -388,4 +388,56 @@ test('Vedor (validade) obs. 2: entrega/início na mesma oração sem "válido" e
   }
   assert.equal(val('05/11/2026', 'condição vale até 05/11/2026', 'Closer: essa condição vale até 05/11/2026.').preco.validade, '05/11/2026');
   assert.equal(val('07/11', 'válida até 7 de novembro', 'Closer: a proposta fica válida até 7 de novembro.').preco.validade, '07/11');
+});
+
+test('Gabriel 30/10: semana omitida ou esvaziada pela análise entra com o padrão do catálogo', () => {
+  const e = normalizarEscopo(bruto(), ctx);
+  assert.deepEqual(e.escopo.semanas.map((s) => s.id), ['s1', 's2', 's3', 's4']);
+  const s1 = e.escopo.semanas.find((s) => s.id === 's1');
+  assert.ok(s1.itens.some((i) => i.catalogo_id === 'li_icp_contas'), 'a semana que veio fica como veio');
+  const s3 = e.escopo.semanas.find((s) => s.id === 's3');
+  assert.ok(s3.itens.length && s3.itens.every((i) => i.catalogo_id.startsWith('s3is_')), 'S3 vazia → variante inside sales');
+  assert.match(s3.titulo, /Inside Sales/);
+  for (const n of [2, 4]) assert.ok(e.pendencias.some((p) => p.startsWith(`Semana ${n} não veio da análise`)));
+  assert.ok(e.pendencias.some((p) => p.startsWith('Semana 3 ficou sem itens válidos')), 'S3 veio vazia');
+  assert.ok(!e.pendencias.some((p) => p.startsWith('Semana 1 não veio')));
+  assert.deepEqual(validarEscopo(e), []);
+});
+
+test('Gabriel 30/10: S3 padrão segue o modelo de venda; semana extra vai ao fim', () => {
+  const b = bruto(); b.escopo.semanas.push({ id: 'extra', titulo: 'Semana bônus', itens: [{ catalogo_id: 's1_tam_sam_som', texto: 'TAM', origem: 'catalogo' }] });
+  const e = normalizarEscopo(b, { ...ctx, modeloVenda: 'pdv' });
+  assert.deepEqual(e.escopo.semanas.map((s) => s.id), ['s1', 's2', 's3', 's4', 'extra']);
+  assert.ok(e.escopo.semanas.find((s) => s.id === 's3').itens.every((i) => i.catalogo_id.startsWith('s3pdv_')));
+});
+
+test('Gabriel 30/10: plano de execução traz o pacote padrão (texto adaptado mantido) e os extras depois', () => {
+  const b = bruto();
+  b.plano_execucao.itens.push({ catalogo_id: 'ex_social', texto: 'Social media', origem: 'catalogo' });
+  const e = normalizarEscopo(b, ctx);
+  assert.deepEqual(e.plano_execucao.itens.map((i) => i.catalogo_id), ['ex_gestor_conta', 'ex_trafego', 'ex_designer', 'ex_coord', 'ex_social']);
+  assert.equal(e.plano_execucao.itens[0].texto, 'Gestor de Conta');
+  b.plano_execucao.incluido = false;
+  assert.equal(normalizarEscopo(b, ctx).plano_execucao.itens.length, 2, 'sem execução, nada é completado');
+});
+
+test('Vedor (semanas) #1: semana repetida junta os itens; nada some em silêncio', () => {
+  const b = bruto();
+  b.escopo.semanas.push({ id: 's1', titulo: 'Semana 1 de novo', itens: [{ catalogo_id: 's1_tam_sam_som', texto: 'TAM/SAM/SOM', origem: 'catalogo' }] });
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.escopo.semanas.filter((s) => s.id === 's1').length, 1);
+  assert.deepEqual(e.escopo.semanas.find((s) => s.id === 's1').itens.map((i) => i.catalogo_id), ['s1_persona_icp', 'li_icp_contas', 's1_tam_sam_som']);
+});
+
+test('Vedor (semanas) #2/#3: execução vazia vira pendência; ex_* repetido não duplica', () => {
+  const b = bruto(); b.plano_execucao.itens = [];
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.plano_execucao.itens.length, 4);
+  assert.ok(e.pendencias.some((p) => p.startsWith('plano de execução não veio da análise')));
+  const c = bruto();
+  c.plano_execucao.itens.push({ catalogo_id: 'ex_trafego', texto: 'Tráfego A', origem: 'catalogo' }, { catalogo_id: 'ex_trafego', texto: 'Tráfego B', origem: 'catalogo' });
+  const f = normalizarEscopo(c, ctx);
+  assert.deepEqual(f.plano_execucao.itens.map((i) => i.catalogo_id), ['ex_gestor_conta', 'ex_trafego', 'ex_designer', 'ex_coord']);
+  assert.equal(f.plano_execucao.itens[1].texto, 'Tráfego A');
+  assert.ok(!f.pendencias.some((p) => p.startsWith('plano de execução não veio')));
 });
