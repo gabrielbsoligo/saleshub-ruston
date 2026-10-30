@@ -278,7 +278,7 @@ const VALIDADE = /\b(valid[ao]s?|validade|vale|valem|valendo|condicao|condicoes)
 const VALIDADE_FRACA = /\b(prazo|garantid[ao]s?|garanto|garantimos|fechar|fecha|fechamento|assinar|assina|assinatura|segurar|seguro|seguramos)\b/;
 const ASSUNTO_PRECO = /\b(proposta|condicao|condicoes|valor|valores|preco|precos|desconto|investimento)\b/;
 // Data de entrega/início/reunião na mesma oração: só conta com "válido/validade" explícito.
-const ENTREGA = /\b(entrega|entregar|entregamos|comecar|comeca|comecamos|inicio|iniciar|kickoff|onboarding|reuniao|lancamento)\b/;
+const ENTREGA = /\b(entrega|entregar|entregamos|comecar|comeca|comeco|comecamos|comecarmos|inicio|iniciar|iniciamos|kickoff|onboarding|reuniao|lancamento)\b/;
 const VALIDADE_EXPLICITA = /\b(valid[ao]s?|validade)\b/;
 export function falaDeValidade(oracaoNorm) {
   const t = oracaoNorm.replace(/\bvalem? a pena\b/g, ' ');
@@ -288,12 +288,18 @@ export function falaDeValidade(oracaoNorm) {
 const ORACAO = /[.!?;:,](?=\s)|\n/g;
 
 // Validade relativa (P4): "hoje", "amanhã", "fim do mês", "essa semana", "sexta-feira"
-// viram data pela data da reunião. O trecho precisa falar de validade ou de fechamento
-// ("para esse fechamento hoje"); data de entrega/início não conta.
-export function falaDeValidadeRelativa(norm) {
+// viram data pela data da reunião. O trecho precisa falar de validade; "fechar/prazo/assinar"
+// só valem se o trecho ou o que vem logo depois na fala (depois: texto original, ~150
+// caracteres) fala de preço/desconto ("para esse fechamento hoje… consigo tirar 20%").
+// "Vamos fechar por hoje" e data de entrega/início não contam (Vedor, 30/10).
+const DESCONTO = /\b(desconto|descontos|descontar|tirar|tiro|tirando|abat\w*|reduz\w*|menos|off|baix\w*|bonific\w*)\b/;
+const PRECO_PERTO =/\b(proposta|condicao|condicoes|valor|valores|preco|precos|desconto|investimento|tirar|tiro|parcel\w*|vezes)\b/;
+export function falaDeValidadeRelativa(norm, depois = '') {
   const t = norm.replace(/\bvalem? a pena\b/g, ' ');
   if (ENTREGA.test(t) && !VALIDADE_EXPLICITA.test(t)) return false;
-  return VALIDADE.test(t) || VALIDADE_FRACA.test(t);
+  if (VALIDADE.test(t)) return true;
+  if (!VALIDADE_FRACA.test(t)) return false;
+  return PRECO_PERTO.test(t) || PRECO_PERTO.test(normalizarTexto(depois)) || /\d\s*%/.test(depois);
 }
 const DIAS_SEMANA = { segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5 };
 const somarDias = (d, n) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
@@ -355,7 +361,8 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     if (tipos.some((t) => t.id === tipoOferta)) oferta = { tipo: tipoOferta, origem: 'closer', citacao };
     else if (tipos.some((t) => t.id === bruto?.oferta?.tipo)) oferta = { tipo: bruto.oferta.tipo, origem: 'ia', citacao };
     else pendencias.push('tipo de oferta não identificado: usei Estruturação — se não for, gere de novo escolhendo o tipo');
-    if (oferta.origem === 'ia') {
+    // Só avisa quando a IA tirou do deck completo (senão a frase vira ruído em toda Estruturação).
+    if (oferta.origem === 'ia' && oferta.tipo !== 'estruturacao') {
       const nome = tipos.find((t) => t.id === oferta.tipo).nome;
       pendencias.push(`tipo de oferta identificado pela IA: ${nome}${citacao ? ` ("${citacao}")` : ''} — se não for, gere de novo escolhendo o tipo`);
     }
@@ -514,7 +521,8 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     const recorrencia = of.recorrencia === 'mensal' ? 'mensal' : 'unico';
     const papel = recorrencia === 'mensal' ? 'execucao' : 'estruturacao';
     const tabela = dinheiro('oferta_tabela', numero(of.valor_tabela), papel, 'preço de tabela', evo.valor_tabela);
-    // Desconto: o número com "%" ou "por cento" no trecho literal.
+    // Desconto: o número com "%" ou "por cento" num trecho que fala de desconto
+    // ("20% de entrada" não é desconto).
     let desconto = numero(of.desconto_percentual);
     if (desconto != null) {
       const e = conferida(evo.desconto);
@@ -522,15 +530,25 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
       if (!(desconto > 0 && desconto < 100) || !e || !new RegExp(`(^|[^\\d.,])${n}\\s*(%|por ?cento)`, 'i').test(e)) {
         naoConfirmado('desconto');
         desconto = null;
+      } else if (!DESCONTO.test(normalizarTexto(e))) {
+        pendencias.push('desconto: trecho não fala de desconto — confira');
+        desconto = null;
       }
     }
     let final = dinheiro('oferta_final', numero(of.valor_final), papel, 'valor com desconto', evo.valor_final, { silencioso: true });
     let finalCalculado = false;
-    if (final == null && tabela != null && desconto != null) {
+    const calculado = tabela != null && desconto != null ? Math.round(tabela * (1 - desconto / 100) * 100) / 100 : null;
+    const pct = desconto != null ? String(desconto).replace('.', ',') : '';
+    if (final != null && calculado != null && Math.abs(final - calculado) > tabela * 0.01) {
+      // "Confirmado" mas de outro valor da call (ex.: o preço de um item): vale o cálculo.
+      pendencias.push(`valor com desconto lido (${final}) não bate com o preço de tabela − ${pct}%: usei o cálculo — confira`);
+      final = null;
+    }
+    if (final == null && calculado != null) {
       // Não foi lido limpo (ex.: o Meet escreveu "52,200"): calcula da tabela e do desconto, ambos conferidos.
-      final = Math.round(tabela * (1 - desconto / 100) * 100) / 100;
+      final = calculado;
       finalCalculado = true;
-      pendencias.push(`valor com desconto calculado (preço de tabela − ${String(desconto).replace('.', ',')}%) — confira`);
+      pendencias.push(`valor com desconto calculado (preço de tabela − ${pct}%) — confira`);
     } else if (final == null && numero(of.valor_final) != null) naoConfirmado('valor com desconto');
     preco.oferta = {
       recorrencia,
@@ -612,12 +630,16 @@ export function normalizarEscopo(bruto, { catalogo, empresa, transcricao, modelo
     } else if (v) {
       const e = evidenciaDe('validade');
       const en = e ? normalizarTexto(e) : '';
-      const rel = e && falaDeValidadeRelativa(en) ? resolverValidadeRelativa(en, dataReuniao) : null;
+      // o que vem logo depois do trecho na transcrição (para "fechamento hoje… tirar 20%")
+      const fimTrecho = e ? Math.max(0, ...localizarCitacao(e, fonteMapa).map(([, b]) => b)) : 0;
+      const depois = fimTrecho ? transcricao.slice(fimTrecho, fimTrecho + 150) : '';
+      const ok = !!e && falaDeValidadeRelativa(en, depois);
+      const rel = ok ? resolverValidadeRelativa(en, dataReuniao) : null;
       if (rel) {
         preco.validade = rel.data;
         const base = dataAssumida ? `${formatarDataIso(dataReuniao)}, data do pedido (a reunião não estava vinculada)` : formatarDataIso(dataReuniao);
         pendencias.push(`validade ${rel.data} calculada de "${rel.termo}" pela data da reunião (${base}), lida em: "${e}" — confira`);
-      } else if (e && falaDeValidadeRelativa(en) && !dataReuniao) {
+      } else if (ok && !dataReuniao) {
         pendencias.push('validade da proposta: prazo relativo sem a data da reunião — preencha');
       } else pendencias.push('validade da proposta: data não confirmada na transcrição — confira');
     }

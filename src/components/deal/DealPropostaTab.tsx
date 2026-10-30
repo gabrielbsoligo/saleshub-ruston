@@ -23,7 +23,15 @@ export interface Proposta {
   visto_em: string | null;
   enviada_em: string | null;
   created_at: string;
+  tipo_identificado?: string | null;
 }
+
+const NOME_TIPO: Record<string, string> = {
+  estruturacao: 'Estruturação',
+  implementacao: 'Implementação',
+  execucao: 'Execução mensal',
+  implementacao_e_execucao: 'Implementação + execução',
+};
 
 const STATUS: Record<Proposta['status'], { label: string; cls: string }> = {
   pendente: { label: 'Na fila', cls: 'bg-yellow-500/20 text-yellow-400' },
@@ -82,7 +90,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
 
   const carregar = useCallback(async () => {
     const { data, error } = await supabase.from('propostas')
-      .select('id, deal_id, reuniao_id, origem, status, url, pendencias, erro, visto_em, enviada_em, created_at')
+      .select('id, deal_id, reuniao_id, origem, status, url, pendencias, erro, visto_em, enviada_em, created_at, tipo_identificado:escopo->oferta->>tipo')
       .eq('deal_id', deal.id).order('created_at', { ascending: false });
     if (error) toast.error(`Propostas: ${error.message}`);
     setPropostas((data as Proposta[]) || []);
@@ -214,6 +222,7 @@ export const DealPropostaTab: React.FC<{ deal: Deal }> = ({ deal }) => {
                   <span className={`px-2 py-0.5 rounded-full ${STATUS[p.status].cls}`}>{STATUS[p.status].label}</span>
                   <span className="text-[var(--color-v4-text-muted)]">
                     {new Date(p.created_at).toLocaleString('pt-BR')} · {p.origem === 'auto' ? 'automática' : 'manual'}
+                    {p.tipo_identificado && ` · ${NOME_TIPO[p.tipo_identificado] || p.tipo_identificado}`}
                   </span>
                 </div>
                 {EM_ANDAMENTO.includes(p.status) && <Loader2 size={14} className="animate-spin text-yellow-400" />}

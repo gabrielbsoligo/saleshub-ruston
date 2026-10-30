@@ -327,3 +327,67 @@ test('P6: planejar/gerarProposta usam o deck curto (sem exigir placeholders do E
   assert.equal(r.slidesInseridos, secoesCurto(e).length);
   assert.ok(chamadas.includes('dominio'));
 });
+
+// ---- Vedor (Etapa 2), rodada 1 ----
+test('Vedor #1: "20% de entrada" não é desconto (nada de preço calculado)', () => {
+  const t = `${transcricao}\nCloser: Você paga 20% de entrada e o resto em 10 vezes.`;
+  const b = brutoImpl();
+  b.preco.oferta.evidencias.desconto = 'Você paga 20% de entrada e o resto em 10 vezes';
+  b.preco.oferta.valor_final = null;
+  const e = normalizarEscopo(b, { ...ctx, transcricao: t });
+  assert.equal(e.preco.oferta.desconto_percentual, null);
+  assert.equal(e.preco.oferta.valor_final, null);
+  assert.ok(e.pendencias.includes('desconto: trecho não fala de desconto — confira'));
+});
+
+test('Vedor #2: valor final "confirmado" que não bate com tabela − desconto cai no cálculo, com pendência', () => {
+  const b = brutoImpl();
+  b.preco.oferta.valor_final = 4000;
+  b.preco.oferta.evidencias.valor_final = 'ele é um valor de 4.000';
+  const e = normalizarEscopo(b, ctx);
+  assert.equal(e.preco.oferta.valor_final, 5200);
+  assert.equal(e.preco.oferta.valor_final_calculado, true);
+  assert.ok(e.pendencias.some((p) => p.startsWith('valor com desconto lido (4000) não bate')));
+});
+
+test('Vedor #3: "fechar por hoje", "fecha a call hoje", "prazo… hoje", "assina hoje e começo" não viram validade', () => {
+  const casos = [
+    'vamos fechar por hoje então',
+    'a gente fecha a call hoje e eu te mando',
+    'o prazo é de 15 dias, hoje mesmo eu te passo',
+    'assina o contrato hoje e amanhã eu começo',
+  ];
+  for (const frase of casos) {
+    const t = `${transcricao}\nCloser: ${frase}.\nLead: Beleza, obrigado pela conversa.`;
+    const b = brutoImpl();
+    b.preco.evidencias.validade = frase;
+    const e = normalizarEscopo(b, { ...ctx, transcricao: t });
+    assert.equal(e.preco.validade, null, frase);
+  }
+  // caso real: "para esse fechamento hoje… Eu consigo tirar 20%" segue valendo
+  assert.equal(normalizarEscopo(brutoImpl(), ctx).preco.validade, '30/10/2026');
+});
+
+test('Vedor #4: sem slides institucionais configurados, o deck curto avisa que ficou só a capa', () => {
+  const e = normalizarEscopo(brutoImpl(), ctx);
+  const msg = 'slides institucionais não configurados (propostas_config.slides_curto): ficou só a capa — confira';
+  assert.ok(planejar(e, deck(), { slidesCurto: [], prefixo: 'gpA' }).pendencias.includes(msg));
+  assert.ok(planejar(e, deck(), { slidesCurto: ['id_de_outro_template'], prefixo: 'gpB' }).pendencias.includes(msg));
+  assert.ok(!planejar(e, deck(), { slidesCurto: ['capa', 'clientes'], prefixo: 'gpC' }).pendencias.includes(msg));
+});
+
+test('Vedor #5: com 5+ itens com valor, a linha do preço de tabela não some', () => {
+  const e = normalizarEscopo(brutoImpl(), ctx);
+  e.entregaveis = Array.from({ length: 6 }, (_, i) => ({ texto: `Item ${i + 1}`, origem: 'closer', citacao: null, valor: 1000, recorrencia: 'unico' }));
+  const inv = secoesCurto(e).find((x) => x.tipo === 'investimento');
+  assert.equal(inv.linhas.length, 5);
+  assert.deepEqual(inv.linhas.at(-1), { texto: 'Valor de tabela', valor: 'R$ 6.500', destaque: true });
+});
+
+test('Vedor #6: Estruturação identificada pela IA não gera aviso de tipo; deck curto gera', () => {
+  const b = brutoImpl();
+  b.oferta.tipo = 'estruturacao';
+  const e = normalizarEscopo(b, ctx);
+  assert.ok(!e.pendencias.some((p) => p.startsWith('tipo de oferta identificado')));
+  assert.ok(normalizarEscopo(brutoImpl(), ctx).pendencias.some((p) => p.startsWith('tipo de oferta identificado pela IA: Implementação')));
+});

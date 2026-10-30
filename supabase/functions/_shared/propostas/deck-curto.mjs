@@ -66,7 +66,8 @@ export function secoesCurto(escopo) {
 
   // Investimento: itens com valor falado, preço de tabela, condição (desconto/validade).
   const linhas = (escopo.entregaveis || []).filter((e) => e.valor != null)
-    .map((e) => ({ texto: e.texto, valor: brl(e.valor, e.recorrencia) }));
+    .map((e) => ({ texto: e.texto, valor: brl(e.valor, e.recorrencia) }))
+    .slice(0, 4); // 4 itens + a linha do preço de tabela cabem no slide
   const temDesconto = of.desconto_percentual != null;
   if (of.valor_tabela != null && (linhas.length > 1 || temDesconto)) {
     linhas.push({ texto: temDesconto ? 'Valor de tabela' : 'Total', valor: brl(of.valor_tabela, of.recorrencia), destaque: true });
@@ -79,7 +80,7 @@ export function secoesCurto(escopo) {
     tipo: 'investimento',
     rotulo: `Investimento · ${NOME_TIPO[tipo] || 'Proposta'}`,
     titulo: 'Qual é o investimento?',
-    linhas: linhas.slice(0, 5),
+    linhas,
     condicao: temDesconto || validade ? `CONDIÇÃO PARA FECHAMENTO ATÉ ${validade || PREENCHER}` : 'INVESTIMENTO',
     desconto: temDesconto ? `${String(of.desconto_percentual).replace('.', ',')}% DE DESCONTO` : null,
     valor: principal != null ? brl(principal, of.recorrencia) : PREENCHER,
