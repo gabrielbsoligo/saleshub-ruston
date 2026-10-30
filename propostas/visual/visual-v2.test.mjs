@@ -349,3 +349,20 @@ test('capa: nome longo do cliente diminui e cabe na caixa (não encosta no traç
   assert.equal(tam('Acme'), 58);
   assert.ok(tam('Indústria e Comércio de Móveis Planejados Exemplo Ltda') <= 34);
 });
+
+test('bônus de modelo nunca é o 3º sinal (sondas do Vedor)', () => {
+  assert.equal(escolherCaso('Vendas na loja e conversão baixa', CASOS.casos, { modeloVenda: 'pdv' }), null);
+  assert.equal(escolherCaso('Landing page com conversão baixa', CASOS.casos, { modeloVenda: 'e-commerce' }), null);
+});
+
+test('capa: kicker longo não invade o nome, em 16:9 e em 4:3', () => {
+  for (const [w, h] of [[W, H], [9144000, 6858000]]) {
+    const rs = requestsCapa({ sid: 's', indice: 0, W: w, H: h, assets: ASSETS, cliente: 'Acme', tipo: 'Implementação e Execução', data: null });
+    const caixaDe = (id) => rs.find((r) => r.createShape?.objectId === id).createShape.elementProperties;
+    const k = caixaDe('s_vk'); const n = caixaDe('s_vn');
+    assert.ok(k.transform.translateY + k.size.height.magnitude * (k.transform.scaleY ?? 1) <= n.transform.translateY + 1, `${w}x${h}`);
+    assert.ok(rs.some((r) => r.updateShapeProperties?.objectId === 's_vk' && r.updateShapeProperties.shapeProperties.contentAlignment === 'BOTTOM'));
+    const tamK = rs.find((r) => r.updateTextStyle?.objectId === 's_vk').updateTextStyle.style.fontSize.magnitude;
+    assert.ok(tamK <= 10, `${w}x${h}: ${tamK}`);
+  }
+});
