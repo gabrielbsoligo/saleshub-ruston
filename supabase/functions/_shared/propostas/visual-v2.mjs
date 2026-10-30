@@ -68,6 +68,7 @@ const fonteQueCabe = (textos, w, h, fontes = [11, 10, 9]) => fontes.find((f) => 
 //  3) senão, as primeiras palavras do próprio texto (sem terminar em preposição).
 const SOLTAS = new Set(['de', 'da', 'do', 'das', 'dos', 'para', 'com', 'e', 'no', 'na', 'nos', 'nas', 'em', 'a', 'o', 'as', 'os', 'ao', 'por', 'pela', 'pelo']);
 export function tituloDeclarado(t) {
+  // Contrato com o analise.mjs (tituloCurto): até 5 palavras e 44 caracteres antes dos ":".
   // Sem parênteses nem ponto final antes dos dois-pontos: "CRM (ex.: ...)" não é título.
   const m = semNumero(t).match(/^([^:\n()]{1,44}[^:\n().\s]):\s+(\S[\s\S]*)$/);
   if (!m) return null;
@@ -277,12 +278,17 @@ export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data, m
   // Anton ~0,5 em por caractere, quebra por palavra; 1,15 de altura por linha (o respiro da
   // caixa conta): o maior tamanho em que o nome cabe sem encostar no traço vermelho.
   const tam = [58, 48, 40, 34, 28].find((f) => linhasDoTexto(nome, Math.max(1, Math.floor(textoW / PT / (f * 0.5)))) * f * 1.15 <= alturaNome / PT) ?? 24;
+  const kicker = `PROPOSTA COMERCIAL${tipo ? `  ·  ${tipo.toUpperCase()}` : ''}`;
+  const tamKicker = [11, 10, 9].find((f) => kicker.length * f * 0.62 <= textoW / PT - 8) ?? 9;
   return [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
     ...fundo(sid, urlFundo(assets, 'capa')),
     ...(marca ? [imagemRet(`${sid}_vf`, sid, `${assets}/marca/${VERSAO_ASSETS}/${MARCA_CAPA.arquivo}`, W - fotoW, 0, fotoW, H)] : []),
     ...caixa(`${sid}_vw`, sid, m, Math.round(H * 0.07), textoW, pt(26), 'V4 COMPANY', { fonte: ESTILO.fonteTitulo, tamanho: 16 }),
-    ...caixa(`${sid}_vk`, sid, m, Math.round(H * 0.2), textoW, pt(22), `PROPOSTA COMERCIAL${tipo ? `  ·  ${tipo.toUpperCase()}` : ''}`, { rgb: ESTILO.amarelo, tamanho: 11, negrito: true }),
+    // Kicker: 11pt se couber numa linha (negrito ~0,62 em), senão 10/9; se nem 9 couber (4:3),
+    // quebra em 2 linhas numa caixa ancorada embaixo, que cresce para cima, nunca sobre o nome.
+    ...caixa(`${sid}_vk`, sid, m, Math.round(H * 0.27) - pt(32), textoW, pt(30), kicker, { rgb: ESTILO.amarelo, tamanho: tamKicker, negrito: true }),
+    { updateShapeProperties: { objectId: `${sid}_vk`, shapeProperties: { contentAlignment: 'BOTTOM' }, fields: 'contentAlignment' } },
     ...caixa(`${sid}_vn`, sid, m, Math.round(H * 0.27), textoW, alturaNome, nome, { fonte: ESTILO.fonteTitulo, tamanho: tam }),
     { updateShapeProperties: { objectId: `${sid}_vn`, shapeProperties: { contentAlignment: 'TOP' }, fields: 'contentAlignment' } },
     { updateParagraphStyle: { objectId: `${sid}_vn`, textRange: { type: 'ALL' }, style: { lineSpacing: 90 }, fields: 'lineSpacing' } },
@@ -346,7 +352,8 @@ export function requestsNumeros(tiles, { sid, indice, W, H, assets, rotulo, roda
 // mas o case só entra com 3 sinais ou mais e pelo menos 1 específico.
 const SINAIS_GENERICOS = ['comercial', 'lead', 'convers|convert'];
 const SINAIS_ESPECIFICOS = ['crm', 'google', 'landing', 'rastre|ga4', 'tiktok', 'b2b', 'loja|showroom', 'whatsapp', 'e-?commerce|checkout'];
-// modeloVenda (opcional): +1 ao case do mesmo modelo; não dispensa o sinal específico.
+// modeloVenda (opcional): +1 ao case do mesmo modelo, só entre os que JÁ passam pelo texto
+// (desempate/preferência): o bônus nunca é o 3º sinal.
 export function escolherCaso(textoDeck, casos = CASOS.casos, { modeloVenda = null } = {}) {
   const t = normalizar(textoDeck);
   const modelo = modeloDoCatalogo(modeloVenda);
@@ -355,10 +362,12 @@ export function escolherCaso(textoDeck, casos = CASOS.casos, { modeloVenda = nul
   for (const c of casos) {
     const d = normalizar(`${c.desafio} ${c.segmento}`);
     const especificos = casa(SINAIS_ESPECIFICOS, d);
-    const nota = especificos + casa(SINAIS_GENERICOS, d) + (modelo && c.modelo === modelo ? 1 : 0);
+    const base = especificos + casa(SINAIS_GENERICOS, d);
+    if (base < 3 || especificos < 1) continue;
+    const nota = base + (modelo && c.modelo === modelo ? 1 : 0);
     if (!melhor || nota > melhor.nota) melhor = { caso: c, nota, especificos };
   }
-  return melhor && melhor.nota >= 3 && melhor.especificos >= 1 ? melhor : null;
+  return melhor;
 }
 
 // Largura da foto com a altura do slide (proporção do arquivo); nunca menor que a coluna.
