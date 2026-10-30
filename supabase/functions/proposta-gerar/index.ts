@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
     if (!membro) return json({ error: 'usuário sem cadastro ativo no SalesHub' }, 403)
 
     if (action === 'gerar') {
-      const { deal_id, reuniao_id = null, transcricao_texto = null, tipo_oferta = null } = body
+      const { deal_id, reuniao_id = null, transcricao_texto = null, tipo_oferta = null, incluir_case = false } = body
       if (!deal_id) return json({ error: 'deal_id obrigatório' }, 400)
       // Tipo escolhido pelo closer (null = a IA classifica).
       if (tipo_oferta != null && !['estruturacao', 'implementacao', 'execucao', 'implementacao_e_execucao'].includes(tipo_oferta)) {
@@ -90,6 +90,8 @@ Deno.serve(async (req) => {
       if (em?.length) return json({ error: 'já há uma proposta sendo gerada para este deal' }, 409)
       const { data: nova, error } = await sb.from('propostas').insert({
         deal_id, reuniao_id, origem: 'manual', status: 'pendente', solicitado_por: membro.id, tipo_oferta,
+        // case V4 só com opt-in do closer (decisão do Gabriel, 30/10)
+        incluir_case: incluir_case === true,
         transcricao_manual: typeof transcricao_texto === 'string' && transcricao_texto.trim() ? transcricao_texto : null,
       }).select('id').single()
       if (error) throw error

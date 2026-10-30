@@ -12,9 +12,11 @@ import { extrairJson, montarPrompt, normalizarEscopo } from './analise.mjs'
 import { validarEscopo } from './slides.mjs'
 import { chamarLLM } from './llm.ts'
 import { redigir } from './redigir.mjs'
+import { aplicarCamadaVisual } from './camada-visual.mjs'
 
 const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? ''
 const GOOGLE_CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? ''
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 export const MIN_TRANSCRICAO_CHARS = 200
 
 // Mesmo refresh da edge google-drive. O token nunca sai desta função.
@@ -84,11 +86,11 @@ export async function carregarTranscricao(sb: any, deal: any, reuniaoId: string 
 // dataAssumida = não é a data da reunião (ex.: data do pedido).
 export async function analisarTranscricao(
   texto: string, empresa: string, modeloVenda: string | null = null,
-  opcoes: { tipoOferta?: string | null, dataReuniao?: string | null, dataAssumida?: boolean } = {},
+  opcoes: { tipoOferta?: string | null, dataReuniao?: string | null, dataAssumida?: boolean, provedor?: string } = {},
 ) {
-  const { tipoOferta = null, dataReuniao = null, dataAssumida = false } = opcoes
+  const { tipoOferta = null, dataReuniao = null, dataAssumida = false, provedor: principal } = opcoes
   const prompt = montarPrompt({ transcricao: texto, catalogo, empresa, modeloVenda, tipoOferta })
-  const { texto: resposta, provedor } = await chamarLLM(prompt)
+  const { texto: resposta, provedor } = await chamarLLM(prompt, principal)
   const escopo = normalizarEscopo(extrairJson(resposta), { catalogo, empresa, transcricao: texto, modeloVenda, tipoOferta, dataReuniao, dataAssumida })
   const erros = validarEscopo(escopo)
   if (erros.length) throw new Error(`escopo da análise inválido: ${erros.join('; ')}`)
@@ -154,6 +156,7 @@ export async function processarProposta(sb: any, id: string) {
 
     let resultado: any = null
     let usado: string | null = null
+    let tokenUsado: string | null = null
     const falhas: string[] = []
     for (const mid of contas) {
       const token = await tokenValido(sb, mid)
@@ -165,6 +168,7 @@ export async function processarProposta(sb: any, id: string) {
           editores, dominio: cfg.dominio || null, slidesCurto: cfg.slides_curto || [],
         })
         usado = mid
+        tokenUsado = token
         break
       } catch (e: any) {
         // Cópia criada e não apagada: parar (não criar outra com a reserva).
@@ -176,15 +180,23 @@ export async function processarProposta(sb: any, id: string) {
     }
     if (!resultado) throw new Error(`nenhuma conta Google conseguiu gerar: ${falhas.join(' | ')}`)
 
+    // Camada visual v2 (ícones, grades, capa do cliente). Falha vira pendência, nunca erro.
+    const visual = await aplicarCamadaVisual({
+      token: tokenUsado, apresentacaoId: resultado.id, supabaseUrl: SUPABASE_URL,
+      tipo: escopo.oferta?.tipo || 'estruturacao', modeloVenda: escopo.cliente?.modelo_venda || null,
+      incluirCase: p.incluir_case === true,
+    })
+    const pendencias = [...(resultado.pendencias || []), ...visual.pendencias]
+
     await atualizar(sb, id, {
       status: 'revisao',
       presentation_id: resultado.id,
       url: resultado.url,
-      pendencias: resultado.pendencias,
+      pendencias,
       gerado_com_member_id: usado,
       erro: falhas.length ? `gerada com a conta reserva (${falhas.join(' | ')})` : null,
     })
-    return { id, status: 'revisao', url: resultado.url, pendencias: resultado.pendencias }
+    return { id, status: 'revisao', url: resultado.url, pendencias }
   } catch (e) {
     const msg = redigir((e as Error).message || 'erro desconhecido')
     await atualizar(sb, id, { status: 'erro', erro: msg.slice(0, 2000) }).catch(() => {})

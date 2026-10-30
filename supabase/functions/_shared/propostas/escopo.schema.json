@@ -376,6 +376,13 @@
             ],
             "description": "id do portfólio V4 (catalogo-v1.produtos)"
           },
+          "titulo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "nome curto (até 5 palavras); no deck curto sai como \"Título: detalhe\""
+          },
           "texto": {
             "type": "string",
             "minLength": 1
