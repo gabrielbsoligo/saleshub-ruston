@@ -8,6 +8,7 @@ import { analisarSlide } from '../../supabase/functions/_shared/propostas/visual
 import {
   requestsVisualV2, aplicarVisualV2, assetsDoProjeto, tituloCurto, primeiraOracao, validadeDoTexto, escolherCaso,
   numerosDoDeck, cabe, AVISO_CASO, planoGradeEntregas, planoGradeDiagnostico, planoPassos, mockupsDoDeck,
+  tituloDeclarado, nomeDoTipo, modeloDoCatalogo, planoBV2, requestsCapa,
 } from '../../supabase/functions/_shared/propostas/visual-v2.mjs';
 
 const PT = 12700;
@@ -98,11 +99,11 @@ test('título curto: palavra-chave fora do sujeito não vira cabeçalho (sondas 
   assert.equal(tituloCurto('Revisão mensal das metas com a empresa'), 'Revisão mensal das metas');
   assert.equal(tituloCurto('Automação de follow-up para leads parados há 30 dias'), 'Automação de follow-up');
   assert.notEqual(tituloCurto('Relatório semanal enviado ao cliente por WhatsApp'), 'CRM + WhatsApp');
-  // os 6 da Authoral seguem com o nome do ícone
+  // Authoral: nome do ícone; com "Título: detalhe" (até 5 palavras), vale o título escrito
   const authoral = [
     ['Landing page focada em conversão, no modelo de portfólio, com os melhores projetos entregues', 'Landing page'],
     ['Funis personalizados no CRM (ex.: arquitetos e parceiros; cliente final), com etapas até o fechamento', 'Funis'],
-    ['Rastreamento de ponta a ponta: UTMs, pixel e tags, e API de conversão ligando o CRM às campanhas', 'Rastreamento'],
+    ['Rastreamento de ponta a ponta: UTMs, pixel e tags, e API de conversão ligando o CRM às campanhas', 'Rastreamento de ponta a ponta'],
     ['Setup de campanha no Google Ads pronto para rodar, com 15 dias de acompanhamento', 'Google Ads'],
   ];
   for (const [t, esperado] of authoral) assert.equal(tituloCurto(t), esperado, t);
@@ -162,10 +163,10 @@ test('mockups só das entregas com forma visível (no máximo 3, sem repetir des
 
 test('plano v2: layouts, slides novos na ordem certa, IDs únicos e sem colisão', () => {
   const d = deck();
-  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '30/10/2026', caso: 'sim' });
+  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '30/10/2026', caso: 'sim', capa: 'depois' });
   const por = Object.fromEntries(resumo.map((r) => [r.slide, r.feito]));
   assert.deepEqual(por.xD, ['grade_diagnostico']);
-  assert.deepEqual(por.xA, ['titulos:icone=4,texto=0', 'grade_entregas']);
+  assert.deepEqual(por.xA, ['titulos:titulo=0,icone=4,texto=0', 'grade_entregas']);
   assert.deepEqual(por.xI, ['icones_linhas:1', 'comparativo_preco']);
   assert.deepEqual(por.xC, ['passos+validade']);
   const novos = criados(requests);
@@ -197,7 +198,7 @@ test('integração com o deck curto (main): plano completo sem colisão', () => 
   const e = normalizarEscopo(fx.escopo, { catalogo, empresa: 'Marcenaria Exemplo', transcricao: fx.transcricao, dataReuniao: '2026-10-30' });
   const base0 = { pageSize: deck().pageSize, slides: [{ objectId: 'capa', pageElements: [] }] };
   const ap = simular(base0, requestsDeckCurto(e, base0, { manter: ['capa'], prefixo: 'gpT' }).requests);
-  const { requests, resumo } = requestsVisualV2(ap, { assets: ASSETS, prefixo: 'vT' });
+  const { requests, resumo } = requestsVisualV2(ap, { assets: ASSETS, prefixo: 'vT', capa: 'depois' });
   const r = JSON.stringify(resumo);
   for (const f of ['grade_entregas', 'comparativo_preco', 'capa_cliente']) assert.ok(r.includes(f), `${f}: ${r}`);
   const novos = criados(requests);
@@ -207,22 +208,90 @@ test('integração com o deck curto (main): plano completo sem colisão', () => 
   assert.ok(!JSON.stringify(resumo).includes('case:'), 'implementação sem opt-in: sem case');
 });
 
-test('capa: depois da institucional (padrão), antes, substituindo ou nenhuma', () => {
+test('capa: substituindo a institucional (padrão), depois, antes ou nenhuma', () => {
   const ordem = (capa) => simular(deck(), requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'k', capa }).requests).slides.slice(0, 2).map((x) => x.objectId);
-  assert.deepEqual(ordem(undefined), ['capaV4', 'k_vcapa']);
+  assert.deepEqual(ordem(undefined), ['k_vcapa', 'xD']);
+  assert.deepEqual(ordem('depois'), ['capaV4', 'k_vcapa']);
   assert.deepEqual(ordem('antes'), ['k_vcapa', 'capaV4']);
   assert.deepEqual(ordem('substituir'), ['k_vcapa', 'xD']);
   assert.deepEqual(ordem('nao'), ['capaV4', 'xD']);
 });
 
-test('case: automático só em Estruturação; com opt-in em outro tipo, leva o aviso no rodapé', () => {
-  const textos = (o) => requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'c', ...o }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
-  assert.ok(!textos({}).some((t) => /VALEC/.test(t)), 'implementação: sem case por padrão');
+test('case: desligado por padrão; opt-in fora de Estruturação leva o aviso; auto só em Estruturação', () => {
+  const textos = (o, d = deck()) => requestsVisualV2(d, { assets: ASSETS, prefixo: 'c', ...o }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  assert.ok(!textos({}).some((t) => /VALEC/.test(t)), 'padrão: sem case');
   assert.ok(textos({ caso: 'sim' }).includes(AVISO_CASO));
+  assert.ok(!textos({ caso: 'auto' }).some((t) => /VALEC/.test(t)), 'auto em implementação: sem case');
   const d = deck();
   d.slides[2] = lista('xA', 'PROPOSTA · ESTRUTURAÇÃO ESTRATÉGICA', 'O QUE ENTREGAMOS', ['Persona e ICP', 'CRM integrado ao WhatsApp', 'Landing page']);
-  const t = requestsVisualV2(d, { assets: ASSETS, prefixo: 'c' }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  assert.ok(!textos({}, d).some((x) => /VALEC/.test(x)), 'Estruturação também começa sem case');
+  const t = textos({ caso: 'auto' }, d);
   assert.ok(t.some((x) => /VALEC/.test(x)) && !t.includes(AVISO_CASO));
+  assert.ok(!textos({ caso: 'sim' }, d).includes(AVISO_CASO), 'sim numa Estruturação: sem aviso');
+});
+
+test('tipo do gerador vale no lugar do rótulo do deck (capa e case)', () => {
+  const textos = (o) => requestsVisualV2(deck(), { assets: ASSETS, prefixo: 't', ...o }).requests.filter((r) => r.insertText).map((r) => r.insertText.text);
+  // rótulo do deck diz Implementação, a oferta é Estruturação: case auto entra sem aviso e a capa diz Estruturação
+  const t = textos({ tipo: 'estruturacao', caso: 'auto' });
+  assert.ok(t.some((x) => /VALEC/.test(x)) && !t.includes(AVISO_CASO));
+  assert.ok(t.includes('PROPOSTA COMERCIAL  ·  ESTRUTURAÇÃO'));
+  assert.ok(textos({ tipo: 'implementacao_e_execucao' }).includes('PROPOSTA COMERCIAL  ·  IMPLEMENTAÇÃO E EXECUÇÃO'));
+  assert.ok(textos({ caso: 'sim', tipo: 'execucao' }).includes(AVISO_CASO));
+  // tipo desconhecido ou ausente: fica o rótulo do deck
+  assert.ok(textos({ tipo: 'outro' }).includes('PROPOSTA COMERCIAL  ·  IMPLEMENTAÇÃO'));
+  assert.equal(nomeDoTipo(null, []), '');
+});
+
+test('modelo de venda: +1 ao case do mesmo modelo, sem dispensar o sinal específico', () => {
+  assert.equal(modeloDoCatalogo('E-commerce de moda'), 'e-commerce');
+  assert.equal(modeloDoCatalogo('loja física / showroom'), 'pdv');
+  assert.equal(modeloDoCatalogo('Inside Sales'), 'inside-sales');
+  assert.equal(modeloDoCatalogo('recorrente'), null);
+  assert.equal(modeloDoCatalogo(null), null);
+  const casos = [
+    { id: 'a', modelo: 'pdv', desafio: 'CRM e comercial com WhatsApp', segmento: 'x' },
+    { id: 'b', modelo: 'inside-sales', desafio: 'CRM e comercial com WhatsApp', segmento: 'y' },
+  ];
+  const texto = 'Time comercial sem CRM, atendimento no WhatsApp';
+  assert.equal(escolherCaso(texto, casos).caso.id, 'a', 'empate: o primeiro');
+  assert.equal(escolherCaso(texto, casos, { modeloVenda: 'inside sales B2B' }).caso.id, 'b');
+  assert.equal(escolherCaso(texto, casos, { modeloVenda: 'inside sales' }).nota, 4);
+  // só genéricos + modelo: continua sem case
+  const gen = [{ id: 'g', modelo: 'pdv', desafio: 'comercial lead conversão', segmento: '' }];
+  assert.equal(escolherCaso('comercial lead conversão', gen, { modeloVenda: 'pdv' }), null);
+});
+
+test('entregável "Título curto: detalhe": título declarado e detalhe sem repetir', () => {
+  assert.deepEqual(tituloDeclarado('01   CRM com WhatsApp: funis por origem, com etapas até o fechamento'), { titulo: 'CRM com WhatsApp', detalhe: 'funis por origem, com etapas até o fechamento' });
+  assert.equal(tituloDeclarado('Funis personalizados no CRM (ex.: arquitetos e parceiros)'), null, 'dois-pontos dentro de parênteses');
+  assert.equal(tituloDeclarado('Um título comprido demais com seis palavras: detalhe'), null, 'mais de 5 palavras');
+  assert.equal(tituloDeclarado('Ex.: algo'), null, 'abreviação');
+  assert.equal(tituloDeclarado('Sem dois-pontos aqui'), null);
+  const a = analisarSlide(lista('h', 'PROPOSTA · IMPLEMENTAÇÃO', 'O QUE ENTREGAMOS', ['Landing page: página de captação com formulário', 'Relatório semanal por WhatsApp', 'Rastreamento GA4: eventos de formulário e clique']));
+  const p = planoGradeEntregas(a, W, H);
+  assert.deepEqual(p.titulos, ['Landing page', tituloCurto('Relatório semanal por WhatsApp'), 'Rastreamento GA4']);
+  assert.deepEqual([p.origens[0], p.origens[2]], ['titulo', 'titulo']);
+  assert.notEqual(p.origens[1], 'titulo');
+  assert.equal(p.detalhes[0], 'página de captação com formulário');
+  assert.equal(p.detalhes[1], 'Relatório semanal por WhatsApp');
+});
+
+test('capa nova leva a marca V4: arte à direita e "V4 COMPANY" em texto; logo após a institucional, sem a arte', () => {
+  const capa = (o) => requestsVisualV2(deck(), { assets: ASSETS, prefixo: 'm', ...o }).requests;
+  const temArte = (rs) => rs.some((r) => r.createImage?.objectId === 'm_vcapa_vf' && r.createImage.url === `${ASSETS}/marca/v1/v4-capa.png`);
+  const temNome = (rs) => rs.some((r) => r.insertText?.objectId === 'm_vcapa_vw' && r.insertText.text === 'V4 COMPANY');
+  for (const c of [undefined, 'substituir', 'antes']) assert.ok(temArte(capa({ capa: c })) && temNome(capa({ capa: c })), String(c));
+  assert.ok(!temArte(capa({ capa: 'depois' })) && temNome(capa({ capa: 'depois' })));
+  // plano B: sem a arte, o texto da marca fica
+  const b = planoBV2(capa({}));
+  assert.ok(!temArte(b) && temNome(b));
+  // arte encostada à direita, na altura do slide; o nome do cliente não invade
+  const img = capa({}).find((r) => r.createImage?.objectId === 'm_vcapa_vf').createImage.elementProperties;
+  const nome = capa({}).find((r) => r.createShape?.objectId === 'm_vcapa_vn').createShape.elementProperties;
+  const larg = (e) => e.size.width.magnitude * (e.transform.scaleX ?? 1);
+  assert.ok(Math.abs(img.transform.translateX + larg(img) - W) < 2);
+  assert.ok(nome.transform.translateX + larg(nome) <= img.transform.translateX);
 });
 
 test('números: entregas somam "(cont.)" e ignoram [PREENCHER]; textos sem inventar', () => {
@@ -259,4 +328,24 @@ test('aplicarVisualV2: falha de imagem repete sem imagens E sem fundos de imagem
   }
   assert.ok(!JSON.stringify(posts[1]).includes('_vcase'), 'case sai inteiro no plano B');
   assert.equal(assetsDoProjeto('https://abc.supabase.co/'), 'https://abc.supabase.co/storage/v1/object/public/propostas-visual');
+});
+
+test('título declarado que não cabe na grade: só aquele item volta ao fallback; a grade fica', () => {
+  const itens = ['Landing page: página de portfólio', 'Rastreamento de ponta a ponta: UTMs, pixel e API de conversão', 'CRM: funis por origem',
+    'Google Ads: campanha pronta para rodar', 'Funis: arquitetos e cliente final', 'Treinamento: time comercial no CRM'];
+  const p = planoGradeEntregas(analisarSlide(lista('z', 'PROPOSTA · IMPLEMENTAÇÃO', 'T', itens)), W, H);
+  assert.ok(p, 'grade');
+  assert.equal(p.titulos[1], 'Rastreamento');
+  assert.equal(p.detalhes[1], itens[1], 'fallback: detalhe completo');
+  assert.equal(p.origens[1], 'icone');
+  assert.equal(p.titulos[0], 'Landing page');
+  assert.equal(p.detalhes[0], 'página de portfólio');
+});
+
+test('capa: nome longo do cliente diminui e cabe na caixa (não encosta no traço)', () => {
+  const tam = (cliente) => requestsCapa({ sid: 's', indice: 0, W, H, assets: ASSETS, cliente, tipo: '', data: null })
+    .find((r) => r.updateTextStyle?.objectId === 's_vn').updateTextStyle.style.fontSize.magnitude;
+  assert.equal(tam('Authoral Ambientes Planejados'), 48);
+  assert.equal(tam('Acme'), 58);
+  assert.ok(tam('Indústria e Comércio de Móveis Planejados Exemplo Ltda') <= 34);
 });

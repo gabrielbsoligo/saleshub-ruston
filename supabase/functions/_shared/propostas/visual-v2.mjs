@@ -60,12 +60,23 @@ export function cabe(textoAlvo, larguraPt, alturaPt, fonte) {
 }
 const fonteQueCabe = (textos, w, h, fontes = [11, 10, 9]) => fontes.find((f) => textos.every((t) => cabe(t, w, h, f))) ?? null;
 
-// Título curto do entregável: o nome do ícone (já é do catálogo), nunca texto novo.
-// Só usa o nome do ícone se a palavra-chave estiver no SUJEITO do item (1ª oração ou
-// primeiros 30 caracteres): "Relatório ... por WhatsApp" não vira "CRM + WhatsApp".
-// Senão, as primeiras palavras do próprio texto (sem terminar em preposição).
+// Título curto do entregável, nunca texto novo:
+//  1) o deck curto escreve "Título curto: detalhe" (até 5 palavras antes dos dois-pontos):
+//     título = o que vem antes, detalhe = o que vem depois;
+//  2) senão, o nome do ícone (do catálogo), se a palavra-chave estiver no SUJEITO do item
+//     (1ª oração ou primeiros 30 caracteres): "Relatório ... por WhatsApp" não vira "CRM + WhatsApp";
+//  3) senão, as primeiras palavras do próprio texto (sem terminar em preposição).
 const SOLTAS = new Set(['de', 'da', 'do', 'das', 'dos', 'para', 'com', 'e', 'no', 'na', 'nos', 'nas', 'em', 'a', 'o', 'as', 'os', 'ao', 'por', 'pela', 'pelo']);
-export function tituloCurtoComOrigem(t) {
+export function tituloDeclarado(t) {
+  // Sem parênteses nem ponto final antes dos dois-pontos: "CRM (ex.: ...)" não é título.
+  const m = semNumero(t).match(/^([^:\n()]{1,44}[^:\n().\s]):\s+(\S[\s\S]*)$/);
+  if (!m) return null;
+  const titulo = m[1].trim();
+  return titulo.split(/\s+/).length <= 5 ? { titulo, detalhe: m[2].trim() } : null;
+}
+export function tituloCurtoComOrigem(t, { declarado: usarDeclarado = true } = {}) {
+  const declarado = usarDeclarado && tituloDeclarado(t);
+  if (declarado) return { titulo: declarado.titulo, origem: 'titulo', detalhe: declarado.detalhe };
   const limpo = semNumero(t);
   const sujeito = primeiraOracao(limpo) || limpo.slice(0, 30);
   const i = ICONES.find((x) => x.chave === iconePara(sujeito));
@@ -94,13 +105,19 @@ export function planoGradeEntregas(a, W, H) {
   const gap = pt(12);
   const cw = (W - 2 * m - gap * (cols - 1)) / cols;
   const ch = (base - topo - gap * (rows - 1)) / rows;
-  const detalhes = a.cartoes.map((c) => semNumero(c.texto));
+  const larguraTitulo = cw / PT - 60;
+  // Título declarado que não cabe nem a 12pt: aquele item volta ao título do ícone/texto
+  // (e ao detalhe completo), em vez de a grade inteira cair na lista.
+  const origens = a.cartoes.map((c) => {
+    const o = tituloCurtoComOrigem(c.texto);
+    return o.origem === 'titulo' && o.titulo.length * 12 * 0.5 > larguraTitulo ? tituloCurtoComOrigem(c.texto, { declarado: false }) : o;
+  });
+  // Com título declarado, o detalhe é só o que vem depois dos dois-pontos (sem repetir o título).
+  const detalhes = a.cartoes.map((c, i) => origens[i].detalhe ?? semNumero(c.texto));
   const fonte = fonteQueCabe(detalhes, cw / PT - 24, ch / PT - 58, [11, 10, 9]);
   if (!fonte) return null;
   // Título (Anton ~0,5 em por caractere) em 1 linha na caixa de 34pt: 16pt, senão 14 ou 12.
-  const origens = a.cartoes.map((c) => tituloCurtoComOrigem(c.texto));
   const titulos = origens.map((o) => o.titulo);
-  const larguraTitulo = cw / PT - 60;
   const tamTitulo = [16, 14, 12].find((f) => titulos.every((t) => t.length * f * 0.5 <= larguraTitulo));
   if (!tamTitulo) return null;
   return { cols, rows, gap, cw, ch, fonte, detalhes, titulos, tamTitulo, origens: origens.map((o) => o.origem) };
@@ -235,22 +252,44 @@ const tipoDoDeck = (analisados) => {
   const p = analisados.find((a) => /^proposta/.test(normalizar(a.rotulo)));
   return p ? p.rotulo.split('·').slice(1).join('·').trim() : '';
 };
+// escopo.oferta.tipo do gerador → nome na capa. Tipo desconhecido: fica o do rótulo do deck.
+const NOMES_TIPO = { estruturacao: 'Estruturação', implementacao: 'Implementação', execucao: 'Execução', implementacao_e_execucao: 'Implementação e Execução' };
+export const nomeDoTipo = (tipo, analisados = []) => NOMES_TIPO[normalizar(tipo || '').replace(/\s+/g, '_')] || tipoDoDeck(analisados);
 
-export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data }) {
+// Modelo de venda do deal → modelo do catálogo de cases (pdv | inside-sales | e-commerce).
+// "pontual"/"recorrente" (cobrança) não dizem o modelo: sem bônus.
+const MODELOS = [['e-commerce', /e-?commerce|loja virtual|checkout|marketplace/], ['pdv', /\bpdv\b|loja fisica|showroom|presencial|ponto de venda/], ['inside-sales', /inside|televend|\bsdr\b|closer|b2b/]];
+export const modeloDoCatalogo = (modeloVenda) => {
+  const t = normalizar(modeloVenda || '');
+  return MODELOS.find(([, re]) => re.test(t))?.[0] ?? null;
+};
+
+// Marca V4 na capa do cliente: a arte da capa institucional (mão com o cubo V4, recortada
+// do deck aprovado) à direita, na altura do slide, e "V4 COMPANY" em texto no alto
+// (o texto fica mesmo se o plano B tirar a imagem).
+const MARCA_CAPA = { arquivo: 'v4-capa.png', largura: 681, altura: 800 };
+export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data, marca = true }) {
   const { m } = geo(W, H);
   const nome = cliente.toUpperCase();
-  const tam = nome.length > 26 ? 40 : nome.length > 16 ? 48 : 58;
+  const fotoW = marca ? Math.round(H * MARCA_CAPA.largura / MARCA_CAPA.altura) : 0;
+  const textoW = marca ? W - fotoW - m - pt(24) : W * 0.78;
+  const alturaNome = Math.round(H * 0.42);
+  // Anton ~0,5 em por caractere, quebra por palavra; 1,15 de altura por linha (o respiro da
+  // caixa conta): o maior tamanho em que o nome cabe sem encostar no traço vermelho.
+  const tam = [58, 48, 40, 34, 28].find((f) => linhasDoTexto(nome, Math.max(1, Math.floor(textoW / PT / (f * 0.5)))) * f * 1.15 <= alturaNome / PT) ?? 24;
   return [
     { createSlide: { objectId: sid, insertionIndex: indice, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
     ...fundo(sid, urlFundo(assets, 'capa')),
-    ...caixa(`${sid}_vk`, sid, m, Math.round(H * 0.2), W * 0.7, pt(22), `PROPOSTA COMERCIAL${tipo ? `  ·  ${tipo.toUpperCase()}` : ''}`, { rgb: ESTILO.amarelo, tamanho: 11, negrito: true }),
-    ...caixa(`${sid}_vn`, sid, m, Math.round(H * 0.27), W * 0.78, Math.round(H * 0.42), nome, { fonte: ESTILO.fonteTitulo, tamanho: tam }),
+    ...(marca ? [imagemRet(`${sid}_vf`, sid, `${assets}/marca/${VERSAO_ASSETS}/${MARCA_CAPA.arquivo}`, W - fotoW, 0, fotoW, H)] : []),
+    ...caixa(`${sid}_vw`, sid, m, Math.round(H * 0.07), textoW, pt(26), 'V4 COMPANY', { fonte: ESTILO.fonteTitulo, tamanho: 16 }),
+    ...caixa(`${sid}_vk`, sid, m, Math.round(H * 0.2), textoW, pt(22), `PROPOSTA COMERCIAL${tipo ? `  ·  ${tipo.toUpperCase()}` : ''}`, { rgb: ESTILO.amarelo, tamanho: 11, negrito: true }),
+    ...caixa(`${sid}_vn`, sid, m, Math.round(H * 0.27), textoW, alturaNome, nome, { fonte: ESTILO.fonteTitulo, tamanho: tam }),
     { updateShapeProperties: { objectId: `${sid}_vn`, shapeProperties: { contentAlignment: 'TOP' }, fields: 'contentAlignment' } },
     { updateParagraphStyle: { objectId: `${sid}_vn`, textRange: { type: 'ALL' }, style: { lineSpacing: 90 }, fields: 'lineSpacing' } },
     forma(`${sid}_vl`, sid, 'RECTANGLE', m, Math.round(H * 0.72), pt(64), pt(3)),
     aparencia(`${sid}_vl`, { fundo: ESTILO.vermelhoClaro }),
-    ...caixa(`${sid}_vs`, sid, m, Math.round(H * 0.75), W * 0.7, pt(22), `Preparada pela V4 Company${data ? `  ·  ${data}` : ''}`, { rgb: BRANCO_SUAVE, tamanho: 12 }),
-    ...caixa(`${sid}_vm`, sid, m, Math.round(H * 0.9), W - 2 * m, pt(18), 'NOSSO NEGÓCIO É VENDER O SEU', { rgb: ESTILO.cinza, tamanho: 9, negrito: true }),
+    ...caixa(`${sid}_vs`, sid, m, Math.round(H * 0.75), textoW, pt(22), `Preparada pela V4 Company${data ? `  ·  ${data}` : ''}`, { rgb: BRANCO_SUAVE, tamanho: 12 }),
+    ...caixa(`${sid}_vm`, sid, m, Math.round(H * 0.9), textoW, pt(18), 'NOSSO NEGÓCIO É VENDER O SEU', { rgb: ESTILO.cinza, tamanho: 9, negrito: true }),
   ];
 }
 
@@ -307,14 +346,16 @@ export function requestsNumeros(tiles, { sid, indice, W, H, assets, rotulo, roda
 // mas o case só entra com 3 sinais ou mais e pelo menos 1 específico.
 const SINAIS_GENERICOS = ['comercial', 'lead', 'convers|convert'];
 const SINAIS_ESPECIFICOS = ['crm', 'google', 'landing', 'rastre|ga4', 'tiktok', 'b2b', 'loja|showroom', 'whatsapp', 'e-?commerce|checkout'];
-export function escolherCaso(textoDeck, casos = CASOS.casos) {
+// modeloVenda (opcional): +1 ao case do mesmo modelo; não dispensa o sinal específico.
+export function escolherCaso(textoDeck, casos = CASOS.casos, { modeloVenda = null } = {}) {
   const t = normalizar(textoDeck);
+  const modelo = modeloDoCatalogo(modeloVenda);
   const casa = (lista, d) => lista.filter((s) => new RegExp(s).test(t) && new RegExp(s).test(d)).length;
   let melhor = null;
   for (const c of casos) {
     const d = normalizar(`${c.desafio} ${c.segmento}`);
     const especificos = casa(SINAIS_ESPECIFICOS, d);
-    const nota = especificos + casa(SINAIS_GENERICOS, d);
+    const nota = especificos + casa(SINAIS_GENERICOS, d) + (modelo && c.modelo === modelo ? 1 : 0);
     if (!melhor || nota > melhor.nota) melhor = { caso: c, nota, especificos };
   }
   return melhor && melhor.nota >= 3 && melhor.especificos >= 1 ? melhor : null;
@@ -451,11 +492,13 @@ export function requestsMockups(itens, { sid, indice, W, H, assets, rotulo, roda
 }
 
 // ---------- orquestração ----------
-// Opções (decisões do Gabriel pendentes; padrões conservadores):
-//   capa: 'depois' (após a capa institucional) | 'antes' | 'substituir' (apaga a institucional) | 'nao'
-//   caso: 'auto' (só em proposta de Estruturação) | 'sim' (qualquer tipo, com aviso no rodapé) | 'nao'
+// Opções (padrões = decisões do Gabriel, 30/10/2026):
+//   capa: 'substituir' (apaga a institucional; a capa nova leva a marca V4) | 'depois' | 'antes' | 'nao'
+//   caso: 'nao' (padrão; o closer liga) | 'sim' (com aviso no rodapé fora de Estruturação) | 'auto' (só em Estruturação)
+//   tipo: escopo.oferta.tipo do gerador ('estruturacao'…); vale no lugar do rótulo do deck (capa e case)
+//   modeloVenda: modelo do deal (texto livre); +1 ao case do mesmo modelo
 export const AVISO_CASO = 'RESULTADO DE ESTRUTURAÇÃO ESTRATÉGICA COM EXECUÇÃO CONTÍNUA, NÃO DESTA PROPOSTA  ·  CASE V4, PÁGINA OFICIAL EE 2026';
-export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.random().toString(36).slice(2, 8)}`, data = null, casos = CASOS.casos, capa = 'depois', caso: modoCaso = 'auto' } = {}) {
+export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.random().toString(36).slice(2, 8)}`, data = null, casos = CASOS.casos, capa = 'substituir', caso: modoCaso = 'nao', tipo = null, modeloVenda = null } = {}) {
   if (!assets) throw new Error('raiz dos assets ausente');
   const base = `${assets}/icones/${VERSAO_ASSETS}`;
   const W = apresentacao.pageSize?.width?.magnitude ?? 9144000;
@@ -483,7 +526,7 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
       if (p) {
         reqs.push(...requestsGradeEntregas(a, p, W, H, assets));
         layout = 'grade_entregas';
-        feito.push(`titulos:icone=${p.origens.filter((o) => o === 'icone').length},texto=${p.origens.filter((o) => o === 'texto').length}`);
+        feito.push(`titulos:${['titulo', 'icone', 'texto'].map((o) => `${o}=${p.origens.filter((x) => x === o).length}`).join(',')}`);
       }
     }
     else if (/^(diagnostico|contexto)/.test(r)) { const p = planoGradeDiagnostico(a, W, H); if (p) { reqs.push(...requestsGradeDiagnostico(a, p, W, H, assets)); layout = 'grade_diagnostico'; } }
@@ -516,7 +559,9 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
   if (cliente && capa !== 'nao' && !existe('_vcapa')) {
     const indice = capa === 'depois' && institucional ? 1 : 0;
     const extra = capa === 'substituir' && institucional ? [{ deleteObject: { objectId: institucional } }] : [];
-    novos.push({ indice, requests: [...requestsCapa({ sid: `${prefixo}_vcapa`, indice, W, H, assets, cliente, tipo: tipoDoDeck(analisados), data }), ...extra] });
+    // Logo depois da institucional, a arte V4 repetiria: lá a capa nova vai sem a foto.
+    const marca = !(capa === 'depois' && institucional);
+    novos.push({ indice, requests: [...requestsCapa({ sid: `${prefixo}_vcapa`, indice, W, H, assets, cliente, tipo: nomeDoTipo(tipo, analisados), data, marca }), ...extra] });
     resumo.push({ slide: `${prefixo}_vcapa`, titulo: cliente, feito: [`capa_cliente:${capa}`] });
   }
   const entregas = analisados.find((a) => /^proposta/.test(normalizar(a.rotulo)) && a.cartoes.length);
@@ -528,8 +573,8 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
     resumo.push({ slide: `${prefixo}_vmock`, titulo: 'COMO FICA NA PRÁTICA', feito: [`mockups:${mk.length}`] });
   }
   const textoDeck = analisados.flatMap((a) => [a.titulo, ...a.cartoes.map((c) => c.texto)]).join('\n');
-  const ehEstruturacao = /estruturacao/.test(normalizar(tipoDoDeck(analisados)));
-  const caso = modoCaso === 'nao' || (modoCaso === 'auto' && !ehEstruturacao) ? null : escolherCaso(textoDeck, casos);
+  const ehEstruturacao = /estruturacao/.test(normalizar(nomeDoTipo(tipo, analisados)));
+  const caso = modoCaso === 'nao' || (modoCaso === 'auto' && !ehEstruturacao) ? null : escolherCaso(textoDeck, casos, { modeloVenda });
   if (caso && !existe('_vcase')) {
     const aviso = ehEstruturacao ? null : AVISO_CASO;
     novos.push({ indice: depoisEntregas, requests: requestsCaso(caso.caso, { sid: `${prefixo}_vcase`, indice: depoisEntregas, W, H, assets, rodape, aviso }) });
@@ -554,8 +599,8 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
 }
 
 // Aplica a v2 (mesma rede e mesmo plano B da v1: sem imagens se o Google não baixar alguma).
-export const aplicarVisualV2 = ({ assets, data = null, capa, caso, ...resto }) =>
-  aplicarVisual({ ...resto, planejar: (ap) => requestsVisualV2(ap, { assets, data, capa, caso }), planoB: planoBV2 });
+export const aplicarVisualV2 = ({ assets, data = null, capa, caso, tipo, modeloVenda, ...resto }) =>
+  aplicarVisual({ ...resto, planejar: (ap) => requestsVisualV2(ap, { assets, data, capa, caso, tipo, modeloVenda }), planoB: planoBV2 });
 
 // Plano B da v2: tira imagens e fundos de imagem (a cor sólida que vem antes fica) e
 // descarta o slide de case inteiro (sem a foto ele perde 40% da área).
