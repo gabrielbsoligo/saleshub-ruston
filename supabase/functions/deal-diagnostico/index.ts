@@ -12,7 +12,7 @@
 //     deals.link_transcricao) e chama a rotina:
 //       URL  = env DIAG_ROUTINE_TRIGGER_URL (fallback CLAUDE_ROUTINE_TRIGGER_URL)
 //       auth = Bearer env CLAUDE_DIAG_ROUTINE_KEY
-//       headers anthropic-beta/version iguais ao prep-call (call_routine.py)
+//       headers anthropic-beta/version de Claude Code Routine
 //       body {text: JSON.stringify(payload)} — payload inclui callback_url
 //       e callback_secret pra rotina devolver o resultado.
 //   - grava deal_diagnosticos (status processing, session ids).

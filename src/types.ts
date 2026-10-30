@@ -712,6 +712,11 @@ export interface PrepBriefing {
   failed_stage?: string;
   github_run_url?: string;
   scraped_data?: Record<string, any>;
+  // Tentativa vigente (migration_184): cada Gerar/Reenviar abre uma
+  attempt_id?: string | null;
+  attempt_motor?: string | null;
+  started_at?: string | null;
+  deadline_at?: string | null;
   routine_session_id?: string;
   routine_session_url?: string;
   briefing_markdown?: string;

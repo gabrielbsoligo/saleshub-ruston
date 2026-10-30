@@ -16,6 +16,7 @@ import Bottleneck from 'bottleneck';
 import Anthropic from '@anthropic-ai/sdk';
 import { sondarSite as sondarSiteSeguro } from './sonda.mjs';
 import { disponibilidade, escolherPadrao, variaveisDe } from './cadenciaModelos.mjs';
+import { executarPrep, contagensInstagram } from './prepCall.mjs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 // Contexto da requisição (token do chamador + lead em foco) disponível em
@@ -1318,6 +1319,13 @@ async function auditUrl(url) {
     hasGoogleAds: /AW-\d{6,}|googleadservices\.com|google_conversion|gtag\('event',\s*'conversion'/i.test(html),
     // Pixel do TikTok Ads.
     hasTiktokPixel: /analytics\.tiktok\.com|ttq\.(load|track|page)/i.test(html),
+    // Sinais de SEO/CRM/conteúdo (score de maturidade do Prep Call).
+    title: (html.match(/<title[^>]*>([^<]{1,200})<\/title>/i)?.[1] ?? '').replace(/\s+/g, ' ').trim() || null,
+    metaDescription: (html.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']{1,400})["']/i)?.[1]
+      ?? html.match(/<meta[^>]+content=["']([^"']{1,400})["'][^>]*name=["']description["']/i)?.[1] ?? '').trim() || null,
+    hasRdStation: /rdstation|rd-station|d335luupugsy2\.cloudfront\.net/i.test(html),
+    hasHubspot: /js\.hs-scripts\.com|hs-analytics|hsforms|hubspot/i.test(html),
+    hasBlog: /href=["'][^"']*\/blog(?:[\/?#"'])/i.test(html),
     siteInstagram: siteSocials.instagram,
     siteFacebook: siteSocials.facebook,
     notes,
@@ -4502,6 +4510,8 @@ async function workerTick() {
       const n = await sweepEsteirasOrfas().catch((e) => { console.warn('[worker] sweep falhou:', String(e?.message || e).slice(0, 160)); return 0; });
       if (n) console.warn(`[worker] ${n} lead(s) preso(s) em esteira_fX marcados como esteira_erro`);
     }
+    // Prep Call primeiro: reunião marcada tem prioridade sobre o outbound.
+    await prepTick();
     const cap = capacidade();
     for (const fase of ['f4', 'f3', 'f2', 'all']) {
       const livre = cap[fase] - (workerRodando[fase] ?? 0);
@@ -4538,6 +4548,166 @@ async function estadoFila() {
     ultimoTick: _ultimoTick ? new Date(_ultimoTick).toISOString() : null,
   };
 }
+// ============================================================================
+// PREP CALL (briefing pré-reunião) — fila própria prep_call_jobs (migration_184)
+// A lógica (coleta, score, prompt v3, leitura da resposta) vive em prepCall.mjs;
+// aqui ficam as ferramentas do motor que ela usa e a ponte com as RPCs.
+// ============================================================================
+const PREP_ATIVO = process.env.PREP_ATIVO !== '0';
+const PREP_MODEL = process.env.PREP_MODEL || 'claude-opus-5-5';
+const PREP_EFFORT = process.env.PREP_EFFORT || 'medium';
+const PREP_CAP = envInt('PREP_CAP', 2);
+const PREP_DAILY_CAP = envInt('PREP_DAILY_CAP', 80);
+const PREP_BUCKET = 'prep-call-visuais';
+let prepRodando = 0;
+let _prepPausaAte = 0;
+
+async function prepTick() {
+  if (!PREP_ATIVO || Date.now() < _prepPausaAte) return;
+  const livre = PREP_CAP - prepRodando;
+  if (livre <= 0) return;
+  let jobs;
+  try {
+    jobs = await sbRpc(SERVICE_KEY, 'prep_call_claim', { p_worker: WORKER_ID, p_limite: livre, p_lease_seg: 180, p_teto_diario: PREP_DAILY_CAP });
+  } catch (e) {
+    // Migration ainda não aplicada / banco fora: não insiste a cada 2 s.
+    _prepPausaAte = Date.now() + 60_000;
+    console.warn('[prep] claim falhou (pausa de 60 s):', String(e?.message || e).slice(0, 160));
+    return;
+  }
+  for (const job of jobs ?? []) void executarPrepJob(job);
+}
+
+async function executarPrepJob(job) {
+  prepRodando += 1;
+  const t0 = Date.now();
+  const rpc = (fn, args) => sbRpc(SERVICE_KEY, fn, args);
+  const db = {
+    renovar: (j, etapa) => rpc('prep_call_renovar', { p_job: j.job_id, p_token: j.claim_token, p_etapa: etapa, p_lease_seg: 180 }).then((r) => r === true),
+    concluir: (j, { markdown, json, scraped, modelo }) => rpc('prep_call_concluir', { p_job: j.job_id, p_token: j.claim_token, p_markdown: markdown, p_json: json, p_scraped: scraped, p_modelo: modelo }).then((r) => r === true),
+    falhar: (j, { etapa, mensagem, scraped }) => rpc('prep_call_falhar', { p_job: j.job_id, p_token: j.claim_token, p_etapa: etapa, p_mensagem: mensagem, p_scraped: scraped ?? null }),
+  };
+  const deps = {
+    googleNegocio: (empresa, cidade) => serperPlacesCached(marcaDe(empresa), cidade, []),
+    descobrirSite: ({ empresa, cidade, gmn }) => discoverSite({ companyName: empresa, nomeFantasia: marcaDe(empresa), cidade, cnpj: job.lead_cnpj ?? null, gmn: gmn ?? null }),
+    auditar: (url) => auditUrl(url),
+    pagespeed: (url) => pagespeed(url),
+    telaSite: (url) => capturarTela(url),
+    acharInstagram: (empresa, opts) => findCompanySocial(marcaDe(empresa), 'instagram', [], opts),
+    perfilInstagram: (handle) => perfilInstagramPrep(handle),
+    metaPagina: async (fbUrl, marca) => {
+      const r = await resolverMetaPageId(fbUrl, { marca: marcaDe(marca) });
+      return r?.pageId ? { pageId: String(r.pageId), pageName: r.pageName ?? null } : null;
+    },
+    anunciosMeta: (p) => anunciosHeadless({ ...p, company: marcaDe(p.company) }),
+    anunciosGoogle: (p) => googleTransparency(p),
+    telaPagina: (url) => capturarTela(url, { esperaMs: 5000 }),
+    salvarVisual: (nome, conteudo, tipo) => salvarVisualPrep(job, nome, conteudo, tipo),
+  };
+  try {
+    const r = await reqCtx.run({ token: SERVICE_KEY, leadId: null, fase: 'PREP' }, () =>
+      executarPrep(job, { deps, db, gerarTexto: gerarTextoPrep, modelo: PREP_MODEL, log: (m) => console.log(`[prep] ${job.empresa}: ${m}`) }));
+    console.log(`[prep] ${job.empresa} (execução ${job.execucao}): ${r.ok ? 'concluído' : r.encerrada ? 'tentativa encerrada' : `falhou — ${r.erro}`} em ${Math.round((Date.now() - t0) / 1000)} s`);
+    void registrarMetrica({ fonte: 'job:prep', ms: Date.now() - t0, ok: !!r.ok, note: r.erro ?? null, fase: 'PREP' });
+  } catch (e) {
+    console.warn(`[prep] ${job.empresa}: erro inesperado`, String(e?.message || e).slice(0, 200));
+  } finally {
+    prepRodando = Math.max(0, prepRodando - 1);
+  }
+}
+
+// Tela (JPEG) de uma página pública, acima da dobra. Com proxy quando pedido.
+async function capturarTela(url, { proxy = null, esperaMs = 3000, largura = 1280, altura = 800 } = {}) {
+  return runHeadless(async () => {
+    const browser = await getBrowser();
+    if (!browser) throw new Error('headless indisponível');
+    let ctx;
+    try {
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: largura, height: altura }, ...(proxy ? { proxy } : {}) });
+      const page = await ctx.newPage();
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.waitForTimeout(esperaMs);
+      return await page.screenshot({ type: 'jpeg', quality: 70 });
+    } finally {
+      if (ctx) await ctx.close().catch(() => {});
+    }
+  });
+}
+
+// Perfil público do Instagram: contagens (og:description) + tela do cabeçalho.
+// IP de datacenter costuma cair no muro de login: com proxy residencial quando houver.
+async function perfilInstagramPrep(handle) {
+  const url = `https://www.instagram.com/${handle}/`;
+  return runHeadless(async () => {
+    const browser = await getBrowser();
+    if (!browser) throw new Error('headless indisponível');
+    let ctx;
+    try {
+      ctx = await browser.newContext({ locale: 'pt-BR', userAgent: UA, viewport: { width: 1280, height: 900 }, ...(proxyConfig() ? { proxy: proxyConfig() } : {}) });
+      const page = await ctx.newPage();
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+      await page.waitForTimeout(3500);
+      const html = await page.content().catch(() => '');
+      if (IG_INDISPONIVEL_RE.test(html.slice(0, 200000)) && !/og:description/i.test(html)) return { existe: false };
+      const c = contagensInstagram(html);
+      const tela = await page.screenshot({ type: 'jpeg', quality: 70 }).catch(() => null);
+      return { existe: true, ...c, tela };
+    } finally {
+      if (ctx) await ctx.close().catch(() => {});
+    }
+  });
+}
+
+// Guarda a imagem no bucket público do briefing e devolve a URL pública.
+// `conteudo` é um Buffer (tela) ou a URL de uma imagem (criativo do fbcdn, que expira).
+async function salvarVisualPrep(job, nome, conteudo, tipo = 'image/jpeg') {
+  let corpo = conteudo;
+  let ct = tipo;
+  if (typeof conteudo === 'string') {
+    if (!/^https:\/\//i.test(conteudo)) return null;
+    const r = await fetchWithTimeout(conteudo, { headers: { 'user-agent': UA } }, 15000);
+    if (!r.ok) throw new Error(`imagem ${nome}: HTTP ${r.status}`);
+    ct = (r.headers.get('content-type') || '').split(';')[0].trim();
+    if (!/^image\/(jpeg|png|webp)$/.test(ct)) throw new Error(`imagem ${nome}: tipo ${ct || '?'}`);
+    corpo = Buffer.from(await r.arrayBuffer());
+  }
+  if (!corpo || corpo.length > 5 * 1024 * 1024) return null;
+  const ext = ct === 'image/png' ? 'png' : ct === 'image/webp' ? 'webp' : 'jpg';
+  const caminho = `${job.briefing_id}/${job.attempt_id}/${nome}.${ext}`;
+  const r = await fetch(`${AUTH_SUPABASE_URL}/storage/v1/object/${PREP_BUCKET}/${caminho}`, {
+    method: 'POST',
+    headers: { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}`, 'content-type': ct, 'x-upsert': 'true' },
+    body: corpo,
+  });
+  if (!r.ok) throw new Error(`upload ${nome}: HTTP ${r.status}`);
+  return `${AUTH_SUPABASE_URL}/storage/v1/object/public/${PREP_BUCKET}/${caminho}`;
+}
+
+// Briefing pela API do Claude (streaming: a resposta é longa). Fallback do
+// servidor em recusa; se a conta não aceitar o beta, repete sem ele.
+async function gerarTextoPrep(prompt) {
+  const client = anthropicClient();
+  if (!client) throw new Error('ANTHROPIC_API_KEY ausente no motor');
+  const params = {
+    model: PREP_MODEL,
+    max_tokens: 32000,
+    thinking: { type: 'adaptive' },
+    output_config: { effort: PREP_EFFORT },
+    messages: [{ role: 'user', content: prompt }],
+  };
+  let msg;
+  try {
+    msg = await client.beta.messages.stream({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }).finalMessage();
+  } catch (e) {
+    if (e?.status !== 400 || !/fallback|beta/i.test(String(e?.message || ''))) throw e;
+    console.warn('[prep] fallback do servidor recusado — repetindo sem ele');
+    msg = await client.messages.stream(params).finalMessage();
+  }
+  if (msg.stop_reason === 'refusal') throw new Error('o modelo recusou gerar o briefing');
+  if (msg.stop_reason === 'max_tokens') throw new Error('briefing cortado no limite de tokens');
+  return (msg.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+}
+
 if (SERVICE_KEY) {
   setInterval(workerTick, 2000);
   console.log(`[worker] fila de jobs LIGADA (${WORKER_ID})`);
@@ -4596,6 +4766,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, {
         versao: 'cases-sonda-2026-10-26',
         worker: { ativo: !!SERVICE_KEY, id: WORKER_ID, rodando: workerRodando, capacidade: capacidade() },
+        prep: { ativo: PREP_ATIVO && !!SERVICE_KEY, rodando: prepRodando, capacidade: PREP_CAP, tetoDiario: PREP_DAILY_CAP, modelo: PREP_MODEL, effort: PREP_EFFORT, pausadoAte: _prepPausaAte > Date.now() ? new Date(_prepPausaAte).toISOString() : null },
         fila,
         ok: true,
         authRequired: AUTH_REQUIRED,
