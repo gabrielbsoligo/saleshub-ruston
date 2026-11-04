@@ -301,44 +301,44 @@
       }
       function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
       function pad(n) { return (n < 10 ? '0' : '') + n; }
-      function calibrado() { var d = lsGet('desvio', null); return !!d && typeof d.s === 'number'; }
-      function desvio() { var d = lsGet('desvio', null); return d && typeof d.s === 'number' ? d.s : 0; }
-      // (Date.now, performance.now) da última medição DESTA aba: se o relógio do PC saltou (acerto manual/NTP), a
-      // diferença entre os dois cresce; aí as amostras antigas do desvio não valem mais.
-      var ultimoPar = null;
-      function perfAgora() { try { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : null; } catch (e) { return null; } }
-      function medirDesvio(servidorAgora) {
-        if (!servidorAgora) return;
-        var agoraMs = Date.now(), perf = perfAgora();
-        var m = Math.floor(agoraMs / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
-        var saltou = !!ultimoPar && perf !== null && Math.abs((agoraMs - ultimoPar.t) - (perf - ultimoPar.p)) > 5000;
-        ultimoPar = perf !== null ? { t: agoraMs, p: perf } : null;
-        var am = saltou ? [] : (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto grande: recomeça
-        am.push(m); am = am.slice(-10);
-        lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
-      }
+      function calibrado() { var d = lsGet('desvio', null); return !!d && typeof d.s === 'number'; }
+      function desvio() { var d = lsGet('desvio', null); return d && typeof d.s === 'number' ? d.s : 0; }
+      // (Date.now, performance.now) da última medição DESTA aba: se o relógio do PC saltou (acerto manual/NTP), a
+      // diferença entre os dois cresce; aí as amostras antigas do desvio não valem mais.
+      var ultimoPar = null;
+      function perfAgora() { try { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : null; } catch (e) { return null; } }
+      function medirDesvio(servidorAgora) {
+        if (!servidorAgora) return;
+        var agoraMs = Date.now(), perf = perfAgora();
+        var m = Math.floor(agoraMs / 1000) - servidorAgora, d = lsGet('desvio', null) || { amostras: [] };
+        var saltou = !!ultimoPar && perf !== null && Math.abs((agoraMs - ultimoPar.t) - (perf - ultimoPar.p)) > 5000;
+        ultimoPar = perf !== null ? { t: agoraMs, p: perf } : null;
+        var am = saltou ? [] : (d.amostras || []).filter(function (x) { return Math.abs(x - m) <= 300; });   // salto grande: recomeça
+        am.push(m); am = am.slice(-10);
+        lsSet('desvio', { s: Math.min.apply(null, am), amostras: am });
+      }
       // relógio MONOTÔNICO (não muda com o acerto do relógio do PC): prazo da autorização de atendimento automático
       function mono() { try { if (typeof performance !== 'undefined' && performance.now) return performance.now(); } catch (e) {} return Date.now(); }
-      function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
-      // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
-      // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
-      // ou null (feitos ANTES da 1ª calibração, no relógio do PC). Só os null são convertidos, uma vez, quando a
-      // calibração existir. Carimbos do servidor (gerado_em, chats_em) são brutos. Snapshot antigo sem marca = null.
-      function marca() { return calibrado() ? desvio() : null; }
-      function alinhar(t, d) { return (d === null || d === undefined) && calibrado() ? t - desvio() : t; }
-      function normalizar(s) {
-        if (!s || !calibrado()) return false;
-        var mudou = false;
-        if (s.falha && typeof s.falha.d !== 'number') { s.falha.em = alinhar(s.falha.em, null); s.falha.d = desvio(); mudou = true; }
-        var semMarca = s.dLocal === null || (s.dLocal === undefined && s.modo === 'degradado');
-        if (semMarca) { if (s.dadosEm) s.dadosEm = alinhar(s.dadosEm, null); s.dLocal = desvio(); mudou = true; }
-        return mudou;
-      }
-      // depois de medir o desvio: compatibiliza o snapshot (e o estado) e avisa as outras abas (rev nova)
-      function recalibrar() {
-        var s = lsGet(kSnap(), null);
-        if (s && normalizar(s)) { s.rev = novaRev(); lsSet(kSnap(), s); aplicar(s); }
-      }
+      function agoraS() { return Math.floor(Date.now() / 1000) - desvio(); }
+      // Carimbos LOCAIS (falha.em; dadosEm do degradado) levam uma marca: o desvio já calibrado quando foram feitos
+      // (número: já estão no referencial do servidor e NUNCA se movem — nem se o relógio do PC for corrigido depois)
+      // ou null (feitos ANTES da 1ª calibração, no relógio do PC). Só os null são convertidos, uma vez, quando a
+      // calibração existir. Carimbos do servidor (gerado_em, chats_em) são brutos. Snapshot antigo sem marca = null.
+      function marca() { return calibrado() ? desvio() : null; }
+      function alinhar(t, d) { return (d === null || d === undefined) && calibrado() ? t - desvio() : t; }
+      function normalizar(s) {
+        if (!s || !calibrado()) return false;
+        var mudou = false;
+        if (s.falha && typeof s.falha.d !== 'number') { s.falha.em = alinhar(s.falha.em, null); s.falha.d = desvio(); mudou = true; }
+        var semMarca = s.dLocal === null || (s.dLocal === undefined && s.modo === 'degradado');
+        if (semMarca) { if (s.dadosEm) s.dadosEm = alinhar(s.dadosEm, null); s.dLocal = desvio(); mudou = true; }
+        return mudou;
+      }
+      // depois de medir o desvio: compatibiliza o snapshot (e o estado) e avisa as outras abas (rev nova)
+      function recalibrar() {
+        var s = lsGet(kSnap(), null);
+        if (s && normalizar(s)) { s.rev = novaRev(); lsSet(kSnap(), s); aplicar(s); }
+      }
       function minutoDoDia() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
       function hora(unixS) { var d = new Date(unixS * 1000); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
       function fmtQuando(unix, now) {

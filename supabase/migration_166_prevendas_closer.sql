@@ -1,6 +1,22 @@
 -- migration_166_prevendas_closer.sql — fila do CLOSER no widget ruston-prevendas (PROPOSTA.md §7).
 -- Só funções de LEITURA (create or replace), só service_role. Nada de tabela, cadência ou Kommo.
 
+-- Reverter (volta à 163; a 0.4.8 não usa status_id/atualizado nem prevendas_compromissos):
+--   drop function if exists public.prevendas_compromissos(bigint, bigint[], timestamptz, timestamptz);
+--   create or replace function public.prevendas_leads(p_ids bigint[])
+--   returns jsonb
+--   language sql stable security definer set search_path = public, kommo as $$
+--     select coalesce(jsonb_object_agg(l.id::text, jsonb_build_object(
+--              'nome', l.name, 'pipeline_id', l.pipeline_id, 'etapa', s.name,
+--              'origem', (select cf->'values'->0->>'value'
+--                           from jsonb_array_elements(case when jsonb_typeof(l.custom_fields) = 'array' then l.custom_fields else '[]'::jsonb end) cf
+--                          where (cf->>'field_id')::bigint = 975168 limit 1))), '{}'::jsonb)
+--       from kommo.leads l
+--       left join kommo.stages s on s.id = l.status_id and s.pipeline_id = l.pipeline_id
+--      where l.id = any(p_ids) and not coalesce(l.is_deleted, false);
+--   $$;
+--   (os grants da 163 continuam valendo: create or replace preserva o ACL)
+
 -- dados de lead (réplica) para os ids pedidos: {id: {nome, pipeline_id, status_id, etapa, origem, atualizado}}
 -- (mesma função da 163, agora com status_id e a data de atualização da réplica)
 create or replace function public.prevendas_leads(p_ids bigint[])
