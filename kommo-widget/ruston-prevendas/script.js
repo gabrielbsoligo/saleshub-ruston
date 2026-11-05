@@ -910,10 +910,15 @@
         }, ms);
       }
       function mmss(ms) { var t = Math.max(0, Math.floor(ms / 1000)); return pad(Math.floor(t / 60)) + ':' + pad(t % 60); }
+      var VOZ_POS_CHAMADA_MS = 20000;
       function vozEmUso() { return !!(voz.sessao || voz.pedida || voz.discando || voz.emChamada); }
+      function vozVisivel() {
+        if (vozEmUso()) { state.vozAte = Date.now() + VOZ_POS_CHAMADA_MS; return true; }
+        return state.vozAberta || Date.now() < (state.vozAte || 0);
+      }
       function htmlVoz() {
         if (!cfg().voz) return '';
-        if (!state.vozAberta && !vozEmUso()) return '';
+        if (!vozVisivel()) return '';
         var rot = { off: 'desligado', carregando: 'conectando…', registrado: 'pronto', reconectando: 'reconectando…', erro: 'com problema', outra_aba: 'ativo em outra aba' }[voz.estado] || voz.estado;
         var h = '<div class="rpv-card"><div class="rpv-h"><span class="tt">📞 Telefone' + (voz.provedor && voz.ua ? ' ' + (voz.provedor === '3c' ? '3C' : '4com') : '') + ' · ' + esc(rot) + '</span>' +
                 (voz.estado === 'outra_aba' ? '<button data-act="voz-aqui" title="Usar o telefone nesta aba">usar aqui</button>' : '') +
@@ -994,6 +999,7 @@
         c.className = NS + '-root ' + NS + '-' + conf.position + (state.arrasto && state.arrasto.movendo ? ' ' + NS + '-arrastando' : '');
         var dir = conf.position.indexOf('right') > 0, p = state.pos;
         if (p && typeof p.top === 'number' && typeof p.lado === 'number') {             // posição arrastada pelo usuário (localStorage)
+          p = clampPos(p);                                                               // outra tela/janela menor: nunca some da tela
           c.style.top = p.top + 'px'; c.style.bottom = '';
           if (dir) { c.style.right = p.lado + 'px'; c.style.left = ''; } else { c.style.left = p.lado + 'px'; c.style.right = ''; }
         } else {
@@ -1076,8 +1082,10 @@
         var pill = '<div class="rpv-tog' + (p ? (p.futura ? ' fut' : '') : ' off') + '">' +
                    '<span class="rpv-grip" data-drag="1" title="Arraste para mover · duplo clique volta ao lugar">⋮⋮</span>';
         if (conf.voz) {
-          var vst = vozEmUso() ? (voz.emChamada ? 'chamada' : 'tocando') : ({ registrado: 'ok', erro: 'erro', carregando: 'liga', reconectando: 'liga' }[voz.estado] || 'off');
-          pill += '<button class="rpv-tb rpv-tb-voz' + (state.vozAberta ? ' on' : '') + ' st-' + vst + '" data-act="voz" aria-pressed="' + (state.vozAberta ? 'true' : 'false') + '" title="' + (state.vozAberta ? 'Esconder o telefone' : 'Abrir o telefone') + '">' +
+          var vst = vozEmUso() ? (voz.emChamada ? 'chamada' : 'tocando') : ({ registrado: 'ok', erro: 'erro', carregando: 'liga', reconectando: 'liga', outra_aba: 'liga' }[voz.estado] || 'off');
+          var vrot = { off: 'desligado', carregando: 'conectando…', registrado: 'pronto', reconectando: 'reconectando…', erro: 'com problema', outra_aba: 'ativo em outra aba' }[voz.estado] || voz.estado;
+          var vdica = 'Ramal: ' + vrot + (voz.msg ? ' — ' + voz.msg : '') + ' · clique para ' + (state.vozAberta ? 'esconder' : 'abrir');
+          pill += '<button class="rpv-tb rpv-tb-voz' + (state.vozAberta ? ' on' : '') + ' st-' + vst + '" data-act="voz" aria-pressed="' + (state.vozAberta ? 'true' : 'false') + '" title="' + esc(vdica) + '">' +
                   '<span class="dot"></span>📞 Ligar</button>';
         }
         pill += '<button class="rpv-tb rpv-tb-ntf' + (atrasado ? ' late' : '') + '" ' + (p ? 'data-act="avancar"' : 'disabled') + ' title="' + esc(dica) + '">🔔' +
@@ -1129,13 +1137,17 @@
         ev.preventDefault();
         state.arrasto = { x: ev.clientX, y: ev.clientY, top: r.top, lado: cfg().position.indexOf('right') > 0 ? (window.innerWidth - r.right) : r.left, movendo: false };
       }
+      function clampPos(p) {
+        var W = window.innerWidth || 1200, H = window.innerHeight || 800;
+        return { top: Math.max(0, Math.min(H - 40, Math.round(p.top))), lado: Math.max(0, Math.min(W - 120, Math.round(p.lado))) };
+      }
       function aoMover(ev) {
         var a = state.arrasto; if (!a) return;
         var dx = ev.clientX - a.x, dy = ev.clientY - a.y;
         if (!a.movendo && Math.abs(dx) + Math.abs(dy) < 4) return;
         a.movendo = true;
         var dir = cfg().position.indexOf('right') > 0, W = window.innerWidth || 1200, H = window.innerHeight || 800;
-        state.pos = { top: Math.max(0, Math.min(H - 40, Math.round(a.top + dy))), lado: Math.max(0, Math.min(W - 120, Math.round(a.lado + (dir ? -dx : dx)))) };
+        state.pos = clampPos({ top: a.top + dy, lado: a.lado + (dir ? -dx : dx) });
         raiz();
       }
       function aoSoltar() {
@@ -1183,6 +1195,9 @@
         ouvir(document, 'mousemove', aoMover, false);
         ouvir(document, 'mouseup', aoSoltar, false);
         ouvir(document, 'dblclick', aoDuploClique, false);
+        ouvir(document, 'mouseleave', aoSoltar, false);
+        ouvir(window, 'blur', aoSoltar, false);
+        ouvir(window, 'resize', function () { if (state.pos) raiz(); }, false);
         ouvir(window, 'storage', aoArmazenar, false);
         var prime = function () {
           try { if (state.audio) { state.audio.muted = true; state.audio.play().then(function () { state.audio.pause(); state.audio.currentTime = 0; state.audio.muted = false; }).catch(function () { state.audio.muted = false; }); } } catch (e) {}
@@ -1199,6 +1214,7 @@
           if (location.pathname !== ultima) { ultima = location.pathname; if (cfg().voz && voz.estado === 'registrado') telefonesAqui(g); render(); }
           else if (trocarPerfil()) ciclo(g, true);     // override do modo mudou sem onSave
           else if (podarChats()) render();          // chat venceu pelo relógio (sem leitura nova, pausa ou aba seguidora)
+          else if (state.vozAte && Date.now() >= state.vozAte && !vozEmUso()) { state.vozAte = 0; render(); }   // fim da janela pós-ligação
         }, 700);
         intervalo(function () { cicloVoz(g); }, 1000);                     // liga/desliga o telefone conforme o setting voz
         if (cfg().voz) iniciarVoz(g, false);

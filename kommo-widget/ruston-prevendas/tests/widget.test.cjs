@@ -1379,7 +1379,7 @@ test('pílula-toggle: padrão FECHADO; "Ligar" abre e fecha o telefone e o estad
   assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(UI_KEY)), { voz: false, fila: false })
 })
 
-test('pílula-toggle: chamada recebida abre o telefone sozinha mesmo com o toggle fechado; depois volta a esconder', async () => {
+test('pílula-toggle: chamada recebida abre o telefone sozinha mesmo com o toggle fechado; fica 20 s após o fim e esconde', async () => {
   const env = ambiente(), reg = {}
   const { w } = comVoz(env, reg, { credencial: CRED }, { __fechado: true })
   w.callbacks.init(); await flush(); reg.emit('registered')
@@ -1388,7 +1388,35 @@ test('pílula-toggle: chamada recebida abre o telefone sozinha mesmo com o toggl
   assert.match(html, /Chamada recebida/); assert.match(html, /rpv-tb-voz st-tocando/)
   s.session.terminate(); env.rodarTimers('i')
   html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Telefone 4com/)                                          // janela pós-ligação: resultado visível
   assert.doesNotMatch(html, /Chamada recebida/); assert.match(html, /data-act="voz" aria-pressed="false"/)
+  const agoraReal = Date.now
+  env.ctx.Date = class extends Date { static now() { return agoraReal() + 21000 } }
+  env.rodarTimers('i')
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone 4com/)
+})
+
+test('pílula-toggle: title do Ligar traz o estado do ramal; "outra aba" fica amarelo', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, { credencial: CRED }, { __fechado: true })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  assert.match(env.elems['rpv-root'].innerHTML, /title="Ramal: pronto · clique para abrir"/)
+})
+
+test('pílula-toggle: posição salva em tela maior é trazida para dentro da tela atual; arrasto cancela ao sair da janela', () => {
+  const env = ambiente()
+  env.ctx.window.innerWidth = 1366; env.ctx.window.innerHeight = 700
+  env.ctx.localStorage.setItem(POS_KEY, JSON.stringify({ top: 950, lado: 1700 }))
+  const w = instanciar(env, [{ ok: true, itens: [] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const root = env.elems['rpv-root']
+  assert.equal(root.style.top, '660px'); assert.equal(root.style.right, '1246px')
+  root.getBoundingClientRect = () => ({ top: 660, right: 120, left: 0, bottom: 690 })
+  const alca = { closest: (sel) => (sel === '[data-drag]' ? {} : null) }
+  ouvinte(env, 'mousedown')({ target: alca, button: 0, clientX: 50, clientY: 670, preventDefault() {} })
+  ouvinte(env, 'mouseleave')({})
+  ouvinte(env, 'mousemove')({ clientX: 400, clientY: 100 })                       // voltou sem botão: não arrasta mais
+  assert.equal(root.style.top, '660px')
 })
 
 test('pílula-toggle: estado salvo (telefone e fila abertos) é restaurado no próximo carregamento', async () => {

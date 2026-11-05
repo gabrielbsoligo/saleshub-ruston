@@ -177,6 +177,7 @@ Ficam fora da fila Incoming leads, CONTRATO ASSINADO, ganho e perdido, mas só s
   - Com `em_andamento`, tenta de novo em cerca de 7 s.
   - Um watchdog de 45 s impede que um pedido que nunca volta congele a fila.
   - As notificações continuam só com dado recente.
+- **Posição salva** é trazida para dentro da tela atual (outra tela ou janela menor) e o arrasto cancela se o mouse sair da janela. `offset` menor que 64 no topo cobre o cabeçalho do Kommo.
 - **Reverter:** redeploy da `prevendas-fila` do commit anterior e o zip 0.4.5. Nada muda no banco.
 
 ## Servidor 0.4.7 — chats da janela inteira (7 dias), leitura incremental
@@ -219,7 +220,7 @@ Pedido do Gabriel (05/11): o widget não pode atrapalhar o SDR.
   - `🔔 N` é o antigo "Próximo": o contador é o tamanho da fila (vermelho com item atrasado ou aviso novo) e o clique abre o próximo da fila. **Alt+N continua.**
   - `▾` abre e fecha a lista da fila.
 - **Toggle:** o telefone e a fila só aparecem quando clicados. O estado fica salvo no `localStorage` do usuário (chave `rpv_ui_…`); o padrão é FECHADO.
-- **Exceção de segurança:** chamada recebida, pedida ou em curso abre o telefone sozinha, mesmo com o toggle fechado, e esconde ao terminar.
+- **Exceção de segurança:** chamada recebida, pedida ou em curso abre o telefone sozinha, mesmo com o toggle fechado. O card fica mais 20 s depois do fim, para mostrar o resultado ("Chamada encerrada" e "Última ligação"), e então esconde. O title do botão Ligar mostra o estado do ramal e o aviso (ex.: microfone negado).
 - **Avisos de tarefa:** continuam iguais (som, notificação do navegador, até 3 grupos), agora em linhas compactas de 30 px embaixo da pílula. O `×` fecha.
 - **Settings:** `position` passa a ter padrão `top-right` e `offset` padrão 70 (distância do topo). `bottom-*` continua funcionando, com a pílula embaixo e os cards em cima.
 - **Reverter:** subir de novo o zip 0.5.2 (branch `feat/widget-prevendas` @ cd427ee). Nada muda no servidor.
