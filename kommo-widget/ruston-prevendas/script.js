@@ -246,12 +246,14 @@
       var self = this;
       var NS = 'rpv';
       var DEFAULTS = {
-        endpoint: '', usuarios: '', position: 'bottom-right', offset: 96, poll_seconds: 45,
+        endpoint: '', usuarios: '', position: 'top-right', offset: 70, poll_seconds: 45,
         antecedencia_min: 10, grupos: 'G1,G2,G3,G5,G9',
         sound: 'Y', lookahead_min: 15, atalho: 'Y', voz: 'N', endpoint_voz: '', debug_voz: 'N', provedor_voz: '',
         modo: '', etapas_closer: '', antecedencia_closer_min: 120
       };
       var POS = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
+      // 0.5.3: pílula no topo, à esquerda da coluna "Widgets" da ficha do lead (65 px) e abaixo do cabeçalho do Kommo
+      var MARGEM_DIREITA = 72, MARGEM_ESQUERDA = 16;
       // degradado: no máx. 4 páginas (1000 tarefas), 1 página a cada 1,5 s, só durante falha do servidor
       var MAX_PAGINAS_DEGRADADO = 4, PASSO_PAGINA_MS = 1500, MAX_NOTIF_CICLO = 5, ATRASO_MAX_S = 600;
       var MARCA_TTL_MS = 2 * 60 * 1000;
@@ -263,7 +265,7 @@
         uid: null, sub: 'acc', base: '', audio: null,
         itens: [], motivos: [],
         modo: 'aguardando', aviso: '', parcial: false, dadosEm: 0, rev: '', falha: null,
-        fila: [], futura: null, open: false, atual: null, notif: [], resumoNotif: 0, carregando: false, carregandoEm: 0, reTentar: 0
+        fila: [], futura: null, open: false, vozAberta: false, pos: null, arrasto: null, atual: null, notif: [], resumoNotif: 0, carregando: false, carregandoEm: 0, reTentar: 0
       };
       // telefone: a credencial NUNCA fica aqui nem em storage — só dentro da config do UA do JsSIP (memória)
       var voz = { estado: 'off', msg: '', ua: null, sessao: null, tocando: false, emChamada: false, mudo: false, inicio: 0,
@@ -908,8 +910,10 @@
         }, ms);
       }
       function mmss(ms) { var t = Math.max(0, Math.floor(ms / 1000)); return pad(Math.floor(t / 60)) + ':' + pad(t % 60); }
+      function vozEmUso() { return !!(voz.sessao || voz.pedida || voz.discando || voz.emChamada); }
       function htmlVoz() {
         if (!cfg().voz) return '';
+        if (!state.vozAberta && !vozEmUso()) return '';
         var rot = { off: 'desligado', carregando: 'conectando…', registrado: 'pronto', reconectando: 'reconectando…', erro: 'com problema', outra_aba: 'ativo em outra aba' }[voz.estado] || voz.estado;
         var h = '<div class="rpv-card"><div class="rpv-h"><span class="tt">📞 Telefone' + (voz.provedor && voz.ua ? ' ' + (voz.provedor === '3c' ? '3C' : '4com') : '') + ' · ' + esc(rot) + '</span>' +
                 (voz.estado === 'outra_aba' ? '<button data-act="voz-aqui" title="Usar o telefone nesta aba">usar aqui</button>' : '') +
@@ -953,11 +957,18 @@
       var CSS = '' +
 '.rpv-root{position:fixed;z-index:2147483000;display:flex;flex-direction:column;gap:8px;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}' +
 '.rpv-root>*{pointer-events:auto}.rpv-bottom-right,.rpv-top-right{right:16px;align-items:flex-end}.rpv-bottom-left,.rpv-top-left{left:16px;align-items:flex-start}' +
-'.rpv-pill{display:inline-flex;align-items:stretch;background:#E30613;border-radius:999px;box-shadow:0 2px 10px rgba(0,0,0,.22);overflow:hidden;height:34px}' +
-'.rpv-pill.fut{background:#5C6066}.rpv-pill.off{background:#6E6C6A;opacity:.75}' +
-'.rpv-go{display:inline-flex;align-items:center;gap:7px;background:none;border:0;cursor:pointer;color:#fff;padding:0 12px;font-size:12.5px;font-weight:700;white-space:nowrap}' +
-'.rpv-go .cnt{background:rgba(255,255,255,.24);border-radius:999px;padding:1px 7px;font-size:11px}' +
-'.rpv-q{background:rgba(0,0,0,.16);border:0;border-left:1px solid rgba(255,255,255,.18);cursor:pointer;color:#fff;width:28px;font-size:10px}' +
+'.rpv-tog{display:inline-flex;align-items:stretch;height:30px;background:#fff;border:1px solid #E2E1DE;border-radius:999px;box-shadow:0 1px 4px rgba(0,0,0,.12);overflow:hidden;opacity:.94;transition:box-shadow .15s,transform .15s,opacity .15s;user-select:none}' +
+'.rpv-tog:hover{opacity:1;box-shadow:0 4px 14px rgba(0,0,0,.2);transform:translateY(-1px);border-color:#E30613}' +
+'.rpv-arrastando .rpv-tog{transform:none;box-shadow:0 6px 18px rgba(0,0,0,.26);cursor:grabbing}' +
+'.rpv-grip{display:inline-flex;align-items:center;padding:0 3px 0 9px;color:#8C8A88;cursor:grab;font-size:12px;letter-spacing:-3px}' +
+'.rpv-tb{display:inline-flex;align-items:center;gap:5px;background:none;border:0;border-left:1px solid #EFEEEC;cursor:pointer;color:#1A1A1D;padding:0 10px;font-size:12px;font-weight:600;white-space:nowrap;font-family:inherit}' +
+'.rpv-grip+.rpv-tb{border-left:0}.rpv-tb:hover{background:#F4F3F1}.rpv-tb[disabled]{cursor:default;color:#A5A3A0}.rpv-tb[disabled]:hover{background:none}' +
+'.rpv-tb.on{background:#FDECEC;color:#B4232B}.rpv-tb .dot{width:7px;height:7px;border-radius:50%;background:#A5A3A0}' +
+'.rpv-tb.st-ok .dot{background:#1E8E3E}.rpv-tb.st-erro .dot{background:#E30613}.rpv-tb.st-liga .dot{background:#E0A100}' +
+'.rpv-tb.st-tocando .dot{background:#E30613;animation:rpvpulsa 1s infinite}.rpv-tb.st-chamada .dot{background:#1E8E3E;animation:rpvpulsa 1.6s infinite}' +
+'@keyframes rpvpulsa{0%{box-shadow:0 0 0 0 rgba(227,6,19,.5)}70%{box-shadow:0 0 0 6px rgba(227,6,19,0)}100%{box-shadow:0 0 0 0 rgba(227,6,19,0)}}' +
+'.rpv-tb .cnt{background:#EEEDEB;color:#3A3A3D;border-radius:999px;padding:1px 6px;font-size:10.5px;font-weight:700}.rpv-tb-ntf.late .cnt{background:#E30613;color:#fff}' +
+'.rpv-tog.fut .rpv-tb-ntf .cnt{background:#5C6066;color:#fff}.rpv-q{width:28px;justify-content:center;padding:0;font-size:10px;color:#5C6066}' +
 '.rpv-card{background:#fff;border:1px solid #E2E1DE;border-radius:12px;width:320px;max-width:calc(100vw - 32px);box-shadow:0 10px 30px rgba(0,0,0,.16);overflow:hidden;font-size:12px;color:#1A1A1D}' +
 '.rpv-h{display:flex;align-items:center;gap:6px;padding:9px 12px;border-bottom:1px solid #EFEEEC;font-weight:700}' +
 '.rpv-h .tt{flex:1}.rpv-h button{background:none;border:0;color:#8C8A88;cursor:pointer;font-size:14px}' +
@@ -968,7 +979,11 @@
 '.rpv-it .pos{width:16px;color:#A5A3A0;text-align:right}.rpv-it .bd{flex:1;min-width:0}.rpv-it .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
 '.rpv-tag{border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:700;background:#EEF3F8;color:#5C6E80}.rpv-tag.m1{background:#FFE9E9;color:#B4232B}.rpv-tag.m2,.rpv-tag.m3{background:#FFF1E0;color:#A35300}' +
 '.rpv-late{color:#B4232B;font-weight:700}.rpv-f{padding:7px 12px;border-top:1px solid #EFEEEC;font-size:10px;color:#8C8A88;display:flex;justify-content:space-between;gap:8px}' +
-'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-nota{color:#8A8885;padding:4px 12px;font-size:10.5px}.rpv-ntf{border-left:4px solid #E30613}.rpv-ntf .rpv-b{cursor:pointer}' +
+'.rpv-warn{background:#FFF8E6;color:#8A5A00;padding:6px 12px;font-size:11px}.rpv-nota{color:#8A8885;padding:4px 12px;font-size:10.5px}' +
+'.rpv-ntf{display:flex;align-items:center;gap:7px;width:300px;max-width:calc(100vw - 32px);box-sizing:border-box;height:30px;padding:0 4px 0 10px;background:#fff;border:1px solid #E2E1DE;border-left:3px solid #E30613;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:11.5px;color:#1A1A1D;cursor:pointer}' +
+'.rpv-ntf:hover{background:#FAFAF9}.rpv-ntf .ic{font-size:11px}.rpv-ntf .bd{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rpv-ntf .qd{font-size:10.5px;color:#5C6066;white-space:nowrap}' +
+'.rpv-ntf button{background:none;border:0;color:#8C8A88;cursor:pointer;font-size:14px;padding:0 6px}' +
+'.rpv-root{gap:6px}' +
 '.rpv-num{width:100%;box-sizing:border-box;border:1px solid #E2E1DE;border-radius:7px;padding:5px 8px;font-size:12.5px}' +
 '.rpv-tag.m0{background:#E30613;color:#fff}.rpv-ligar{border-radius:7px;border:1px solid #1E8E3E;background:#1E8E3E;color:#fff;padding:4px 10px;cursor:pointer;font-weight:700;font-size:11.5px;align-self:center}.rpv-ligar[disabled]{opacity:.5;cursor:default}';
 
@@ -976,8 +991,15 @@
       function raiz() {
         var c = document.getElementById(NS + '-root'), conf = cfg();
         if (!c) { c = document.createElement('div'); c.id = NS + '-root'; document.body.appendChild(c); }
-        c.className = NS + '-root ' + NS + '-' + conf.position;
-        if (conf.position.indexOf('bottom') === 0) { c.style.bottom = conf.offset + 'px'; c.style.top = ''; } else { c.style.top = Math.max(64, conf.offset) + 'px'; c.style.bottom = ''; }
+        c.className = NS + '-root ' + NS + '-' + conf.position + (state.arrasto && state.arrasto.movendo ? ' ' + NS + '-arrastando' : '');
+        var dir = conf.position.indexOf('right') > 0, p = state.pos;
+        if (p && typeof p.top === 'number' && typeof p.lado === 'number') {             // posição arrastada pelo usuário (localStorage)
+          c.style.top = p.top + 'px'; c.style.bottom = '';
+          if (dir) { c.style.right = p.lado + 'px'; c.style.left = ''; } else { c.style.left = p.lado + 'px'; c.style.right = ''; }
+        } else {
+          if (conf.position.indexOf('bottom') === 0) { c.style.bottom = conf.offset + 'px'; c.style.top = ''; } else { c.style.top = conf.offset + 'px'; c.style.bottom = ''; }
+          if (dir) { c.style.right = MARGEM_DIREITA + 'px'; c.style.left = ''; } else { c.style.left = MARGEM_ESQUERDA + 'px'; c.style.right = ''; }
+        }
         return c;
       }
       function tagCloser(q) {
@@ -1002,10 +1024,11 @@
         var c = raiz(), now = agoraS(), conf = cfg(), html = '', agir = podeAgir();
 
         Fila.agruparNotif(state.notif).slice(0, 3).forEach(function (n) {
-          html += '<div class="rpv-card rpv-ntf"><div class="rpv-h"><span class="tt">🔔 ' + esc(Fila.ROTULO[n.momento] || 'Tarefa') + (n.qtd > 1 ? ' · ' + n.qtd + ' iguais' : '') + '</span>' +
-                  '<button data-act="fechar-ntf" data-tid="' + esc(n.ids.join(',')) + '" title="Fechar">×</button></div>' +
-                  '<div class="rpv-b" data-act="abrir" data-et="' + esc(n.etype) + '" data-eid="' + esc(n.eid) + '"><div class="nm">' + esc(n.titulo) + '</div>' +
-                  '<div class="mt"><span' + (n.due < now ? ' class="rpv-late"' : '') + '>' + esc(fmtQuando(n.due, now)) + '</span></div></div></div>';
+          // 0.5.3: aviso compacto (uma linha), para não cobrir o Kommo; som e notificação do navegador iguais
+          html += '<div class="rpv-ntf" data-act="abrir" data-et="' + esc(n.etype) + '" data-eid="' + esc(n.eid) + '" title="' + esc(n.titulo) + '">' +
+                  '<span class="ic">🔔</span><span class="bd"><b>' + esc(Fila.ROTULO[n.momento] || 'Tarefa') + (n.qtd > 1 ? ' · ' + n.qtd + ' iguais' : '') + '</b> · ' + esc(n.titulo) + '</span>' +
+                  '<span class="qd' + (n.due < now ? ' rpv-late' : '') + '">' + esc(fmtQuando(n.due, now)) + '</span>' +
+                  '<button data-act="fechar-ntf" data-tid="' + esc(n.ids.join(',')) + '" title="Fechar">×</button></div>';
         });
         if (state.resumoNotif) html += '<div class="rpv-card"><div class="rpv-b">+' + state.resumoNotif + ' tarefas vencendo agora — veja a fila.</div></div>';
 
@@ -1044,12 +1067,23 @@
           html += '<div class="rpv-f"><span>' + esc(state.modo) + (state.dadosEm ? ' · dados das ' + hora(state.dadosEm) : '') + '</span>' + (conf.atalho ? '<span>Alt+N</span>' : '') + '</div></div>';
         }
 
+        // 0.5.3: pílula-toggle (Ligar · Notificações · fila). Os cards abrem embaixo dela (topo) ou em cima (base).
         var p = agir ? Fila.proximoDe(state.fila, state.futura, aqui) : null;
-        var classe = p ? (p.futura ? ' fut' : '') : ' off';
-        var rotulo = p && p.futura ? 'Próxima ' + hora(p.item.due) : 'Próximo';
-        html += '<span class="rpv-pill' + classe + '" title="' + esc(p ? nomeDe(p.item) + ' · ' + (Fila.ROTULO[p.item.momento] || '') : (agir ? 'sem tarefas' : 'fila desatualizada')) + '">' +
-                '<button class="rpv-go" ' + (p ? 'data-act="avancar"' : 'disabled') + '>➜ ' + esc(rotulo) + (state.fila.length ? '<span class="cnt">' + state.fila.length + '</span>' : '') + '</button>' +
-                '<button class="rpv-q" data-act="painel" title="Ver a fila">' + (state.open ? '▾' : '▴') + '</button></span>';
+        var topo = conf.position.indexOf('top') === 0;
+        var atrasado = state.fila.some(function (q) { return q.due && q.due < now; }) || state.notif.length > 0;
+        var dica = p ? (p.futura ? 'Próxima às ' + hora(p.item.due) + ': ' : 'Próximo: ') + nomeDe(p.item) + ' · ' + (Fila.ROTULO[p.item.momento] || '') + (conf.atalho ? ' (Alt+N)' : '')
+                     : (agir ? 'Sem tarefas' : 'Fila desatualizada');
+        var pill = '<div class="rpv-tog' + (p ? (p.futura ? ' fut' : '') : ' off') + '">' +
+                   '<span class="rpv-grip" data-drag="1" title="Arraste para mover · duplo clique volta ao lugar">⋮⋮</span>';
+        if (conf.voz) {
+          var vst = vozEmUso() ? (voz.emChamada ? 'chamada' : 'tocando') : ({ registrado: 'ok', erro: 'erro', carregando: 'liga', reconectando: 'liga' }[voz.estado] || 'off');
+          pill += '<button class="rpv-tb rpv-tb-voz' + (state.vozAberta ? ' on' : '') + ' st-' + vst + '" data-act="voz" aria-pressed="' + (state.vozAberta ? 'true' : 'false') + '" title="' + (state.vozAberta ? 'Esconder o telefone' : 'Abrir o telefone') + '">' +
+                  '<span class="dot"></span>📞 Ligar</button>';
+        }
+        pill += '<button class="rpv-tb rpv-tb-ntf' + (atrasado ? ' late' : '') + '" ' + (p ? 'data-act="avancar"' : 'disabled') + ' title="' + esc(dica) + '">🔔' +
+                (state.fila.length ? '<span class="cnt">' + state.fila.length + '</span>' : '') + '</button>' +
+                '<button class="rpv-tb rpv-q" data-act="painel" aria-pressed="' + (state.open ? 'true' : 'false') + '" title="' + (state.open ? 'Esconder a fila' : 'Ver a fila') + '">' + (state.open === topo ? '▴' : '▾') + '</button></div>';
+        html = topo ? pill + html : html + pill;
         var foco = document.activeElement && document.activeElement.id === NS + '-manual', pos = foco ? document.activeElement.selectionStart : 0;
         c.innerHTML = html;
         if (foco) { var inp = document.getElementById(NS + '-manual'); if (inp && inp.focus) { inp.focus(); try { inp.setSelectionRange(pos, pos); } catch (e) {} } }
@@ -1061,7 +1095,8 @@
         if (!el || !root || !root.contains(el)) return;
         var act = el.getAttribute('data-act');
         if (act === 'avancar') avancar();
-        else if (act === 'painel') { state.open = !state.open; render(); }
+        else if (act === 'painel') { state.open = !state.open; salvarUi(); render(); }
+        else if (act === 'voz') { state.vozAberta = !state.vozAberta; salvarUi(); render(); }
         else if (act === 'atualizar') ciclo(state.geracao, true);
         else if (act === 'concluir') concluirEProximo(state.atual);
         else if (act === 'pular') pular(state.atual);
@@ -1075,6 +1110,45 @@
         else if (act === 'voz-aqui') usarAqui(state.geracao);
         else if (act === 'voz-reconectar') { pararVoz(); voz.estado = 'off'; voz.msg = ''; iniciarVoz(state.geracao, false); }
         else if (act === 'fechar-ntf') { var tids = String(el.getAttribute('data-tid') || '').split(',').map(Number); state.notif = state.notif.filter(function (n) { return tids.indexOf(n.id) === -1; }); lsSet('notif', state.notif); render(); }
+      }
+      // estado da pílula por usuário (padrão: tudo fechado). Nunca guarda credencial.
+      function salvarUi() { lsSet('ui', { voz: !!state.vozAberta, fila: !!state.open }); }
+      function carregarUi() {
+        var u = lsGet('ui', null) || {};
+        state.vozAberta = u.voz === true; state.open = u.fila === true;
+        var p = lsGet('pos', null);
+        state.pos = p && typeof p.top === 'number' && typeof p.lado === 'number' ? p : null;
+      }
+      // arrastar a pílula pela alça ⋮⋮ (mouse); duplo clique na alça volta à posição padrão
+      function aoApertar(ev) {
+        var el = ev.target && ev.target.closest ? ev.target.closest('[data-drag]') : null;
+        var root = document.getElementById(NS + '-root');
+        if (!el || !root || !root.contains(el) || ev.button) return;
+        var r = root.getBoundingClientRect ? root.getBoundingClientRect() : null;
+        if (!r) return;
+        ev.preventDefault();
+        state.arrasto = { x: ev.clientX, y: ev.clientY, top: r.top, lado: cfg().position.indexOf('right') > 0 ? (window.innerWidth - r.right) : r.left, movendo: false };
+      }
+      function aoMover(ev) {
+        var a = state.arrasto; if (!a) return;
+        var dx = ev.clientX - a.x, dy = ev.clientY - a.y;
+        if (!a.movendo && Math.abs(dx) + Math.abs(dy) < 4) return;
+        a.movendo = true;
+        var dir = cfg().position.indexOf('right') > 0, W = window.innerWidth || 1200, H = window.innerHeight || 800;
+        state.pos = { top: Math.max(0, Math.min(H - 40, Math.round(a.top + dy))), lado: Math.max(0, Math.min(W - 120, Math.round(a.lado + (dir ? -dx : dx)))) };
+        raiz();
+      }
+      function aoSoltar() {
+        var a = state.arrasto; if (!a) return;
+        state.arrasto = null;
+        if (a.movendo) lsSet('pos', state.pos);
+        raiz();
+      }
+      function aoDuploClique(ev) {
+        var el = ev.target && ev.target.closest ? ev.target.closest('[data-drag]') : null;
+        var root = document.getElementById(NS + '-root');
+        if (!el || !root || !root.contains(el)) return;
+        state.pos = null; lsSet('pos', null); raiz();
       }
       function aoDigitar(ev) {                                              // guarda o que foi digitado (o render recria o campo)
         if (ev.target && ev.target.id === NS + '-manual') voz.manual = String(ev.target.value || '').slice(0, 30);
@@ -1100,10 +1174,15 @@
         state.base = String(p.cdn_path || p.path || '').replace(/\/+$/, '');
         try { state.atual = JSON.parse(sessionStorage.getItem(key('atual')) || 'null'); } catch (e) { state.atual = null; }
         state.notif = lsGet('notif', []);
+        carregarUi();
         css(); raiz(); initAudio();
         ouvir(document, 'click', aoClicar, false);
         ouvir(document, 'keydown', aoTeclar, false);
         ouvir(document, 'input', aoDigitar, false);
+        ouvir(document, 'mousedown', aoApertar, false);
+        ouvir(document, 'mousemove', aoMover, false);
+        ouvir(document, 'mouseup', aoSoltar, false);
+        ouvir(document, 'dblclick', aoDuploClique, false);
         ouvir(window, 'storage', aoArmazenar, false);
         var prime = function () {
           try { if (state.audio) { state.audio.muted = true; state.audio.play().then(function () { state.audio.pause(); state.audio.currentTime = 0; state.audio.muted = false; }).catch(function () { state.audio.muted = false; }); } } catch (e) {}

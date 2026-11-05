@@ -7,8 +7,8 @@
   "settings": {
     "endpoint": "Endereço do classificador (SalesHub). Ex.: https://iaompeiokjxbffwehhrx.supabase.co/functions/v1/prevendas-classificar",
     "usuarios": "IDs de usuário do Kommo que veem o widget, separados por vírgula. Vazio = todos. (Em teste: só o Gabriel.)",
-    "position": "Posição: bottom-right (padrão), bottom-left, top-right ou top-left",
-    "offset": "Distância da borda em pixels (padrão 96)",
+    "position": "Posição da pílula: top-right (padrão), top-left, bottom-right ou bottom-left. O usuário também pode arrastá-la pela alça ⋮⋮",
+    "offset": "Distância do topo (ou da base) em pixels (padrão 70, logo abaixo do cabeçalho do Kommo)",
     "poll_seconds": "Atualização da fila em segundos (mínimo 15, padrão 45)",
     "antecedencia_min": "Minutos antes do vencimento em que a tarefa entra na fila (padrão 10)",
     "grupos": "Ordem dos grupos de origem: G1 Indicação, G2 Inbound (inclui Leadbroker, Blackbox, Foodbox), G3 Base própria, G5 Outbound, G9 Sem origem (padrão G1,G2,G3,G5,G9)",

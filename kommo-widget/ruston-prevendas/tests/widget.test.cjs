@@ -65,6 +65,7 @@ function instanciar(env, respostas, settings = {}) {
 }
 
 const AGORA = Math.floor(Date.now() / 1000)
+const UI_KEY = 'rpv_ui_financeirorustonengenhariacombr_11420911'
 const tarefa = (id, extra = {}) => ({ id, entity_type: 'leads', entity_id: id * 10, due: AGORA - 60, momento: 'follow_up', grupo: 'G1', urgente: false, texto: 't' + id, lead_nome: 'Lead ' + id, ...extra })
 
 test('ciclo completo: fila vem do servidor; tarefa que sai (reatribuída/concluída) some da fila', () => {
@@ -398,6 +399,9 @@ const CRED = { ok: true, provedor: '4com', wss: 'wss://ruston.api4com.com:6443',
 function comVoz(env, reg, rotas, settings = {}, travas = travasFalsas()) {
   env.ctx.window.JsSIP = fakeJsSIP(reg)
   env.ctx.navigator = { locks: travas }
+  // 0.5.3: o telefone fica atrás do toggle "Ligar" (padrão fechado). Os testes de telefone partem do toggle ABERTO
+  // (estado salvo por usuário); os testes do toggle em si estão em "pílula-toggle".
+  if (!settings.__fechado) env.ctx.localStorage.setItem(UI_KEY, JSON.stringify({ voz: true, fila: false }))
   let conf = { endpoint: 'https://srv/fila', usuarios: '11420911', voz: 'Y', ...settings }
   const w = instanciar(env, [{ ok: true, itens: [] }])
   w.get_settings = () => conf
@@ -1349,4 +1353,99 @@ test("resultado da ligação: as consultas do widget vão além dos 15 min do 's
   assert.equal(esperas.length, n - 1)
   const aposFim = 8000 + esperas.reduce((a, b) => a + b, 0), aposDiscar = 90000 + esperas.reduce((a, b) => a + b, 0)
   assert.ok(aposFim > 15 * 60_000 && aposDiscar > 15 * 60_000)
+})
+
+// ======================================================================
+// 0.5.3 — pílula-toggle (Ligar · Notificações · fila), padrão fechado, estado e posição por usuário
+// ======================================================================
+const POS_KEY = 'rpv_pos_financeirorustonengenhariacombr_11420911'
+const ouvinte = (env, ev) => env.ouvintes.find((o) => o[0] === ev && !o[2])[1]
+
+test('pílula-toggle: padrão FECHADO; "Ligar" abre e fecha o telefone e o estado fica salvo', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, { credencial: CRED }, { __fechado: true })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  let html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /^<div class="rpv-tog/)                                   // topo: a pílula vem primeiro
+  assert.match(html, /data-act="voz" aria-pressed="false"/)
+  assert.match(html, /rpv-tb-voz st-ok/)                                       // ponto verde: ramal registrado
+  assert.doesNotMatch(html, /Telefone/)                                        // painel do telefone escondido
+  clicar(env, 'voz')
+  html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Telefone 4com · pronto/); assert.match(html, /data-act="voz" aria-pressed="true"/)
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(UI_KEY)), { voz: true, fila: false })
+  clicar(env, 'voz')
+  assert.doesNotMatch(env.elems['rpv-root'].innerHTML, /Telefone/)
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(UI_KEY)), { voz: false, fila: false })
+})
+
+test('pílula-toggle: chamada recebida abre o telefone sozinha mesmo com o toggle fechado; depois volta a esconder', async () => {
+  const env = ambiente(), reg = {}
+  const { w } = comVoz(env, reg, { credencial: CRED }, { __fechado: true })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  const s = sessao(false); reg.emit('newRTCSession', s)
+  let html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Chamada recebida/); assert.match(html, /rpv-tb-voz st-tocando/)
+  s.session.terminate(); env.rodarTimers('i')
+  html = env.elems['rpv-root'].innerHTML
+  assert.doesNotMatch(html, /Chamada recebida/); assert.match(html, /data-act="voz" aria-pressed="false"/)
+})
+
+test('pílula-toggle: estado salvo (telefone e fila abertos) é restaurado no próximo carregamento', async () => {
+  const env = ambiente(), reg = {}
+  env.ctx.localStorage.setItem(UI_KEY, JSON.stringify({ voz: true, fila: true }))
+  const { w } = comVoz(env, reg, { credencial: CRED }, { __fechado: true })
+  w.callbacks.init(); await flush(); reg.emit('registered')
+  const html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /Telefone 4com · pronto/); assert.match(html, /Sua fila · /)
+})
+
+test('pílula-toggle: sininho = Próximo (contador, vermelho com atraso, clique avança); seta abre a fila; Alt+N mantido', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1), tarefa(2)], frescor: { atraso_s: 30, status: 'done' } }])
+  w.callbacks.init(); env.rodarTimers('t')
+  let html = env.elems['rpv-root'].innerHTML
+  assert.match(html, /rpv-tb-ntf late" data-act="avancar" title="Próximo: Lead 1/)
+  assert.match(html, /🔔<span class="cnt">2<\/span>/)
+  assert.doesNotMatch(html, /data-act="voz"/)                                 // sem voz=Y: sem botão Ligar
+  assert.doesNotMatch(html, /Sua fila/)
+  clicar(env, 'painel'); assert.match(env.elems['rpv-root'].innerHTML, /Sua fila · 2/)
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(UI_KEY)), { voz: false, fila: true })
+  clicar(env, 'avancar'); assert.equal(env.ctx.location.pathname, '/leads/detail/10')
+  ouvinte(env, 'keydown')({ altKey: true, key: 'n', target: { tagName: 'DIV' }, preventDefault() {} })
+  assert.equal(env.ctx.location.pathname, '/leads/detail/20')
+})
+
+test('pílula-toggle: posição padrão abaixo do cabeçalho, à esquerda da coluna Widgets; arrastar salva; duplo clique volta', () => {
+  const env = ambiente()
+  env.ctx.window.innerWidth = 1900; env.ctx.window.innerHeight = 1000
+  const w = instanciar(env, [{ ok: true, itens: [] }])
+  w.callbacks.init(); env.rodarTimers('t')
+  const root = env.elems['rpv-root']
+  assert.equal(root.style.top, '70px'); assert.equal(root.style.right, '72px'); assert.equal(root.style.bottom, '')
+  root.getBoundingClientRect = () => ({ top: 70, right: 1900 - 72, left: 1700, bottom: 100 })
+  const alca = { closest: (sel) => (sel === '[data-drag]' ? {} : null) }
+  ouvinte(env, 'mousedown')({ target: alca, button: 0, clientX: 1750, clientY: 70, preventDefault() {} })
+  ouvinte(env, 'mousemove')({ clientX: 1650, clientY: 300 })
+  ouvinte(env, 'mouseup')({})
+  assert.equal(root.style.top, '300px'); assert.equal(root.style.right, '172px')
+  assert.deepEqual(JSON.parse(env.ctx.localStorage.getItem(POS_KEY)), { top: 300, lado: 172 })
+  ouvinte(env, 'dblclick')({ target: alca })
+  assert.equal(root.style.top, '70px'); assert.equal(root.style.right, '72px')
+  assert.equal(JSON.parse(env.ctx.localStorage.getItem(POS_KEY)), null)
+})
+
+test('pílula-toggle: clique curto na alça não move; position=bottom-right mantém a pílula embaixo (por último)', () => {
+  const env = ambiente()
+  const w = instanciar(env, [{ ok: true, itens: [tarefa(1)] }], { position: 'bottom-right', offset: '96' })
+  w.callbacks.init(); env.rodarTimers('t')
+  const root = env.elems['rpv-root']
+  assert.equal(root.style.bottom, '96px'); assert.equal(root.style.top, '')
+  root.getBoundingClientRect = () => ({ top: 900, right: 1828, left: 1700, bottom: 930 })
+  const alca = { closest: (sel) => (sel === '[data-drag]' ? {} : null) }
+  ouvinte(env, 'mousedown')({ target: alca, button: 0, clientX: 10, clientY: 10, preventDefault() {} })
+  ouvinte(env, 'mousemove')({ clientX: 11, clientY: 11 }); ouvinte(env, 'mouseup')({})
+  assert.equal(env.ctx.localStorage.getItem(POS_KEY), null); assert.equal(root.style.bottom, '96px')
+  clicar(env, 'painel')
+  assert.match(root.innerHTML, /Sua fila[\s\S]*<div class="rpv-tog/)              // base: a fila abre em cima da pílula
 })

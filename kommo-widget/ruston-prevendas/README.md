@@ -209,3 +209,17 @@ Ficam fora da fila Incoming leads, CONTRATO ASSINADO, ganho e perdido, mas só s
 - **Convergência:** quando a tabela `calls` + `kommo-writer` (AUDITORIA-LIGACOES F5, Engenheiro) existirem, a prevendas-voz só registra a tentativa (`client_ref = widget_ev`) e o writer atualiza ESTA nota (por `nota_id`/marcador); então o cron e a ação `resultado` são desligados.
 - **Migration `supabase/migration_169_prevendas_voz_resultado.sql`:** aditiva. Colunas `provedor`, `nota_entidade`, `nota_id`, `final`, `final_em`, `cdr_id`; ação `resultado` no check; índice parcial das pendentes; job do cron.
 - **Reverter:** zip 0.4.6, redeploy da `prevendas-voz` de `9f65f59` e o SQL de reversão do cabeçalho da 169.
+
+## 0.5.3 — pílula-toggle no topo (só front; backend e fila iguais à 0.5.2)
+Pedido do Gabriel (05/11): o widget não pode atrapalhar o SDR.
+- **Pílula branca** fixa no canto superior direito, logo abaixo do cabeçalho do Kommo e à esquerda da coluna "Widgets" da ficha do lead (top 70 px, right 72 px). No hover, ganha sombra e borda vermelha.
+- **Dentro da pílula:**
+  - `⋮⋮` alça para arrastar. A posição fica salva por usuário; duplo clique na alça volta ao padrão.
+  - `📞 Ligar` abre e fecha o painel do telefone. O ponto mostra o estado do ramal: verde = pronto, amarelo = conectando, vermelho = problema, vermelho pulsando = chamada tocando.
+  - `🔔 N` é o antigo "Próximo": o contador é o tamanho da fila (vermelho com item atrasado ou aviso novo) e o clique abre o próximo da fila. **Alt+N continua.**
+  - `▾` abre e fecha a lista da fila.
+- **Toggle:** o telefone e a fila só aparecem quando clicados. O estado fica salvo no `localStorage` do usuário (chave `rpv_ui_…`); o padrão é FECHADO.
+- **Exceção de segurança:** chamada recebida, pedida ou em curso abre o telefone sozinha, mesmo com o toggle fechado, e esconde ao terminar.
+- **Avisos de tarefa:** continuam iguais (som, notificação do navegador, até 3 grupos), agora em linhas compactas de 30 px embaixo da pílula. O `×` fecha.
+- **Settings:** `position` passa a ter padrão `top-right` e `offset` padrão 70 (distância do topo). `bottom-*` continua funcionando, com a pílula embaixo e os cards em cima.
+- **Reverter:** subir de novo o zip 0.5.2 (branch `feat/widget-prevendas` @ cd427ee). Nada muda no servidor.
