@@ -81,10 +81,23 @@ export function tituloCurtoComOrigem(t, { declarado: usarDeclarado = true } = {}
   const limpo = semNumero(t);
   const sujeito = primeiraOracao(limpo) || limpo.slice(0, 30);
   const i = ICONES.find((x) => x.chave === iconePara(sujeito));
-  if (i?.nome && i.chave !== 'padrao') return { titulo: i.nome.charAt(0).toUpperCase() + i.nome.slice(1), origem: 'icone' };
+  // Nome do ícone só vira título se alguma palavra dele está no texto ("Foco" para
+  // "Cliente oculto nos concorrentes" ou "Funis" para "funil" não servem).
+  if (i?.nome && i.chave !== 'padrao' && nomeNoTexto(i.nome, limpo)) return { titulo: capital(i.nome), origem: 'icone' };
+  return { titulo: tituloDoTexto(limpo), origem: 'texto' };
+}
+const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const nomeNoTexto = (nome, texto) => {
+  const t = ` ${normalizar(texto).replace(/[^a-z0-9]+/g, ' ')} `;
+  return normalizar(nome).split(/[^a-z0-9]+/).filter((w) => w.length >= 3).some((w) => t.includes(` ${w} `));
+};
+function tituloDoTexto(limpo, maxChars = Infinity) {
+  // Até 4 palavras; com maxChars (grade), corta palavra inteira e as soltas no fim até caber.
   const palavras = limpo.split(/[:;,(]/)[0].trim().split(/\s+/).slice(0, 4);
-  while (palavras.length > 1 && SOLTAS.has(normalizar(palavras[palavras.length - 1]))) palavras.pop();
-  return { titulo: palavras.join(' '), origem: 'texto' };
+  const aparar = () => { while (palavras.length > 1 && SOLTAS.has(normalizar(palavras[palavras.length - 1]))) palavras.pop(); };
+  aparar();
+  while (palavras.length > 1 && palavras.join(' ').length > maxChars) { palavras.pop(); aparar(); }
+  return palavras.join(' ');
 }
 export const tituloCurto = (t) => tituloCurtoComOrigem(t).titulo;
 
@@ -112,6 +125,18 @@ export function planoGradeEntregas(a, W, H) {
   const origens = a.cartoes.map((c) => {
     const o = tituloCurtoComOrigem(c.texto);
     return o.origem === 'titulo' && o.titulo.length * 12 * 0.5 > larguraTitulo ? tituloCurtoComOrigem(c.texto, { declarado: false }) : o;
+  });
+  // Título repetido no mesmo slide (ex.: dois "Funis"): o que veio do ícone cai no título do texto.
+  const vistos = new Set();
+  origens.forEach((o, i) => {
+    const k = normalizar(o.titulo);
+    if (vistos.has(k) && o.origem === 'icone') origens[i] = { titulo: tituloDoTexto(semNumero(a.cartoes[i].texto)), origem: 'texto' };
+    vistos.add(normalizar(origens[i].titulo));
+  });
+  // Título tirado do texto que não cabe nem a 12pt: encurta (palavra inteira), em vez de a grade cair na lista.
+  const cabe12 = Math.floor(larguraTitulo / 6);
+  origens.forEach((o, i) => {
+    if (o.origem === 'texto' && o.titulo.length > cabe12) origens[i] = { ...o, titulo: tituloDoTexto(semNumero(a.cartoes[i].texto), cabe12) };
   });
   // Com título declarado, o detalhe é só o que vem depois dos dois-pontos (sem repetir o título).
   const detalhes = a.cartoes.map((c, i) => origens[i].detalhe ?? semNumero(c.texto));
@@ -300,10 +325,16 @@ export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data, m
 }
 
 // Números que JÁ estão no deck: valor (_p2) e desconto (_p1), prazo, nº de entregas, validade (_p0).
+// Slides de entregas: "PROPOSTA…" (deck curto) e, na Estruturação (deck E2026 completo),
+// as semanas ("ESTRUTURAÇÃO ESTRATÉGICA") e os bônus. O plano de execução ("EXECUTAR") ganha a
+// grade, mas não entra nos wireframes nem na contagem de entregas.
+export const ROTULO_ENTREGAS = /^(proposta|estruturacao estrategica|bonus)/;
+export const ROTULO_GRADE = /^(proposta|estruturacao estrategica|bonus|executar)/;
+
 export function numerosDoDeck(analisados) {
   const inv = analisados.find((a) => a.p?.p2);
   // Entregas: soma os slides de proposta (inclui "(cont.)"), sem os [PREENCHER].
-  const nEntregas = analisados.filter((a) => /^proposta/.test(normalizar(a.rotulo)))
+  const nEntregas = analisados.filter((a) => ROTULO_ENTREGAS.test(normalizar(a.rotulo)))
     .flatMap((a) => a.cartoes).filter((c) => !/\[PREENCHER/i.test(c.texto)).length;
   const tudo = analisados.flatMap((a) => a.cartoes.map((c) => c.texto)).join('\n');
   const prazo = tudo.match(/prazo[^:\n]*:\s*(\d+)\s*dias/i);
@@ -425,7 +456,7 @@ export function mockupsDoDeck(a) {
   const chaves = a.cartoes.map((c) => iconePara(c.texto));
   const vistos = new Set();
   return MOCKUPS.filter((mk) => chaves.includes(mk.chave) && !vistos.has(mk.desenho) && vistos.add(mk.desenho))
-    .slice(0, 3).map((mk) => ({ ...mk, nome: tituloCurto(a.cartoes[chaves.indexOf(mk.chave)].texto) }));
+    .slice(0, 3).map((mk) => ({ ...mk, nome: capital(ICONES.find((i) => i.chave === mk.chave).nome) }));
 }
 
 function desenho(tipo, id, pg, x, y, w, h) {
@@ -532,7 +563,7 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
     if (temEtapa2 && (ETAPA2.test(r) || /^proposta/.test(r))) { reqs.push(...requestsEtapas(a, W, ETAPA2.test(r) ? 2 : 1)); feito.push('etapas'); }
 
     let layout = null;
-    if (/^proposta/.test(r)) {
+    if (ROTULO_GRADE.test(r)) {
       const p = planoGradeEntregas(a, W, H);
       if (p) {
         reqs.push(...requestsGradeEntregas(a, p, W, H, assets));
@@ -575,12 +606,15 @@ export function requestsVisualV2(apresentacao, { assets, prefixo = `vz${Math.ran
     novos.push({ indice, requests: [...requestsCapa({ sid: `${prefixo}_vcapa`, indice, W, H, assets, cliente, tipo: nomeDoTipo(tipo, analisados), data, marca }), ...extra] });
     resumo.push({ slide: `${prefixo}_vcapa`, titulo: cliente, feito: [`capa_cliente:${capa}`] });
   }
-  const entregas = analisados.find((a) => /^proposta/.test(normalizar(a.rotulo)) && a.cartoes.length);
+  // Wireframes: entregas de todos os slides (semanas, "(cont.)", bônus); entram depois do último
+  // e herdam o rótulo do primeiro (ex.: "ESTRUTURAÇÃO ESTRATÉGICA", não "BÔNUS PARA VOCÊ").
+  const todasEntregas = analisados.filter((a) => ROTULO_ENTREGAS.test(normalizar(a.rotulo)) && a.cartoes.length);
+  const entregas = todasEntregas[todasEntregas.length - 1];
   const inv = analisados.find((a) => a.p?.p2 || a.linhas.length);
   const depoisEntregas = entregas ? indiceDe(entregas.sid) + 1 : (inv ? indiceDe(inv.sid) : slides.length);
-  const mk = entregas ? mockupsDoDeck(entregas) : [];
+  const mk = entregas ? mockupsDoDeck({ ...entregas, cartoes: todasEntregas.flatMap((a) => a.cartoes) }) : [];
   if (mk.length >= 2 && !existe('_vmock')) {
-    novos.push({ indice: depoisEntregas, requests: requestsMockups(mk, { sid: `${prefixo}_vmock`, indice: depoisEntregas, W, H, assets, rotulo: entregas.rotulo, rodape }) });
+    novos.push({ indice: depoisEntregas, requests: requestsMockups(mk, { sid: `${prefixo}_vmock`, indice: depoisEntregas, W, H, assets, rotulo: todasEntregas[0].rotulo, rodape }) });
     resumo.push({ slide: `${prefixo}_vmock`, titulo: 'COMO FICA NA PRÁTICA', feito: [`mockups:${mk.length}`] });
   }
   const textoDeck = analisados.flatMap((a) => [a.titulo, ...a.cartoes.map((c) => c.texto)]).join('\n');
