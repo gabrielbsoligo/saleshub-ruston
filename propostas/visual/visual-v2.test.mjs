@@ -440,3 +440,14 @@ test('Estruturação real (11 itens da Semana 2 em 2 slides + execução): grade
   }
 });
 const normalizarT = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+test('sondas do Vedor (R1): "por" não prova o ícone; repetido com o declarado depois; contagem sem bônus', () => {
+  assert.notEqual(tituloCurto('Conteúdo orgânico por mês'), 'Busca por IA');
+  const sl = lista('d', 'ESTRUTURAÇÃO ESTRATÉGICA', 'S', ['Integração do CRM ao site', 'CRM: funis e réguas', 'Recuperação de carrinho e pós-venda']);
+  const p = planoGradeEntregas(analisarSlide(sl), W, H);
+  assert.equal(new Set(p.titulos.map(normalizarT)).size, p.titulos.length, p.titulos.join(' | '));
+  assert.equal(p.titulos[1], 'CRM');
+  const tiles = numerosDoDeck(deckEstruturacao().slides.map(analisarSlide).filter(Boolean));
+  const ent = tiles.find((t) => t.rotulo === 'ENTREGAS');
+  assert.equal(ent ? ent.valor : '6', '6');
+});

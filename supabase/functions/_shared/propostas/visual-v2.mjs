@@ -88,8 +88,12 @@ export function tituloCurtoComOrigem(t, { declarado: usarDeclarado = true } = {}
 }
 const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const nomeNoTexto = (nome, texto) => {
-  const t = ` ${normalizar(texto).replace(/[^a-z0-9]+/g, ' ')} `;
-  return normalizar(nome).split(/[^a-z0-9]+/).filter((w) => w.length >= 3).some((w) => t.includes(` ${w} `));
+  // Palavra do nome (3+ letras, sem as soltas como "por") ou sigla em maiúsculas ("IA", "CRM");
+  // vale o plural/derivado no texto ("busca" → "buscas"), não o contrário ("funis" ≠ "funil").
+  const tokens = ` ${normalizar(texto).replace(/[^a-z0-9]+/g, ' ')} `;
+  const palavras = String(nome).split(/[^A-Za-zÀ-ÿ0-9]+/).filter(Boolean)
+    .filter((w) => /^[A-Z]{2,}$/.test(w) || (w.length >= 3 && !SOLTAS.has(normalizar(w))));
+  return palavras.some((w) => tokens.includes(` ${normalizar(w)}`));
 };
 function tituloDoTexto(limpo, maxChars = Infinity) {
   // Até 4 palavras; com maxChars (grade), corta palavra inteira e as soltas no fim até caber.
@@ -126,18 +130,24 @@ export function planoGradeEntregas(a, W, H) {
     const o = tituloCurtoComOrigem(c.texto);
     return o.origem === 'titulo' && o.titulo.length * 12 * 0.5 > larguraTitulo ? tituloCurtoComOrigem(c.texto, { declarado: false }) : o;
   });
-  // Título repetido no mesmo slide (ex.: dois "Funis"): o que veio do ícone cai no título do texto.
-  const vistos = new Set();
-  origens.forEach((o, i) => {
-    const k = normalizar(o.titulo);
-    if (vistos.has(k) && o.origem === 'icone') origens[i] = { titulo: tituloDoTexto(semNumero(a.cartoes[i].texto)), origem: 'texto' };
-    vistos.add(normalizar(origens[i].titulo));
-  });
   // Título tirado do texto que não cabe nem a 12pt: encurta (palavra inteira), em vez de a grade cair na lista.
   const cabe12 = Math.floor(larguraTitulo / 6);
-  origens.forEach((o, i) => {
-    if (o.origem === 'texto' && o.titulo.length > cabe12) origens[i] = { ...o, titulo: tituloDoTexto(semNumero(a.cartoes[i].texto), cabe12) };
-  });
+  const doTexto = (i) => ({ titulo: tituloDoTexto(semNumero(a.cartoes[i].texto), cabe12), origem: 'texto' });
+  origens.forEach((o, i) => { if (o.origem === 'texto' && o.titulo.length > cabe12) origens[i] = doTexto(i); });
+  // Título repetido no mesmo slide (ex.: dois "Funis"): o que veio do ícone (antes ou depois) cai no
+  // título do texto; repete até estabilizar (o encurtamento já rodou, então não recria repetido).
+  for (let volta = 0; volta < origens.length; volta++) {
+    const primeiro = new Map();
+    let mudou = false;
+    origens.forEach((o, i) => {
+      const k = normalizar(o.titulo);
+      if (!primeiro.has(k)) { primeiro.set(k, i); return; }
+      const j = primeiro.get(k);
+      if (o.origem === 'icone') { origens[i] = doTexto(i); mudou = true; }
+      else if (origens[j].origem === 'icone') { origens[j] = doTexto(j); primeiro.set(k, i); mudou = true; }
+    });
+    if (!mudou) break;
+  }
   // Com título declarado, o detalhe é só o que vem depois dos dois-pontos (sem repetir o título).
   const detalhes = a.cartoes.map((c, i) => origens[i].detalhe ?? semNumero(c.texto));
   const fonte = fonteQueCabe(detalhes, cw / PT - 24, ch / PT - 58, [11, 10, 9]);
@@ -327,14 +337,14 @@ export function requestsCapa({ sid, indice, W, H, assets, cliente, tipo, data, m
 // Números que JÁ estão no deck: valor (_p2) e desconto (_p1), prazo, nº de entregas, validade (_p0).
 // Slides de entregas: "PROPOSTA…" (deck curto) e, na Estruturação (deck E2026 completo),
 // as semanas ("ESTRUTURAÇÃO ESTRATÉGICA") e os bônus. O plano de execução ("EXECUTAR") ganha a
-// grade, mas não entra nos wireframes nem na contagem de entregas.
+// grade, mas não entra nos wireframes; a contagem de entregas (números) não soma bônus nem execução.
 export const ROTULO_ENTREGAS = /^(proposta|estruturacao estrategica|bonus)/;
 export const ROTULO_GRADE = /^(proposta|estruturacao estrategica|bonus|executar)/;
 
 export function numerosDoDeck(analisados) {
   const inv = analisados.find((a) => a.p?.p2);
   // Entregas: soma os slides de proposta (inclui "(cont.)"), sem os [PREENCHER].
-  const nEntregas = analisados.filter((a) => ROTULO_ENTREGAS.test(normalizar(a.rotulo)))
+  const nEntregas = analisados.filter((a) => /^(proposta|estruturacao estrategica)/.test(normalizar(a.rotulo)))
     .flatMap((a) => a.cartoes).filter((c) => !/\[PREENCHER/i.test(c.texto)).length;
   const tudo = analisados.flatMap((a) => a.cartoes.map((c) => c.texto)).join('\n');
   const prazo = tudo.match(/prazo[^:\n]*:\s*(\d+)\s*dias/i);
