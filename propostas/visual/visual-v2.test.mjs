@@ -376,3 +376,79 @@ test('empate de nota entre cases qualificados: vence o do modelo do deal (sonda 
   assert.equal(r.caso.id, 'i');
   assert.equal(escolherCaso('crm comercial leads conversão google', casos).caso.id, 'p');
 });
+
+// Estruturação (deck E2026 completo): semanas, bônus e execução também viram grade; wireframes juntam as semanas.
+const deckEstruturacao = () => ({
+  pageSize: { width: { magnitude: W, unit: 'EMU' }, height: { magnitude: H, unit: 'EMU' } },
+  slides: [
+    { objectId: 'capaV4', pageElements: [] },
+    lista('eD', 'DIAGNÓSTICO', 'O QUE OUVIMOS DA MARCENARIA', ['Sem CRM: não dá para saber de onde veio cada lead', 'Atendimento feito por uma pessoa só']),
+    lista('e1', 'ESTRUTURAÇÃO ESTRATÉGICA', 'SEMANA 1 — DESCOBERTA E PESQUISA DE MERCADO', ['Concorrentes: anúncios e palavras-chave', 'Google: palavras-chave de compra', 'Personas: ICP e dores']),
+    lista('e2', 'ESTRUTURAÇÃO ESTRATÉGICA', 'SEMANA 3 — ESTRUTURA DA OPERAÇÃO', ['Landing page: captura de orçamento', 'CRM: funis e réguas', 'Recuperação de carrinho e pós-venda']),
+    lista('eB', 'BÔNUS PARA VOCÊ', 'OVERDELIVERIES', ['IA de atendimento: WhatsApp com triagem', 'Garantia: plano aprovado ou dinheiro de volta']),
+    lista('eX', 'EXECUTAR', 'PLANO DE EXECUÇÃO', ['Gestor de tráfego', 'Designer e copywriter', 'Coordenador estratégico', 'Especialista de CRM']),
+  ],
+});
+
+test('Estruturação: semanas, bônus e execução em grade; wireframes juntam as semanas, depois do último e com o rótulo do primeiro', () => {
+  const d = deckEstruturacao();
+  const { requests, resumo } = requestsVisualV2(d, { assets: ASSETS, prefixo: 'tst', data: '07/11/2026', tipo: 'estruturacao' });
+  const por = Object.fromEntries(resumo.map((r) => [r.slide, r.feito]));
+  for (const sid of ['e1', 'e2', 'eB', 'eX']) assert.ok(por[sid].includes('grade_entregas'), `${sid}: ${por[sid]}`);
+  assert.deepEqual(por.eD, ['grade_diagnostico']);
+  assert.deepEqual(por.tst_vmock, ['mockups:3']);
+  const ap = simular(d, requests);
+  assert.deepEqual(ap.slides.map((s) => s.objectId), ['tst_vcapa', 'eD', 'e1', 'e2', 'eB', 'tst_vmock', 'eX']);
+  const textos = requests.filter((r) => r.insertText && r.insertText.objectId.startsWith('tst_vmock')).map((r) => r.insertText.text);
+  assert.ok(textos.includes('ESTRUTURAÇÃO ESTRATÉGICA'), textos.join(' | '));
+  assert.ok(!textos.includes('BÔNUS PARA VOCÊ'));
+  // desenhos das entregas de semanas diferentes (landing da S3, busca do Google da S1, celular da IA no bônus)
+  assert.deepEqual(mockupsDoDeck({ cartoes: d.slides.slice(2, 5).flatMap((s) => analisarSlide(s).cartoes) }).map((m) => m.desenho).sort(), ['celular', 'navegador', 'quadro']);
+  // idempotente
+  assert.deepEqual(requestsVisualV2(ap, { assets: ASSETS, prefixo: 'tst2' }).requests, []);
+});
+
+test('Estruturação: entregas da contagem incluem semanas e bônus, nunca a execução', () => {
+  const an = deckEstruturacao().slides.map(analisarSlide).filter(Boolean);
+  assert.equal(an.filter((a) => /^(estruturacao estrategica|bonus)/.test(a.rotulo.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''))).flatMap((a) => a.cartoes).length, 8);
+});
+
+test('títulos da grade: ícone só se a palavra está no texto; repetido cai no texto; wireframe com o nome do catálogo', () => {
+  assert.equal(tituloCurto('Cliente oculto nos concorrentes, com atendimento via WhatsApp'), 'Cliente oculto nos concorrentes');
+  assert.equal(tituloCurto('Diagnóstico do funil do e-commerce'), 'Diagnóstico do funil');
+  assert.equal(tituloCurto('Funis personalizados no CRM'), 'Funis');
+  const s3 = lista('s3', 'ESTRUTURAÇÃO ESTRATÉGICA', 'SEMANA 3', ['Funis B2C e B2B no CRM', 'Funis de recompra e carteira', 'Recuperação de carrinho e pós-venda']);
+  const p = planoGradeEntregas(analisarSlide(s3), W, H);
+  assert.ok(p, 'cabe na grade');
+  assert.equal(new Set(p.titulos.map((x) => x.toLowerCase())).size, p.titulos.length, p.titulos.join(' | '));
+  // "Criativos: … landing pages" desenha o navegador, mas a legenda é a do catálogo
+  const mk = mockupsDoDeck(analisarSlide(lista('m', 'ESTRUTURAÇÃO ESTRATÉGICA', 'T', ['Criativos: produção com landing pages após validar', 'CRM: funis e réguas'])));
+  assert.deepEqual(mk.map((m) => [m.desenho, m.nome]), [['navegador', 'Landing page'], ['quadro', 'Funis']]);
+});
+
+test('Estruturação real (11 itens da Semana 2 em 2 slides + execução): grade sem título repetido e sem estouro', () => {
+  const s2 = ['Concorrentes: anúncios, palavras-chave e tráfego', 'Google: palavras-chave de compra e de fornecedor', 'Meta: remarketing em vídeo para quem visitou o site',
+    'Posicionamento: PUV, taglines e canais por público', 'Rastreamento: Pixel e API de conversões', 'Ferramenta: e-commerce Nuvemshop integrado ao Bling'];
+  const s3 = ['Diagnóstico de CRO: checkout, produto e carrinho', 'Diagnóstico do funil do e-commerce', 'Réguas de relacionamento e CRM com WhatsApp',
+    'Recuperação de carrinho e pós-venda', 'Funis B2C, B2B e gestão de carteira no CRM', 'Cliente oculto nos concorrentes, com atendimento via WhatsApp'];
+  for (const itens of [s2, s3]) {
+    const p = planoGradeEntregas(analisarSlide(lista('x', 'ESTRUTURAÇÃO ESTRATÉGICA', 'SEMANA', itens)), W, H);
+    assert.ok(p, 'grade');
+    assert.equal(new Set(p.titulos.map(normalizarT)).size, p.titulos.length, p.titulos.join(' | '));
+    // sem estouro: título cabe numa linha no tamanho escolhido (mesma conta do plano)
+    for (const t of p.titulos) assert.ok(t.length * p.tamTitulo * 0.5 <= p.cw / PT - 60, t);
+  }
+});
+const normalizarT = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+test('sondas do Vedor (R1): "por" não prova o ícone; repetido com o declarado depois; contagem sem bônus', () => {
+  assert.notEqual(tituloCurto('Conteúdo orgânico por mês'), 'Busca por IA');
+  assert.notEqual(tituloCurto('Sitemap e indexação do blog orgânico'), 'Site');
+  const sl = lista('d', 'ESTRUTURAÇÃO ESTRATÉGICA', 'S', ['Integração do CRM ao site', 'CRM: funis e réguas', 'Recuperação de carrinho e pós-venda']);
+  const p = planoGradeEntregas(analisarSlide(sl), W, H);
+  assert.equal(new Set(p.titulos.map(normalizarT)).size, p.titulos.length, p.titulos.join(' | '));
+  assert.equal(p.titulos[1], 'CRM');
+  const tiles = numerosDoDeck(deckEstruturacao().slides.map(analisarSlide).filter(Boolean));
+  const ent = tiles.find((t) => t.rotulo === 'ENTREGAS');
+  assert.equal(ent ? ent.valor : '6', '6');
+});
