@@ -443,6 +443,7 @@ const normalizarT = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, 
 
 test('sondas do Vedor (R1): "por" não prova o ícone; repetido com o declarado depois; contagem sem bônus', () => {
   assert.notEqual(tituloCurto('Conteúdo orgânico por mês'), 'Busca por IA');
+  assert.notEqual(tituloCurto('Sitemap e indexação do blog orgânico'), 'Site');
   const sl = lista('d', 'ESTRUTURAÇÃO ESTRATÉGICA', 'S', ['Integração do CRM ao site', 'CRM: funis e réguas', 'Recuperação de carrinho e pós-venda']);
   const p = planoGradeEntregas(analisarSlide(sl), W, H);
   assert.equal(new Set(p.titulos.map(normalizarT)).size, p.titulos.length, p.titulos.join(' | '));

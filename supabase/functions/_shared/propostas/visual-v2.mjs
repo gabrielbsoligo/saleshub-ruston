@@ -89,11 +89,11 @@ export function tituloCurtoComOrigem(t, { declarado: usarDeclarado = true } = {}
 const capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const nomeNoTexto = (nome, texto) => {
   // Palavra do nome (3+ letras, sem as soltas como "por") ou sigla em maiúsculas ("IA", "CRM");
-  // vale o plural/derivado no texto ("busca" → "buscas"), não o contrário ("funis" ≠ "funil").
+  // vale o plural no texto ("busca" → "buscas"; só +s/+es), não o contrário ("funis" ≠ "funil").
   const tokens = ` ${normalizar(texto).replace(/[^a-z0-9]+/g, ' ')} `;
   const palavras = String(nome).split(/[^A-Za-zÀ-ÿ0-9]+/).filter(Boolean)
     .filter((w) => /^[A-Z]{2,}$/.test(w) || (w.length >= 3 && !SOLTAS.has(normalizar(w))));
-  return palavras.some((w) => tokens.includes(` ${normalizar(w)}`));
+  return palavras.some((w) => new RegExp(` ${normalizar(w)}(s|es)? `).test(tokens));
 };
 function tituloDoTexto(limpo, maxChars = Infinity) {
   // Até 4 palavras; com maxChars (grade), corta palavra inteira e as soltas no fim até caber.
